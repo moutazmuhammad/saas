@@ -160,9 +160,10 @@ class SaasContainerPhysicalServer(models.Model):
                 _("SSH connection failed:\n%s") % str(e)
             )
 
-        self.docker_container_ids.unlink()
-
         container_model = self.env['saas.docker.container']
+        existing = {c.container_id: c for c in self.docker_container_ids}
+        seen_ids = set()
+
         for line in stdout.strip().splitlines():
             line = line.strip()
             if not line:
@@ -170,13 +171,28 @@ class SaasContainerPhysicalServer(models.Model):
             parts = line.split(separator)
             if len(parts) < 7:
                 continue
-            container_model.create({
-                'server_id': self.id,
-                'container_id': parts[0][:12],
+            cid = parts[0][:12]
+            seen_ids.add(cid)
+            vals = {
                 'image': parts[1],
                 'command': parts[2],
                 'created': parts[3],
                 'status': parts[4],
                 'ports': parts[5],
                 'name': parts[6],
-            })
+            }
+            if cid in existing:
+                existing[cid].write(vals)
+            else:
+                vals.update({
+                    'server_id': self.id,
+                    'container_id': cid,
+                })
+                container_model.create(vals)
+
+        # Remove containers that no longer exist on the server
+        stale = container_model.browse([
+            c.id for cid, c in existing.items() if cid not in seen_ids
+        ])
+        if stale:
+            stale.unlink()

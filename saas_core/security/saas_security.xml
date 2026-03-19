@@ -19,4 +19,102 @@
         <field name="comment">Full management access to SaaS instances, servers, and configuration.</field>
     </record>
 
+    <!-- Record Rules -->
+    <data noupdate="1">
+
+        <!-- SaaS User: can only see instances of their own company -->
+        <record id="rule_saas_instance_user_company" model="ir.rule">
+            <field name="name">SaaS Instance: company-scoped (user)</field>
+            <field name="model_id" ref="model_saas_instance"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_user'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <!-- SaaS Manager: can see and manage instances of their own company -->
+        <record id="rule_saas_instance_manager_company" model="ir.rule">
+            <field name="name">SaaS Instance: company-scoped (manager)</field>
+            <field name="model_id" ref="model_saas_instance"/>
+            <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_manager'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- Backup: inherits access from instance company -->
+        <record id="rule_saas_backup_user_company" model="ir.rule">
+            <field name="name">SaaS Backup: company-scoped (user)</field>
+            <field name="model_id" ref="model_saas_instance_backup"/>
+            <field name="domain_force">[('instance_id.company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_user'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_saas_backup_manager_company" model="ir.rule">
+            <field name="name">SaaS Backup: company-scoped (manager)</field>
+            <field name="model_id" ref="model_saas_instance_backup"/>
+            <field name="domain_force">[('instance_id.company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_manager'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- Module lines: inherits access from instance company -->
+        <record id="rule_saas_module_line_user_company" model="ir.rule">
+            <field name="name">SaaS Module Line: company-scoped (user)</field>
+            <field name="model_id" ref="model_saas_instance_module_line"/>
+            <field name="domain_force">[('instance_id.company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_user'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_saas_module_line_manager_company" model="ir.rule">
+            <field name="name">SaaS Module Line: company-scoped (manager)</field>
+            <field name="model_id" ref="model_saas_instance_module_line"/>
+            <field name="domain_force">[('instance_id.company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_manager'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- Instance repos: inherits access from instance company -->
+        <record id="rule_saas_instance_repo_user_company" model="ir.rule">
+            <field name="name">SaaS Instance Repo: company-scoped (user)</field>
+            <field name="model_id" ref="model_saas_instance_repo"/>
+            <field name="domain_force">[('instance_id.company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_user'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="False"/>
+            <field name="perm_create" eval="False"/>
+            <field name="perm_unlink" eval="False"/>
+        </record>
+
+        <record id="rule_saas_instance_repo_manager_company" model="ir.rule">
+            <field name="name">SaaS Instance Repo: company-scoped (manager)</field>
+            <field name="model_id" ref="model_saas_instance_repo"/>
+            <field name="domain_force">[('instance_id.company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_manager'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+    </data>
+
 </odoo>

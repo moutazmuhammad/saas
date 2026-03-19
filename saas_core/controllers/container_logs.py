@@ -3,7 +3,7 @@ import logging
 import shlex
 import select
 
-from werkzeug.exceptions import NotFound, Forbidden
+from werkzeug.exceptions import NotFound
 
 from odoo import http
 from odoo.http import request, Response
@@ -44,16 +44,26 @@ class ContainerLogsController(http.Controller):
         return self._stream(container.server_id, container.name, tail)
 
     def _stream(self, server, container_name, tail):
-        ssh_conn = server._get_ssh_connection()
         safe_name = shlex.quote(container_name)
+
+        # Validate tail is a safe integer
+        try:
+            tail_int = int(tail)
+        except (ValueError, TypeError):
+            tail_int = 100
+
+        # Obtain SSH connection while the ORM cursor is still open.
+        # The generator runs after the request transaction ends,
+        # so ORM access inside generate() would hit a closed cursor.
+        ssh_conn = server._get_ssh_connection()
 
         def generate():
             try:
-                ssh_conn._connect()
+                ssh_conn._connect()  # noqa: uses ssh_conn from outer scope
                 transport = ssh_conn._client.get_transport()
                 channel = transport.open_session()
                 channel.exec_command(
-                    'docker logs -f --tail %s %s 2>&1' % (int(tail), safe_name)
+                    'docker logs -f --tail %d %s 2>&1' % (tail_int, safe_name)
                 )
                 channel.settimeout(STREAM_TIMEOUT)
 

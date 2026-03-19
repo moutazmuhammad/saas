@@ -24,6 +24,12 @@ class SaasPlan(models.Model):
         help='Maximum total storage (container disk + database) in GB. '
              'Instances exceeding this limit will be suspended.',
     )
+    max_backups = fields.Integer(
+        string='Max Backups',
+        default=7,
+        help='Maximum number of backups to keep per instance. '
+             'Older backups are automatically deleted during cleanup.',
+    )
     instance_count = fields.Integer(
         string='Instances',
         compute='_compute_instance_count',

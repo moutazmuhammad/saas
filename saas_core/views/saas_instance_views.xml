@@ -41,10 +41,10 @@
                             icon="fa-play"
                             invisible="state not in ('draft', 'failed')"/>
 
-                    <!-- Restart: when running or stopped -->
+                    <!-- Restart: when running, stopped, or suspended -->
                     <button name="action_restart" string="Restart"
                             type="object" icon="fa-refresh"
-                            invisible="state not in ('running', 'stopped')"/>
+                            invisible="state not in ('running', 'stopped', 'suspended')"/>
 
                     <!-- Stop: only when running -->
                     <button name="action_stop" string="Stop"
@@ -57,10 +57,10 @@
                             type="object" icon="fa-pause"
                             invisible="state != 'running'"/>
 
-                    <!-- Redeploy: when running, stopped, or failed -->
+                    <!-- Redeploy: when running, stopped, or suspended -->
                     <button name="action_redeploy" string="Redeploy"
                             type="object" icon="fa-rocket"
-                            invisible="state not in ('running', 'stopped', 'failed')"
+                            invisible="state not in ('running', 'stopped', 'suspended')"
                             confirm="This will stop and restart the container (volumes are kept). Are you sure?"/>
 
                     <!-- Config: when running -->

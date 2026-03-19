@@ -5,6 +5,7 @@ import re
 import secrets
 import shlex
 import string
+import threading
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -95,12 +96,12 @@ class SaasInstance(models.Model):
         default=lambda self: self.env['saas.psql.physical.server'].search([], limit=1),
         help='PostgreSQL server that hosts the database for this instance.',
     )
-    xmlrpc_port = fields.Char(
+    xmlrpc_port = fields.Integer(
         string='HTTP Port',
         readonly=True,
         help='Host port mapped to the Odoo XML-RPC / HTTP interface inside the container.',
     )
-    longpolling_port = fields.Char(
+    longpolling_port = fields.Integer(
         string='Longpolling Port',
         readonly=True,
         help='Host port mapped to the Odoo longpolling / websocket interface inside the container.',
@@ -110,17 +111,20 @@ class SaasInstance(models.Model):
     admin_password = fields.Char(
         string='Admin Master Password',
         readonly=True,
+        groups='saas_core.group_saas_manager',
         help='Odoo master password (admin_passwd in odoo.conf). '
              'Used for database management operations.',
     )
     db_user = fields.Char(
         string='Database User',
         readonly=True,
+        groups='saas_core.group_saas_manager',
         help='PostgreSQL role name created for this instance.',
     )
     db_password = fields.Char(
         string='Database Password',
         readonly=True,
+        groups='saas_core.group_saas_manager',
         help='Password for the PostgreSQL role used by this instance.',
     )
 
@@ -290,14 +294,22 @@ class SaasInstance(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
+        alphabet = string.ascii_letters + string.digits + '-_.~+='
+        for vals in vals_list:
+            subdomain = vals.get('subdomain', '')
+            if subdomain and not vals.get('db_user'):
+                safe_subdomain = subdomain.replace('-', '_').replace('.', '_')
+                vals['db_user'] = 'saas_%s' % safe_subdomain
+            if not vals.get('db_password'):
+                vals['db_password'] = ''.join(
+                    secrets.choice(alphabet) for _ in range(24)
+                )
+            if not vals.get('admin_password'):
+                vals['admin_password'] = ''.join(
+                    secrets.choice(alphabet) for _ in range(24)
+                )
         records = super().create(vals_list)
         for rec in records:
-            if not rec.db_user and rec.subdomain:
-                rec.db_user = rec._generate_db_user()
-            if not rec.db_password:
-                rec.db_password = rec._generate_random_password()
-            if not rec.admin_password:
-                rec.admin_password = rec._generate_random_password()
             if rec.docker_server_id and (not rec.xmlrpc_port or not rec.longpolling_port):
                 rec._auto_assign_ports()
         return records
@@ -541,21 +553,15 @@ class SaasInstance(models.Model):
         siblings = self.env['saas.instance'].search([
             ('docker_server_id', '=', self.docker_server_id.id),
             ('id', '!=', self.id),
-            ('xmlrpc_port', '!=', False),
+            ('xmlrpc_port', '>', 0),
         ])
 
         used_ports = set()
         for sibling in siblings:
             if sibling.xmlrpc_port:
-                try:
-                    used_ports.add(int(sibling.xmlrpc_port))
-                except (ValueError, TypeError):
-                    pass
+                used_ports.add(sibling.xmlrpc_port)
             if sibling.longpolling_port:
-                try:
-                    used_ports.add(int(sibling.longpolling_port))
-                except (ValueError, TypeError):
-                    pass
+                used_ports.add(sibling.longpolling_port)
 
         candidate = starting_port
         while candidate < 65535:
@@ -569,8 +575,8 @@ class SaasInstance(models.Model):
                 % self.docker_server_id.name
             )
 
-        self.xmlrpc_port = str(candidate)
-        self.longpolling_port = str(candidate + 1)
+        self.xmlrpc_port = candidate
+        self.longpolling_port = candidate + 1
 
     def _validate_deploy_fields(self):
         """Validate all required fields before deployment."""
@@ -629,319 +635,432 @@ class SaasInstance(models.Model):
         """Fetch CPU, RAM, disk, and database size for this instance."""
         for rec in self:
             rec._ensure_can_ssh()
-            container_name = rec._get_container_name()
-            server = rec.docker_server_id
-            instance_path = rec._get_instance_path()
+            with rec.docker_server_id._get_ssh_connection() as ssh:
+                rec._refresh_usage_with_ssh(ssh)
+        return True
 
-            with server._get_ssh_connection() as ssh:
-                # Fetch container CPU & RAM via docker stats table output
-                stats_cmd = 'docker stats --no-stream %s' % shlex.quote(container_name)
-                exit_code, stdout, stderr = ssh.execute(stats_cmd)
-                if exit_code == 0 and stdout.strip():
-                    lines = stdout.strip().splitlines()
-                    if len(lines) >= 2:
-                        values = lines[1].split()
-                        for i, val in enumerate(values):
-                            if '%' in val:
-                                rec.cpu_usage = val
-                                remaining = values[i+1:]
-                                if len(remaining) >= 3:
-                                    rec.ram_usage = '%s %s %s' % (
-                                        remaining[0], remaining[1], remaining[2],
-                                    )
-                                if len(remaining) >= 4 and '%' in remaining[3]:
-                                    rec.ram_percent = remaining[3]
-                                break
+    def _refresh_usage_with_ssh(self, ssh):
+        """Fetch resource usage using an existing SSH connection to the docker server."""
+        self.ensure_one()
+        container_name = self._get_container_name()
+        instance_path = self._get_instance_path()
 
-                # Fetch disk usage of the instance folder (in bytes)
-                disk_cmd = 'du -sb %s 2>/dev/null | cut -f1' % shlex.quote(instance_path)
-                exit_code, stdout, stderr = ssh.execute(disk_cmd)
-                disk_bytes = 0
-                if exit_code == 0 and stdout.strip():
-                    try:
-                        disk_bytes = int(stdout.strip())
-                    except (ValueError, TypeError):
-                        pass
-                rec.disk_usage = rec._format_bytes(disk_bytes) if disk_bytes else ''
-                rec.disk_usage_bytes = disk_bytes
+        # Fetch container CPU & RAM via docker stats table output
+        stats_cmd = 'docker stats --no-stream %s' % shlex.quote(container_name)
+        exit_code, stdout, stderr = ssh.execute(stats_cmd)
+        if exit_code == 0 and stdout.strip():
+            lines = stdout.strip().splitlines()
+            if len(lines) >= 2:
+                values = lines[1].split()
+                for i, val in enumerate(values):
+                    if '%' in val:
+                        self.cpu_usage = val
+                        remaining = values[i+1:]
+                        if len(remaining) >= 3:
+                            self.ram_usage = '%s %s %s' % (
+                                remaining[0], remaining[1], remaining[2],
+                            )
+                        if len(remaining) >= 4 and '%' in remaining[3]:
+                            self.ram_percent = remaining[3]
+                        break
 
-            # Fetch database size from PostgreSQL server (in bytes)
-            db_bytes = 0
-            if rec.db_server_id and rec.subdomain:
-                try:
-                    with rec.db_server_id._get_ssh_connection() as ssh:
-                        db_size_cmd = (
-                            "sudo -u postgres psql -At -c "
-                            "'SELECT pg_database_size(%s);'"
-                        ) % shlex.quote("$$%s$$" % rec.subdomain)
-                        exit_code, stdout, stderr = ssh.execute(db_size_cmd)
-                        if exit_code == 0 and stdout.strip():
-                            try:
-                                db_bytes = int(stdout.strip())
-                            except (ValueError, TypeError):
-                                pass
-                except Exception:
-                    pass
-            rec.db_size = rec._format_bytes(db_bytes) if db_bytes else ''
-            rec.db_size_bytes = db_bytes
+        # Fetch disk usage of the instance folder (in bytes)
+        disk_cmd = 'du -sb %s 2>/dev/null | cut -f1' % shlex.quote(instance_path)
+        exit_code, stdout, stderr = ssh.execute(disk_cmd)
+        disk_bytes = 0
+        if exit_code == 0 and stdout.strip():
+            try:
+                disk_bytes = int(stdout.strip())
+            except (ValueError, TypeError):
+                pass
+        self.disk_usage = self._format_bytes(disk_bytes) if disk_bytes else ''
+        self.disk_usage_bytes = disk_bytes
 
-            total_bytes = disk_bytes + db_bytes
-            rec.total_storage = rec._format_bytes(total_bytes) if total_bytes else ''
-            rec.total_storage_bytes = total_bytes
-            rec.usage_last_updated = fields.Datetime.now()
+        # Fetch database size from PostgreSQL server (in bytes)
+        db_bytes = 0
+        if self.db_server_id and self.subdomain:
+            try:
+                with self.db_server_id._get_ssh_connection() as db_ssh:
+                    db_size_cmd = (
+                        'sudo -u postgres psql -At -c '
+                        '"SELECT pg_database_size(\'%s\');"'
+                    ) % self.subdomain
+                    exit_code, stdout, stderr = db_ssh.execute(db_size_cmd)
+                    if exit_code == 0 and stdout.strip():
+                        try:
+                            db_bytes = int(stdout.strip())
+                        except (ValueError, TypeError):
+                            pass
+            except Exception:
+                _logger.warning(
+                    "Failed to fetch DB size for instance %s", self.subdomain,
+                )
+        self.db_size = self._format_bytes(db_bytes) if db_bytes else ''
+        self.db_size_bytes = db_bytes
+
+        total_bytes = disk_bytes + db_bytes
+        self.total_storage = self._format_bytes(total_bytes) if total_bytes else ''
+        self.total_storage_bytes = total_bytes
+        self.usage_last_updated = fields.Datetime.now()
+
+    # ========== Config Rendering (DRY helper) ==========
+
+    def _render_and_write_configs(self, ssh):
+        """Render docker-compose.yml and odoo.conf from templates and write them via SSH."""
+        self.ensure_one()
+        instance_path = self._get_instance_path()
+        repos, version_repos, all_addons_paths = self._get_all_repo_context()
+
+        # docker-compose.yml
+        self._append_log("Writing docker-compose.yml...")
+        dc_context = {
+            'odoo_image': self.odoo_version_id.docker_image,
+            'odoo_version': self.odoo_version_id.docker_image_tag,
+            'subdomain': self.subdomain,
+            'host_ip': '127.0.0.1',
+            'xmlrpc_port': self.xmlrpc_port,
+            'longpolling_port': self.longpolling_port,
+            'network_name': 'net_%s' % self.subdomain,
+            'cpu_limit': self.plan_id.cpu_limit if self.plan_id else 0,
+            'ram_limit': self.plan_id.ram_limit if self.plan_id else '',
+            'repos': repos,
+            'version_repos': version_repos,
+        }
+        dc_content = self._render_template('docker-compose.yml.jinja', dc_context)
+        ssh.write_file('%s/docker-compose.yml' % instance_path, dc_content)
+        self._append_log("docker-compose.yml written.")
+
+        # odoo.conf
+        self._append_log("Writing odoo.conf...")
+        psql_server = self.db_server_id
+        db_host = psql_server.private_ip_v4 or psql_server.ip_v4
+        conf_context = {
+            'master_pass': self.admin_password,
+            'db_host': db_host,
+            'db_port': psql_server.psql_port or 5432,
+            'db_user': self.db_user,
+            'db_password': self.db_password,
+            'proxy_mode': True,
+            'extra_config': self._parse_extra_config(),
+            'repo_addons_paths': all_addons_paths,
+        }
+        conf_content = self._render_template('odoo.conf.jinja', conf_context)
+        ssh.write_file('%s/config/odoo.conf' % instance_path, conf_content)
+        self._append_log("odoo.conf written.")
+
+    # ========== Module Installation Helper ==========
+
+    def _install_pending_modules(self, ssh):
+        """Install pending module lines via docker compose run. Returns True if modules were installed."""
+        self.ensure_one()
+        instance_path = self._get_instance_path()
+
+        pending_lines = self.module_line_ids.filtered(
+            lambda l: l.state == 'pending'
+        ).sorted('sequence')
+
+        if not pending_lines:
+            return False
+
+        all_module_names = []
+        for line in pending_lines:
+            names = line._get_all_technical_names()
+            names.discard('base')
+            for n in sorted(names):
+                if n not in all_module_names:
+                    all_module_names.append(n)
+
+        if not all_module_names:
+            return False
+
+        modules_to_install = ','.join(all_module_names)
+
+        # Log what each line contributes
+        for line in pending_lines:
+            names = line._get_all_technical_names()
+            names.discard('base')
+            label = line.product_id.name if line.product_id else (
+                line.module_id.name if line.module_id else ','.join(sorted(names))
+            )
+            self._append_log(
+                "Line [%d] %s: %s" % (line.sequence, label, ','.join(sorted(names)))
+            )
+
+        self._append_log("Installing modules: %s" % modules_to_install)
+        install_cmd = (
+            'cd %s && docker compose run --rm -T odoo '
+            'odoo -d %s '
+            '-i %s '
+            '--without-demo=all '
+            '--stop-after-init '
+            '--no-http 2>&1'
+        ) % (
+            shlex.quote(instance_path),
+            shlex.quote(self.subdomain),
+            shlex.quote(modules_to_install),
+        )
+        exit_code, stdout, stderr = ssh.execute(install_cmd, timeout=600)
+        self._append_log(
+            "Install output (last 1000 chars):\n%s" % stdout[-1000:]
+        )
+        if exit_code != 0:
+            for line in pending_lines:
+                line.state = 'failed'
+                line.log = stdout[-2000:] + '\n' + stderr[-500:]
+            raise UserError(
+                _("Module installation failed:\n%s\n%s")
+                % (stdout[-500:], stderr[-500:])
+            )
+
+        self._append_log("All modules installed successfully.")
+
+        # Mark all lines as installed and track products
+        all_products = self.env['product.product']
+        for line in pending_lines:
+            line.state = 'installed'
+            line.log = ''
+            if line.product_id:
+                module_tmpls = line.product_id.product_tmpl_id.saas_module_ids
+                all_products |= module_tmpls.mapped('product_variant_id')
+            elif line.module_id:
+                all_products |= line.module_id
+        if all_products:
+            self.installed_module_ids = [(4, p.id) for p in all_products]
 
         return True
 
     # ========== Deploy Flow ==========
 
     def action_deploy(self):
-        """Full deployment flow: provision Docker container over SSH."""
+        """Full deployment flow: provision Docker container over SSH (async)."""
         for rec in self:
             if rec.state not in ('draft', 'failed'):
                 raise UserError(
                     _("Cannot deploy instance '%s': must be in Draft or Failed state (current: %s).")
                     % (rec.subdomain, rec.state)
                 )
-            rec._do_deploy()
+
+            rec._validate_deploy_fields()
+
+            if not rec.db_user:
+                rec.db_user = rec._generate_db_user()
+            if not rec.db_password:
+                rec.db_password = rec._generate_random_password()
+            if not rec.admin_password:
+                rec.admin_password = rec._generate_random_password()
+
+            rec._auto_assign_ports()
+            rec.provisioning_log = ''
+            rec.state = 'provisioning'
+            rec._append_log("Deployment queued. Running in background...")
+
+            # Run deployment in background thread with its own cursor.
+            # Use postcommit to ensure the 'provisioning' state is committed
+            # before the thread starts writing to the same row.
+            instance_id = rec.id
+            dbname = rec.env.cr.dbname
+            uid = rec.env.uid
+            context = dict(rec.env.context)
+
+            def _start_deploy_thread():
+                thread = threading.Thread(
+                    target=self._deploy_in_thread,
+                    args=(dbname, uid, context, instance_id),
+                    name='saas_deploy_%s' % rec.subdomain,
+                    daemon=True,
+                )
+                thread.start()
+
+            rec.env.cr.postcommit.add(_start_deploy_thread)
+
+    @api.model
+    def _deploy_in_thread(self, dbname, uid, context, instance_id):
+        """Run deployment in a background thread with a dedicated cursor."""
+        import odoo
+        db_registry = odoo.registry(dbname)
+        with db_registry.cursor() as new_cr:
+            new_env = api.Environment(new_cr, uid, context)
+            instance = new_env['saas.instance'].browse(instance_id)
+            try:
+                instance._do_deploy()
+                new_cr.commit()
+            except Exception as e:
+                new_cr.rollback()
+                # Re-open cursor to save the failure state
+                with db_registry.cursor() as err_cr:
+                    err_env = api.Environment(err_cr, uid, context)
+                    err_inst = err_env['saas.instance'].browse(instance_id)
+                    err_inst.state = 'failed'
+                    err_inst._append_log("DEPLOYMENT FAILED: %s" % str(e))
+                    err_cr.commit()
+                _logger.exception(
+                    "Background deployment failed for instance id=%s", instance_id,
+                )
 
     def _do_deploy(self):
         """Internal deploy logic for a single record."""
         self.ensure_one()
 
-        self._validate_deploy_fields()
-
-        if not self.db_user:
-            self.db_user = self._generate_db_user()
-        if not self.db_password:
-            self.db_password = self._generate_random_password()
-        if not self.admin_password:
-            self.admin_password = self._generate_random_password()
-
-        self._auto_assign_ports()
-
-        self.provisioning_log = ''
-        self.state = 'provisioning'
-
         server = self.docker_server_id
         instance_path = self._get_instance_path()
         container_name = self._get_container_name()
 
-        try:
-            with server._get_ssh_connection() as ssh:
+        with server._get_ssh_connection() as ssh:
 
-                # Create folder structure
-                self._append_log("Creating directory structure at %s" % instance_path)
-                mkdir_cmd = (
-                    'mkdir -p %(path)s/addons '
-                    '%(path)s/config '
-                    '%(path)s/data/odoo'
-                ) % {'path': instance_path}
-                exit_code, stdout, stderr = ssh.execute(mkdir_cmd)
-                if exit_code != 0:
-                    raise UserError(
-                        _("Failed to create directories:\n%s") % stderr
-                    )
-                self._append_log("Directory structure created.")
-
-                # Set permissions
-                self._append_log("Setting permissions...")
-                perms_cmd = (
-                    'chown -R 1000:1000 %(path)s/data/odoo %(path)s/config %(path)s/addons && '
-                    'chmod -R 777 %(path)s/data/odoo %(path)s/config %(path)s/addons'
-                ) % {'path': instance_path}
-                exit_code, stdout, stderr = ssh.execute(perms_cmd)
-                if exit_code != 0:
-                    raise UserError(
-                        _("Failed to set permissions:\n%s") % stderr
-                    )
-                self._append_log("Permissions set.")
-
-                # Render and write docker-compose.yml
-                self._append_log("Writing docker-compose.yml...")
-                repos, version_repos, all_addons_paths = self._get_all_repo_context()
-                dc_context = {
-                    'odoo_image': self.odoo_version_id.docker_image,
-                    'odoo_version': self.odoo_version_id.docker_image_tag,
-                    'subdomain': self.subdomain,
-                    'host_ip': '127.0.0.1',
-                    'xmlrpc_port': self.xmlrpc_port,
-                    'longpolling_port': self.longpolling_port,
-                    'network_name': 'net_%s' % self.subdomain,
-                    'cpu_limit': self.plan_id.cpu_limit if self.plan_id else 0,
-                    'ram_limit': self.plan_id.ram_limit if self.plan_id else '',
-                    'repos': repos,
-                    'version_repos': version_repos,
-                }
-                dc_content = self._render_template(
-                    'docker-compose.yml.jinja', dc_context,
-                )
-                ssh.write_file(
-                    '%s/docker-compose.yml' % instance_path, dc_content,
-                )
-                self._append_log("docker-compose.yml written.")
-
-                # Render and write odoo.conf
-                self._append_log("Writing odoo.conf...")
-                psql_server = self.db_server_id
-                db_host = psql_server.private_ip_v4 or psql_server.ip_v4
-                conf_context = {
-                    'master_pass': self.admin_password,
-                    'db_host': db_host,
-                    'db_port': psql_server.psql_port or 5432,
-                    'db_user': self.db_user,
-                    'db_password': self.db_password,
-                    'proxy_mode': True,
-                    'extra_config': self._parse_extra_config(),
-                    'repo_addons_paths': all_addons_paths,
-                }
-                conf_content = self._render_template(
-                    'odoo.conf.jinja', conf_context,
-                )
-                ssh.write_file(
-                    '%s/config/odoo.conf' % instance_path, conf_content,
-                )
-                self._append_log("odoo.conf written.")
-
-                # Create PostgreSQL user and database
-                self._append_log("Creating PostgreSQL role and database...")
-                self._provision_postgresql()
-                self._append_log("PostgreSQL role and database ready.")
-
-                # Collect all modules from pending lines (sequence order)
-                pending_lines = self.module_line_ids.filtered(
-                    lambda l: l.state == 'pending'
-                ).sorted('sequence')
-
-                all_module_names = []
-                for line in pending_lines:
-                    names = line._get_all_technical_names()
-                    names.discard('base')
-                    for n in sorted(names):
-                        if n not in all_module_names:
-                            all_module_names.append(n)
-
-                modules_to_install = 'base'
-                if all_module_names:
-                    modules_to_install = 'base,%s' % ','.join(all_module_names)
-
-                # Log what each line contributes
-                for line in pending_lines:
-                    names = line._get_all_technical_names()
-                    names.discard('base')
-                    label = line.product_id.name if line.product_id else (
-                        line.module_id.name if line.module_id else ','.join(sorted(names))
-                    )
-                    self._append_log(
-                        "Line [%d] %s: %s" % (line.sequence, label, ','.join(sorted(names)))
-                    )
-
-                # Single install pass — Odoo resolves dependency order internally
-                self._append_log(
-                    "Initializing database with modules: %s" % modules_to_install
-                )
-                init_cmd = (
-                    'cd %s && docker compose run --rm -T odoo '
-                    'odoo -d %s '
-                    '-i %s '
-                    '--without-demo=all '
-                    '--stop-after-init '
-                    '--no-http 2>&1'
-                ) % (
-                    shlex.quote(instance_path),
-                    shlex.quote(self.subdomain),
-                    shlex.quote(modules_to_install),
-                )
-                exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=600)
-                self._append_log(
-                    "Install output (last 1000 chars):\n%s"
-                    % stdout[-1000:]
-                )
-                if exit_code != 0:
-                    for line in pending_lines:
-                        line.state = 'failed'
-                        line.log = stdout[-2000:] + '\n' + stderr[-500:]
-                    raise UserError(
-                        _("Module installation failed:\n%s\n%s")
-                        % (stdout[-500:], stderr[-500:])
-                    )
-                self._append_log("All modules installed successfully.")
-
-                # Mark all lines as installed and track products
-                all_products = self.env['product.product']
-                for line in pending_lines:
-                    line.state = 'installed'
-                    line.log = ''
-                    if line.product_id:
-                        module_tmpls = line.product_id.product_tmpl_id.saas_module_ids
-                        all_products |= module_tmpls.mapped('product_variant_id')
-                    elif line.module_id:
-                        all_products |= line.module_id
-                if all_products:
-                    self.installed_module_ids = [(4, p.id) for p in all_products]
-
-                # Start the server
-                self._append_log("Starting container with docker compose up -d...")
-                up_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
-                exit_code, stdout, stderr = ssh.execute(up_cmd)
-                self._append_log(
-                    "docker compose up output:\n%s\n%s" % (stdout, stderr)
-                )
-                if exit_code != 0:
-                    raise UserError(
-                        _("docker compose up failed:\n%s\n%s") % (stdout, stderr)
-                    )
-                self._append_log("Container started.")
-
-                # Wait for container to be ready
-                self._append_log("Waiting for container to be ready...")
-                wait_cmd = (
-                    'for i in $(seq 1 30); do '
-                    '  STATUS=$(docker inspect -f "{{.State.Status}}" %s 2>/dev/null); '
-                    '  if [ "$STATUS" = "running" ]; then echo "READY"; exit 0; fi; '
-                    '  if [ "$STATUS" = "exited" ] || [ "$STATUS" = "dead" ]; then '
-                    '    echo "FAILED:$STATUS"; exit 1; '
-                    '  fi; '
-                    '  sleep 2; '
-                    'done; '
-                    'echo "TIMEOUT"; exit 1'
-                ) % shlex.quote(container_name)
-                exit_code, stdout, stderr = ssh.execute(wait_cmd)
-                if exit_code != 0 or 'READY' not in stdout:
-                    _ec, logs_out, _err = ssh.execute(
-                        'docker logs --tail 50 %s 2>&1' % shlex.quote(container_name)
-                    )
-                    self._append_log(
-                        "Container failed to start.\n"
-                        "Container logs:\n%s"
-                        % logs_out
-                    )
-                    raise UserError(
-                        _("Container did not become ready within 60 seconds.\n"
-                          "Container logs:\n%s")
-                        % logs_out
-                    )
-                self._append_log("Container is running.")
-
-                # Configure Nginx reverse proxy with SSL
-                self._append_log("Configuring Nginx reverse proxy with SSL...")
-                self._provision_nginx(ssh)
-                self._append_log("Nginx configured successfully.")
-
-            self.state = 'running'
-            self._append_log("Deployment completed successfully. State: running.")
-
-        except Exception as e:
-            self.state = 'failed'
-            self._append_log("DEPLOYMENT FAILED: %s" % str(e))
-            _logger.exception(
-                "Deployment failed for instance %s (id=%s)",
-                self.subdomain, self.id,
-            )
-            if not isinstance(e, (UserError, ValidationError)):
+            # Create folder structure
+            self._append_log("Creating directory structure at %s" % instance_path)
+            mkdir_cmd = (
+                'mkdir -p %(path)s/addons '
+                '%(path)s/config '
+                '%(path)s/data/odoo'
+            ) % {'path': instance_path}
+            exit_code, stdout, stderr = ssh.execute(mkdir_cmd)
+            if exit_code != 0:
                 raise UserError(
-                    _("Deployment failed for '%s':\n%s") % (self.subdomain, str(e))
+                    _("Failed to create directories:\n%s") % stderr
                 )
-            raise
+            self._append_log("Directory structure created.")
+
+            # Set permissions
+            self._append_log("Setting permissions...")
+            perms_cmd = (
+                'chown -R 1000:1000 %(path)s/data/odoo %(path)s/config %(path)s/addons && '
+                'chmod -R 777 %(path)s/data/odoo %(path)s/config %(path)s/addons'
+            ) % {'path': instance_path}
+            exit_code, stdout, stderr = ssh.execute(perms_cmd)
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to set permissions:\n%s") % stderr
+                )
+            self._append_log("Permissions set.")
+
+            # Render and write config files
+            self._render_and_write_configs(ssh)
+
+            # Create PostgreSQL user and database
+            self._append_log("Creating PostgreSQL role and database...")
+            self._provision_postgresql()
+            self._append_log("PostgreSQL role and database ready.")
+
+            # Install modules — for initial deploy, include 'base'
+            pending_lines = self.module_line_ids.filtered(
+                lambda l: l.state == 'pending'
+            ).sorted('sequence')
+
+            all_module_names = []
+            for line in pending_lines:
+                names = line._get_all_technical_names()
+                names.discard('base')
+                for n in sorted(names):
+                    if n not in all_module_names:
+                        all_module_names.append(n)
+
+            modules_to_install = 'base'
+            if all_module_names:
+                modules_to_install = 'base,%s' % ','.join(all_module_names)
+
+            for line in pending_lines:
+                names = line._get_all_technical_names()
+                names.discard('base')
+                label = line.product_id.name if line.product_id else (
+                    line.module_id.name if line.module_id else ','.join(sorted(names))
+                )
+                self._append_log(
+                    "Line [%d] %s: %s" % (line.sequence, label, ','.join(sorted(names)))
+                )
+
+            self._append_log(
+                "Initializing database with modules: %s" % modules_to_install
+            )
+            init_cmd = (
+                'cd %s && docker compose run --rm -T odoo '
+                'odoo -d %s '
+                '-i %s '
+                '--without-demo=all '
+                '--stop-after-init '
+                '--no-http 2>&1'
+            ) % (
+                shlex.quote(instance_path),
+                shlex.quote(self.subdomain),
+                shlex.quote(modules_to_install),
+            )
+            exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=600)
+            self._append_log(
+                "Install output (last 1000 chars):\n%s" % stdout[-1000:]
+            )
+            if exit_code != 0:
+                for line in pending_lines:
+                    line.state = 'failed'
+                    line.log = stdout[-2000:] + '\n' + stderr[-500:]
+                raise UserError(
+                    _("Module installation failed:\n%s\n%s")
+                    % (stdout[-500:], stderr[-500:])
+                )
+            self._append_log("All modules installed successfully.")
+
+            # Mark all lines as installed and track products
+            all_products = self.env['product.product']
+            for line in pending_lines:
+                line.state = 'installed'
+                line.log = ''
+                if line.product_id:
+                    module_tmpls = line.product_id.product_tmpl_id.saas_module_ids
+                    all_products |= module_tmpls.mapped('product_variant_id')
+                elif line.module_id:
+                    all_products |= line.module_id
+            if all_products:
+                self.installed_module_ids = [(4, p.id) for p in all_products]
+
+            # Start the server
+            self._append_log("Starting container with docker compose up -d...")
+            up_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
+            exit_code, stdout, stderr = ssh.execute(up_cmd)
+            self._append_log(
+                "docker compose up output:\n%s\n%s" % (stdout, stderr)
+            )
+            if exit_code != 0:
+                raise UserError(
+                    _("docker compose up failed:\n%s\n%s") % (stdout, stderr)
+                )
+            self._append_log("Container started.")
+
+            # Wait for container to be ready
+            self._append_log("Waiting for container to be ready...")
+            wait_cmd = (
+                'for i in $(seq 1 30); do '
+                '  STATUS=$(docker inspect -f "{{.State.Status}}" %s 2>/dev/null); '
+                '  if [ "$STATUS" = "running" ]; then echo "READY"; exit 0; fi; '
+                '  if [ "$STATUS" = "exited" ] || [ "$STATUS" = "dead" ]; then '
+                '    echo "FAILED:$STATUS"; exit 1; '
+                '  fi; '
+                '  sleep 2; '
+                'done; '
+                'echo "TIMEOUT"; exit 1'
+            ) % shlex.quote(container_name)
+            exit_code, stdout, stderr = ssh.execute(wait_cmd)
+            if exit_code != 0 or 'READY' not in stdout:
+                _ec, logs_out, _err = ssh.execute(
+                    'docker logs --tail 50 %s 2>&1' % shlex.quote(container_name)
+                )
+                self._append_log(
+                    "Container failed to start.\n"
+                    "Container logs:\n%s"
+                    % logs_out
+                )
+                raise UserError(
+                    _("Container did not become ready within 60 seconds.\n"
+                      "Container logs:\n%s")
+                    % logs_out
+                )
+            self._append_log("Container is running.")
+
+            # Configure Nginx reverse proxy with SSL
+            self._append_log("Configuring Nginx reverse proxy with SSL...")
+            self._provision_nginx(ssh)
+            self._append_log("Nginx configured successfully.")
+
+        self.state = 'running'
+        self._append_log("Deployment completed successfully. State: running.")
 
     # ========== Lifecycle Actions ==========
 
@@ -991,7 +1110,7 @@ class SaasInstance(models.Model):
 
     def action_redeploy(self):
         """Redeploy: clone pending repos, pull cloned repos, update config/mounts,
-        install pending modules, and restart the container."""
+        install pending modules, and restart the container (async)."""
         for rec in self:
             if rec.state not in ('running', 'stopped', 'suspended'):
                 raise UserError(
@@ -999,184 +1118,120 @@ class SaasInstance(models.Model):
                     % (rec.subdomain, rec.state)
                 )
             rec._ensure_can_ssh()
-            server = rec.docker_server_id
-            instance_path = rec._get_instance_path()
+            prev_state = rec.state
+            rec.state = 'provisioning'
+            rec._append_log("Redeployment queued. Running in background...")
 
-            # 1. Clone any pending instance repos
-            pending_repos = rec.repo_ids.filtered(lambda r: r.state == 'pending')
-            if pending_repos:
-                pending_repos._clone_repo()
+            instance_id = rec.id
+            dbname = rec.env.cr.dbname
+            uid = rec.env.uid
+            context = dict(rec.env.context)
+            thread = threading.Thread(
+                target=self._redeploy_in_thread,
+                args=(dbname, uid, context, instance_id, prev_state),
+                name='saas_redeploy_%s' % rec.subdomain,
+                daemon=True,
+            )
+            thread.start()
 
-            # 2. Pull all cloned instance repos
-            cloned_repos = rec.repo_ids.filtered(lambda r: r.state == 'cloned')
-            if cloned_repos:
-                with server._get_ssh_connection() as ssh:
-                    for repo in cloned_repos:
-                        repo_path = repo._get_remote_repo_path()
-                        clone_url = repo._get_clone_url()
-                        ssh.execute(
-                            'cd %s && git remote set-url origin %s'
-                            % (shlex.quote(repo_path), shlex.quote(clone_url))
-                        )
-                        rec._append_log("Pulling %s..." % repo.name)
-                        pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
-                            shlex.quote(repo_path), shlex.quote(repo.branch),
-                        )
-                        exit_code, stdout, stderr = ssh.execute(
-                            pull_cmd, timeout=300,
-                        )
-                        if exit_code != 0:
-                            repo.error_message = stdout + '\n' + stderr
-                            raise UserError(
-                                _("Git pull failed for '%s':\n%s\n%s")
-                                % (repo.name, stdout[-500:], stderr[-500:])
-                            )
-                        repo.last_pull = fields.Datetime.now()
-                        repo.error_message = False
-                        rec._append_log(
-                            "Pulled %s: %s" % (repo.name, stdout.strip()[:200])
-                        )
-
-            # 3. Clone any pending version repos needed by module lines
-            needed_version_repo_ids = set()
-            for line in rec.module_line_ids:
-                if line.product_id:
-                    tmpl = line.product_id.product_tmpl_id
-                    if tmpl.saas_source_repo_id:
-                        needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
-                    for mod in tmpl.saas_module_ids:
-                        if mod.saas_source_repo_id:
-                            needed_version_repo_ids.add(mod.saas_source_repo_id.id)
-                if line.module_id:
-                    tmpl = line.module_id.product_tmpl_id
-                    if tmpl.saas_source_repo_id:
-                        needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
-            if rec.odoo_version_id and needed_version_repo_ids:
-                pending_vrepos = rec.odoo_version_id.repo_ids.filtered(
-                    lambda r: r.state == 'pending' and r.id in needed_version_repo_ids
+    @api.model
+    def _redeploy_in_thread(self, dbname, uid, context, instance_id, prev_state):
+        """Run redeployment in a background thread with a dedicated cursor."""
+        import odoo
+        db_registry = odoo.registry(dbname)
+        with db_registry.cursor() as new_cr:
+            new_env = api.Environment(new_cr, uid, context)
+            instance = new_env['saas.instance'].browse(instance_id)
+            try:
+                instance._do_redeploy()
+                new_cr.commit()
+            except Exception as e:
+                new_cr.rollback()
+                with db_registry.cursor() as err_cr:
+                    err_env = api.Environment(err_cr, uid, context)
+                    err_inst = err_env['saas.instance'].browse(instance_id)
+                    err_inst.state = prev_state if prev_state != 'provisioning' else 'failed'
+                    err_inst._append_log("REDEPLOYMENT FAILED: %s" % str(e))
+                    err_cr.commit()
+                _logger.exception(
+                    "Background redeployment failed for instance id=%s", instance_id,
                 )
-                for vrepo in pending_vrepos:
-                    rec._append_log("Cloning pending version repo %s..." % vrepo.repo_url)
-                    vrepo.action_clone_repo()
 
-            # 4. Update docker-compose.yml and odoo.conf with current mounts
-            rec._append_log("Updating configuration...")
-            repos, version_repos, all_addons_paths = rec._get_all_repo_context()
+    def _do_redeploy(self):
+        """Internal redeploy logic for a single record."""
+        self.ensure_one()
+        server = self.docker_server_id
+
+        # 1. Clone any pending instance repos
+        pending_repos = self.repo_ids.filtered(lambda r: r.state == 'pending')
+        if pending_repos:
+            pending_repos._clone_repo()
+
+        # 2. Pull all cloned instance repos
+        cloned_repos = self.repo_ids.filtered(lambda r: r.state == 'cloned')
+        if cloned_repos:
             with server._get_ssh_connection() as ssh:
-                dc_context = {
-                    'odoo_image': rec.odoo_version_id.docker_image,
-                    'odoo_version': rec.odoo_version_id.docker_image_tag,
-                    'subdomain': rec.subdomain,
-                    'host_ip': '127.0.0.1',
-                    'xmlrpc_port': rec.xmlrpc_port,
-                    'longpolling_port': rec.longpolling_port,
-                    'network_name': 'net_%s' % rec.subdomain,
-                    'cpu_limit': rec.plan_id.cpu_limit if rec.plan_id else 0,
-                    'ram_limit': rec.plan_id.ram_limit if rec.plan_id else '',
-                    'repos': repos,
-                    'version_repos': version_repos,
-                }
-                dc_content = rec._render_template(
-                    'docker-compose.yml.jinja', dc_context,
-                )
-                ssh.write_file(
-                    '%s/docker-compose.yml' % instance_path, dc_content,
-                )
-
-                psql_server = rec.db_server_id
-                db_host = psql_server.private_ip_v4 or psql_server.ip_v4
-                conf_context = {
-                    'master_pass': rec.admin_password,
-                    'db_host': db_host,
-                    'db_port': psql_server.psql_port or 5432,
-                    'db_user': rec.db_user,
-                    'db_password': rec.db_password,
-                    'proxy_mode': True,
-                    'extra_config': rec._parse_extra_config(),
-                    'repo_addons_paths': all_addons_paths,
-                }
-                conf_content = rec._render_template(
-                    'odoo.conf.jinja', conf_context,
-                )
-                ssh.write_file(
-                    '%s/config/odoo.conf' % instance_path, conf_content,
-                )
-            rec._append_log("Configuration updated.")
-
-            # 5. Install pending modules (if any)
-            pending_lines = rec.module_line_ids.filtered(
-                lambda l: l.state == 'pending'
-            ).sorted('sequence')
-
-            if pending_lines:
-                all_module_names = []
-                for line in pending_lines:
-                    names = line._get_all_technical_names()
-                    names.discard('base')
-                    for n in sorted(names):
-                        if n not in all_module_names:
-                            all_module_names.append(n)
-
-                if all_module_names:
-                    modules_to_install = ','.join(all_module_names)
-                    for line in pending_lines:
-                        names = line._get_all_technical_names()
-                        names.discard('base')
-                        label = line.product_id.name if line.product_id else (
-                            line.module_id.name if line.module_id else ','.join(sorted(names))
-                        )
-                        rec._append_log(
-                            "Line [%d] %s: %s" % (line.sequence, label, ','.join(sorted(names)))
-                        )
-
-                    rec._append_log(
-                        "Installing modules: %s" % modules_to_install
+                for repo in cloned_repos:
+                    repo_path = repo._get_remote_repo_path()
+                    clone_url = repo._get_clone_url()
+                    ssh.execute(
+                        'cd %s && git remote set-url origin %s'
+                        % (shlex.quote(repo_path), shlex.quote(clone_url))
                     )
-                    with server._get_ssh_connection() as ssh:
-                        install_cmd = (
-                            'cd %s && docker compose run --rm -T odoo '
-                            'odoo -d %s '
-                            '-i %s '
-                            '--without-demo=all '
-                            '--stop-after-init '
-                            '--no-http 2>&1'
-                        ) % (
-                            shlex.quote(instance_path),
-                            shlex.quote(rec.subdomain),
-                            shlex.quote(modules_to_install),
+                    self._append_log("Pulling %s..." % repo.name)
+                    pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
+                        shlex.quote(repo_path), shlex.quote(repo.branch),
+                    )
+                    exit_code, stdout, stderr = ssh.execute(
+                        pull_cmd, timeout=300,
+                    )
+                    if exit_code != 0:
+                        repo.error_message = stdout + '\n' + stderr
+                        raise UserError(
+                            _("Git pull failed for '%s':\n%s\n%s")
+                            % (repo.name, stdout[-500:], stderr[-500:])
                         )
-                        exit_code, stdout, stderr = ssh.execute(
-                            install_cmd, timeout=600,
-                        )
-                        rec._append_log(
-                            "Install output (last 1000 chars):\n%s"
-                            % stdout[-1000:]
-                        )
-                        if exit_code != 0:
-                            for line in pending_lines:
-                                line.state = 'failed'
-                                line.log = stdout[-2000:] + '\n' + stderr[-500:]
-                            raise UserError(
-                                _("Module installation failed:\n%s\n%s")
-                                % (stdout[-500:], stderr[-500:])
-                            )
+                    repo.last_pull = fields.Datetime.now()
+                    repo.error_message = False
+                    self._append_log(
+                        "Pulled %s: %s" % (repo.name, stdout.strip()[:200])
+                    )
 
-                    rec._append_log("Modules installed successfully.")
-                    all_products = self.env['product.product']
-                    for line in pending_lines:
-                        line.state = 'installed'
-                        line.log = ''
-                        if line.product_id:
-                            module_tmpls = line.product_id.product_tmpl_id.saas_module_ids
-                            all_products |= module_tmpls.mapped('product_variant_id')
-                        elif line.module_id:
-                            all_products |= line.module_id
-                    if all_products:
-                        rec.installed_module_ids = [(4, p.id) for p in all_products]
+        # 3. Clone any pending version repos needed by module lines
+        needed_version_repo_ids = set()
+        for line in self.module_line_ids:
+            if line.product_id:
+                tmpl = line.product_id.product_tmpl_id
+                if tmpl.saas_source_repo_id:
+                    needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
+                for mod in tmpl.saas_module_ids:
+                    if mod.saas_source_repo_id:
+                        needed_version_repo_ids.add(mod.saas_source_repo_id.id)
+            if line.module_id:
+                tmpl = line.module_id.product_tmpl_id
+                if tmpl.saas_source_repo_id:
+                    needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
+        if self.odoo_version_id and needed_version_repo_ids:
+            pending_vrepos = self.odoo_version_id.repo_ids.filtered(
+                lambda r: r.state == 'pending' and r.id in needed_version_repo_ids
+            )
+            for vrepo in pending_vrepos:
+                self._append_log("Cloning pending version repo %s..." % vrepo.repo_url)
+                vrepo.action_clone_repo()
 
-            # 6. Restart the container
-            rec._restart_container()
-            rec.state = 'running'
+        # 4. Update docker-compose.yml and odoo.conf with current mounts
+        self._append_log("Updating configuration...")
+        with server._get_ssh_connection() as ssh:
+            self._render_and_write_configs(ssh)
+        self._append_log("Configuration updated.")
+
+        # 5. Install pending modules (if any)
+        with server._get_ssh_connection() as ssh:
+            self._install_pending_modules(ssh)
+
+        # 6. Restart the container
+        self._restart_container()
+        self.state = 'running'
 
     def action_suspend(self):
         """Stop container and set state to suspended."""
@@ -1416,41 +1471,69 @@ class SaasInstance(models.Model):
 
     @api.model
     def _cron_check_storage_limits(self):
-        """Check total storage of running instances and suspend those exceeding their plan limit."""
+        """Check total storage of running instances and suspend those exceeding their plan limit.
+
+        Batches SSH calls by server to avoid opening N connections sequentially.
+        """
         instances = self.search([
             ('state', '=', 'running'),
             ('plan_id', '!=', False),
             ('plan_id.storage_limit', '>', 0),
         ])
-        for instance in instances:
+        if not instances:
+            return
+
+        # Group instances by docker server for batched SSH calls
+        by_docker_server = {}
+        for inst in instances:
+            by_docker_server.setdefault(inst.docker_server_id.id, self.browse())
+            by_docker_server[inst.docker_server_id.id] |= inst
+
+        for server_id, server_instances in by_docker_server.items():
+            server = server_instances[0].docker_server_id
             try:
-                instance.action_refresh_usage()
-                total_bytes = instance.total_storage_bytes
-                limit_bytes = instance.plan_id.storage_limit * (1024 ** 3)
-                if total_bytes > limit_bytes:
-                    instance.action_suspend()
-                    instance._append_log(
-                        "AUTO-SUSPENDED: Storage %.2f GB exceeds plan limit %.2f GB."
-                        % (total_bytes / (1024 ** 3), instance.plan_id.storage_limit)
-                    )
-                    instance.message_post(
-                        body=_(
-                            "Instance automatically suspended: total storage (%(used)s) "
-                            "exceeds plan limit (%(limit).2f GB).",
-                            used=instance.total_storage or '',
-                            limit=instance.plan_id.storage_limit,
-                        ),
-                        message_type='notification',
-                    )
-                    _logger.info(
-                        "Instance %s suspended: storage %.2f GB exceeds %.2f GB limit",
-                        instance.subdomain, total_bytes / (1024 ** 3),
-                        instance.plan_id.storage_limit,
-                    )
+                with server._get_ssh_connection() as ssh:
+                    for instance in server_instances:
+                        try:
+                            instance._refresh_usage_with_ssh(ssh)
+                        except Exception:
+                            _logger.exception(
+                                "Failed to refresh usage for instance %s (id=%s)",
+                                instance.subdomain, instance.id,
+                            )
+                            continue
+
+                        total_bytes = instance.total_storage_bytes
+                        limit_bytes = instance.plan_id.storage_limit * (1024 ** 3)
+                        if total_bytes > limit_bytes:
+                            try:
+                                instance.action_suspend()
+                                instance._append_log(
+                                    "AUTO-SUSPENDED: Storage %.2f GB exceeds plan limit %.2f GB."
+                                    % (total_bytes / (1024 ** 3), instance.plan_id.storage_limit)
+                                )
+                                instance.message_post(
+                                    body=_(
+                                        "Instance automatically suspended: total storage (%(used)s) "
+                                        "exceeds plan limit (%(limit).2f GB).",
+                                        used=instance.total_storage or '',
+                                        limit=instance.plan_id.storage_limit,
+                                    ),
+                                    message_type='notification',
+                                )
+                                _logger.info(
+                                    "Instance %s suspended: storage %.2f GB exceeds %.2f GB limit",
+                                    instance.subdomain, total_bytes / (1024 ** 3),
+                                    instance.plan_id.storage_limit,
+                                )
+                            except Exception:
+                                _logger.exception(
+                                    "Failed to suspend instance %s (id=%s)",
+                                    instance.subdomain, instance.id,
+                                )
             except Exception:
                 _logger.exception(
-                    "Failed to check storage for instance %s (id=%s)",
-                    instance.subdomain, instance.id,
+                    "Failed to connect to docker server id=%s for storage checks", server_id,
                 )
 
     # ========== Repo Management ==========
@@ -1460,55 +1543,9 @@ class SaasInstance(models.Model):
         self.ensure_one()
         self._ensure_can_ssh()
         server = self.docker_server_id
-        instance_path = self._get_instance_path()
-
-        repos, version_repos, all_addons_paths = self._get_all_repo_context()
 
         with server._get_ssh_connection() as ssh:
-            # Regenerate docker-compose.yml with repo volumes
-            self._append_log("Updating docker-compose.yml with repo volumes...")
-            dc_context = {
-                'odoo_image': self.odoo_version_id.docker_image,
-                'odoo_version': self.odoo_version_id.docker_image_tag,
-                'subdomain': self.subdomain,
-                'host_ip': '0.0.0.0',
-                'xmlrpc_port': self.xmlrpc_port,
-                'longpolling_port': self.longpolling_port,
-                'network_name': 'net_%s' % self.subdomain,
-                'cpu_limit': self.plan_id.cpu_limit if self.plan_id else 0,
-                'ram_limit': self.plan_id.ram_limit if self.plan_id else '',
-                'repos': repos,
-                'version_repos': version_repos,
-            }
-            dc_content = self._render_template(
-                'docker-compose.yml.jinja', dc_context,
-            )
-            ssh.write_file(
-                '%s/docker-compose.yml' % instance_path, dc_content,
-            )
-            self._append_log("docker-compose.yml updated.")
-
-            # Regenerate odoo.conf with repo addons paths
-            self._append_log("Updating odoo.conf with repo addons paths...")
-            psql_server = self.db_server_id
-            db_host = psql_server.private_ip_v4 or psql_server.ip_v4
-            conf_context = {
-                'master_pass': self.admin_password,
-                'db_host': db_host,
-                'db_port': psql_server.psql_port or 5432,
-                'db_user': self.db_user,
-                'db_password': self.db_password,
-                'proxy_mode': True,
-                'extra_config': self._parse_extra_config(),
-                'repo_addons_paths': all_addons_paths,
-            }
-            conf_content = self._render_template(
-                'odoo.conf.jinja', conf_context,
-            )
-            ssh.write_file(
-                '%s/config/odoo.conf' % instance_path, conf_content,
-            )
-            self._append_log("odoo.conf updated.")
+            self._render_and_write_configs(ssh)
 
         # Restart the container
         self._restart_container()

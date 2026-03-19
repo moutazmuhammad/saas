@@ -7,7 +7,7 @@ from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
 
-MAX_BACKUPS_PER_INSTANCE = 7
+DEFAULT_MAX_BACKUPS = 7
 PRESIGNED_URL_EXPIRY = 7 * 24 * 3600
 
 
@@ -184,6 +184,30 @@ class SaasInstanceBackup(models.Model):
                 ExpiresIn=PRESIGNED_URL_EXPIRY,
             )
 
+    def _generate_presigned_put_url(self, object_key):
+        """Generate a presigned PUT URL for direct server-to-bucket upload."""
+        cfg = self._get_backup_config()
+        if cfg['provider'] == 'gcs':
+            client, bucket_name = self._get_gcs_client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(object_key)
+            return blob.generate_signed_url(
+                expiration=datetime.timedelta(hours=1),
+                method='PUT',
+                content_type='application/zip',
+            )
+        else:
+            client, bucket = self._get_s3_client()
+            return client.generate_presigned_url(
+                'put_object',
+                Params={
+                    'Bucket': bucket,
+                    'Key': object_key,
+                    'ContentType': 'application/zip',
+                },
+                ExpiresIn=3600,
+            )
+
     def _delete_from_bucket(self):
         try:
             cfg = self._get_backup_config()
@@ -199,10 +223,13 @@ class SaasInstanceBackup(models.Model):
             _logger.warning("Failed to delete backup object %s: %s", self.bucket_path, e)
 
     # ------------------------------------------------------------------
-    # Backup creation — all done on the docker server via SSH
+    # Backup creation — zip on server, upload directly to bucket
     # ------------------------------------------------------------------
-    def _create_backup_zip(self, instance):
-        """SSH to the docker server, dump DB + copy filestore + manifest, zip, return bytes."""
+    def _create_and_upload_backup(self, instance, object_key):
+        """SSH to the docker server, dump DB + copy filestore + manifest, zip,
+        then upload directly from the server to the bucket via presigned URL.
+        Returns the zip size in bytes.
+        """
         instance._ensure_can_ssh()
         docker_server = instance.docker_server_id
         container_name = instance._get_container_name()
@@ -224,6 +251,12 @@ class SaasInstanceBackup(models.Model):
             'instance': instance.name or '',
         }, indent=2)
 
+        # Generate presigned PUT URL for direct upload from server to bucket
+        try:
+            presigned_put_url = self._generate_presigned_put_url(object_key)
+        except Exception:
+            presigned_put_url = None
+
         # Use environment variables instead of embedding credentials in shell script
         env_vars = {
             'SAAS_TMP_DIR': tmp_dir,
@@ -235,9 +268,23 @@ class SaasInstanceBackup(models.Model):
             'SAAS_DB_USER': instance.db_user,
             'SAAS_DB_PASS': instance.db_password,
         }
+        if presigned_put_url:
+            env_vars['SAAS_UPLOAD_URL'] = presigned_put_url
+
         env_prefix = ' '.join(
             '%s=%s' % (k, shlex.quote(v)) for k, v in env_vars.items()
         )
+
+        # Build the upload step based on whether presigned URL is available
+        if presigned_put_url:
+            upload_step = (
+                '# 5) Upload directly to cloud storage via presigned URL\n'
+                'curl -f -X PUT -H "Content-Type: application/zip" '
+                '--data-binary "@$SAAS_ZIP_PATH" "$SAAS_UPLOAD_URL"\n'
+                'UPLOAD_OK=$?\n'
+            )
+        else:
+            upload_step = 'UPLOAD_OK=1  # No presigned URL, will download via SFTP\n'
 
         script = r"""#!/bin/bash
 set -e
@@ -265,9 +312,19 @@ MANIFEST_EOF
 cd "$SAAS_TMP_DIR"
 zip -r -q "$SAAS_ZIP_PATH" dump.sql filestore manifest.json
 
-# 5) Cleanup temp dir (keep zip for SFTP download)
+# Cleanup temp dir (keep zip)
 rm -rf "$SAAS_TMP_DIR"
-""" % manifest
+
+%s
+
+# Output zip size for tracking
+stat -c %%s "$SAAS_ZIP_PATH" 2>/dev/null || stat -f %%z "$SAAS_ZIP_PATH" 2>/dev/null || echo 0
+
+# Cleanup zip if uploaded directly
+if [ "${UPLOAD_OK:-1}" = "0" ]; then
+    rm -f "$SAAS_ZIP_PATH"
+fi
+""" % (manifest, upload_step)
 
         with docker_server._get_ssh_connection() as ssh:
             # Upload script file to avoid shell quoting issues
@@ -288,16 +345,28 @@ rm -rf "$SAAS_TMP_DIR"
                     _("Backup failed on server %s:\n%s") % (docker_server.name, stderr or stdout)
                 )
 
-            # Download zip via SFTP instead of base64 over stdout
-            try:
-                zip_data = ssh.read_file_bytes(zip_path)
-            finally:
+            # Parse size from stdout (last line)
+            size_bytes = 0
+            for line in stdout.strip().splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    size_bytes = int(line)
+
+            # If presigned upload failed or wasn't used, fall back to SFTP download
+            if not presigned_put_url or 'UPLOAD_OK=1' in script:
+                try:
+                    zip_data = ssh.read_file_bytes(zip_path)
+                    size_bytes = len(zip_data)
+                finally:
+                    ssh.execute('rm -f %s' % shlex.quote(zip_path))
+                if not zip_data:
+                    raise UserError(_("Backup produced empty file."))
+                self._upload_to_bucket(object_key, zip_data)
+            else:
+                # Cleanup zip on server (already uploaded)
                 ssh.execute('rm -f %s' % shlex.quote(zip_path))
 
-        if not zip_data:
-            raise UserError(_("Backup produced empty file."))
-
-        return zip_data
+        return size_bytes
 
     # ------------------------------------------------------------------
     # Cron entry point
@@ -348,13 +417,12 @@ rm -rf "$SAAS_TMP_DIR"
         })
 
         try:
-            zip_data = backup._create_backup_zip(instance)
-            backup._upload_to_bucket(object_key, zip_data)
+            size_bytes = backup._create_and_upload_backup(instance, object_key)
             url = backup._generate_presigned_url()
             now = fields.Datetime.now()
             backup.write({
                 'state': 'done',
-                'size_mb': round(len(zip_data) / (1024 * 1024), 2),
+                'size_mb': round(size_bytes / (1024 * 1024), 2),
                 'download_url': url,
                 'download_url_expiry': now + datetime.timedelta(seconds=PRESIGNED_URL_EXPIRY),
             })
@@ -367,7 +435,7 @@ rm -rf "$SAAS_TMP_DIR"
 
     @api.model
     def _cleanup_old_backups(self):
-        """Keep at most MAX_BACKUPS_PER_INSTANCE backups per instance.
+        """Keep at most max_backups (from plan) per instance.
 
         Also removes stale 'running' backups older than 1 day.
         """
@@ -383,14 +451,27 @@ rm -rf "$SAAS_TMP_DIR"
             except Exception as e:
                 _logger.error("Failed to cleanup stale backup %s: %s", backup.name, e)
 
-        # Enforce max backups per instance
-        instances = self.env['saas.instance'].search([('state', '=', 'running')])
-        for instance in instances:
+        # Use read_group to find instances that have excess backups
+        data = self._read_group(
+            [('state', '=', 'done')],
+            ['instance_id'],
+            ['__count'],
+        )
+        # Only process instances that might have excess backups
+        for instance, count in data:
+            if count <= DEFAULT_MAX_BACKUPS:
+                continue
+            # Get the actual limit from the plan
+            max_backups = DEFAULT_MAX_BACKUPS
+            if instance.plan_id and instance.plan_id.max_backups > 0:
+                max_backups = instance.plan_id.max_backups
+            if count <= max_backups:
+                continue
             backups = self.search([
                 ('instance_id', '=', instance.id),
                 ('state', '=', 'done'),
             ], order='create_date desc')
-            excess = backups[MAX_BACKUPS_PER_INSTANCE:]
+            excess = backups[max_backups:]
             for backup in excess:
                 try:
                     if backup.bucket_path:

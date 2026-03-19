@@ -62,8 +62,14 @@ class SaasOdooVersion(models.Model):
     )
 
     def _compute_module_count(self):
+        data = self.env['product.template']._read_group(
+            [('saas_odoo_version_id', 'in', self.ids), ('saas_type', '=', 'module')],
+            ['saas_odoo_version_id'],
+            ['__count'],
+        )
+        counts = {version.id: count for version, count in data}
         for rec in self:
-            rec.module_count = len(rec.module_ids)
+            rec.module_count = counts.get(rec.id, 0)
 
     def _get_container_server(self):
         """Return the first available container server or raise."""
@@ -90,25 +96,23 @@ class SaasOdooVersion(models.Model):
         server = self._get_container_server()
 
         scan_script = (
-            "import ast, os, sys; "
-            "paths = ['/usr/lib/python3/dist-packages/odoo/addons', '/mnt/extra-addons']; "
-            "["
-            "("
-            "  lambda m: sys.stdout.write("
-            "    d + '|||' + m.get('name', d) + '|||' "
-            "    + m.get('summary', '').replace('\\\\n', ' ').replace('\\n', ' ') + '|||' "
-            "    + m.get('category', '') + '|||' "
-            "    + m.get('author', '') + '|||' "
-            "    + ','.join(m.get('depends', [])) + '\\n'"
-            "  )"
-            ")(ast.literal_eval(open(os.path.join(p, d, '__manifest__.py')).read())) "
-            "if os.path.isfile(os.path.join(p, d, '__manifest__.py')) "
-            "and ast.literal_eval(open(os.path.join(p, d, '__manifest__.py')).read()).get('application') "
-            "else None "
-            "for p in paths if os.path.isdir(p) "
-            "for d in sorted(os.listdir(p)) "
-            "if os.path.isdir(os.path.join(p, d))"
-            "]"
+            "import ast, os, sys\n"
+            "paths = ['/usr/lib/python3/dist-packages/odoo/addons', '/mnt/extra-addons']\n"
+            "for p in paths:\n"
+            "  if not os.path.isdir(p): continue\n"
+            "  for d in sorted(os.listdir(p)):\n"
+            "    mf = os.path.join(p, d, '__manifest__.py')\n"
+            "    if not os.path.isfile(mf): continue\n"
+            "    try:\n"
+            "      m = ast.literal_eval(open(mf).read())\n"
+            "    except Exception: continue\n"
+            "    if not m.get('application'): continue\n"
+            "    sys.stdout.write("
+            "d + '|||' + m.get('name', d) + '|||' "
+            "+ m.get('summary', '').replace('\\\\n', ' ').replace('\\n', ' ') + '|||' "
+            "+ m.get('category', '') + '|||' "
+            "+ m.get('author', '') + '|||' "
+            "+ ','.join(m.get('depends', [])) + '\\n')\n"
         )
 
         cmd = "docker run --rm %s python3 -c \"%s\" 2>/dev/null" % (image, scan_script)

@@ -11,6 +11,7 @@
                 <field name="cpu_limit"/>
                 <field name="ram_limit"/>
                 <field name="storage_limit"/>
+                <field name="max_backups"/>
                 <field name="instance_count"/>
             </list>
         </field>
@@ -30,6 +31,7 @@
                         <group>
                             <field name="ram_limit"/>
                             <field name="storage_limit"/>
+                            <field name="max_backups"/>
                         </group>
                     </group>
                 </sheet>
