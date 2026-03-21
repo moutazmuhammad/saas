@@ -68,6 +68,11 @@
                             type="object" icon="fa-cog"
                             invisible="state != 'running'"/>
 
+                    <!-- Docker Compose: when running -->
+                    <button name="action_docker_compose" string="Docker Compose"
+                            type="object" icon="fa-docker"
+                            invisible="state != 'running'"/>
+
                     <!-- Live Logs: when running -->
                     <button name="action_view_logs" string="Logs"
                             type="object" icon="fa-file-text-o"
@@ -139,15 +144,15 @@
                     </group>
 
                     <notebook>
-                        <page string="Bundles">
-                            <field name="bundle_line_ids" nolabel="1">
+                        <page string="Products">
+                            <field name="product_line_ids" nolabel="1">
                                 <list editable="bottom">
                                     <field name="sequence" widget="handle"/>
                                     <field name="odoo_version_id" column_invisible="1"/>
                                     <field name="product_id"
                                            required="1"
                                            options="{'no_create': True}"
-                                           domain="[('saas_type', '=', 'bundle'), ('saas_odoo_version_id', '=', odoo_version_id)]"/>
+                                           domain="[('saas_type', '=', 'product'), ('saas_odoo_version_id', '=', odoo_version_id)]"/>
                                     <field name="state" widget="badge"
                                            decoration-success="state == 'installed'"
                                            decoration-danger="state == 'failed'"

@@ -14,8 +14,8 @@ Key capabilities:
   creates PostgreSQL users and databases, assigns ports, and initialises the
   Odoo database, all over SSH.
 - **Module management** -- fetch available modules from a Docker image, organise
-  them into sellable bundles, and install them on running instances.
-- **Product catalog integration** -- modules and bundles are standard Odoo
+  them into sellable products, and install them on running instances.
+- **Product catalog integration** -- modules and products are standard Odoo
   products (product.template) so they can be quoted, sold, and invoiced through
   the regular Sales workflow.
 - **Infrastructure registry** -- keep track of Docker host servers, PostgreSQL
@@ -33,6 +33,7 @@ Key capabilities:
         'data/ir_config_parameter.xml',
         'data/saas_backup_cron.xml',
         'data/saas_storage_check_cron.xml',
+        'data/saas_usage_refresh_cron.xml',
         'views/saas_plan_views.xml',
         'views/saas_instance_views.xml',
         'views/saas_ssh_key_pair_views.xml',

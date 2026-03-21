@@ -143,15 +143,15 @@
     </record>
 
     <!-- ============================================================ -->
-    <!--                     SaaS BUNDLE VIEWS                        -->
+    <!--                     SaaS PRODUCT VIEWS                       -->
     <!-- ============================================================ -->
 
-    <!-- Search View: Bundles -->
-    <record id="saas_bundle_product_view_search" model="ir.ui.view">
-        <field name="name">product.template.saas.bundle.search</field>
+    <!-- Search View: Products -->
+    <record id="saas_product_view_search" model="ir.ui.view">
+        <field name="name">product.template.saas.product.search</field>
         <field name="model">product.template</field>
         <field name="arch" type="xml">
-            <search string="Module Bundles">
+            <search string="Products">
                 <field name="name"/>
                 <field name="saas_odoo_version_id"/>
                 <separator/>
@@ -169,9 +169,9 @@
         </field>
     </record>
 
-    <!-- Kanban View: Bundles -->
-    <record id="saas_bundle_product_view_kanban" model="ir.ui.view">
-        <field name="name">product.template.saas.bundle.kanban</field>
+    <!-- Kanban View: Products -->
+    <record id="saas_product_view_kanban" model="ir.ui.view">
+        <field name="name">product.template.saas.product.kanban</field>
         <field name="model">product.template</field>
         <field name="arch" type="xml">
             <kanban>
@@ -211,12 +211,12 @@
         </field>
     </record>
 
-    <!-- Form View: Bundles -->
-    <record id="saas_bundle_product_view_form" model="ir.ui.view">
-        <field name="name">product.template.saas.bundle.form</field>
+    <!-- Form View: Products -->
+    <record id="saas_product_view_form" model="ir.ui.view">
+        <field name="name">product.template.saas.product.form</field>
         <field name="model">product.template</field>
         <field name="arch" type="xml">
-            <form string="Module Bundle">
+            <form string="Product">
                 <header>
                     <!-- Clone: when repo_url is set and not yet cloned -->
                     <button name="action_clone_repo" string="Clone Repo"
@@ -241,7 +241,7 @@
                            options="{'preview_image': 'image_128'}"/>
                     <div class="oe_title">
                         <label for="name"/>
-                        <h1><field name="name" placeholder="Bundle Name"/></h1>
+                        <h1><field name="name" placeholder="Product Name"/></h1>
                     </div>
                     <group>
                         <group>
@@ -256,8 +256,8 @@
                         </group>
                     </group>
 
-                    <!-- Repository: always visible so user can fill repo_url to make it a custom bundle -->
-                    <group string="Repository (fill to make this a custom repo bundle)">
+                    <!-- Repository: always visible so user can fill repo_url to make it a custom product -->
+                    <group string="Repository (fill to make this a custom repo product)">
                         <group>
                             <field name="repo_url"
                                    placeholder="https://github.com/user/repo.git"/>
@@ -298,7 +298,7 @@
                         </page>
                         <page string="Description">
                             <field name="description_sale" nolabel="1"
-                                   placeholder="Describe what this product bundle provides..."/>
+                                   placeholder="Describe what this product provides..."/>
                         </page>
                     </notebook>
                 </sheet>
@@ -306,12 +306,12 @@
         </field>
     </record>
 
-    <!-- List View: Bundles -->
-    <record id="saas_bundle_product_view_list" model="ir.ui.view">
-        <field name="name">product.template.saas.bundle.list</field>
+    <!-- List View: Products -->
+    <record id="saas_product_view_list" model="ir.ui.view">
+        <field name="name">product.template.saas.product.list</field>
         <field name="model">product.template</field>
         <field name="arch" type="xml">
-            <list string="Module Bundles">
+            <list string="Products">
                 <field name="image_128" widget="image"
                        options="{'size': [32, 32]}" string=""/>
                 <field name="name"/>
@@ -331,22 +331,22 @@
         </field>
     </record>
 
-    <!-- Action: Bundles -->
+    <!-- Action: Products -->
     <record id="saas_odoo_product_action" model="ir.actions.act_window">
-        <field name="name">Module Bundles</field>
+        <field name="name">Products</field>
         <field name="res_model">product.template</field>
         <field name="view_mode">kanban,list,form</field>
-        <field name="domain">[('saas_type', '=', 'bundle')]</field>
-        <field name="context">{'default_saas_type': 'bundle', 'default_type': 'service'}</field>
-        <field name="search_view_id" ref="saas_bundle_product_view_search"/>
+        <field name="domain">[('saas_type', '=', 'product')]</field>
+        <field name="context">{'default_saas_type': 'product', 'default_type': 'service'}</field>
+        <field name="search_view_id" ref="saas_product_view_search"/>
         <field name="view_ids" eval="[(5, 0, 0),
-            (0, 0, {'view_mode': 'kanban', 'view_id': ref('saas_bundle_product_view_kanban')}),
-            (0, 0, {'view_mode': 'list', 'view_id': ref('saas_bundle_product_view_list')}),
-            (0, 0, {'view_mode': 'form', 'view_id': ref('saas_bundle_product_view_form')}),
+            (0, 0, {'view_mode': 'kanban', 'view_id': ref('saas_product_view_kanban')}),
+            (0, 0, {'view_mode': 'list', 'view_id': ref('saas_product_view_list')}),
+            (0, 0, {'view_mode': 'form', 'view_id': ref('saas_product_view_form')}),
         ]"/>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
-                Create your first module bundle
+                Create your first product
             </p>
         </field>
     </record>

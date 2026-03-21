@@ -70,9 +70,9 @@
               action="saas_odoo_module_action"
               sequence="30"/>
 
-    <!-- Configuration > Module Bundles -->
+    <!-- Configuration > Products -->
     <menuitem id="saas_master_menu_odoo_products"
-              name="Module Bundles"
+              name="Products"
               parent="saas_master_menu_configuration"
               action="saas_odoo_product_action"
               sequence="32"/>

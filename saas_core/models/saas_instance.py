@@ -5,12 +5,12 @@ import re
 import secrets
 import shlex
 import string
-import threading
-
 from jinja2 import Environment, FileSystemLoader
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
+
+from ..utils import run_in_background
 
 _logger = logging.getLogger(__name__)
 
@@ -133,14 +133,14 @@ class SaasInstance(models.Model):
         'saas.instance.module.line',
         'instance_id',
         string='Installation Lines',
-        help='All module and bundle installation requests for this instance.',
+        help='All module and product installation requests for this instance.',
     )
-    bundle_line_ids = fields.One2many(
+    product_line_ids = fields.One2many(
         'saas.instance.module.line',
         'instance_id',
-        string='Bundles to Install',
+        string='Products to Install',
         domain=[('product_id', '!=', False)],
-        help='Installation lines that reference a module bundle.',
+        help='Installation lines that reference a product.',
     )
     single_module_line_ids = fields.One2many(
         'saas.instance.module.line',
@@ -402,7 +402,7 @@ class SaasInstance(models.Model):
 
         Combines instance-level repos and version-level repos.
         Only includes version repos that are needed by the instance's
-        selected bundles or modules (via saas_source_repo_id).
+        selected products or modules (via saas_source_repo_id).
         """
         self.ensure_one()
         server = self.docker_server_id
@@ -415,15 +415,15 @@ class SaasInstance(models.Model):
         } for r in instance_repos]
         addons_paths = [r._get_container_addons_path() for r in instance_repos]
 
-        # Determine which version repos are needed by selected bundles/modules
+        # Determine which version repos are needed by selected products/modules
         needed_version_repo_ids = set()
         for line in self.module_line_ids:
-            # Check bundle's source repo
+            # Check product's source repo
             if line.product_id:
                 tmpl = line.product_id.product_tmpl_id
                 if tmpl.saas_source_repo_id:
                     needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
-                # Also check individual modules inside the bundle
+                # Also check individual modules inside the product
                 for mod in tmpl.saas_module_ids:
                     if mod.saas_source_repo_id:
                         needed_version_repo_ids.add(mod.saas_source_repo_id.id)
@@ -639,6 +639,32 @@ class SaasInstance(models.Model):
                 rec._refresh_usage_with_ssh(ssh)
         return True
 
+    def _safe_refresh_usage(self):
+        """Refresh resource usage, silently ignoring errors."""
+        try:
+            self._ensure_can_ssh()
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                self._refresh_usage_with_ssh(ssh)
+        except Exception:
+            _logger.debug(
+                "Failed to refresh usage for instance %s", self.subdomain,
+                exc_info=True,
+            )
+
+    @api.model
+    def _cron_refresh_usage(self):
+        """Cron: refresh resource usage for all running instances."""
+        instances = self.search([('state', '=', 'running')])
+        for instance in instances:
+            try:
+                instance._safe_refresh_usage()
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Cron: failed to refresh usage for %s", instance.subdomain,
+                )
+
     def _refresh_usage_with_ssh(self, ssh):
         """Fetch resource usage using an existing SSH connection to the docker server."""
         self.ensure_one()
@@ -853,49 +879,12 @@ class SaasInstance(models.Model):
             rec.provisioning_log = ''
             rec.state = 'provisioning'
             rec._append_log("Deployment queued. Running in background...")
-
-            # Run deployment in background thread with its own cursor.
-            # Use postcommit to ensure the 'provisioning' state is committed
-            # before the thread starts writing to the same row.
-            instance_id = rec.id
-            dbname = rec.env.cr.dbname
-            uid = rec.env.uid
-            context = dict(rec.env.context)
-
-            def _start_deploy_thread():
-                thread = threading.Thread(
-                    target=self._deploy_in_thread,
-                    args=(dbname, uid, context, instance_id),
-                    name='saas_deploy_%s' % rec.subdomain,
-                    daemon=True,
-                )
-                thread.start()
-
-            rec.env.cr.postcommit.add(_start_deploy_thread)
-
-    @api.model
-    def _deploy_in_thread(self, dbname, uid, context, instance_id):
-        """Run deployment in a background thread with a dedicated cursor."""
-        import odoo
-        db_registry = odoo.registry(dbname)
-        with db_registry.cursor() as new_cr:
-            new_env = api.Environment(new_cr, uid, context)
-            instance = new_env['saas.instance'].browse(instance_id)
-            try:
-                instance._do_deploy()
-                new_cr.commit()
-            except Exception as e:
-                new_cr.rollback()
-                # Re-open cursor to save the failure state
-                with db_registry.cursor() as err_cr:
-                    err_env = api.Environment(err_cr, uid, context)
-                    err_inst = err_env['saas.instance'].browse(instance_id)
-                    err_inst.state = 'failed'
-                    err_inst._append_log("DEPLOYMENT FAILED: %s" % str(e))
-                    err_cr.commit()
-                _logger.exception(
-                    "Background deployment failed for instance id=%s", instance_id,
-                )
+            run_in_background(
+                rec, '_do_deploy',
+                error_method='_on_background_error',
+                error_args=('failed',),
+                thread_name='saas_deploy_%s' % rec.subdomain,
+            )
 
     def _do_deploy(self):
         """Internal deploy logic for a single record."""
@@ -1061,11 +1050,12 @@ class SaasInstance(models.Model):
 
         self.state = 'running'
         self._append_log("Deployment completed successfully. State: running.")
+        self._safe_refresh_usage()
 
     # ========== Lifecycle Actions ==========
 
     def action_stop(self):
-        """Stop the Docker container and set state to stopped."""
+        """Stop the Docker container and set state to stopped (async)."""
         for rec in self:
             if rec.state != 'running':
                 raise UserError(
@@ -1073,21 +1063,35 @@ class SaasInstance(models.Model):
                     % (rec.subdomain, rec.state)
                 )
             rec._ensure_can_ssh()
-            server = rec.docker_server_id
-            container_name = rec._get_container_name()
-            with server._get_ssh_connection() as ssh:
-                exit_code, stdout, stderr = ssh.execute(
-                    'docker stop %s' % shlex.quote(container_name),
+            prev_state = rec.state
+            rec.state = 'provisioning'
+            rec._append_log("Stop queued. Running in background...")
+            run_in_background(
+                rec, '_do_stop',
+                error_method='_on_background_error',
+                error_args=(prev_state,),
+                thread_name='saas_stop_%s' % rec.subdomain,
+            )
+
+    def _do_stop(self):
+        """Stop container (runs in background thread)."""
+        self.ensure_one()
+        server = self.docker_server_id
+        container_name = self._get_container_name()
+        with server._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = ssh.execute(
+                'docker stop %s' % shlex.quote(container_name),
+            )
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to stop container '%s':\n%s")
+                    % (container_name, stderr)
                 )
-                if exit_code != 0:
-                    raise UserError(
-                        _("Failed to stop container '%s':\n%s")
-                        % (container_name, stderr)
-                    )
-            rec.state = 'stopped'
+        self.state = 'stopped'
+        self._append_log("Instance stopped successfully.")
 
     def action_restart(self):
-        """Restart the Docker container via SSH."""
+        """Restart the Docker container via SSH (async)."""
         for rec in self:
             if rec.state not in ('running', 'stopped', 'suspended'):
                 raise UserError(
@@ -1095,18 +1099,33 @@ class SaasInstance(models.Model):
                     % (rec.subdomain, rec.state)
                 )
             rec._ensure_can_ssh()
-            server = rec.docker_server_id
-            container_name = rec._get_container_name()
-            with server._get_ssh_connection() as ssh:
-                exit_code, stdout, stderr = ssh.execute(
-                    'docker restart %s' % shlex.quote(container_name),
+            prev_state = rec.state
+            rec.state = 'provisioning'
+            rec._append_log("Restart queued. Running in background...")
+            run_in_background(
+                rec, '_do_restart',
+                error_method='_on_background_error',
+                error_args=(prev_state,),
+                thread_name='saas_restart_%s' % rec.subdomain,
+            )
+
+    def _do_restart(self):
+        """Restart container (runs in background thread)."""
+        self.ensure_one()
+        server = self.docker_server_id
+        container_name = self._get_container_name()
+        with server._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = ssh.execute(
+                'docker restart %s' % shlex.quote(container_name),
+            )
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to restart container '%s':\n%s")
+                    % (container_name, stderr)
                 )
-                if exit_code != 0:
-                    raise UserError(
-                        _("Failed to restart container '%s':\n%s")
-                        % (container_name, stderr)
-                    )
-            rec.state = 'running'
+        self.state = 'running'
+        self._append_log("Instance restarted successfully.")
+        self._safe_refresh_usage()
 
     def action_redeploy(self):
         """Redeploy: clone pending repos, pull cloned repos, update config/mounts,
@@ -1121,41 +1140,12 @@ class SaasInstance(models.Model):
             prev_state = rec.state
             rec.state = 'provisioning'
             rec._append_log("Redeployment queued. Running in background...")
-
-            instance_id = rec.id
-            dbname = rec.env.cr.dbname
-            uid = rec.env.uid
-            context = dict(rec.env.context)
-            thread = threading.Thread(
-                target=self._redeploy_in_thread,
-                args=(dbname, uid, context, instance_id, prev_state),
-                name='saas_redeploy_%s' % rec.subdomain,
-                daemon=True,
+            run_in_background(
+                rec, '_do_redeploy',
+                error_method='_on_background_error',
+                error_args=(prev_state,),
+                thread_name='saas_redeploy_%s' % rec.subdomain,
             )
-            thread.start()
-
-    @api.model
-    def _redeploy_in_thread(self, dbname, uid, context, instance_id, prev_state):
-        """Run redeployment in a background thread with a dedicated cursor."""
-        import odoo
-        db_registry = odoo.registry(dbname)
-        with db_registry.cursor() as new_cr:
-            new_env = api.Environment(new_cr, uid, context)
-            instance = new_env['saas.instance'].browse(instance_id)
-            try:
-                instance._do_redeploy()
-                new_cr.commit()
-            except Exception as e:
-                new_cr.rollback()
-                with db_registry.cursor() as err_cr:
-                    err_env = api.Environment(err_cr, uid, context)
-                    err_inst = err_env['saas.instance'].browse(instance_id)
-                    err_inst.state = prev_state if prev_state != 'provisioning' else 'failed'
-                    err_inst._append_log("REDEPLOYMENT FAILED: %s" % str(e))
-                    err_cr.commit()
-                _logger.exception(
-                    "Background redeployment failed for instance id=%s", instance_id,
-                )
 
     def _do_redeploy(self):
         """Internal redeploy logic for a single record."""
@@ -1232,9 +1222,10 @@ class SaasInstance(models.Model):
         # 6. Restart the container
         self._restart_container()
         self.state = 'running'
+        self._safe_refresh_usage()
 
     def action_suspend(self):
-        """Stop container and set state to suspended."""
+        """Stop container and set state to suspended (async)."""
         for rec in self:
             if rec.state != 'running':
                 raise UserError(
@@ -1242,18 +1233,32 @@ class SaasInstance(models.Model):
                     % (rec.subdomain, rec.state)
                 )
             rec._ensure_can_ssh()
-            server = rec.docker_server_id
-            container_name = rec._get_container_name()
-            with server._get_ssh_connection() as ssh:
-                exit_code, stdout, stderr = ssh.execute(
-                    'docker stop %s' % shlex.quote(container_name),
+            prev_state = rec.state
+            rec.state = 'provisioning'
+            rec._append_log("Suspend queued. Running in background...")
+            run_in_background(
+                rec, '_do_suspend',
+                error_method='_on_background_error',
+                error_args=(prev_state,),
+                thread_name='saas_suspend_%s' % rec.subdomain,
+            )
+
+    def _do_suspend(self):
+        """Suspend container (runs in background thread)."""
+        self.ensure_one()
+        server = self.docker_server_id
+        container_name = self._get_container_name()
+        with server._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = ssh.execute(
+                'docker stop %s' % shlex.quote(container_name),
+            )
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to stop container '%s':\n%s")
+                    % (container_name, stderr)
                 )
-                if exit_code != 0:
-                    raise UserError(
-                        _("Failed to stop container '%s':\n%s")
-                        % (container_name, stderr)
-                    )
-            rec.state = 'suspended'
+        self.state = 'suspended'
+        self._append_log("Instance suspended successfully.")
 
     def action_cancel(self):
         for rec in self:
@@ -1298,7 +1303,7 @@ class SaasInstance(models.Model):
                 ssh.execute(drop_role_cmd)
 
     def action_delete_instance(self):
-        """Remove container, volumes, network, database, db user, and instance folder."""
+        """Remove container, volumes, network, database, db user, and instance folder (async)."""
         for rec in self:
             if rec.state == 'provisioning':
                 raise UserError(
@@ -1306,51 +1311,65 @@ class SaasInstance(models.Model):
                     % rec.subdomain
                 )
             rec._ensure_can_ssh()
-            server = rec.docker_server_id
-            instance_path = rec._get_instance_path()
-
-            with server._get_ssh_connection() as ssh:
-                down_cmd = 'cd %s && docker compose down -v --remove-orphans 2>&1' % shlex.quote(instance_path)
-                exit_code, stdout, stderr = ssh.execute(down_cmd)
-                if exit_code != 0:
-                    _logger.warning(
-                        "docker compose down failed for %s: %s", rec.subdomain, stderr
-                    )
-
-                exit_code, stdout, stderr = ssh.execute(
-                    'rm -rf %s' % shlex.quote(instance_path),
-                )
-                if exit_code != 0:
-                    raise UserError(
-                        _("Failed to remove instance directory '%s':\n%s")
-                        % (instance_path, stderr)
-                    )
-
-                # Remove Nginx config and SSL certificate
-                nginx_path = '/etc/nginx/sites-enabled/%s' % rec.subdomain
-                ssh.execute('rm -f %s' % shlex.quote(nginx_path))
-                ssh.execute('systemctl reload nginx 2>&1')
-                if rec.name:
-                    ssh.execute(
-                        'certbot delete --cert-name %s --non-interactive 2>&1'
-                        % shlex.quote(rec.name)
-                    )
-
-            rec._drop_postgresql()
-
-            # Delete all backups from cloud storage
-            for backup in rec.backup_ids.filtered(
-                lambda b: b.state == 'done' and b.bucket_path
-            ):
-                backup._delete_from_bucket()
-            rec.backup_ids.unlink()
-
-            # Reset module/bundle lines and clear installed modules
-            rec.module_line_ids.write({'state': 'pending'})
-            rec.installed_module_ids = [(5,)]
-
-            rec.state = 'cancelled'
+            prev_state = rec.state
+            rec.state = 'provisioning'
+            rec._append_log("Deletion queued. Running in background...")
+            run_in_background(
+                rec, '_do_delete_instance',
+                error_method='_on_background_error',
+                error_args=(prev_state,),
+                thread_name='saas_delete_%s' % rec.subdomain,
+            )
         return True
+
+    def _do_delete_instance(self):
+        """Delete instance (runs in background thread)."""
+        self.ensure_one()
+        server = self.docker_server_id
+        instance_path = self._get_instance_path()
+
+        with server._get_ssh_connection() as ssh:
+            down_cmd = 'cd %s && docker compose down -v --remove-orphans 2>&1' % shlex.quote(instance_path)
+            exit_code, stdout, stderr = ssh.execute(down_cmd)
+            if exit_code != 0:
+                _logger.warning(
+                    "docker compose down failed for %s: %s", self.subdomain, stderr
+                )
+
+            exit_code, stdout, stderr = ssh.execute(
+                'rm -rf %s' % shlex.quote(instance_path),
+            )
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to remove instance directory '%s':\n%s")
+                    % (instance_path, stderr)
+                )
+
+            # Remove Nginx config and SSL certificate
+            nginx_path = '/etc/nginx/sites-enabled/%s' % self.subdomain
+            ssh.execute('rm -f %s' % shlex.quote(nginx_path))
+            ssh.execute('systemctl reload nginx 2>&1')
+            if self.name:
+                ssh.execute(
+                    'certbot delete --cert-name %s --non-interactive 2>&1'
+                    % shlex.quote(self.name)
+                )
+
+        self._drop_postgresql()
+
+        # Delete all backups from cloud storage
+        for backup in self.backup_ids.filtered(
+            lambda b: b.state == 'done' and b.bucket_path
+        ):
+            backup._delete_from_bucket()
+        self.backup_ids.unlink()
+
+        # Reset module/product lines and clear installed modules
+        self.module_line_ids.write({'state': 'pending'})
+        self.installed_module_ids = [(5,)]
+
+        self.state = 'cancelled'
+        self._append_log("Instance deleted successfully.")
 
     def action_config(self):
         """Read odoo.conf from the server and display it in a popup."""
@@ -1376,10 +1395,50 @@ class SaasInstance(models.Model):
             'context': {'default_content': stdout},
         }
 
+    def action_docker_compose(self):
+        """Read docker-compose.yml from the server and display it in a popup."""
+        self.ensure_one()
+        self._ensure_can_ssh()
+        server = self.docker_server_id
+        instance_path = self._get_instance_path()
+        compose_path = '%s/docker-compose.yml' % instance_path
+
+        with server._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = ssh.execute('cat %s' % shlex.quote(compose_path))
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to read docker-compose.yml:\n%s") % stderr
+                )
+
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _("docker-compose.yml — %s") % self.name,
+            'res_model': 'saas.config.viewer',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {'default_content': stdout},
+        }
+
+    def _on_background_error(self, exception, prev_state):
+        """Handle background operation failure by reverting state."""
+        self.state = prev_state
+        self._append_log("OPERATION FAILED: %s" % str(exception))
+
     def action_create_backup(self):
+        """Create a backup in the background."""
+        self.ensure_one()
+        self._append_log("Backup queued. Running in background...")
+        run_in_background(
+            self, '_do_create_backup',
+            thread_name='saas_backup_%s' % self.subdomain,
+        )
+        return True
+
+    def _do_create_backup(self):
+        """Create backup (runs in background thread)."""
         self.ensure_one()
         self.env['saas.instance.backup']._perform_backup(self)
-        return True
+        self._append_log("Backup completed successfully.")
 
 
 

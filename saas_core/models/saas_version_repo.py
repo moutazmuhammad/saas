@@ -60,12 +60,12 @@ class SaasVersionRepo(models.Model):
         string='Status',
         readonly=True,
     )
-    bundle_id = fields.Many2one(
+    product_id = fields.Many2one(
         'product.template',
-        string='Bundle Product',
+        string='Product',
         readonly=True,
         ondelete='set null',
-        help='Auto-created bundle product representing this repo.',
+        help='Auto-created product representing this repo.',
     )
     last_pull = fields.Datetime(string='Last Pull', readonly=True)
     error_message = fields.Text(string='Error', readonly=True)
@@ -96,11 +96,11 @@ class SaasVersionRepo(models.Model):
         return url
 
     def _get_remote_repo_path(self, server):
-        """Return the path: bundle_repos/{odoo_version}/{repo}."""
+        """Return the path: product_repos/{odoo_version}/{repo}."""
         self.ensure_one()
         base = server.docker_base_path.rstrip('/')
         version_name = self.version_id.name
-        return '%s/bundle_repos/%s/%s' % (base, version_name, self._get_repo_dir_name())
+        return '%s/product_repos/%s/%s' % (base, version_name, self._get_repo_dir_name())
 
     def _get_container_addons_path(self):
         """Return the addons path inside a container for this repo."""
@@ -199,13 +199,13 @@ class SaasVersionRepo(models.Model):
                 )
 
     def action_remove_repo(self):
-        """Remove the repo from the server, clean up bundle and modules, delete the record."""
+        """Remove the repo from the server, clean up product and modules, delete the record."""
         self.unlink()
         return True
 
     def unlink(self):
         """Delete repo files from server, clean up products, and update running instances."""
-        # Clean up associated custom modules and bundles
+        # Clean up associated custom modules and products
         for rec in self:
             custom_modules = self.env['product.template'].search([
                 ('saas_source_repo_id', '=', rec.id),
@@ -213,8 +213,8 @@ class SaasVersionRepo(models.Model):
             ])
             if custom_modules:
                 custom_modules.with_context(skip_repo_cleanup=True).unlink()
-            if rec.bundle_id:
-                rec.bundle_id.with_context(skip_repo_cleanup=True).unlink()
+            if rec.product_id:
+                rec.product_id.with_context(skip_repo_cleanup=True).unlink()
 
         # Collect running instances that mount these repos, to update after deletion
         instances_to_restart = self.env['saas.instance']

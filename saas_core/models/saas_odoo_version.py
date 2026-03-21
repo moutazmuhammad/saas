@@ -3,6 +3,8 @@ import logging
 from odoo import fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
+from ..utils import run_in_background
+
 _logger = logging.getLogger(__name__)
 
 
@@ -46,9 +48,9 @@ class SaasOdooVersion(models.Model):
     product_ids = fields.One2many(
         'product.template',
         'saas_odoo_version_id',
-        string='Bundles',
-        domain=[('saas_type', '=', 'bundle')],
-        help='Module bundles configured for this Odoo version.',
+        string='Products',
+        domain=[('saas_type', '=', 'product')],
+        help='Products configured for this Odoo version.',
     )
     repo_ids = fields.One2many(
         'saas.version.repo',
@@ -90,7 +92,28 @@ class SaasOdooVersion(models.Model):
         return '%s:%s' % (self.docker_image, self.docker_image_tag)
 
     def action_fetch_modules(self):
-        """Fetch available standard modules from the Docker image."""
+        """Fetch available standard modules from the Docker image (async)."""
+        self.ensure_one()
+        # Validate early so errors show immediately
+        self._get_docker_image()
+        self._get_container_server()
+        run_in_background(
+            self, '_do_fetch_modules',
+            thread_name='saas_fetch_modules_%s' % self.id,
+        )
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _("Fetching Modules"),
+                'message': _("Module fetch is running in the background. Please refresh to see results."),
+                'type': 'info',
+                'sticky': False,
+            },
+        }
+
+    def _do_fetch_modules(self):
+        """Fetch modules from Docker image (runs in background thread)."""
         self.ensure_one()
         image = self._get_docker_image()
         server = self._get_container_server()

@@ -51,7 +51,7 @@
                                 </list>
                             </field>
                         </page>
-                        <page string="Bundles">
+                        <page string="Products">
                             <field name="product_ids" nolabel="1">
                                 <list editable="bottom">
                                     <field name="image_128" widget="image"

@@ -24,9 +24,9 @@ class SaasInstanceModuleLine(models.Model):
     )
     product_id = fields.Many2one(
         'product.product',
-        string='Bundle',
-        domain="[('saas_type', '=', 'bundle'), ('saas_odoo_version_id', '=', odoo_version_id)]",
-        help='Module bundle to install. All modules in the bundle will be installed together.',
+        string='Product',
+        domain="[('saas_type', '=', 'product'), ('saas_odoo_version_id', '=', odoo_version_id)]",
+        help='Product to install. All modules in the product will be installed together.',
     )
     module_id = fields.Many2one(
         'product.product',
@@ -36,7 +36,7 @@ class SaasInstanceModuleLine(models.Model):
     )
     product_image = fields.Image(
         related='product_id.image_128',
-        string='Bundle Image',
+        string='Product Image',
     )
     module_image = fields.Image(
         related='module_id.image_128',

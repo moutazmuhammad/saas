@@ -4,6 +4,8 @@ import shlex
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
+from ..utils import run_in_background
+
 _logger = logging.getLogger(__name__)
 
 
@@ -171,56 +173,77 @@ class SaasInstanceRepo(models.Model):
                 )
 
     def action_clone_repo(self):
-        """Clone the repository, update config, and restart the instance."""
-        self._clone_repo()
+        """Clone the repository, update config, and restart the instance (async)."""
         for rec in self:
-            rec.instance_id._update_repo_config_and_restart()
+            rec.instance_id._ensure_can_ssh()
+            run_in_background(
+                rec, '_do_clone_and_restart',
+                error_method='_on_repo_background_error',
+                thread_name='saas_inst_clone_%s' % rec.id,
+            )
+
+    def _do_clone_and_restart(self):
+        """Clone repo and restart instance (runs in background thread)."""
+        self._clone_repo()
+        self.instance_id._update_repo_config_and_restart()
+
+    def _on_repo_background_error(self, exception):
+        """Handle background repo operation failure."""
+        self.state = 'error'
+        self.error_message = str(exception)
 
     def action_pull_repo(self):
-        """Git pull the repo (no restart)."""
+        """Git pull the repo (async, no restart)."""
         for rec in self:
             if rec.state != 'cloned':
                 raise UserError(_("Repository must be cloned first."))
+            run_in_background(
+                rec, '_do_pull_repo',
+                error_method='_on_repo_background_error',
+                thread_name='saas_inst_pull_%s' % rec.id,
+            )
 
-            instance = rec.instance_id
-            instance._ensure_can_ssh()
-            server = instance.docker_server_id
-            repo_path = rec._get_remote_repo_path()
-            clone_url = rec._get_clone_url()
+    def _do_pull_repo(self):
+        """Pull repo (runs in background thread)."""
+        self.ensure_one()
+        instance = self.instance_id
+        instance._ensure_can_ssh()
+        server = instance.docker_server_id
+        repo_path = self._get_remote_repo_path()
+        clone_url = self._get_clone_url()
 
-            try:
-                with server._get_ssh_connection() as ssh:
-                    # Update remote URL in case token changed
-                    ssh.execute(
-                        'cd %s && git remote set-url origin %s'
-                        % (shlex.quote(repo_path), shlex.quote(clone_url))
-                    )
-
-                    instance._append_log(
-                        "Pulling latest changes for %s..." % rec.name
-                    )
-                    pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
-                        shlex.quote(repo_path), shlex.quote(rec.branch),
-                    )
-                    exit_code, stdout, stderr = ssh.execute(pull_cmd, timeout=300)
-                    if exit_code != 0:
-                        rec.error_message = stdout + '\n' + stderr
-                        raise UserError(
-                            _("Git pull failed:\n%s\n%s")
-                            % (stdout[-500:], stderr[-500:])
-                        )
-
-                    instance._append_log("Pull completed: %s" % stdout.strip()[:200])
-                    rec.last_pull = fields.Datetime.now()
-                    rec.error_message = False
-
-            except UserError:
-                raise
-            except Exception as e:
-                rec.error_message = str(e)
-                raise UserError(
-                    _("Failed to pull repository: %s") % str(e)
+        try:
+            with server._get_ssh_connection() as ssh:
+                ssh.execute(
+                    'cd %s && git remote set-url origin %s'
+                    % (shlex.quote(repo_path), shlex.quote(clone_url))
                 )
+
+                instance._append_log(
+                    "Pulling latest changes for %s..." % self.name
+                )
+                pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
+                    shlex.quote(repo_path), shlex.quote(self.branch),
+                )
+                exit_code, stdout, stderr = ssh.execute(pull_cmd, timeout=300)
+                if exit_code != 0:
+                    self.error_message = stdout + '\n' + stderr
+                    raise UserError(
+                        _("Git pull failed:\n%s\n%s")
+                        % (stdout[-500:], stderr[-500:])
+                    )
+
+                instance._append_log("Pull completed: %s" % stdout.strip()[:200])
+                self.last_pull = fields.Datetime.now()
+                self.error_message = False
+
+        except UserError:
+            raise
+        except Exception as e:
+            self.error_message = str(e)
+            raise UserError(
+                _("Failed to pull repository: %s") % str(e)
+            )
 
     def action_remove_repo(self):
         """Remove the repo from the server, update config, and restart."""

@@ -3,6 +3,8 @@ import logging
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
+from ..utils import run_in_background
+
 _logger = logging.getLogger(__name__)
 
 
@@ -12,12 +14,12 @@ class ProductTemplate(models.Model):
     saas_type = fields.Selection(
         selection=[
             ('module', 'Module'),
-            ('bundle', 'Bundle'),
+            ('product', 'Product'),
         ],
         string='SaaS Type',
         help='Identifies this product as part of the SaaS platform. '
              '"Module" represents an individual Odoo module; '
-             '"Bundle" represents a package of modules sold together.',
+             '"Product" represents a package of modules sold together.',
     )
     technical_name = fields.Char(
         string='Technical Name',
@@ -28,7 +30,7 @@ class ProductTemplate(models.Model):
         'saas.odoo.version',
         string='Odoo Version',
         ondelete='cascade',
-        help='The Odoo version this module or bundle belongs to.',
+        help='The Odoo version this module or product belongs to.',
     )
     saas_dependency_ids = fields.Many2many(
         'product.template',
@@ -41,13 +43,13 @@ class ProductTemplate(models.Model):
     )
     saas_module_ids = fields.Many2many(
         'product.template',
-        'saas_bundle_module_rel',
-        'bundle_id',
+        'saas_product_module_rel',
+        'product_tmpl_id',
         'module_id',
         string='Included Modules',
         domain="[('saas_type', '=', 'module')]",
-        help='Modules included in this bundle. All listed modules will be '
-             'installed when a customer purchases this bundle.',
+        help='Modules included in this product. All listed modules will be '
+             'installed when a customer purchases this product.',
     )
     saas_source = fields.Selection(
         [
@@ -71,10 +73,10 @@ class ProductTemplate(models.Model):
     saas_module_count = fields.Integer(
         string='Module Count',
         compute='_compute_saas_module_count',
-        help='Number of modules included in this bundle.',
+        help='Number of modules included in this product.',
     )
 
-    # ========== Repo fields (for bundles with saas_source='custom') ==========
+    # ========== Repo fields (for products with saas_source='custom') ==========
     repo_url = fields.Char(
         string='Repository URL',
         help='Git clone URL (HTTPS). e.g. https://github.com/user/repo.git',
@@ -121,14 +123,14 @@ class ProductTemplate(models.Model):
     ]
 
     def unlink(self):
-        """When deleting a bundle, also delete its linked version repo and custom modules."""
+        """When deleting a product, also delete its linked version repo and custom modules."""
         if self.env.context.get('skip_repo_cleanup'):
             return super().unlink()
 
         repos_to_delete = self.env['saas.version.repo']
         modules_to_delete = self.env['product.template']
         for rec in self:
-            if rec.saas_type == 'bundle' and rec.saas_source_repo_id:
+            if rec.saas_type == 'product' and rec.saas_source_repo_id:
                 repo = rec.saas_source_repo_id
                 repos_to_delete |= repo
                 # Collect custom modules sourced from this repo
@@ -154,7 +156,7 @@ class ProductTemplate(models.Model):
     # ========== Repo Actions ==========
 
     def _ensure_repo(self):
-        """Ensure a saas.version.repo record exists for this bundle and sync fields."""
+        """Ensure a saas.version.repo record exists for this product and sync fields."""
         self.ensure_one()
         if not self.repo_url:
             raise UserError(_("Repository URL is required."))
@@ -175,7 +177,7 @@ class ProductTemplate(models.Model):
         if repo:
             repo.write(vals)
         else:
-            vals['bundle_id'] = self.id
+            vals['product_id'] = self.id
             repo = VersionRepo.create(vals)
             self.saas_source_repo_id = repo
 
@@ -188,24 +190,73 @@ class ProductTemplate(models.Model):
         self.repo_error = repo.error_message
 
     def action_clone_repo(self):
-        """Clone the repository on the server."""
+        """Clone the repository on the server (async)."""
         self.ensure_one()
         self.saas_source = 'custom'
-        repo = self._ensure_repo()
+        self._ensure_repo()
+        run_in_background(
+            self, '_do_clone_repo',
+            error_method='_on_repo_background_error',
+            thread_name='saas_clone_repo_%s' % self.id,
+        )
+
+    def _do_clone_repo(self):
+        """Clone repo (runs in background thread)."""
+        self.ensure_one()
+        repo = self.saas_source_repo_id
+        if not repo:
+            raise UserError(_("No repository linked."))
         repo.action_clone_repo()
         self._sync_from_repo(repo)
 
     def action_pull_repo(self):
-        """Git pull the repository."""
+        """Git pull the repository (async)."""
         self.ensure_one()
         repo = self.saas_source_repo_id
         if not repo:
-            raise UserError(_("No repository linked to this bundle."))
+            raise UserError(_("No repository linked to this product."))
+        run_in_background(
+            self, '_do_pull_repo',
+            error_method='_on_repo_background_error',
+            thread_name='saas_pull_repo_%s' % self.id,
+        )
+
+    def _do_pull_repo(self):
+        """Pull repo (runs in background thread)."""
+        self.ensure_one()
+        repo = self.saas_source_repo_id
         repo.action_pull_repo()
         self._sync_from_repo(repo)
 
+    def _on_repo_background_error(self, exception):
+        """Handle background repo operation failure."""
+        self.repo_state = 'error'
+        self.repo_error = str(exception)
+
     def action_fetch_repo_modules(self):
-        """Scan the cloned repo for modules and populate this bundle."""
+        """Scan the cloned repo for modules and populate this product (async)."""
+        self.ensure_one()
+        repo = self.saas_source_repo_id
+        if not repo or repo.state != 'cloned':
+            raise UserError(_("Repository must be cloned first."))
+        run_in_background(
+            self, '_do_fetch_repo_modules',
+            error_method='_on_repo_background_error',
+            thread_name='saas_fetch_repo_modules_%s' % self.id,
+        )
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _("Fetching Modules"),
+                'message': _("Module fetch is running in the background. Please refresh to see results."),
+                'type': 'info',
+                'sticky': False,
+            },
+        }
+
+    def _do_fetch_repo_modules(self):
+        """Scan the cloned repo for modules (runs in background thread)."""
         self.ensure_one()
         repo = self.saas_source_repo_id
         if not repo or repo.state != 'cloned':
@@ -312,7 +363,7 @@ class ProductTemplate(models.Model):
         if to_remove:
             to_remove.unlink()
 
-        # Update this bundle's included modules
+        # Update this product's included modules
         repo_modules = ProductTemplate.search([
             ('saas_source_repo_id', '=', repo.id),
             ('saas_type', '=', 'module'),

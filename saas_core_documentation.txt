@@ -1,0 +1,781 @@
+================================================================================
+                    SAAS CORE MODULE - COMPLETE DOCUMENTATION
+                    Odoo 18 Custom Module for SaaS Platform
+================================================================================
+
+MODULE: saas_core (SaaS Instance Manager)
+VERSION: 18.0.4.0.0
+CATEGORY: SaaS
+LICENSE: LGPL-3
+AUTHOR: SaaS Platform
+DEPENDS: base, mail, sale
+PYTHON DEPS: paramiko, jinja2, boto3, google-cloud-storage
+
+================================================================================
+1. WHAT THIS MODULE DOES
+================================================================================
+
+This is a full SaaS platform manager built as an Odoo 18 module. It allows you
+to provision, manage, and monitor multi-tenant Odoo instances running in Docker
+containers on remote servers -- all from within the Odoo UI.
+
+Key capabilities:
+- Provision Odoo instances as Docker containers on remote servers via SSH
+- Full lifecycle: deploy, start, stop, restart, suspend, redeploy, delete
+- Automatic PostgreSQL database creation on separate DB servers
+- Nginx reverse proxy with automatic SSL certificates (Certbot)
+- Module marketplace: fetch modules from Docker images, organize into products
+- Custom Git repositories: clone, pull, scan for modules
+- Cloud backups to S3, Google Cloud Storage, or DigitalOcean Spaces
+- Resource monitoring: CPU, RAM, disk, DB size
+- Storage limit enforcement with automatic suspension
+- Live Docker log streaming via Server-Sent Events
+- Sales integration: modules and products are standard Odoo products
+
+================================================================================
+2. FILE STRUCTURE
+================================================================================
+
+saas_core/
+  __manifest__.py                 Module metadata and dependencies
+  __init__.py                     Module init
+  utils.py                        SSH connection class + background task helper
+
+  models/
+    __init__.py
+    saas_instance.py              Main instance model (deploy, lifecycle, etc.)
+    saas_plan.py                  Resource plans (CPU/RAM/storage limits)
+    saas_ssh_key_pair.py          SSH key storage
+    saas_docker_server.py         Docker host server config
+    saas_docker_container.py      Docker container tracking
+    saas_db_server.py             PostgreSQL server config
+    saas_odoo_version.py          Odoo version + Docker image config
+    saas_domain.py                Base domain for subdomains
+    saas_instance_backup.py       Backup model (S3/GCS)
+    saas_instance_module_line.py  Module/product installation lines
+    saas_instance_repo.py         Instance-level custom Git repos
+    saas_version_repo.py          Version-level shared Git repos
+    product_template.py           Extended product.template for modules/products
+    res_config_settings.py        Module settings (ports, backup config)
+
+  views/
+    saas_instance_views.xml       Instance list + form views
+    saas_plan_views.xml           Plan views
+    saas_docker_server_views.xml  Docker server views
+    saas_db_server_views.xml      DB server views
+    saas_domain_views.xml         Domain views
+    saas_odoo_version_views.xml   Version views (with module/product tabs)
+    product_template_views.xml    Module + product views (kanban, list, form)
+    saas_ssh_key_pair_views.xml   SSH key views
+    saas_docker_container_views.xml  Container views
+    res_config_settings_views.xml Settings page
+    saas_menus.xml                Menu structure
+
+  wizards/
+    __init__.py
+    saas_config_viewer.py         Transient model for displaying config files
+    saas_config_viewer_views.xml  Popup wizard view
+
+  controllers/
+    __init__.py
+    container_logs.py             SSE endpoint for live Docker log streaming
+
+  templates/
+    docker-compose.yml.jinja      Docker Compose template
+    odoo.conf.jinja               Odoo configuration template
+    nginx_new_odoo_versions.jinja Nginx config for Odoo 16+ (/websocket)
+    nginx_old_odoo_versions.jinja Nginx config for Odoo <= 15 (/longpolling)
+
+  static/src/components/container_logs/
+    container_logs.js             OWL component for live log viewer
+    container_logs.xml            OWL template for log viewer UI
+
+  data/
+    ir_config_parameter.xml       Default starting port (32000)
+    saas_backup_cron.xml          Daily auto-backup cron
+    saas_storage_check_cron.xml   Daily storage limit check cron
+    saas_usage_refresh_cron.xml   10-minute resource usage refresh cron
+
+  security/
+    saas_security.xml             User/Manager groups + record rules
+    ir.model.access.csv           Model-level access control (26 entries)
+
+  migrations/
+    18.0.2.0.0/pre-migrate.py
+    18.0.4.0.0/pre-migrate.py
+
+================================================================================
+3. DATA MODELS (DETAILED)
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1  saas.instance  (saas_instance.py)  --  THE MAIN MODEL
+--------------------------------------------------------------------------------
+
+The central model. Represents one Odoo instance = one Docker container + one
+PostgreSQL database + one Nginx vhost + one SSL certificate.
+
+FIELDS:
+  Identity:
+    subdomain        Char      Unique subdomain prefix (e.g. "acme")
+    domain_id        M2O       -> saas.based.domain (e.g. "saas.example.com")
+    name             Char      Computed: subdomain.domain (e.g. "acme.saas.example.com")
+    partner_id       M2O       -> res.partner  (customer)
+    url              Char      Computed: https://name
+    plan_id          M2O       -> saas.plan
+
+  Infrastructure:
+    odoo_version_id  M2O       -> saas.odoo.version (Docker image + version)
+    docker_server_id M2O       -> saas.container.physical.server
+    db_server_id     M2O       -> saas.psql.physical.server
+    xmlrpc_port      Integer   Host port for Odoo HTTP (auto-assigned)
+    longpolling_port Integer   Host port for websocket (auto-assigned)
+
+  Credentials (generated automatically):
+    admin_password   Char      Odoo master password
+    db_user          Char      PostgreSQL role
+    db_password      Char      PostgreSQL password
+
+  Modules:
+    module_line_ids        O2M  -> saas.instance.module.line (all install requests)
+    product_line_ids       O2M  -> saas.instance.module.line (filtered: products only)
+    single_module_line_ids O2M  -> saas.instance.module.line (filtered: modules only)
+    installed_module_ids   M2M  -> product.product (successfully installed)
+
+  Resource Usage (updated by cron every 10 min):
+    cpu_usage          Char    e.g. "2.35%"
+    ram_usage          Char    e.g. "256MiB / 1GiB"
+    ram_percent        Char    e.g. "25.00%"
+    disk_usage         Char    e.g. "1.2 GB"
+    db_size            Char    e.g. "500 MB"
+    total_storage      Char    disk + db combined
+    usage_last_updated Datetime
+
+  Other:
+    state              Selection  draft/provisioning/running/stopped/failed/
+                                  suspended/cancelled
+    provisioning_log   Text       Timestamped operation log
+    extra_config       Text       Additional odoo.conf key=value lines
+    repo_ids           O2M        -> saas.instance.repo (custom Git repos)
+    backup_ids         O2M        -> saas.instance.backup
+
+STATE MACHINE:
+    draft --[deploy]--> provisioning --[success]--> running
+                                     --[error]---> failed
+    running --[stop]------> stopped
+    running --[suspend]---> suspended
+    running --[redeploy]--> provisioning --> running
+    stopped/suspended --[restart]--> running
+    any (except provisioning) --[delete]--> cancelled
+    failed/cancelled --[reset]--> draft
+
+KEY METHODS:
+    action_deploy()          Validate + queue background deployment
+    _do_deploy()             Create dirs, provision PG, render configs,
+                             start container, setup Nginx+SSL
+    action_stop()            Queue background stop
+    action_restart()         Queue background restart
+    action_suspend()         Queue background suspend
+    action_redeploy()        Queue background redeploy (clone repos, pull,
+                             update configs, install modules, restart)
+    action_delete_instance() Queue background deletion (compose down, rm dirs,
+                             drop PG, delete backups, remove nginx)
+    action_create_backup()   Queue background backup
+    action_config()          Read odoo.conf and show in popup
+    action_docker_compose()  Read docker-compose.yml and show in popup
+    action_view_logs()       Open live log stream (SSE)
+    action_refresh_usage()   Fetch CPU/RAM/disk/DB size (synchronous)
+    _cron_refresh_usage()    Cron: refresh usage for all running instances
+    _cron_check_storage_limits()  Cron: suspend instances over storage limit
+
+BACKGROUND PATTERN:
+    All long-running SSH operations run in background threads:
+    1. Action method validates + sets state to 'provisioning'
+    2. Calls run_in_background() which uses postcommit to start thread
+    3. Thread opens its own DB cursor, executes work, commits
+    4. On error: rolls back, opens new cursor, sets error state
+
+--------------------------------------------------------------------------------
+3.2  saas.plan  (saas_plan.py)
+--------------------------------------------------------------------------------
+
+Resource plans that define limits for instances.
+
+FIELDS:
+    name           Char     Plan name (e.g. "Basic", "Pro")
+    cpu_limit      Float    CPU cores (e.g. 0.5, 1.0, 2.0), default 1.0
+    ram_limit      Char     RAM limit (e.g. "512m", "1g"), default "1g"
+    storage_limit  Float    Max total storage in GB, default 5.0
+    max_backups    Integer  Max backups to keep, default 7
+    instance_count Integer  Computed: number of instances on this plan
+
+--------------------------------------------------------------------------------
+3.3  saas.ssh.key.pair  (saas_ssh_key_pair.py)
+--------------------------------------------------------------------------------
+
+SSH private key storage for authenticating to servers.
+
+FIELDS:
+    name                 Char      Label (e.g. "Production Key")
+    type                 Selection rsa/dsa/ecdsa/ed25519
+    private_key_file     Binary    PEM-encoded private key
+    private_key_filename Char      Original filename
+
+--------------------------------------------------------------------------------
+3.4  saas.container.physical.server  (saas_docker_server.py)
+--------------------------------------------------------------------------------
+
+Docker host server configuration.
+
+FIELDS:
+    name                Char      Label (e.g. "EU Production 1")
+    ssh_key_pair_id     M2O       -> saas.ssh.key.pair
+    ssh_user            Char      OS user, default "root"
+    ssh_port            Integer   SSH port, default 22
+    ip_v4               Char      Public IPv4
+    private_ip_v4       Char      Private IPv4
+    ssh_connect_using   Selection public_ip / private_ip
+    docker_base_path    Char      Root dir for instances, default "/home/odoo"
+    docker_container_ids O2M      -> saas.docker.container
+
+METHODS:
+    _get_ssh_connection()      Return SSHConnection context manager
+    action_test_connection()   Test SSH and show result notification
+    action_refresh_containers() Sync containers from docker ps output
+
+--------------------------------------------------------------------------------
+3.5  saas.psql.physical.server  (saas_db_server.py)
+--------------------------------------------------------------------------------
+
+PostgreSQL server configuration. Same SSH fields as Docker server.
+
+EXTRA FIELDS:
+    psql_port  Integer  PostgreSQL port, default 5432
+
+--------------------------------------------------------------------------------
+3.6  saas.docker.container  (saas_docker_container.py)
+--------------------------------------------------------------------------------
+
+Tracks Docker containers discovered on servers.
+
+FIELDS:
+    server_id    M2O   -> saas.container.physical.server
+    container_id Char   Docker short ID
+    name         Char   Container name
+    image        Char   Docker image:tag
+    status       Char   e.g. "Up 3 hours"
+    ports        Char   Port mappings
+
+METHODS:
+    action_stop_container()
+    action_restart_container()
+    action_view_logs()
+
+--------------------------------------------------------------------------------
+3.7  saas.odoo.version  (saas_odoo_version.py)
+--------------------------------------------------------------------------------
+
+Odoo version configuration with its Docker image.
+
+FIELDS:
+    name             Char      Version string (e.g. "18.0")
+    docker_image     Char      Image repo (e.g. "odoo")
+    docker_image_tag Char      Image tag (e.g. "18.0")
+    nginx_template   Selection new (16+, /websocket) / old (<=15, /longpolling)
+    module_ids       O2M       -> product.template (modules from this image)
+    product_ids      O2M       -> product.template (products for this version)
+    repo_ids         O2M       -> saas.version.repo
+    module_count     Integer   Computed
+
+METHODS:
+    action_fetch_modules()   Scan Docker image for application modules (async).
+                             Runs "docker run --rm IMAGE python3 -c SCAN_SCRIPT"
+                             to discover modules, creates product.template records,
+                             resolves dependencies, fetches icons.
+    _do_fetch_modules()      Background execution of the above
+
+--------------------------------------------------------------------------------
+3.8  saas.based.domain  (saas_domain.py)
+--------------------------------------------------------------------------------
+
+Base domain for instance subdomains.
+
+FIELDS:
+    name  Char  Domain name (e.g. "saas.example.com")
+
+--------------------------------------------------------------------------------
+3.9  saas.instance.backup  (saas_instance_backup.py)
+--------------------------------------------------------------------------------
+
+Instance backups stored in cloud storage.
+
+FIELDS:
+    instance_id         M2O       -> saas.instance
+    name                Char      Backup name (e.g. "backup_2026-03-21_14-30-00")
+    bucket_path         Char      Cloud storage object key
+    size_mb             Float     Backup size in MB
+    state               Selection running/done/failed
+    error_message       Text      Error details
+    download_url        Char      Presigned download URL (7-day expiry)
+    download_url_expiry Datetime  When the URL expires
+
+METHODS:
+    action_download()      Generate/refresh presigned URL and redirect
+    action_delete_backup() Delete from cloud + remove record
+    _perform_backup()      Dump PG + tar instance folder + upload to cloud
+    _cron_backup_all_instances()  Daily cron for all running instances
+    _cleanup_old_backups()        Delete backups exceeding plan's max_backups
+
+SUPPORTED PROVIDERS:
+    - AWS S3 (via boto3)
+    - DigitalOcean Spaces (S3-compatible via boto3)
+    - Google Cloud Storage (via google-cloud-storage)
+
+BACKUP FLOW:
+    1. Create backup record (state=running)
+    2. SSH to Docker server: pg_dump + tar into /tmp zip
+    3. If presigned PUT URL available: server uploads directly to cloud
+       Otherwise: download zip via SFTP, upload from Odoo
+    4. Set state=done, record size
+    5. On error: set state=failed, store error_message
+
+--------------------------------------------------------------------------------
+3.10  saas.instance.module.line  (saas_instance_module_line.py)
+--------------------------------------------------------------------------------
+
+Installation request linking an instance to a product or module.
+
+FIELDS:
+    instance_id     M2O       -> saas.instance
+    odoo_version_id M2O       Related from instance (for domain filtering)
+    product_id      M2O       -> product.product (product to install)
+    module_id       M2O       -> product.product (individual module)
+    product_image   Image     Related from product
+    module_image    Image     Related from module
+    state           Selection pending/installed/failed
+    module_source   Selection Related: standard/custom
+    log             Text      Error log on failure
+
+METHODS:
+    _get_all_technical_names()  Returns set of all module technical names
+                                 including dependencies from the product/module
+
+--------------------------------------------------------------------------------
+3.11  saas.instance.repo  (saas_instance_repo.py)
+--------------------------------------------------------------------------------
+
+Instance-level custom Git repository (specific to one instance).
+
+FIELDS:
+    instance_id   M2O   -> saas.instance
+    repo_url      Char  Git clone URL (HTTPS)
+    branch        Char  Branch, default "main"
+    github_token  Char  PAT for private repos
+    addons_subdir Char  Subdirectory with addons
+    state         Selection  pending/cloned/error
+    last_pull     Datetime
+    error_message Text
+
+SERVER PATH: custom_repos/{version}/{subdomain}/{repo_name}
+CONTAINER PATH: /mnt/repos/{repo_name}
+
+METHODS:
+    action_clone_repo()  Clone + update instance config + restart (async)
+    action_pull_repo()   Git pull (async)
+    action_remove_repo() Remove from server + update instance
+    All actions run in background threads.
+
+--------------------------------------------------------------------------------
+3.12  saas.version.repo  (saas_version_repo.py)
+--------------------------------------------------------------------------------
+
+Version-level shared Git repository (shared across instances of same version).
+Linked to a product.template record.
+
+FIELDS:
+    version_id    M2O   -> saas.odoo.version
+    repo_url      Char  Git clone URL
+    branch        Char  Branch, default "main"
+    github_token  Char  PAT
+    addons_subdir Char  Subdirectory with addons
+    state         Selection  pending/cloned/error
+    product_id    M2O   -> product.template (auto-created product)
+    last_pull     Datetime
+    error_message Text
+
+SERVER PATH: product_repos/{version}/{repo_name}
+CONTAINER PATH: /mnt/version-repos/{repo_name}
+
+METHODS:
+    action_clone_repo()  Clone repo on Docker server
+    action_pull_repo()   Git pull
+    unlink()             Delete from server, clean up products/modules,
+                         restart affected instances
+
+--------------------------------------------------------------------------------
+3.13  product.template (inherited)  (product_template.py)
+--------------------------------------------------------------------------------
+
+Extends Odoo's product.template to represent SaaS modules and products.
+
+FIELDS:
+    saas_type           Selection  module / product
+    technical_name      Char       Odoo module name (e.g. "sale")
+    saas_odoo_version_id M2O      -> saas.odoo.version
+    saas_dependency_ids M2M       -> product.template (module dependencies)
+    saas_module_ids     M2M       -> product.template (modules in a product)
+    saas_source         Selection  standard / custom
+    saas_source_repo_id M2O       -> saas.version.repo
+    saas_author         Char       Module author
+    saas_module_count   Integer    Computed: count of included modules
+
+    Repo fields (for custom products):
+    repo_url, repo_branch, repo_github_token, repo_addons_subdir,
+    repo_state, repo_last_pull, repo_error
+
+MODULE vs PRODUCT:
+    - A "module" is an individual Odoo module (e.g. sale, account, crm).
+      Fetched from Docker image or from a custom repo.
+    - A "product" is a package of modules sold together. It groups multiple
+      modules and can be linked to a custom Git repository.
+
+METHODS:
+    action_clone_repo()          Clone custom repo (async)
+    action_pull_repo()           Git pull repo (async)
+    action_fetch_repo_modules()  Scan repo for modules, create records (async)
+    unlink()                     Clean up linked repo + custom modules
+
+SQL CONSTRAINTS:
+    technical_name must be unique per Odoo version
+
+--------------------------------------------------------------------------------
+3.14  res.config.settings (inherited)  (res_config_settings.py)
+--------------------------------------------------------------------------------
+
+Settings page under SaaS Manager > Configuration > Settings.
+
+FIELDS:
+    saas_default_instance_starting_port  Integer  Starting port (default 32000)
+
+    Backup settings:
+    saas_backup_provider       Selection  aws / gcs / digitalocean
+    saas_backup_bucket_name    Char       Bucket name
+    saas_backup_region         Char       Region (e.g. "us-east-1")
+    saas_backup_access_key     Char       AWS/DO access key
+    saas_backup_secret_key     Char       AWS/DO secret key
+    saas_backup_endpoint       Char       S3-compatible endpoint (for DO)
+    saas_backup_service_account_key_file  Binary  GCP service account JSON
+
+================================================================================
+4. JINJA2 TEMPLATES
+================================================================================
+
+docker-compose.yml.jinja
+-------------------------
+Generates the docker-compose.yml for each instance. Defines:
+- Odoo service with image, ports, volumes, resource limits
+- Volume mounts: config, data, addons, custom repos, version repos
+- CPU and RAM limits from the plan
+- Docker network for the instance
+
+odoo.conf.jinja
+---------------
+Generates the Odoo configuration file. Includes:
+- Database connection (host, port, user, password)
+- Admin master password
+- Proxy mode setting
+- Addons paths (standard + custom repos + version repos)
+- Extra config from the instance's extra_config field
+
+nginx_new_odoo_versions.jinja  (Odoo 16+)
+------------------------------------------
+Nginx reverse proxy with:
+- /websocket location with WebSocket upgrade headers
+- SSL via Certbot certificates
+- HSTS, secure cookies
+- Gzip compression
+- HTTP -> HTTPS redirect
+
+nginx_old_odoo_versions.jinja  (Odoo <= 15)
+--------------------------------------------
+Nginx reverse proxy with:
+- /longpolling location (old Odoo pattern)
+- /web/static/ caching (90 minutes)
+- SSL via Certbot
+- HTTP -> HTTPS redirect
+
+================================================================================
+5. FRONTEND COMPONENTS
+================================================================================
+
+Live Docker Log Viewer (OWL Component)
+---------------------------------------
+File: static/src/components/container_logs/container_logs.js + .xml
+
+- Connects to SSE endpoint: /saas/instance/<id>/logs/stream
+- Displays real-time Docker container logs
+- Dark terminal theme (green text on black)
+- Auto-scrolls with toggle
+- Max 5000 lines in memory
+- Connected/Disconnected status indicator
+- Stop/Start/Clear buttons
+- Auto-reconnects on error
+
+================================================================================
+6. CONTROLLERS (HTTP ENDPOINTS)
+================================================================================
+
+/saas/instance/<instance_id>/logs/stream  (GET, auth=user)
+    Returns SSE stream of Docker container logs for an instance.
+    Reads logs via SSH in 4KB chunks, sends as JSON events.
+    Max timeout: 300 seconds.
+
+/saas/container/<container_id>/logs/stream  (GET, auth=user)
+    Same but for a standalone container (from the container list).
+
+================================================================================
+7. CRON JOBS
+================================================================================
+
+1. SaaS: Auto Backup Instances
+   Frequency: Every 1 day
+   Action: Backup all running instances to cloud storage
+
+2. SaaS: Check Storage Limits
+   Frequency: Every 1 day
+   Action: Suspend instances exceeding their plan's storage limit
+
+3. SaaS: Refresh Resource Usage
+   Frequency: Every 10 minutes
+   Action: Fetch CPU, RAM, disk, DB size for all running instances
+
+================================================================================
+8. SECURITY
+================================================================================
+
+GROUPS:
+  group_saas_user     Read-only access to instances and config
+  group_saas_manager  Full CRUD access (implies user)
+
+RECORD RULES:
+  All instance-related records filtered by company_id.
+  Users see only their company's instances.
+  Managers have full access within their company.
+
+ACCESS CONTROL (26 entries in ir.model.access.csv):
+  Users:  Read-only on instances, backups, lines, plans, servers, etc.
+  Managers: Full CRUD on everything
+  SSH keys and config viewer: managers only
+
+================================================================================
+9. MENU STRUCTURE
+================================================================================
+
+SaaS Manager (root)
+  |-- Instances
+  +-- Configuration
+        |-- Settings
+        |-- Plans
+        |-- Docker Servers
+        |-- Database Servers
+        |-- Base Domains
+        |-- Odoo Versions
+        |-- Odoo Modules
+        +-- Products
+
+================================================================================
+10. KEY WORKFLOWS
+================================================================================
+
+INSTANCE DEPLOYMENT:
+  1. Create instance (draft): set subdomain, domain, customer, plan, version,
+     Docker server, DB server
+  2. Add product/module lines (what to install)
+  3. Click "Deploy" -> state becomes "provisioning"
+  4. Background thread:
+     a. Auto-assigns ports (finds unused pair starting from config port)
+     b. Generates random credentials (db_user, db_password, admin_password)
+     c. Creates directory structure on Docker server via SSH:
+        {base_path}/{partner_code}/{subdomain}/
+          docker-compose.yml, config/odoo.conf, data/odoo/, addons/
+     d. Creates PostgreSQL role + database on DB server via SSH
+     e. Renders docker-compose.yml and odoo.conf from Jinja2 templates
+     f. Starts container: docker compose up -d
+     g. Waits for Odoo to be ready (polls HTTP for 120s)
+     h. Installs base modules via docker compose run
+     i. Installs selected modules (from product/module lines)
+     j. Obtains SSL certificate via Certbot
+     k. Deploys Nginx reverse proxy config
+     l. Sets state = "running"
+     m. Auto-refreshes resource usage
+
+MODULE INSTALLATION (on running instance):
+  1. Add new product/module lines to instance
+  2. Click "Redeploy"
+  3. Background thread:
+     a. Clones any pending custom repos
+     b. Pulls all cloned repos
+     c. Updates docker-compose.yml (adds new volume mounts)
+     d. Updates odoo.conf (adds new addons paths)
+     e. Installs pending modules via docker compose run
+     f. Restarts container
+
+CUSTOM REPOSITORY (instance-level):
+  1. Add repo in instance "Custom Repos" tab (URL, branch, token)
+  2. Click "Clone" -> clones repo on Docker server via SSH
+  3. Click "Pull" -> git pull latest changes
+  4. Redeploy instance to pick up new modules
+
+CUSTOM REPOSITORY (version-level, via Product form):
+  1. Create a Product, fill in Repository URL
+  2. Click "Clone Repo" -> creates saas.version.repo, clones on server
+  3. Click "Fetch Modules & Icons" -> scans repo for application modules,
+     creates product.template records for each found module
+  4. The product can now be installed on any instance of that version
+
+BACKUP FLOW:
+  1. Manual: click "Create Backup" on instance
+  2. Automatic: daily cron for all running instances
+  3. Process:
+     a. pg_dump database on DB server
+     b. Tar instance folder on Docker server
+     c. Upload to configured cloud storage (S3/GCS/DO Spaces)
+     d. Store presigned download URL (7-day expiry)
+  4. Old backups auto-cleaned based on plan's max_backups
+
+================================================================================
+11. BACKGROUND PROCESSING PATTERN
+================================================================================
+
+All long-running SSH operations use a common pattern to avoid blocking the UI:
+
+UTILITY: run_in_background()  (in utils.py)
+
+How it works:
+  1. The action method validates inputs and sets intermediate state
+  2. Calls run_in_background(record, '_do_method', error_method, ...)
+  3. run_in_background uses env.cr.postcommit to ensure the current
+     transaction is committed BEFORE the thread starts
+  4. A daemon thread opens its own DB cursor
+  5. Executes the work method on a fresh record instance
+  6. On success: commits
+  7. On failure: rolls back, opens new cursor, calls error handler
+     (typically reverts state and logs the error)
+
+Operations using this pattern:
+  - Deploy, Redeploy
+  - Stop, Restart, Suspend
+  - Delete Instance
+  - Create Backup
+  - Clone/Pull repos (instance and version level)
+  - Fetch modules from Docker image
+  - Fetch modules from custom repo
+
+================================================================================
+12. DIRECTORY LAYOUT ON SERVERS
+================================================================================
+
+DOCKER SERVER:
+  {docker_base_path}/                          (default: /home/odoo)
+    {partner_code}/{subdomain}/                (instance folder)
+      docker-compose.yml
+      config/odoo.conf
+      data/odoo/                               (Odoo filestore)
+      addons/                                  (extra addons mount)
+    custom_repos/{version}/{subdomain}/        (instance custom repos)
+      {repo_name}/
+    product_repos/{version}/                   (shared version repos)
+      {repo_name}/
+
+INSIDE DOCKER CONTAINER:
+  /mnt/extra-addons/      Standard Odoo addons
+  /mnt/repos/{repo}/      Instance custom repos
+  /mnt/version-repos/{repo}/  Version shared repos
+
+NGINX:
+  /etc/nginx/sites-enabled/{subdomain}   Vhost config
+
+SSL CERTIFICATES:
+  Managed by Certbot at /etc/letsencrypt/
+
+================================================================================
+13. CONFIGURATION PARAMETERS
+================================================================================
+
+System parameters (ir.config_parameter):
+  saas_master.default_instance_starting_port = 32000
+
+Settings (via SaaS Manager > Configuration > Settings):
+  Backup provider: aws / gcs / digitalocean
+  Bucket name, region, access key, secret key
+  Endpoint (for DigitalOcean Spaces)
+  Service account JSON (for GCS)
+
+================================================================================
+14. WHAT HAS BEEN DONE RECENTLY
+================================================================================
+
+1. RENAMED "BUNDLES" TO "PRODUCTS":
+   Changed the saas_type selection value from 'bundle' to 'product' across
+   all Python models, XML views, help texts, comments, field names, and
+   menu items. Affected files: product_template.py, saas_version_repo.py,
+   saas_instance_module_line.py, saas_instance.py, saas_odoo_version.py,
+   __manifest__.py, and all related XML views.
+
+   Key renames:
+   - Selection: ('bundle','Bundle') -> ('product','Product')
+   - Field: bundle_id -> product_id (on saas.version.repo)
+   - Field: bundle_line_ids -> product_line_ids (on saas.instance)
+   - Table: saas_bundle_module_rel -> saas_product_module_rel
+   - XML IDs: saas_bundle_* -> saas_product_*
+   - Menu: "Module Bundles" -> "Products"
+   - Path: bundle_repos/ -> product_repos/
+
+   NOTE: This requires a database migration if there is existing data
+   with saas_type='bundle' or existing bundle_repos/ directories.
+
+2. BACKGROUND PROCESSING FOR ALL OPERATIONS:
+   Converted all blocking SSH operations to run in background threads:
+   - Created run_in_background() utility in utils.py
+   - Converted: deploy, redeploy, stop, restart, suspend, delete,
+     create backup, clone repo, pull repo, fetch modules
+   - Fixed action_redeploy to use postcommit (was missing)
+   - Consolidated deploy/redeploy to use the shared utility
+   - Added _on_background_error() for state recovery on failure
+
+3. DOCKER COMPOSE VIEWER BUTTON:
+   Added "Docker Compose" button next to "Config" button on instance form.
+   Reads docker-compose.yml via SSH and displays in the same popup wizard.
+
+4. AUTOMATIC RESOURCE USAGE REFRESH:
+   - Added _safe_refresh_usage() method (silently catches errors)
+   - Added _cron_refresh_usage() cron method (every 10 minutes)
+   - Auto-refresh after deploy, restart, and redeploy complete
+   - Created saas_usage_refresh_cron.xml data file
+   - Registered in __manifest__.py
+
+================================================================================
+15. POTENTIAL NEXT STEPS / AREAS FOR IMPROVEMENT
+================================================================================
+
+- Database migration script for the bundle->product rename
+- Customer portal: let customers see their instances, trigger backups,
+  view resource usage
+- Billing integration: auto-create invoices based on plan and usage
+- Auto-scaling: automatically upgrade plans when limits are approached
+- Multi-server load balancing: distribute instances across servers
+- Health checks: periodic pings to detect unresponsive instances
+- Email notifications: alert customers/admins on state changes or failures
+- Instance cloning/duplication
+- Restore from backup functionality
+- DNS management integration (auto-create DNS records)
+- WebSocket-based real-time UI updates (bus.bus) so the form auto-refreshes
+  when background operations complete
+- Rate limiting on instance creation
+- Instance usage analytics and dashboards
+- Support for non-Docker deployments (e.g. Kubernetes)
+- Automated testing suite
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================

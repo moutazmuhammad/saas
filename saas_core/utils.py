@@ -3,10 +3,67 @@ import logging
 import os
 import stat
 import tempfile
+import threading
 
 import paramiko
 
 _logger = logging.getLogger(__name__)
+
+
+def run_in_background(record, method_name, method_args=(),
+                      error_method=None, error_args=(),
+                      thread_name=None):
+    """Run record.method_name(*args) in a background thread with its own cursor.
+
+    On success the cursor is committed.  On failure it is rolled back and,
+    if *error_method* is given, ``record.error_method(exception, *error_args)``
+    is called inside a fresh cursor that is then committed.
+
+    Uses ``postcommit`` so the current transaction is committed before the
+    thread starts, ensuring the thread sees the latest DB state.
+    """
+    dbname = record.env.cr.dbname
+    uid = record.env.uid
+    context = dict(record.env.context)
+    model_name = record._name
+    record_id = record.id
+
+    def _target():
+        import odoo
+        from odoo import api as odoo_api
+        db_registry = odoo.registry(dbname)
+        with db_registry.cursor() as new_cr:
+            new_env = odoo_api.Environment(new_cr, uid, context)
+            rec = new_env[model_name].browse(record_id)
+            try:
+                getattr(rec, method_name)(*method_args)
+                new_cr.commit()
+            except Exception as e:
+                new_cr.rollback()
+                if error_method:
+                    try:
+                        with db_registry.cursor() as err_cr:
+                            err_env = odoo_api.Environment(err_cr, uid, context)
+                            err_rec = err_env[model_name].browse(record_id)
+                            getattr(err_rec, error_method)(e, *error_args)
+                            err_cr.commit()
+                    except Exception:
+                        _logger.exception(
+                            "Error handler failed for %s#%s",
+                            model_name, record_id,
+                        )
+                _logger.exception(
+                    "Background %s failed for %s#%s",
+                    method_name, model_name, record_id,
+                )
+
+    name = thread_name or 'saas_bg_%s_%s' % (method_name, record_id)
+
+    def _start():
+        t = threading.Thread(target=_target, name=name, daemon=True)
+        t.start()
+
+    record.env.cr.postcommit.add(_start)
 
 SSH_COMMAND_TIMEOUT = 120  # seconds
 SSH_CONNECT_TIMEOUT = 30  # seconds
