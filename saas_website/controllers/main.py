@@ -16,43 +16,79 @@ _ACTIVE_STATES = (
 
 class SaasWebsite(http.Controller):
 
-    # ==================== Public Pricing Page ====================
+    # ------------------------------------------------------------------
+    #  Helpers
+    # ------------------------------------------------------------------
 
-    @http.route('/plans', type='http', auth='public', website=True, sitemap=True)
-    def plans_page(self, **kw):
-        plans = request.env['saas.plan'].sudo().search([
-            ('product_id', '!=', False),
+    def _get_trial_info(self):
+        """Return (trial_available, trial_days) for the current user."""
+        if request.env.user._is_public():
+            return False, 0
+        partner = request.env.user.partner_id.sudo()
+        trial_days = int(request.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.trial_days', '14',
+        ))
+        trial_available = not partner.saas_trial_used and trial_days > 0
+        return trial_available, trial_days
+
+    # ==================================================================
+    #  1. Services Catalog  –  /services
+    # ==================================================================
+
+    @http.route('/services', type='http', auth='public', website=True, sitemap=True)
+    def services_page(self, **kw):
+        """Browse all published SaaS service products."""
+        products = request.env['saas.product'].sudo().search([
+            ('is_published', '=', True),
         ], order='sequence, id')
 
-        # Check trial eligibility for logged-in users
-        trial_available = False
-        trial_days = 0
-        if not request.env.user._is_public():
-            partner = request.env.user.partner_id.sudo()
-            trial_days = int(request.env['ir.config_parameter'].sudo().get_param(
-                'saas_master.trial_days', '14',
-            ))
-            trial_available = not partner.saas_trial_used and trial_days > 0
+        return request.render('saas_website.services_page', {
+            'products': products,
+        })
 
-        return request.render('saas_website.plans_page', {
+    # ==================================================================
+    #  2. Service Detail / Plan Selection  –  /services/<id>
+    # ==================================================================
+
+    @http.route('/services/<int:product_id>', type='http', auth='public',
+                website=True, sitemap=True)
+    def service_plans(self, product_id, **kw):
+        """Show available plans for the selected service."""
+        product = request.env['saas.product'].sudo().browse(product_id)
+        if not product.exists() or not product.is_published:
+            return request.redirect('/services')
+
+        plans = product.plan_ids.sorted('sequence')
+
+        trial_available, trial_days = self._get_trial_info()
+
+        return request.render('saas_website.service_plans_page', {
+            'product': product,
             'plans': plans,
             'trial_available': trial_available,
             'trial_days': trial_days,
         })
 
-    # ==================== Configure Instance ====================
+    # ==================================================================
+    #  3. Configure Instance  –  /services/<id>/plans/<plan_id>/configure
+    # ==================================================================
 
-    @http.route('/plans/<int:plan_id>/configure', type='http', auth='user', website=True)
-    def plan_configure(self, plan_id, error=None, **kw):
+    @http.route('/services/<int:product_id>/plans/<int:plan_id>/configure',
+                type='http', auth='user', website=True)
+    def service_configure(self, product_id, plan_id, error=None, **kw):
+        product = request.env['saas.product'].sudo().browse(product_id)
         plan = request.env['saas.plan'].sudo().browse(plan_id)
-        if not plan.exists() or not plan.product_id:
-            return request.redirect('/plans')
+        if (not product.exists() or not product.is_published
+                or not plan.exists()
+                or plan.saas_product_id.id != product.id):
+            return request.redirect('/services')
 
         is_trial = kw.get('trial') == '1'
         domains = request.env['saas.based.domain'].sudo().search([])
         versions = request.env['saas.odoo.version'].sudo().search([])
 
-        return request.render('saas_website.plan_configure_form', {
+        return request.render('saas_website.service_configure_form', {
+            'product': product,
             'plan': plan,
             'domains': domains,
             'versions': versions,
@@ -61,47 +97,55 @@ class SaasWebsite(http.Controller):
             'form_values': kw,
         })
 
-    # ==================== Process Order ====================
+    # ==================================================================
+    #  4. Process Order  –  /services/order
+    # ==================================================================
 
-    @http.route('/plans/order', type='http', auth='user', website=True, methods=['POST'], csrf=True)
-    def plan_order(self, **post):
+    @http.route('/services/order', type='http', auth='user', website=True,
+                methods=['POST'], csrf=True)
+    def service_order(self, **post):
+        product_id = int(post.get('product_id', 0))
         plan_id = int(post.get('plan_id', 0))
         subdomain = (post.get('subdomain') or '').strip().lower()
         domain_id = int(post.get('domain_id', 0))
         version_id = int(post.get('odoo_version_id', 0))
 
+        product = request.env['saas.product'].sudo().browse(product_id)
         plan = request.env['saas.plan'].sudo().browse(plan_id)
-        if not plan.exists() or not plan.product_id:
-            return request.redirect('/plans')
+        if (not product.exists() or not product.is_published
+                or not plan.exists()
+                or plan.saas_product_id.id != product.id):
+            return request.redirect('/services')
 
-        # Validate subdomain
+        # --- Subdomain validation ---
         if not subdomain or not SUBDOMAIN_RE.match(subdomain):
-            return self.plan_configure(
-                plan_id,
-                error=_("Invalid subdomain. Use only lowercase letters, digits, and hyphens "
-                        "(max 63 chars, must start/end with alphanumeric)."),
+            return self.service_configure(
+                product_id, plan_id,
+                error=_("Invalid subdomain. Use only lowercase letters, digits, "
+                        "and hyphens (max 63 chars, must start/end with alphanumeric)."),
                 **post,
             )
 
-        # Check uniqueness — only active instances block the subdomain
+        # Check uniqueness
         existing = request.env['saas.instance'].sudo().search([
             ('subdomain', '=', subdomain),
             ('domain_id', '=', domain_id),
             ('state', 'in', _ACTIVE_STATES),
         ], limit=1)
         if existing:
-            return self.plan_configure(
-                plan_id,
-                error=_("The subdomain '%s' is already taken. Please choose another.") % subdomain,
+            return self.service_configure(
+                product_id, plan_id,
+                error=_("The subdomain '%s' is already taken. "
+                        "Please choose another.") % subdomain,
                 **post,
             )
 
-        # Validate references
+        # --- Validate references ---
         domain = request.env['saas.based.domain'].sudo().browse(domain_id)
         version = request.env['saas.odoo.version'].sudo().browse(version_id)
         if not domain.exists() or not version.exists():
-            return self.plan_configure(
-                plan_id,
+            return self.service_configure(
+                product_id, plan_id,
                 error=_("Please select a valid domain and Odoo version."),
                 **post,
             )
@@ -109,7 +153,7 @@ class SaasWebsite(http.Controller):
         partner = request.env.user.partner_id
         is_trial = post.get('is_trial') == '1'
 
-        # ---- Rate limiting: max instances per user ----
+        # --- Rate limiting ---
         max_instances = int(request.env['ir.config_parameter'].sudo().get_param(
             'saas_master.max_instances_per_user', '5',
         ))
@@ -119,57 +163,53 @@ class SaasWebsite(http.Controller):
                 ('state', 'in', _ACTIVE_STATES),
             ])
             if active_count >= max_instances:
-                return self.plan_configure(
-                    plan_id,
+                return self.service_configure(
+                    product_id, plan_id,
                     error=_("You have reached the maximum number of instances (%d). "
-                            "Please delete or cancel an existing instance first.") % max_instances,
+                            "Please delete or cancel an existing one first.") % max_instances,
                     **post,
                 )
 
-        # ---- Trial: one per client (checked atomically in create()) ----
+        # --- Trial: one per client ---
         if is_trial:
             partner_sudo = partner.sudo()
             if partner_sudo.saas_trial_used:
-                return self.plan_configure(
-                    plan_id,
+                return self.service_configure(
+                    product_id, plan_id,
                     error=_("You have already used your free trial."),
                     **post,
                 )
 
-        # ---- Validate infrastructure exists before creating ----
+        # --- Validate infrastructure ---
         docker_servers = request.env['saas.container.physical.server'].sudo().search([], limit=1)
         db_servers = request.env['saas.psql.physical.server'].sudo().search([], limit=1)
         if not docker_servers or not db_servers:
-            return self.plan_configure(
-                plan_id,
+            return self.service_configure(
+                product_id, plan_id,
                 error=_("Service is temporarily unavailable. "
                         "No infrastructure servers are configured. "
                         "Please contact support."),
                 **post,
             )
 
-        # Create instance
+        # --- Create instance ---
         try:
             vals = {
                 'subdomain': subdomain,
                 'domain_id': domain.id,
                 'partner_id': partner.id,
+                'saas_product_id': product.id,
                 'plan_id': plan.id,
                 'odoo_version_id': version.id,
             }
             if is_trial:
                 vals['is_trial'] = True
 
-            # create() handles:
-            # - SELECT FOR UPDATE on partner for trial atomicity
-            # - _sync_partner_trial() to set saas_trial_used + end date
-            # - access_token generation
             instance = request.env['saas.instance'].sudo().create(vals)
             instance._auto_assign_infrastructure()
 
             if is_trial:
                 # Trial: skip billing, deploy immediately
-                # NOTE: partner trial flags already set by _sync_partner_trial()
                 instance.action_deploy()
                 return request.redirect('/my/instances/%s?access_token=%s' % (
                     instance.id, instance.access_token,
@@ -178,7 +218,7 @@ class SaasWebsite(http.Controller):
             # Paid: billing + auto-deploy flow
             instance.action_confirm_and_bill()
 
-            # If free plan: action_confirm_and_bill auto-deployed, go to portal
+            # If free plan: auto-deployed already
             if instance.state in ('provisioning', 'running', 'paid'):
                 return request.redirect('/my/instances/%s?access_token=%s' % (
                     instance.id, instance.access_token,
@@ -194,13 +234,23 @@ class SaasWebsite(http.Controller):
             ))
 
         except (UserError, ValidationError) as e:
-            return self.plan_configure(
-                plan_id,
+            return self.service_configure(
+                product_id, plan_id,
                 error=str(e),
                 **post,
             )
 
-    # ==================== Subdomain Availability Check ====================
+    # ==================================================================
+    #  Legacy: keep /plans as redirect to /services
+    # ==================================================================
+
+    @http.route('/plans', type='http', auth='public', website=True, sitemap=False)
+    def plans_page_redirect(self, **kw):
+        return request.redirect('/services', code=301)
+
+    # ==================================================================
+    #  Subdomain Availability Check (unchanged)
+    # ==================================================================
 
     @http.route('/saas/check-subdomain', type='json', auth='public', website=True)
     def check_subdomain(self, subdomain='', domain_id=0):
@@ -214,7 +264,6 @@ class SaasWebsite(http.Controller):
                 'message': _("Invalid format. Use lowercase letters, digits, and hyphens."),
             }
 
-        # Only active instances block subdomain reuse
         existing = request.env['saas.instance'].sudo().search([
             ('subdomain', '=', subdomain),
             ('domain_id', '=', int(domain_id or 0)),

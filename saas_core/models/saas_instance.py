@@ -47,6 +47,7 @@ class SaasInstance(models.Model):
     domain_id = fields.Many2one(
         'saas.based.domain',
         string='Base Domain',
+        default=lambda self: self.env['saas.based.domain'].search([], limit=1),
         help='The parent domain under which this instance is hosted '
              '(e.g. "odoo.example.com").',
     )
@@ -69,7 +70,14 @@ class SaasInstance(models.Model):
         help='Public HTTPS URL to access this instance.',
     )
 
-    # ========== Plan ==========
+    # ========== Service & Plan ==========
+    saas_product_id = fields.Many2one(
+        'saas.product',
+        string='Service',
+        tracking=True,
+        help='The service/product this instance provides '
+             '(e.g. "Pharmacy Management", "POS").',
+    )
     plan_id = fields.Many2one(
         'saas.plan',
         string='Plan',
@@ -128,37 +136,6 @@ class SaasInstance(models.Model):
         readonly=True,
         groups='saas_core.group_saas_manager',
         help='Password for the PostgreSQL role used by this instance.',
-    )
-
-    # ========== Modules ==========
-    module_line_ids = fields.One2many(
-        'saas.instance.module.line',
-        'instance_id',
-        string='Installation Lines',
-        help='All module and product installation requests for this instance.',
-    )
-    product_line_ids = fields.One2many(
-        'saas.instance.module.line',
-        'instance_id',
-        string='Products to Install',
-        domain=[('product_id', '!=', False)],
-        help='Installation lines that reference a product.',
-    )
-    single_module_line_ids = fields.One2many(
-        'saas.instance.module.line',
-        'instance_id',
-        string='Modules to Install',
-        domain=[('module_id', '!=', False)],
-        help='Installation lines that reference an individual module.',
-    )
-    installed_module_ids = fields.Many2many(
-        'product.product',
-        'saas_instance_installed_product_rel',
-        'instance_id',
-        'product_id',
-        string='Installed Modules',
-        readonly=True,
-        help='Module products that have been successfully installed on this instance.',
     )
 
     # ========== Sales & Invoicing ==========
@@ -477,6 +454,25 @@ class SaasInstance(models.Model):
 
     # ========== Sales & Invoicing Actions ==========
 
+    def _get_billing_product(self):
+        """Return the default product.product used on SaaS sale order lines.
+
+        Creates it on first use if it doesn't exist yet.
+        """
+        product = self.env['product.product'].sudo().search(
+            [('default_code', '=', 'SAAS-SUB')], limit=1,
+        )
+        if not product:
+            product = self.env['product.product'].sudo().create({
+                'name': 'SaaS Subscription',
+                'default_code': 'SAAS-SUB',
+                'type': 'service',
+                'list_price': 0.0,
+                'sale_ok': True,
+                'purchase_ok': False,
+            })
+        return product
+
     def action_confirm_and_bill(self):
         """Validate instance, create sale order, confirm it, and generate invoice.
 
@@ -492,28 +488,16 @@ class SaasInstance(models.Model):
             raise UserError(_("Please set a customer before confirming."))
         if not self.plan_id:
             raise UserError(_("Please set a plan before confirming."))
-        if not self.plan_id.product_id:
-            raise UserError(
-                _("Plan '%s' has no product linked. Please configure "
-                  "a product on the plan first.") % self.plan_id.name
-            )
 
+        plan = self.plan_id
         # -- Build order lines (respect partner pricelist when available) --
         pricelist = self.partner_id.property_product_pricelist
         order_lines = [(0, 0, {
-            'product_id': self.plan_id.product_id.id,
-            'name': _('%s — %s') % (self.plan_id.name, self.name or self.subdomain),
+            'product_id': self._get_billing_product().id,
+            'name': _('%s — %s') % (plan.name, self.name or self.subdomain),
             'product_uom_qty': 1,
-            'price_unit': self.plan_id.price,
+            'price_unit': plan.price,
         })]
-        for line in self.product_line_ids:
-            product = line.product_id
-            if product and product.product_variant_id and product.list_price:
-                order_lines.append((0, 0, {
-                    'product_id': product.product_variant_id.id,
-                    'product_uom_qty': 1,
-                    'price_unit': product.list_price,
-                }))
 
         # -- Create & confirm sale order --
         order_vals = {
@@ -668,12 +652,11 @@ class SaasInstance(models.Model):
     def _get_all_repo_context(self):
         """Return repo context dicts for docker-compose and addons paths.
 
-        Combines instance-level repos and version-level repos.
-        Only includes version repos that are needed by the instance's
-        selected products or modules (via saas_source_repo_id).
+        Combines instance-level repos and product-level repos.
         """
         self.ensure_one()
         server = self.docker_server_id
+        instance_path = self._get_instance_path()
 
         # Instance-level repos (absolute mount from custom_repos/)
         instance_repos = self.repo_ids.filtered(lambda r: r.state == 'cloned')
@@ -683,35 +666,21 @@ class SaasInstance(models.Model):
         } for r in instance_repos]
         addons_paths = [r._get_container_addons_path() for r in instance_repos]
 
-        # Determine which version repos are needed by selected products/modules
-        needed_version_repo_ids = set()
-        for line in self.module_line_ids:
-            # Check product's source repo
-            if line.product_id:
-                tmpl = line.product_id.product_tmpl_id
-                if tmpl.saas_source_repo_id:
-                    needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
-                # Also check individual modules inside the product
-                for mod in tmpl.saas_module_ids:
-                    if mod.saas_source_repo_id:
-                        needed_version_repo_ids.add(mod.saas_source_repo_id.id)
-            # Check individual module's source repo
-            if line.module_id:
-                tmpl = line.module_id.product_tmpl_id
-                if tmpl.saas_source_repo_id:
-                    needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
-
-        # Version-level repos (absolute mount) — only those needed
-        version_repos = []
-        if self.odoo_version_id and needed_version_repo_ids:
-            for vr in self.odoo_version_id.repo_ids.filtered(
-                lambda r: r.state == 'cloned' and r.id in needed_version_repo_ids
-            ):
-                version_repos.append({
-                    'dir_name': vr._get_repo_dir_name(),
-                    'host_path': vr._get_remote_repo_path(server),
+        # Product-level repos (cloned into instance's product_repos/ dir)
+        product = self.saas_product_id
+        if product:
+            for pr in product.repo_ids:
+                host_path = '%s/product_repos/%s' % (
+                    instance_path, pr._get_repo_dir_name(),
+                )
+                repos.append({
+                    'dir_name': pr._get_repo_dir_name(),
+                    'host_path': host_path,
                 })
-                addons_paths.append(vr._get_container_addons_path())
+                addons_paths.append(pr._get_container_addons_path())
+
+        # Version-level repos not used in snapshot approach
+        version_repos = []
 
         return repos, version_repos, addons_paths
 
@@ -1042,86 +1011,205 @@ class SaasInstance(models.Model):
         ssh.write_file('%s/config/odoo.conf' % instance_path, conf_content)
         self._append_log("odoo.conf written.")
 
-    # ========== Module Installation Helper ==========
+    # ========== Snapshot Restore Helper ==========
 
-    def _install_pending_modules(self, ssh):
-        """Install pending module lines via docker compose run. Returns True if modules were installed."""
+    def _restore_snapshot(self, ssh):
+        """Download and restore a pre-built database snapshot from cloud storage.
+
+        The snapshot zip is expected to contain:
+        - dump.sql — PostgreSQL plain-text dump
+        - filestore/ — Odoo filestore directory
+
+        Returns True if a snapshot was restored, False if none configured.
+        """
         self.ensure_one()
+        product = self.saas_product_id
+        if not product or not product.backup_bucket_path:
+            self._append_log("No snapshot configured — starting with empty database.")
+            return False
+
         instance_path = self._get_instance_path()
+        db_name = self.subdomain
 
-        pending_lines = self.module_line_ids.filtered(
-            lambda l: l.state == 'pending'
-        ).sorted('sequence')
-
-        if not pending_lines:
-            return False
-
-        all_module_names = []
-        for line in pending_lines:
-            names = line._get_all_technical_names()
-            names.discard('base')
-            for n in sorted(names):
-                if n not in all_module_names:
-                    all_module_names.append(n)
-
-        if not all_module_names:
-            return False
-
-        modules_to_install = ','.join(all_module_names)
-
-        # Log what each line contributes
-        for line in pending_lines:
-            names = line._get_all_technical_names()
-            names.discard('base')
-            label = line.product_id.name if line.product_id else (
-                line.module_id.name if line.module_id else ','.join(sorted(names))
-            )
-            self._append_log(
-                "Line [%d] %s: %s" % (line.sequence, label, ','.join(sorted(names)))
-            )
-
-        self._append_log("Installing modules: %s" % modules_to_install)
-        install_cmd = (
-            'cd %s && docker compose run --rm -T odoo '
-            'odoo -d %s '
-            '-i %s '
-            '--without-demo=all '
-            '--stop-after-init '
-            '--no-http 2>&1'
-        ) % (
-            shlex.quote(instance_path),
-            shlex.quote(self.subdomain),
-            shlex.quote(modules_to_install),
-        )
-        exit_code, stdout, stderr = ssh.execute(install_cmd, timeout=600)
+        # Generate presigned URL for the snapshot
         self._append_log(
-            "Install output (last 1000 chars):\n%s" % stdout[-1000:]
+            "Generating download URL for snapshot at %s..."
+            % product.backup_bucket_path
         )
+        download_url = product._generate_snapshot_download_url()
+
+        tmp_zip = '%s/snapshot.zip' % instance_path
+        extract_dir = '%s/snapshot_extract' % instance_path
+
+        # 1. Download snapshot
+        self._append_log("Downloading snapshot...")
+        dl_cmd = 'curl -fsSL -o %s %s 2>&1' % (
+            shlex.quote(tmp_zip), shlex.quote(download_url),
+        )
+        exit_code, stdout, stderr = ssh.execute(dl_cmd, timeout=600)
         if exit_code != 0:
-            for line in pending_lines:
-                line.state = 'failed'
-                line.log = stdout[-2000:] + '\n' + stderr[-500:]
             raise UserError(
-                _("Module installation failed:\n%s\n%s")
+                _("Failed to download snapshot:\n%s\n%s") % (stdout, stderr)
+            )
+        self._append_log("Snapshot downloaded.")
+
+        # 2. Extract the zip
+        self._append_log("Extracting snapshot...")
+        ssh.execute('mkdir -p %s' % shlex.quote(extract_dir))
+        extract_cmd = 'unzip -o %s -d %s 2>&1' % (
+            shlex.quote(tmp_zip), shlex.quote(extract_dir),
+        )
+        exit_code, stdout, stderr = ssh.execute(extract_cmd, timeout=300)
+        if exit_code != 0:
+            raise UserError(
+                _("Failed to extract snapshot:\n%s\n%s") % (stdout, stderr)
+            )
+        self._append_log("Snapshot extracted.")
+
+        # 3. Restore dump.sql into the database
+        dump_path = '%s/dump.sql' % extract_dir
+        self._append_log("Restoring database from dump.sql into %s..." % db_name)
+
+        psql_server = self.db_server_id
+        db_host = psql_server.private_ip_v4 or psql_server.ip_v4
+        db_port = psql_server.psql_port or 5432
+
+        # Use psql on the Docker server to restore — connect to the DB server
+        restore_cmd = (
+            'PGPASSWORD=%s psql -h %s -p %d -U %s -d %s -f %s 2>&1'
+        ) % (
+            shlex.quote(self.db_password),
+            shlex.quote(db_host),
+            db_port,
+            shlex.quote(self.db_user),
+            shlex.quote(db_name),
+            shlex.quote(dump_path),
+        )
+        exit_code, stdout, stderr = ssh.execute(restore_cmd, timeout=600)
+        if exit_code != 0:
+            self._append_log("Restore output:\n%s" % stdout[-2000:])
+            raise UserError(
+                _("Database restore failed:\n%s\n%s")
                 % (stdout[-500:], stderr[-500:])
             )
+        self._append_log("Database restored successfully.")
 
-        self._append_log("All modules installed successfully.")
+        # 4. Place filestore
+        filestore_src = '%s/filestore' % extract_dir
+        filestore_dst = '%s/data/odoo/filestore/%s' % (instance_path, db_name)
+        data_dir = '%s/data' % instance_path
+        self._append_log("Placing filestore...")
+        fs_cmd = (
+            'mkdir -p %s && '
+            'if [ -d %s ]; then '
+            '  cp -a %s/. %s/; '
+            'fi && '
+            'chown -R 1000:1000 %s && '
+            'chmod -R 777 %s'
+        ) % (
+            shlex.quote(filestore_dst),
+            shlex.quote(filestore_src),
+            shlex.quote(filestore_src),
+            shlex.quote(filestore_dst),
+            shlex.quote(data_dir),
+            shlex.quote(data_dir),
+        )
+        exit_code, stdout, stderr = ssh.execute(fs_cmd, timeout=300)
+        if exit_code != 0:
+            self._append_log("Warning: filestore placement issue: %s" % stderr)
+        else:
+            self._append_log("Filestore placed.")
 
-        # Mark all lines as installed and track products
-        all_products = self.env['product.product']
-        for line in pending_lines:
-            line.state = 'installed'
-            line.log = ''
-            if line.product_id:
-                module_tmpls = line.product_id.product_tmpl_id.saas_module_ids
-                all_products |= module_tmpls.mapped('product_variant_id')
-            elif line.module_id:
-                all_products |= line.module_id
-        if all_products:
-            self.installed_module_ids = [(4, p.id) for p in all_products]
+        # 5. Cleanup temp files
+        ssh.execute('rm -rf %s %s' % (
+            shlex.quote(tmp_zip), shlex.quote(extract_dir),
+        ))
+        self._append_log("Snapshot temp files cleaned up.")
 
         return True
+
+    def _clone_product_repos(self, ssh):
+        """Clone the product's GitHub repositories into the instance directory."""
+        self.ensure_one()
+        product = self.saas_product_id
+        if not product or not product.repo_ids:
+            return
+
+        instance_path = self._get_instance_path()
+
+        for repo in product.repo_ids:
+            repo_dir = '%s/product_repos/%s' % (
+                instance_path, repo._get_repo_dir_name(),
+            )
+            clone_url = repo._get_clone_url()
+
+            self._append_log(
+                "Cloning product repo %s (branch: %s)..." % (repo.repo_url, repo.branch)
+            )
+            ssh.execute('mkdir -p %s' % shlex.quote(
+                '%s/product_repos' % instance_path
+            ))
+            # Remove existing if re-cloning
+            ssh.execute('rm -rf %s' % shlex.quote(repo_dir))
+
+            clone_cmd = (
+                'git clone --branch %s --single-branch '
+                '--depth 1 %s %s 2>&1'
+            ) % (
+                shlex.quote(repo.branch),
+                shlex.quote(clone_url),
+                shlex.quote(repo_dir),
+            )
+            exit_code, stdout, stderr = ssh.execute(clone_cmd, timeout=300)
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to clone product repo '%s':\n%s\n%s")
+                    % (repo.repo_url, stdout[-500:], stderr[-500:])
+                )
+            ssh.execute('chmod -R 755 %s' % shlex.quote(repo_dir))
+            self._append_log("Repository %s cloned." % repo.name)
+
+    def _pull_product_repos(self, ssh):
+        """Pull latest changes for the product's repositories."""
+        self.ensure_one()
+        product = self.saas_product_id
+        if not product or not product.repo_ids:
+            return
+
+        instance_path = self._get_instance_path()
+
+        for repo in product.repo_ids:
+            repo_dir = '%s/product_repos/%s' % (
+                instance_path, repo._get_repo_dir_name(),
+            )
+            clone_url = repo._get_clone_url()
+
+            # Check if repo dir exists (already cloned)
+            exit_code, _, _ = ssh.execute(
+                'test -d %s' % shlex.quote(repo_dir)
+            )
+            if exit_code != 0:
+                # Not cloned yet — clone it
+                self._clone_product_repos(ssh)
+                return
+
+            ssh.execute(
+                'cd %s && git remote set-url origin %s'
+                % (shlex.quote(repo_dir), shlex.quote(clone_url))
+            )
+            self._append_log("Pulling product repo %s..." % repo.name)
+            pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
+                shlex.quote(repo_dir), shlex.quote(repo.branch),
+            )
+            exit_code, stdout, stderr = ssh.execute(pull_cmd, timeout=300)
+            if exit_code != 0:
+                raise UserError(
+                    _("Git pull failed for product repo '%s':\n%s\n%s")
+                    % (repo.name, stdout[-500:], stderr[-500:])
+                )
+            self._append_log(
+                "Pulled %s: %s" % (repo.name, stdout.strip()[:200])
+            )
 
     # ========== Deploy Flow ==========
 
@@ -1194,11 +1282,11 @@ class SaasInstance(models.Model):
                 )
             self._append_log("Directory structure created.")
 
-            # Set permissions
+            # Set permissions (1000:1000 = odoo user inside the container)
             self._append_log("Setting permissions...")
             perms_cmd = (
-                'chown -R 1000:1000 %(path)s/data/odoo %(path)s/config %(path)s/addons && '
-                'chmod -R 777 %(path)s/data/odoo %(path)s/config %(path)s/addons'
+                'chown -R 1000:1000 %(path)s/data %(path)s/config %(path)s/addons && '
+                'chmod -R 777 %(path)s/data %(path)s/config %(path)s/addons'
             ) % {'path': instance_path}
             exit_code, stdout, stderr = ssh.execute(perms_cmd)
             if exit_code != 0:
@@ -1215,74 +1303,36 @@ class SaasInstance(models.Model):
             self._provision_postgresql()
             self._append_log("PostgreSQL role and database ready.")
 
-            # Install modules — for initial deploy, include 'base'
-            pending_lines = self.module_line_ids.filtered(
-                lambda l: l.state == 'pending'
-            ).sorted('sequence')
+            # Clone product repositories
+            self._clone_product_repos(ssh)
 
-            all_module_names = []
-            for line in pending_lines:
-                names = line._get_all_technical_names()
-                names.discard('base')
-                for n in sorted(names):
-                    if n not in all_module_names:
-                        all_module_names.append(n)
+            # Restore pre-built database snapshot (if configured)
+            snapshot_restored = self._restore_snapshot(ssh)
 
-            modules_to_install = 'base'
-            if all_module_names:
-                modules_to_install = 'base,%s' % ','.join(all_module_names)
-
-            for line in pending_lines:
-                names = line._get_all_technical_names()
-                names.discard('base')
-                label = line.product_id.name if line.product_id else (
-                    line.module_id.name if line.module_id else ','.join(sorted(names))
+            if not snapshot_restored:
+                # No snapshot — initialize a bare database with base module
+                self._append_log("Initializing database with base module...")
+                init_cmd = (
+                    'cd %s && docker compose run --rm -T odoo '
+                    'odoo -d %s '
+                    '-i base '
+                    '--without-demo=all '
+                    '--stop-after-init '
+                    '--no-http 2>&1'
+                ) % (
+                    shlex.quote(instance_path),
+                    shlex.quote(self.subdomain),
                 )
+                exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=600)
                 self._append_log(
-                    "Line [%d] %s: %s" % (line.sequence, label, ','.join(sorted(names)))
+                    "Init output (last 1000 chars):\n%s" % stdout[-1000:]
                 )
-
-            self._append_log(
-                "Initializing database with modules: %s" % modules_to_install
-            )
-            init_cmd = (
-                'cd %s && docker compose run --rm -T odoo '
-                'odoo -d %s '
-                '-i %s '
-                '--without-demo=all '
-                '--stop-after-init '
-                '--no-http 2>&1'
-            ) % (
-                shlex.quote(instance_path),
-                shlex.quote(self.subdomain),
-                shlex.quote(modules_to_install),
-            )
-            exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=600)
-            self._append_log(
-                "Install output (last 1000 chars):\n%s" % stdout[-1000:]
-            )
-            if exit_code != 0:
-                for line in pending_lines:
-                    line.state = 'failed'
-                    line.log = stdout[-2000:] + '\n' + stderr[-500:]
-                raise UserError(
-                    _("Module installation failed:\n%s\n%s")
-                    % (stdout[-500:], stderr[-500:])
-                )
-            self._append_log("All modules installed successfully.")
-
-            # Mark all lines as installed and track products
-            all_products = self.env['product.product']
-            for line in pending_lines:
-                line.state = 'installed'
-                line.log = ''
-                if line.product_id:
-                    module_tmpls = line.product_id.product_tmpl_id.saas_module_ids
-                    all_products |= module_tmpls.mapped('product_variant_id')
-                elif line.module_id:
-                    all_products |= line.module_id
-            if all_products:
-                self.installed_module_ids = [(4, p.id) for p in all_products]
+                if exit_code != 0:
+                    raise UserError(
+                        _("Database initialization failed:\n%s\n%s")
+                        % (stdout[-500:], stderr[-500:])
+                    )
+                self._append_log("Database initialized.")
 
             # Start the server
             self._append_log("Starting container with docker compose up -d...")
@@ -1472,27 +1522,9 @@ class SaasInstance(models.Model):
                         "Pulled %s: %s" % (repo.name, stdout.strip()[:200])
                     )
 
-        # 3. Clone any pending version repos needed by module lines
-        needed_version_repo_ids = set()
-        for line in self.module_line_ids:
-            if line.product_id:
-                tmpl = line.product_id.product_tmpl_id
-                if tmpl.saas_source_repo_id:
-                    needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
-                for mod in tmpl.saas_module_ids:
-                    if mod.saas_source_repo_id:
-                        needed_version_repo_ids.add(mod.saas_source_repo_id.id)
-            if line.module_id:
-                tmpl = line.module_id.product_tmpl_id
-                if tmpl.saas_source_repo_id:
-                    needed_version_repo_ids.add(tmpl.saas_source_repo_id.id)
-        if self.odoo_version_id and needed_version_repo_ids:
-            pending_vrepos = self.odoo_version_id.repo_ids.filtered(
-                lambda r: r.state == 'pending' and r.id in needed_version_repo_ids
-            )
-            for vrepo in pending_vrepos:
-                self._append_log("Cloning pending version repo %s..." % vrepo.repo_url)
-                vrepo.action_clone_repo()
+        # 3. Pull product repos
+        with server._get_ssh_connection() as ssh:
+            self._pull_product_repos(ssh)
 
         # 4. Update docker-compose.yml and odoo.conf with current mounts
         self._append_log("Updating configuration...")
@@ -1500,11 +1532,7 @@ class SaasInstance(models.Model):
             self._render_and_write_configs(ssh)
         self._append_log("Configuration updated.")
 
-        # 5. Install pending modules (if any)
-        with server._get_ssh_connection() as ssh:
-            self._install_pending_modules(ssh)
-
-        # 6. Restart the container
+        # 5. Restart the container
         self._restart_container()
         self.state = 'running'
         self._safe_refresh_usage()
@@ -1650,10 +1678,6 @@ class SaasInstance(models.Model):
         ):
             backup._delete_from_bucket()
         self.backup_ids.unlink()
-
-        # Reset module/product lines and clear installed modules
-        self.module_line_ids.write({'state': 'pending'})
-        self.installed_module_ids = [(5,)]
 
         self.state = 'cancelled'
         self._append_log("Instance deleted successfully.")
@@ -1992,7 +2016,6 @@ class SaasInstance(models.Model):
             ('state', '=', 'running'),
             ('is_trial', '=', False),
             ('plan_id', '!=', False),
-            ('plan_id.product_id', '!=', False),
             ('next_invoice_date', '<=', today),
         ])
         for instance in instances:
@@ -2010,7 +2033,7 @@ class SaasInstance(models.Model):
         """Create a new sale order + invoice for the next billing period."""
         self.ensure_one()
         plan = self.plan_id
-        if not plan or not plan.product_id:
+        if not plan:
             return
 
         pricelist = self.partner_id.property_product_pricelist
@@ -2021,7 +2044,7 @@ class SaasInstance(models.Model):
             'partner_id': self.partner_id.id,
             'origin': _('Renewal: %s') % (self.name or self.subdomain),
             'order_line': [(0, 0, {
-                'product_id': plan.product_id.id,
+                'product_id': self._get_billing_product().id,
                 'name': _('%s — %s (%s renewal)') % (
                     plan.name, self.name or self.subdomain, period_label,
                 ),
@@ -2185,16 +2208,12 @@ class SaasInstance(models.Model):
         if abs(proration_amount) < 0.01:
             return
 
-        product = new_plan.product_id or old_plan.product_id
-        if not product:
-            return
-
         pricelist = self.partner_id.property_product_pricelist
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': _('Plan change: %s') % (self.name or self.subdomain),
             'order_line': [(0, 0, {
-                'product_id': product.id,
+                'product_id': self._get_billing_product().id,
                 'name': _('Plan change proration: %s → %s (%d days remaining)')
                         % (old_plan.name, new_plan.name, remaining_days),
                 'product_uom_qty': 1,

@@ -76,10 +76,57 @@
                         </setting>
                         <setting id="saas_backup_endpoint_setting"
                                  string="Endpoint URL"
-                                 help="Custom S3-compatible endpoint. Required for DigitalOcean Spaces."
-                                 invisible="saas_backup_provider == 'gcs'">
+                                 help="Custom S3-compatible endpoint. Not needed for DigitalOcean (auto-built from region) or GCS."
+                                 invisible="saas_backup_provider in ('gcs', 'digitalocean')">
                             <field name="saas_backup_endpoint"
-                                   placeholder="https://nyc3.digitaloceanspaces.com"/>
+                                   placeholder="https://s3.amazonaws.com"/>
+                        </setting>
+                    </block>
+
+                    <block title="Snapshot Storage" name="saas_snapshot_storage_container">
+                        <setting id="saas_snapshot_provider_setting"
+                                 string="Cloud Provider"
+                                 help="Select the cloud storage provider for pre-built database snapshots.">
+                            <field name="saas_snapshot_provider"/>
+                        </setting>
+                        <setting id="saas_snapshot_bucket_name_setting"
+                                 string="Bucket Name"
+                                 help="Name of the bucket containing product snapshots.">
+                            <field name="saas_snapshot_bucket_name"/>
+                        </setting>
+                        <setting id="saas_snapshot_region_setting"
+                                 string="Region"
+                                 help="Cloud region (e.g. us-east-1, europe-west1, nyc3)."
+                                 invisible="saas_snapshot_provider == 'gcs'">
+                            <field name="saas_snapshot_region"/>
+                        </setting>
+                        <setting id="saas_snapshot_access_key_setting"
+                                 string="Access Key"
+                                 help="Access key ID for authentication."
+                                 invisible="saas_snapshot_provider == 'gcs'">
+                            <field name="saas_snapshot_access_key"/>
+                        </setting>
+                        <setting id="saas_snapshot_secret_key_setting"
+                                 string="Secret Key"
+                                 help="Secret access key for authentication."
+                                 invisible="saas_snapshot_provider == 'gcs'">
+                            <field name="saas_snapshot_secret_key" password="True"/>
+                        </setting>
+                        <setting id="saas_snapshot_service_account_key_setting"
+                                 string="Service Account JSON Key"
+                                 help="Upload the GCP service account key JSON file."
+                                 invisible="saas_snapshot_provider != 'gcs'">
+                            <field name="saas_snapshot_service_account_key_file"
+                                   filename="saas_snapshot_service_account_key_filename"/>
+                            <field name="saas_snapshot_service_account_key_filename"
+                                   invisible="1"/>
+                        </setting>
+                        <setting id="saas_snapshot_endpoint_setting"
+                                 string="Endpoint URL"
+                                 help="Custom S3-compatible endpoint. Not needed for DigitalOcean (auto-built from region) or GCS."
+                                 invisible="saas_snapshot_provider in ('gcs', 'digitalocean')">
+                            <field name="saas_snapshot_endpoint"
+                                   placeholder="https://s3.amazonaws.com"/>
                         </setting>
                     </block>
                 </app>

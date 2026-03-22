@@ -1,6 +1,6 @@
 {
     'name': 'SaaS Website',
-    'version': '18.0.1.0.0',
+    'version': '18.0.2.0.0',
     'category': 'SaaS',
     'summary': 'Customer-facing website for SaaS plan selection, ordering, and instance management',
     'author': 'SaaS Platform',
@@ -9,8 +9,7 @@
     'data': [
         'security/saas_website_security.xml',
         'security/ir.model.access.csv',
-        'views/saas_pricing_templates.xml',
-        'views/saas_order_templates.xml',
+        'views/saas_services_templates.xml',
         'views/saas_portal_templates.xml',
     ],
     'assets': {

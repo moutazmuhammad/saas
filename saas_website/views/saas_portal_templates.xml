@@ -60,7 +60,7 @@
             <t t-if="not instances">
                 <div class="alert alert-info" role="alert">
                     You don't have any instances yet.
-                    <a href="/plans" class="alert-link">Browse plans</a> to get started.
+                    <a href="/services" class="alert-link">Browse services</a> to get started.
                 </div>
             </t>
 
@@ -68,6 +68,7 @@
                 <thead>
                     <tr class="active">
                         <th>Instance</th>
+                        <th>Service</th>
                         <th>Plan</th>
                         <th>Status</th>
                         <th>URL</th>
@@ -81,6 +82,10 @@
                                 <a t-attf-href="/my/instances/#{inst.id}?access_token=#{inst.access_token or ''}">
                                     <t t-out="inst.name or inst.subdomain"/>
                                 </a>
+                            </td>
+                            <td>
+                                <t t-if="inst.saas_product_id" t-out="inst.saas_product_id.name"/>
+                                <span t-else="" class="text-muted">—</span>
                             </td>
                             <td>
                                 <t t-if="inst.plan_id" t-out="inst.plan_id.name"/>
@@ -144,7 +149,7 @@
                         </div>
                         <div class="card-body">
                             <div class="row">
-                                <div class="col-sm-6 mb-3">
+                                <div class="col-sm-12 mb-3">
                                     <small class="text-muted d-block">Instance URL</small>
                                     <a t-if="instance.url and instance.state == 'running'"
                                        t-att-href="instance.url" target="_blank" class="fw-bold">
@@ -154,6 +159,12 @@
                                     <span t-elif="instance.url" class="text-muted">
                                         <t t-out="instance.url"/> (not yet available)
                                     </span>
+                                </div>
+                                <div class="col-sm-3 mb-3">
+                                    <small class="text-muted d-block">Service</small>
+                                    <strong t-if="instance.saas_product_id"
+                                            t-out="instance.saas_product_id.name"/>
+                                    <span t-else="" class="text-muted">—</span>
                                 </div>
                                 <div class="col-sm-3 mb-3">
                                     <small class="text-muted d-block">Plan</small>

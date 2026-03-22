@@ -5,17 +5,19 @@
         <field name="name">saas.plan.list</field>
         <field name="model">saas.plan</field>
         <field name="arch" type="xml">
-            <list string="SaaS Plans" editable="bottom">
+            <list string="SaaS Plans">
                 <field name="sequence" widget="handle"/>
                 <field name="name"/>
-                <field name="product_id"/>
+                <field name="saas_product_id" string="Service"/>
+                <field name="is_trial_plan"/>
                 <field name="price" widget="monetary"/>
                 <field name="currency_id" column_invisible="1"/>
                 <field name="billing_period"/>
-                <field name="cpu_limit"/>
-                <field name="ram_limit"/>
-                <field name="storage_limit"/>
-                <field name="max_backups"/>
+                <field name="cpu_limit" optional="show"/>
+                <field name="ram_limit" optional="show"/>
+                <field name="storage_limit" optional="show"/>
+                <field name="max_users" optional="hide"/>
+                <field name="max_backups" optional="hide"/>
                 <field name="instance_count"/>
             </list>
         </field>
@@ -27,16 +29,26 @@
         <field name="arch" type="xml">
             <form string="SaaS Plan">
                 <sheet>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" placeholder="e.g. Basic, Pro, Enterprise"/>
+                        </h1>
+                    </div>
                     <group>
                         <group string="General">
-                            <field name="name"/>
+                            <field name="saas_product_id" string="Service"/>
+                            <field name="sequence"/>
                             <field name="is_trial_plan"/>
-                            <field name="product_id"/>
+                            <field name="instance_count"/>
+                        </group>
+                        <group string="Pricing">
                             <field name="price" widget="monetary"/>
-                            <field name="currency_id" invisible="1"/>
+                            <field name="currency_id" groups="base.group_multi_currency"/>
                             <field name="billing_period"/>
                             <field name="grace_period_days"/>
                         </group>
+                    </group>
+                    <group>
                         <group string="Resource Limits">
                             <field name="cpu_limit"/>
                             <field name="ram_limit"/>
@@ -44,13 +56,9 @@
                             <field name="max_backups"/>
                             <field name="max_users"/>
                         </group>
-                    </group>
-                    <group string="Feature Flags">
-                        <group>
+                        <group string="Feature Flags">
                             <field name="feature_api_access"/>
                             <field name="feature_custom_domain"/>
-                        </group>
-                        <group>
                             <field name="feature_custom_modules"/>
                         </group>
                     </group>
@@ -67,7 +75,8 @@
             <p class="o_view_nocontent_smiling_face">
                 Create your first SaaS plan
             </p>
-            <p>Plans define CPU, RAM, and storage limits for instances.</p>
+            <p>Plans define pricing, resource limits, and features for instances.
+               Each plan belongs to a service.</p>
         </field>
     </record>
 

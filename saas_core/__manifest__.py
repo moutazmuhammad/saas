@@ -1,6 +1,6 @@
 {
     'name': 'SaaS Instance Manager',
-    'version': '18.0.6.0.0',
+    'version': '18.0.7.0.0',
     'category': 'SaaS',
     'summary': 'Provision and manage multi-tenant Odoo instances with Docker containers',
     'description': """
@@ -13,11 +13,11 @@ Key capabilities:
 - **Automatic provisioning** -- generates docker-compose and odoo.conf files,
   creates PostgreSQL users and databases, assigns ports, and initialises the
   Odoo database, all over SSH.
-- **Module management** -- fetch available modules from a Docker image, organise
-  them into sellable products, and install them on running instances.
-- **Product catalog integration** -- modules and products are standard Odoo
-  products (product.template) so they can be quoted, sold, and invoiced through
-  the regular Sales workflow.
+- **Snapshot-based provisioning** -- deploy instances from pre-built database
+  snapshots stored in cloud buckets (S3, GCS, DigitalOcean Spaces), with
+  automatic repo cloning for the correct codebase.
+- **Product catalog integration** -- services and plans integrate with standard
+  Odoo products for quoting, selling, and invoicing.
 - **Infrastructure registry** -- keep track of Docker host servers, PostgreSQL
   servers, SSH keys, and base domains used by the platform.
 """,
@@ -37,6 +37,7 @@ Key capabilities:
         'data/saas_usage_refresh_cron.xml',
         'data/saas_trial_expiry_cron.xml',
         'data/saas_recurring_billing_cron.xml',
+        'views/saas_product_views.xml',
         'views/saas_plan_views.xml',
         'views/saas_instance_views.xml',
         'views/saas_ssh_key_pair_views.xml',
@@ -45,7 +46,6 @@ Key capabilities:
         'views/saas_db_server_views.xml',
         'views/saas_domain_views.xml',
         'views/saas_odoo_version_views.xml',
-        'views/product_template_views.xml',
         'views/res_partner_views.xml',
         'views/res_config_settings_views.xml',
         'views/saas_menus.xml',

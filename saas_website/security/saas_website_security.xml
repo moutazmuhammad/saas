@@ -13,18 +13,6 @@
         <field name="perm_unlink" eval="False"/>
     </record>
 
-    <!-- Portal users can read module lines of their own instances -->
-    <record id="rule_saas_module_line_portal" model="ir.rule">
-        <field name="name">Portal: own instance module lines</field>
-        <field name="model_id" ref="saas_core.model_saas_instance_module_line"/>
-        <field name="domain_force">[('instance_id.partner_id', '=', user.partner_id.id)]</field>
-        <field name="groups" eval="[(4, ref('base.group_portal'))]"/>
-        <field name="perm_read" eval="True"/>
-        <field name="perm_write" eval="False"/>
-        <field name="perm_create" eval="False"/>
-        <field name="perm_unlink" eval="False"/>
-    </record>
-
     <!-- Portal users can read backups of their own instances -->
     <record id="rule_saas_backup_portal" model="ir.rule">
         <field name="name">Portal: own instance backups</field>

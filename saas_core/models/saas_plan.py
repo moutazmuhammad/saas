@@ -1,6 +1,6 @@
 from dateutil.relativedelta import relativedelta
 
-from odoo import api, fields, models
+from odoo import fields, models
 
 
 class SaasPlan(models.Model):
@@ -10,27 +10,27 @@ class SaasPlan(models.Model):
 
     sequence = fields.Integer(default=10)
     name = fields.Char(string='Plan Name', required=True)
+    saas_product_id = fields.Many2one(
+        'saas.product',
+        string='Service',
+        help='The service this plan belongs to (e.g. "Pharmacy Management").',
+    )
     is_trial_plan = fields.Boolean(
         string='Trial Plan',
         default=False,
         help='If checked, this plan is available for free trials only '
              'and will not generate invoices.',
     )
-    product_id = fields.Many2one(
-        'product.product',
-        string='Product',
-        help='Sellable product linked to this plan. '
-             'The product price is used when creating sale orders.',
-    )
+
+    # ========== Pricing ==========
     price = fields.Float(
         string='Price',
-        compute='_compute_price',
-        inverse='_inverse_price',
-        help='Sale price from the linked product.',
+        help='Recurring price for this plan per billing period.',
     )
     currency_id = fields.Many2one(
-        related='product_id.currency_id',
+        'res.currency',
         string='Currency',
+        default=lambda self: self.env.company.currency_id,
     )
     billing_period = fields.Selection(
         [
@@ -41,6 +41,8 @@ class SaasPlan(models.Model):
         default='monthly',
         help='How often the customer is invoiced for this plan.',
     )
+
+    # ========== Resource Limits ==========
     cpu_limit = fields.Float(
         string='CPU Limit',
         default=1.0,
@@ -97,16 +99,6 @@ class SaasPlan(models.Model):
         help='Number of days after invoice due date before the instance '
              'is automatically suspended for non-payment.',
     )
-
-    @api.depends('product_id', 'product_id.list_price')
-    def _compute_price(self):
-        for rec in self:
-            rec.price = rec.product_id.list_price if rec.product_id else 0.0
-
-    def _inverse_price(self):
-        for rec in self:
-            if rec.product_id:
-                rec.product_id.list_price = rec.price
 
     def _compute_instance_count(self):
         data = self.env['saas.instance']._read_group(

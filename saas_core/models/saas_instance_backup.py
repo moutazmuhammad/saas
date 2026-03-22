@@ -113,14 +113,21 @@ class SaasInstanceBackup(models.Model):
                 "Go to SaaS Manager > Configuration > Settings."
             ) % cfg['provider'].upper())
 
+        region = cfg['region'] or 'us-east-1'
         kwargs = {
             'aws_access_key_id': cfg['access_key'],
             'aws_secret_access_key': cfg['secret_key'],
-            'region_name': cfg['region'] or None,
+            'region_name': region,
         }
-        if cfg['endpoint']:
-            kwargs['endpoint_url'] = cfg['endpoint']
+
         if cfg['provider'] == 'digitalocean':
+            # DigitalOcean Spaces endpoint: https://{region}.digitaloceanspaces.com
+            # Users sometimes paste the full bucket URL by mistake
+            # (e.g. https://mybucket.fra1.digitaloceanspaces.com)
+            # so we always build the endpoint from the region.
+            kwargs['endpoint_url'] = 'https://%s.digitaloceanspaces.com' % region
+        elif cfg['endpoint']:
+            kwargs['endpoint_url'] = cfg['endpoint']
             kwargs['config'] = BotoConfig(s3={'addressing_style': 'path'})
 
         return boto3.client('s3', **kwargs), cfg['bucket']
@@ -157,14 +164,40 @@ class SaasInstanceBackup(models.Model):
 
     def _upload_to_bucket(self, object_key, data_bytes):
         cfg = self._get_backup_config()
+        _logger.info(
+            "Uploading backup to %s bucket=%s key=%s size=%d bytes",
+            cfg['provider'], cfg['bucket'], object_key, len(data_bytes),
+        )
         if cfg['provider'] == 'gcs':
             client, bucket_name = self._get_gcs_client()
             bucket = client.bucket(bucket_name)
             blob = bucket.blob(object_key)
-            blob.upload_from_string(data_bytes)
+            blob.upload_from_string(data_bytes, content_type='application/zip')
         else:
             client, bucket = self._get_s3_client()
-            client.put_object(Bucket=bucket, Key=object_key, Body=data_bytes)
+            _logger.info(
+                "S3 client endpoint=%s region=%s bucket=%s",
+                client.meta.endpoint_url, client.meta.region_name, bucket,
+            )
+            try:
+                client.put_object(
+                    Bucket=bucket,
+                    Key=object_key,
+                    Body=data_bytes,
+                    ContentType='application/zip',
+                )
+            except Exception as e:
+                _logger.error(
+                    "put_object failed: %s — trying upload_fileobj fallback", e,
+                )
+                # Fallback: use upload_fileobj which handles chunked upload
+                import io
+                client.upload_fileobj(
+                    io.BytesIO(data_bytes),
+                    bucket,
+                    object_key,
+                    ExtraArgs={'ContentType': 'application/zip'},
+                )
 
     def _generate_presigned_url(self):
         cfg = self._get_backup_config()
@@ -279,9 +312,12 @@ class SaasInstanceBackup(models.Model):
         if presigned_put_url:
             upload_step = (
                 '# 5) Upload directly to cloud storage via presigned URL\n'
-                'curl -f -X PUT -H "Content-Type: application/zip" '
-                '--data-binary "@$SAAS_ZIP_PATH" "$SAAS_UPLOAD_URL"\n'
-                'UPLOAD_OK=$?\n'
+                'if curl -f -X PUT -H "Content-Type: application/zip" '
+                '--data-binary "@$SAAS_ZIP_PATH" "$SAAS_UPLOAD_URL"; then\n'
+                '    UPLOAD_OK=0\n'
+                'else\n'
+                '    UPLOAD_OK=1\n'
+                'fi\n'
             )
         else:
             upload_step = 'UPLOAD_OK=1  # No presigned URL, will download via SFTP\n'
@@ -320,7 +356,7 @@ rm -rf "$SAAS_TMP_DIR"
 # Output zip size for tracking
 stat -c %%s "$SAAS_ZIP_PATH" 2>/dev/null || stat -f %%z "$SAAS_ZIP_PATH" 2>/dev/null || echo 0
 
-# Cleanup zip if uploaded directly
+# Remove zip from server if upload succeeded (so Python knows not to SFTP it)
 if [ "${UPLOAD_OK:-1}" = "0" ]; then
     rm -f "$SAAS_ZIP_PATH"
 fi
@@ -352,8 +388,13 @@ fi
                 if line.isdigit():
                     size_bytes = int(line)
 
-            # If presigned upload failed or wasn't used, fall back to SFTP download
-            if not presigned_put_url or 'UPLOAD_OK=1' in script:
+            # Check if the zip still exists on the server (means upload
+            # didn't happen or failed — need SFTP fallback)
+            check_code, _, _ = ssh.execute(
+                'test -f %s' % shlex.quote(zip_path)
+            )
+            if check_code == 0:
+                # Zip still on server — download via SFTP and upload from Odoo
                 try:
                     zip_data = ssh.read_file_bytes(zip_path)
                     size_bytes = len(zip_data)
@@ -362,9 +403,6 @@ fi
                 if not zip_data:
                     raise UserError(_("Backup produced empty file."))
                 self._upload_to_bucket(object_key, zip_data)
-            else:
-                # Cleanup zip on server (already uploaded)
-                ssh.execute('rm -f %s' % shlex.quote(zip_path))
 
         return size_bytes
 

@@ -21,19 +21,26 @@
               parent="saas_master_menu_root"
               sequence="90"/>
 
-    <!-- Configuration > Settings -->
-    <menuitem id="saas_master_menu_settings"
-              name="Settings"
+    <!-- Configuration > Services -->
+    <menuitem id="saas_master_menu_services"
+              name="Services"
               parent="saas_master_menu_configuration"
-              action="action_saas_master_config_settings"
-              sequence="10"/>
+              action="saas_product_action"
+              sequence="5"/>
 
     <!-- Configuration > Plans -->
     <menuitem id="saas_master_menu_plans"
               name="Plans"
               parent="saas_master_menu_configuration"
               action="saas_plan_action"
-              sequence="15"/>
+              sequence="7"/>
+
+    <!-- Configuration > Settings -->
+    <menuitem id="saas_master_menu_settings"
+              name="Settings"
+              parent="saas_master_menu_configuration"
+              action="action_saas_master_config_settings"
+              sequence="10"/>
 
     <!-- Configuration > Docker Servers -->
     <menuitem id="saas_master_menu_physical_servers"
@@ -42,13 +49,6 @@
               action="saas_physical_server_action"
               sequence="25"/>
 
-    <!-- Configuration > Database Servers -->
-    <menuitem id="saas_master_menu_psql_physical_servers"
-              name="Database Servers"
-              parent="saas_master_menu_configuration"
-              action="saas_psql_physical_server_action"
-              sequence="28"/>
-
     <!-- Configuration > Base Domains -->
     <menuitem id="saas_master_menu_based_domain"
               name="Base Domains"
@@ -56,25 +56,18 @@
               action="saas_odoo_based_domain_action"
               sequence="27"/>
 
+    <!-- Configuration > Database Servers -->
+    <menuitem id="saas_master_menu_psql_physical_servers"
+              name="Database Servers"
+              parent="saas_master_menu_configuration"
+              action="saas_psql_physical_server_action"
+              sequence="28"/>
+
     <!-- Configuration > Odoo Versions -->
     <menuitem id="saas_master_menu_odoo_version"
               name="Odoo Versions"
               parent="saas_master_menu_configuration"
               action="saas_odoo_version_action"
-              sequence="28"/>
-
-    <!-- Configuration > Odoo Modules -->
-    <menuitem id="saas_master_menu_odoo_modules"
-              name="Odoo Modules"
-              parent="saas_master_menu_configuration"
-              action="saas_odoo_module_action"
-              sequence="30"/>
-
-    <!-- Configuration > Products -->
-    <menuitem id="saas_master_menu_odoo_products"
-              name="Products"
-              parent="saas_master_menu_configuration"
-              action="saas_odoo_product_action"
-              sequence="32"/>
+              sequence="29"/>
 
 </odoo>
