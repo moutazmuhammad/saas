@@ -1,6 +1,6 @@
 {
     'name': 'SaaS Instance Manager',
-    'version': '18.0.4.0.0',
+    'version': '18.0.6.0.0',
     'category': 'SaaS',
     'summary': 'Provision and manage multi-tenant Odoo instances with Docker containers',
     'description': """
@@ -23,7 +23,7 @@ Key capabilities:
 """,
     'author': 'SaaS Platform',
     'license': 'LGPL-3',
-    'depends': ['base', 'mail', 'sale'],
+    'depends': ['base', 'mail', 'sale', 'account'],
     'external_dependencies': {
         'python': ['paramiko', 'jinja2', 'boto3', 'google-cloud-storage'],
     },
@@ -31,9 +31,12 @@ Key capabilities:
         'security/saas_security.xml',
         'security/ir.model.access.csv',
         'data/ir_config_parameter.xml',
+        'data/mail_templates.xml',
         'data/saas_backup_cron.xml',
         'data/saas_storage_check_cron.xml',
         'data/saas_usage_refresh_cron.xml',
+        'data/saas_trial_expiry_cron.xml',
+        'data/saas_recurring_billing_cron.xml',
         'views/saas_plan_views.xml',
         'views/saas_instance_views.xml',
         'views/saas_ssh_key_pair_views.xml',
@@ -43,6 +46,7 @@ Key capabilities:
         'views/saas_domain_views.xml',
         'views/saas_odoo_version_views.xml',
         'views/product_template_views.xml',
+        'views/res_partner_views.xml',
         'views/res_config_settings_views.xml',
         'views/saas_menus.xml',
         'wizards/saas_config_viewer_views.xml',

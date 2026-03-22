@@ -5,7 +5,7 @@
         <field name="model">saas.config.viewer</field>
         <field name="arch" type="xml">
             <form string="Configuration">
-                <field name="content" widget="ace" options="{'mode': 'ini'}" readonly="1"/>
+                <pre><field name="content" readonly="1" nolabel="1"/></pre>
                 <footer>
                     <button string="Close" class="btn-secondary" special="cancel"/>
                 </footer>

@@ -19,6 +19,23 @@
                         </setting>
                     </block>
 
+                    <block title="Free Trial" name="saas_trial_container">
+                        <setting id="saas_trial_days_setting"
+                                 string="Trial Duration"
+                                 help="Number of days for the free trial. After expiry the instance is suspended until the client pays.">
+                            <field name="saas_trial_days"/>
+                            <span class="text-muted ms-1">days</span>
+                        </setting>
+                    </block>
+
+                    <block title="Rate Limiting" name="saas_rate_limiting_container">
+                        <setting id="saas_max_instances_per_user_setting"
+                                 string="Max Instances Per User"
+                                 help="Maximum number of active instances a single customer can have. 0 = unlimited.">
+                            <field name="saas_max_instances_per_user"/>
+                        </setting>
+                    </block>
+
                     <block title="Backup Storage" name="saas_backup_storage_container">
                         <setting id="saas_backup_provider_setting"
                                  string="Cloud Provider"

@@ -8,5 +8,17 @@
             <field name="value">32000</field>
         </record>
 
+        <record id="config_param_trial_days"
+                model="ir.config_parameter">
+            <field name="key">saas_master.trial_days</field>
+            <field name="value">14</field>
+        </record>
+
+        <record id="config_param_max_instances_per_user"
+                model="ir.config_parameter">
+            <field name="key">saas_master.max_instances_per_user</field>
+            <field name="value">5</field>
+        </record>
+
     </data>
 </odoo>

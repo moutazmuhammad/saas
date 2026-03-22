@@ -8,6 +8,10 @@
             <list string="SaaS Plans" editable="bottom">
                 <field name="sequence" widget="handle"/>
                 <field name="name"/>
+                <field name="product_id"/>
+                <field name="price" widget="monetary"/>
+                <field name="currency_id" column_invisible="1"/>
+                <field name="billing_period"/>
                 <field name="cpu_limit"/>
                 <field name="ram_limit"/>
                 <field name="storage_limit"/>
@@ -24,14 +28,30 @@
             <form string="SaaS Plan">
                 <sheet>
                     <group>
-                        <group>
+                        <group string="General">
                             <field name="name"/>
-                            <field name="cpu_limit"/>
+                            <field name="is_trial_plan"/>
+                            <field name="product_id"/>
+                            <field name="price" widget="monetary"/>
+                            <field name="currency_id" invisible="1"/>
+                            <field name="billing_period"/>
+                            <field name="grace_period_days"/>
                         </group>
-                        <group>
+                        <group string="Resource Limits">
+                            <field name="cpu_limit"/>
                             <field name="ram_limit"/>
                             <field name="storage_limit"/>
                             <field name="max_backups"/>
+                            <field name="max_users"/>
+                        </group>
+                    </group>
+                    <group string="Feature Flags">
+                        <group>
+                            <field name="feature_api_access"/>
+                            <field name="feature_custom_domain"/>
+                        </group>
+                        <group>
+                            <field name="feature_custom_modules"/>
                         </group>
                     </group>
                 </sheet>

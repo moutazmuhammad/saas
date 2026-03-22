@@ -5,6 +5,8 @@ import re
 import secrets
 import shlex
 import string
+import uuid
+from dateutil.relativedelta import relativedelta
 from jinja2 import Environment, FileSystemLoader
 
 from odoo import api, fields, models, _
@@ -159,6 +161,47 @@ class SaasInstance(models.Model):
         help='Module products that have been successfully installed on this instance.',
     )
 
+    # ========== Sales & Invoicing ==========
+    sale_order_id = fields.Many2one(
+        'sale.order',
+        string='Sale Order',
+        tracking=True,
+        help='Sale order linked to this instance.',
+    )
+    sale_order_count = fields.Integer(
+        string='Sale Orders',
+        compute='_compute_sale_order_count',
+    )
+    invoice_count = fields.Integer(
+        string='Invoices',
+        compute='_compute_invoice_count',
+    )
+
+    # ========== Free Trial ==========
+    is_trial = fields.Boolean(
+        string='Free Trial',
+        default=False,
+        tracking=True,
+        help='Whether this instance was created during the client free trial.',
+    )
+
+    # ========== Recurring Billing ==========
+    next_invoice_date = fields.Date(
+        string='Next Invoice Date',
+        tracking=True,
+        help='Date on which the next recurring invoice will be generated. '
+             'Set automatically after the first payment.',
+    )
+    last_invoice_date = fields.Date(
+        string='Last Invoice Date',
+        readonly=True,
+    )
+    suspension_warning_sent = fields.Boolean(
+        default=False,
+        help='Whether a suspension warning email has been sent for the '
+             'current overdue period.',
+    )
+
     # ========== Backups ==========
     backup_ids = fields.One2many(
         'saas.instance.backup', 'instance_id',
@@ -240,6 +283,8 @@ class SaasInstance(models.Model):
     state = fields.Selection(
         selection=[
             ('draft', 'Draft'),
+            ('pending_payment', 'Pending Payment'),
+            ('paid', 'Paid'),
             ('provisioning', 'Provisioning'),
             ('running', 'Running'),
             ('stopped', 'Stopped'),
@@ -280,6 +325,22 @@ class SaasInstance(models.Model):
         ),
     ]
 
+    @api.constrains('is_trial', 'partner_id')
+    def _check_one_trial_per_client(self):
+        for rec in self:
+            if rec.is_trial and rec.partner_id:
+                existing = self.search([
+                    ('partner_id', '=', rec.partner_id.id),
+                    ('is_trial', '=', True),
+                    ('id', '!=', rec.id),
+                ], limit=1)
+                if existing:
+                    raise ValidationError(
+                        _("Client '%s' already has a free trial instance (%s). "
+                          "Only one trial is allowed per client.")
+                        % (rec.partner_id.name, existing.subdomain)
+                    )
+
     @api.constrains('subdomain')
     def _check_subdomain_format(self):
         for rec in self:
@@ -296,6 +357,26 @@ class SaasInstance(models.Model):
     def create(self, vals_list):
         alphabet = string.ascii_letters + string.digits + '-_.~+='
         for vals in vals_list:
+            # Block trial if the client has already used their free trial.
+            # Use SELECT ... FOR UPDATE to prevent race conditions where
+            # two concurrent requests both pass the check.
+            if vals.get('is_trial') and vals.get('partner_id'):
+                self.env.cr.execute(
+                    "SELECT saas_trial_used FROM res_partner "
+                    "WHERE id = %s FOR UPDATE",
+                    (vals['partner_id'],),
+                )
+                row = self.env.cr.fetchone()
+                if row and row[0]:
+                    partner = self.env['res.partner'].browse(vals['partner_id'])
+                    raise ValidationError(
+                        _("Client '%s' has already used their free trial. "
+                          "Only one trial is allowed per client.")
+                        % partner.name
+                    )
+            # Generate access token for portal security (field added by saas_website)
+            if 'access_token' in self._fields and not vals.get('access_token'):
+                vals['access_token'] = uuid.uuid4().hex
             subdomain = vals.get('subdomain', '')
             if subdomain and not vals.get('db_user'):
                 safe_subdomain = subdomain.replace('-', '_').replace('.', '_')
@@ -312,7 +393,48 @@ class SaasInstance(models.Model):
         for rec in records:
             if rec.docker_server_id and (not rec.xmlrpc_port or not rec.longpolling_port):
                 rec._auto_assign_ports()
+            if rec.is_trial and rec.partner_id:
+                rec._sync_partner_trial()
         return records
+
+    def write(self, vals):
+        res = super().write(vals)
+        if vals.get('is_trial'):
+            for rec in self:
+                if rec.is_trial and rec.partner_id:
+                    rec._sync_partner_trial()
+        return res
+
+    def unlink(self):
+        """Block deletion of instances that have live infrastructure.
+
+        Only draft and cancelled instances (no running infra) can be deleted
+        from the database.  Everything else must go through the
+        action_delete_instance() teardown workflow first.
+        """
+        safe_states = ('draft', 'cancelled')
+        unsafe = self.filtered(lambda r: r.state not in safe_states)
+        if unsafe:
+            raise UserError(
+                _("Cannot delete instances that have been deployed. "
+                  "Use the 'Delete' action to tear down infrastructure first.\n"
+                  "Affected: %s")
+                % ', '.join(unsafe.mapped('subdomain'))
+            )
+        return super().unlink()
+
+    def _sync_partner_trial(self):
+        """Mark the partner as having used their trial (one-time)."""
+        self.ensure_one()
+        partner = self.partner_id
+        if not partner.saas_trial_used:
+            trial_days = int(self.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.trial_days', '14',
+            ))
+            partner.write({
+                'saas_trial_used': True,
+                'saas_trial_end_date': fields.Date.today() + datetime.timedelta(days=trial_days),
+            })
 
     # ========== Computed ==========
     @api.depends('subdomain', 'domain_id.name')
@@ -341,6 +463,152 @@ class SaasInstance(models.Model):
         counts = {instance.id: count for instance, count in data}
         for rec in self:
             rec.backup_count = counts.get(rec.id, 0)
+
+    def _compute_sale_order_count(self):
+        for rec in self:
+            rec.sale_order_count = 1 if rec.sale_order_id else 0
+
+    def _compute_invoice_count(self):
+        for rec in self:
+            if rec.sale_order_id:
+                rec.invoice_count = len(rec.sale_order_id.invoice_ids)
+            else:
+                rec.invoice_count = 0
+
+    # ========== Sales & Invoicing Actions ==========
+
+    def action_confirm_and_bill(self):
+        """Validate instance, create sale order, confirm it, and generate invoice.
+
+        This is the single entry point for the billing flow:
+        draft → pending_payment (or paid if zero-amount).
+        """
+        self.ensure_one()
+        if self.state != 'draft':
+            raise UserError(_("Instance must be in Draft state to confirm and bill."))
+        if self.sale_order_id:
+            raise UserError(_("A sale order already exists for this instance."))
+        if not self.partner_id:
+            raise UserError(_("Please set a customer before confirming."))
+        if not self.plan_id:
+            raise UserError(_("Please set a plan before confirming."))
+        if not self.plan_id.product_id:
+            raise UserError(
+                _("Plan '%s' has no product linked. Please configure "
+                  "a product on the plan first.") % self.plan_id.name
+            )
+
+        # -- Build order lines (respect partner pricelist when available) --
+        pricelist = self.partner_id.property_product_pricelist
+        order_lines = [(0, 0, {
+            'product_id': self.plan_id.product_id.id,
+            'name': _('%s — %s') % (self.plan_id.name, self.name or self.subdomain),
+            'product_uom_qty': 1,
+            'price_unit': self.plan_id.price,
+        })]
+        for line in self.product_line_ids:
+            product = line.product_id
+            if product and product.product_variant_id and product.list_price:
+                order_lines.append((0, 0, {
+                    'product_id': product.product_variant_id.id,
+                    'product_uom_qty': 1,
+                    'price_unit': product.list_price,
+                }))
+
+        # -- Create & confirm sale order --
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': self.name or self.subdomain,
+            'order_line': order_lines,
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].create(order_vals)
+        order.action_confirm()
+        self.sale_order_id = order
+
+        # -- Create & post invoice --
+        invoice = order._create_invoices()
+        invoice.action_post()
+
+        # -- Transition state & auto-deploy --
+        if invoice.amount_total <= 0:
+            self.state = 'paid'
+            self._set_next_invoice_date()
+            self._append_log(
+                "Sale order %s confirmed. Zero-amount invoice — deploying automatically."
+                % order.name
+            )
+            self.message_post(body=_(
+                "Sale order %s confirmed. No payment required — deploying now."
+            ) % order.name)
+            self.action_deploy()
+            return True
+        else:
+            self.state = 'pending_payment'
+            self._append_log(
+                "Sale order %s confirmed. Invoice %s awaiting payment. "
+                "Instance will deploy automatically once paid."
+                % (order.name, invoice.name)
+            )
+            self.message_post(body=_(
+                "Sale order %s confirmed. Invoice %s created and awaiting payment. "
+                "Instance will deploy automatically once paid."
+            ) % (order.name, invoice.name))
+
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'account.move',
+            'res_id': invoice.id,
+            'view_mode': 'form',
+            'target': 'current',
+        }
+
+    def action_mark_as_paid(self):
+        """Manually mark as paid and auto-deploy (for wire transfers, trials, etc.)."""
+        self.ensure_one()
+        if self.state != 'pending_payment':
+            raise UserError(_("Instance must be in 'Pending Payment' state."))
+        self.state = 'paid'
+        self._append_log("Manually marked as paid. Deploying automatically.")
+        self.message_post(body=_("Manually marked as paid — deploying now."))
+        self.action_deploy()
+
+    def action_view_sale_order(self):
+        """Open the linked sale order."""
+        self.ensure_one()
+        if not self.sale_order_id:
+            return
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'sale.order',
+            'res_id': self.sale_order_id.id,
+            'view_mode': 'form',
+            'target': 'current',
+        }
+
+    def action_view_invoices(self):
+        """Open invoices related to this instance's sale order."""
+        self.ensure_one()
+        if not self.sale_order_id:
+            return
+        invoices = self.sale_order_id.invoice_ids
+        if len(invoices) == 1:
+            return {
+                'type': 'ir.actions.act_window',
+                'res_model': 'account.move',
+                'res_id': invoices.id,
+                'view_mode': 'form',
+                'target': 'current',
+            }
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Invoices'),
+            'res_model': 'account.move',
+            'view_mode': 'list,form',
+            'domain': [('id', 'in', invoices.ids)],
+            'target': 'current',
+        }
 
     # ========== Private Helpers ==========
 
@@ -857,12 +1125,28 @@ class SaasInstance(models.Model):
 
     # ========== Deploy Flow ==========
 
+    def _do_deploy_after_payment(self):
+        """Background deploy triggered by payment — instance already in 'paid' state."""
+        self.ensure_one()
+        self.action_deploy()
+
     def action_deploy(self):
-        """Full deployment flow: provision Docker container over SSH (async)."""
+        """Full deployment flow: provision Docker container over SSH (async).
+
+        Allowed from ``paid`` and ``failed`` states.  Also allowed from
+        ``draft`` when no plan is set (internal / test instances).
+        """
         for rec in self:
-            if rec.state not in ('draft', 'failed'):
+            if rec.state == 'draft' and rec.plan_id and not rec.is_trial:
                 raise UserError(
-                    _("Cannot deploy instance '%s': must be in Draft or Failed state (current: %s).")
+                    _("Instance '%s' has a plan assigned. "
+                      "Please use 'Confirm & Bill' to create a sale order and "
+                      "invoice before deploying.") % rec.subdomain
+                )
+            if rec.state not in ('draft', 'paid', 'failed'):
+                raise UserError(
+                    _("Cannot deploy instance '%s': must be in Draft (trial/no plan), "
+                      "Paid, or Failed state (current: %s).")
                     % (rec.subdomain, rec.state)
                 )
 
@@ -1051,6 +1335,7 @@ class SaasInstance(models.Model):
         self.state = 'running'
         self._append_log("Deployment completed successfully. State: running.")
         self._safe_refresh_usage()
+        self._send_notification('saas_core.mail_template_saas_deployed')
 
     # ========== Lifecycle Actions ==========
 
@@ -1265,11 +1550,13 @@ class SaasInstance(models.Model):
             rec.state = 'cancelled'
 
     def action_draft(self):
-        """Reset to draft state (only from failed or cancelled)."""
+        """Reset to draft state."""
+        allowed = ('failed', 'cancelled', 'pending_payment', 'paid')
         for rec in self:
-            if rec.state not in ('failed', 'cancelled'):
+            if rec.state not in allowed:
                 raise UserError(
-                    _("Can only reset to draft from 'Failed' or 'Cancelled' state.")
+                    _("Can only reset to draft from Failed, Cancelled, "
+                      "Pending Payment, or Paid state.")
                 )
             rec.state = 'draft'
 
@@ -1595,6 +1882,55 @@ class SaasInstance(models.Model):
                     "Failed to connect to docker server id=%s for storage checks", server_id,
                 )
 
+    # ========== Trial Expiry ==========
+
+    @api.model
+    def _cron_check_trial_expiry(self):
+        """Suspend running trial instances whose client trial period has expired."""
+        today = fields.Date.today()
+        # Find partners whose trial has expired
+        expired_partners = self.env['res.partner'].search([
+            ('saas_trial_used', '=', True),
+            ('saas_trial_end_date', '<=', today),
+        ])
+        if not expired_partners:
+            return
+        # Find their running trial instances
+        expired_instances = self.search([
+            ('state', '=', 'running'),
+            ('is_trial', '=', True),
+            ('partner_id', 'in', expired_partners.ids),
+        ])
+        for instance in expired_instances:
+            try:
+                instance.action_suspend()
+                instance._append_log(
+                    "AUTO-SUSPENDED: Client free trial expired on %s. "
+                    "Please subscribe to a paid plan to reactivate."
+                    % instance.partner_id.saas_trial_end_date
+                )
+                instance.message_post(
+                    body=_(
+                        "Free trial expired. Instance suspended. "
+                        "Please subscribe to continue using the service."
+                    ),
+                    message_type='notification',
+                )
+                instance._send_notification(
+                    'saas_core.mail_template_saas_suspended'
+                )
+                self.env.cr.commit()
+                _logger.info(
+                    "Trial instance %s suspended: client %s trial ended %s",
+                    instance.subdomain, instance.partner_id.name,
+                    instance.partner_id.saas_trial_end_date,
+                )
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Failed to suspend trial instance %s", instance.subdomain,
+                )
+
     # ========== Repo Management ==========
 
     def _update_repo_config_and_restart(self):
@@ -1634,4 +1970,343 @@ class SaasInstance(models.Model):
                 )
             self._append_log("Container restarted successfully.")
 
+    # ========== Recurring Billing ==========
+
+    def _set_next_invoice_date(self):
+        """Compute and write the next invoice date based on the plan billing period."""
+        self.ensure_one()
+        if not self.plan_id or self.is_trial:
+            return
+        today = fields.Date.today()
+        interval = self.plan_id._get_billing_interval()
+        self.next_invoice_date = today + interval
+        self.last_invoice_date = today
+        self.suspension_warning_sent = False
+
+    @api.model
+    def _cron_generate_recurring_invoices(self):
+        """Generate renewal invoices for running instances whose billing
+        cycle has elapsed.  Skips trials and instances without a plan."""
+        today = fields.Date.today()
+        instances = self.search([
+            ('state', '=', 'running'),
+            ('is_trial', '=', False),
+            ('plan_id', '!=', False),
+            ('plan_id.product_id', '!=', False),
+            ('next_invoice_date', '<=', today),
+        ])
+        for instance in instances:
+            try:
+                instance._generate_renewal_invoice()
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Failed to generate renewal invoice for %s",
+                    instance.subdomain,
+                )
+
+    def _generate_renewal_invoice(self):
+        """Create a new sale order + invoice for the next billing period."""
+        self.ensure_one()
+        plan = self.plan_id
+        if not plan or not plan.product_id:
+            return
+
+        pricelist = self.partner_id.property_product_pricelist
+        period_label = dict(plan._fields['billing_period'].selection).get(
+            plan.billing_period, plan.billing_period
+        )
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': _('Renewal: %s') % (self.name or self.subdomain),
+            'order_line': [(0, 0, {
+                'product_id': plan.product_id.id,
+                'name': _('%s — %s (%s renewal)') % (
+                    plan.name, self.name or self.subdomain, period_label,
+                ),
+                'product_uom_qty': 1,
+                'price_unit': plan.price,
+            })],
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].create(order_vals)
+        order.action_confirm()
+        invoice = order._create_invoices()
+        invoice.action_post()
+
+        # Advance billing cycle regardless of payment status
+        interval = plan._get_billing_interval()
+        self.write({
+            'next_invoice_date': self.next_invoice_date + interval,
+            'last_invoice_date': fields.Date.today(),
+            'suspension_warning_sent': False,
+        })
+        self._append_log(
+            "Renewal invoice %s created for %s period."
+            % (invoice.name, period_label)
+        )
+        self.message_post(body=_(
+            "Renewal invoice %s created (%s). Payment due.",
+        ) % (invoice.name, period_label))
+
+        # Send payment-due notification
+        self._send_notification('saas_core.mail_template_saas_payment_due')
+
+    # ========== Dunning / Grace Period ==========
+
+    @api.model
+    def _cron_check_overdue_invoices(self):
+        """Suspend instances whose invoices are overdue past the grace period.
+
+        Also sends a warning email when the invoice first becomes overdue.
+        """
+        today = fields.Date.today()
+        instances = self.search([
+            ('state', '=', 'running'),
+            ('is_trial', '=', False),
+            ('sale_order_id', '!=', False),
+        ])
+        for instance in instances:
+            try:
+                instance._check_dunning(today)
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Dunning check failed for %s", instance.subdomain,
+                )
+
+    def _check_dunning(self, today):
+        """Check if any linked invoices are overdue and act accordingly."""
+        self.ensure_one()
+        if not self.sale_order_id:
+            return
+
+        # Find all unpaid posted invoices linked to this instance's SO history
+        overdue_invoices = self.env['account.move'].search([
+            ('move_type', '=', 'out_invoice'),
+            ('payment_state', 'not in', ('paid', 'in_payment', 'reversed')),
+            ('state', '=', 'posted'),
+            ('invoice_date_due', '<', today),
+            ('partner_id', '=', self.partner_id.id),
+            ('invoice_origin', 'like', self.name or self.subdomain),
+        ], limit=1)
+        if not overdue_invoices:
+            return
+
+        grace_days = self.plan_id.grace_period_days if self.plan_id else 7
+        oldest_due = overdue_invoices.invoice_date_due
+        days_overdue = (today - oldest_due).days
+
+        if days_overdue > grace_days:
+            # Grace period exceeded — suspend
+            self.action_suspend()
+            self._append_log(
+                "AUTO-SUSPENDED: Invoice %s overdue by %d days (grace: %d)."
+                % (overdue_invoices.name, days_overdue, grace_days)
+            )
+            self._send_notification('saas_core.mail_template_saas_suspended')
+        elif not self.suspension_warning_sent:
+            # Within grace period — send warning
+            self.suspension_warning_sent = True
+            self._send_notification('saas_core.mail_template_saas_payment_due')
+            self._append_log(
+                "Payment overdue warning sent. Invoice %s due %s. "
+                "Grace period: %d days."
+                % (overdue_invoices.name, oldest_due, grace_days)
+            )
+
+    # ========== Plan Upgrade/Downgrade ==========
+
+    def action_change_plan(self, new_plan_id, prorate=True):
+        """Change the plan on a running instance.
+
+        Updates resource limits on the running container and optionally
+        creates a prorated credit/charge.
+        """
+        self.ensure_one()
+        if self.state not in ('running', 'stopped', 'suspended'):
+            raise UserError(
+                _("Can only change plan on running, stopped, or suspended instances.")
+            )
+        new_plan = self.env['saas.plan'].browse(new_plan_id)
+        if not new_plan.exists():
+            raise UserError(_("Invalid plan."))
+
+        old_plan = self.plan_id
+
+        # Generate prorated invoice if applicable
+        if prorate and old_plan and new_plan.price != old_plan.price and self.next_invoice_date:
+            self._create_proration_invoice(old_plan, new_plan)
+
+        self.plan_id = new_plan
+        self._append_log(
+            "Plan changed: %s → %s" % (
+                old_plan.name if old_plan else 'None', new_plan.name
+            )
+        )
+        self.message_post(body=_(
+            "Plan changed from %s to %s.",
+        ) % (old_plan.name if old_plan else '—', new_plan.name))
+
+        # Update resource limits on the live container
+        if self.state == 'running':
+            try:
+                self._update_container_resources()
+            except Exception as e:
+                _logger.exception(
+                    "Failed to update container resources for %s",
+                    self.subdomain,
+                )
+                self._append_log(
+                    "WARNING: Plan updated but container resource update failed: %s" % e
+                )
+
+    def _create_proration_invoice(self, old_plan, new_plan):
+        """Create a prorated charge or credit note for the plan change."""
+        self.ensure_one()
+        today = fields.Date.today()
+        if not self.next_invoice_date or not self.last_invoice_date:
+            return
+
+        total_days = (self.next_invoice_date - self.last_invoice_date).days
+        if total_days <= 0:
+            return
+        remaining_days = (self.next_invoice_date - today).days
+        if remaining_days <= 0:
+            return
+
+        fraction = remaining_days / total_days
+        price_diff = new_plan.price - old_plan.price
+        proration_amount = price_diff * fraction
+
+        if abs(proration_amount) < 0.01:
+            return
+
+        product = new_plan.product_id or old_plan.product_id
+        if not product:
+            return
+
+        pricelist = self.partner_id.property_product_pricelist
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': _('Plan change: %s') % (self.name or self.subdomain),
+            'order_line': [(0, 0, {
+                'product_id': product.id,
+                'name': _('Plan change proration: %s → %s (%d days remaining)')
+                        % (old_plan.name, new_plan.name, remaining_days),
+                'product_uom_qty': 1,
+                'price_unit': abs(proration_amount),
+            })],
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].create(order_vals)
+        order.action_confirm()
+
+        if proration_amount > 0:
+            invoice = order._create_invoices()
+            invoice.action_post()
+            self._append_log(
+                "Proration invoice %s: %.2f for plan upgrade."
+                % (invoice.name, proration_amount)
+            )
+        else:
+            invoice = order._create_invoices(final=True)
+            credit = invoice._reverse_moves(
+                default_values_list=[{
+                    'ref': _('Proration credit: %s → %s') % (old_plan.name, new_plan.name),
+                }],
+            )
+            credit.action_post()
+            self._append_log(
+                "Proration credit %s: %.2f for plan downgrade."
+                % (credit.name, abs(proration_amount))
+            )
+
+    def _update_container_resources(self):
+        """Update CPU/RAM limits on a running container via docker update."""
+        self.ensure_one()
+        if not self.plan_id or self.state != 'running':
+            return
+        self._ensure_can_ssh()
+        container_name = self._get_container_name()
+        plan = self.plan_id
+
+        # docker update --cpus=X --memory=Y container
+        update_cmd = 'docker update --cpus=%s %s' % (
+            shlex.quote(str(plan.cpu_limit)),
+            shlex.quote(container_name),
+        )
+        if plan.ram_limit:
+            update_cmd = 'docker update --cpus=%s --memory=%s %s' % (
+                shlex.quote(str(plan.cpu_limit)),
+                shlex.quote(plan.ram_limit),
+                shlex.quote(container_name),
+            )
+
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = ssh.execute(update_cmd)
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to update container resources:\n%s") % stderr
+                )
+
+        # Also regenerate docker-compose.yml so next restart uses new limits
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            self._render_and_write_configs(ssh)
+
+        self._append_log(
+            "Container resources updated: CPU=%s, RAM=%s"
+            % (plan.cpu_limit, plan.ram_limit)
+        )
+
+    # ========== Email Notifications ==========
+
+    def _send_notification(self, template_xmlid):
+        """Send an email notification using the given mail template XML ID."""
+        self.ensure_one()
+        template = self.env.ref(template_xmlid, raise_if_not_found=False)
+        if template:
+            template.send_mail(self.id, force_send=False)
+
+    # ========== Deployment Status Endpoint Helper ==========
+
+    def _get_status_dict(self):
+        """Return a dict suitable for JSON API responses."""
+        self.ensure_one()
+        return {
+            'id': self.id,
+            'state': self.state,
+            'state_label': dict(
+                self._fields['state'].selection
+            ).get(self.state, self.state),
+            'url': self.url or '',
+            'provisioning_log': self.provisioning_log or '',
+        }
+
+    # ========== Portal Self-Service Actions ==========
+
+    def action_portal_restart(self):
+        """Restart from portal — only allowed for running instances."""
+        self.ensure_one()
+        if self.state != 'running':
+            raise UserError(_("Instance must be running to restart."))
+        self.action_restart()
+
+    def action_portal_stop(self):
+        """Stop from portal — only allowed for running instances."""
+        self.ensure_one()
+        if self.state != 'running':
+            raise UserError(_("Instance must be running to stop."))
+        self.action_stop()
+
+    def action_portal_start(self):
+        """Start from portal — only allowed for stopped instances."""
+        self.ensure_one()
+        if self.state != 'stopped':
+            raise UserError(_("Instance must be stopped to start."))
+        self.action_restart()
 

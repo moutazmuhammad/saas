@@ -18,6 +18,7 @@
                 <field name="odoo_version_id"/>
                 <field name="docker_server_id"/>
                 <field name="db_server_id"/>
+                <field name="sale_order_id" optional="hide"/>
                 <field name="state" widget="badge"
                        decoration-success="state == 'running'"
                        decoration-danger="state in ('cancelled', 'failed')"
@@ -35,11 +36,34 @@
         <field name="arch" type="xml">
             <form string="SaaS Instance">
                 <header>
-                    <!-- Deploy: visible in draft and failed -->
+                    <!-- ===== Billing Flow ===== -->
+
+                    <!-- Confirm & Bill: draft with a plan assigned (not trial).
+                         Creates SO, confirms, invoices. Deploys automatically
+                         once payment is received (or immediately if zero-amount). -->
+                    <button name="action_confirm_and_bill"
+                            string="Confirm &amp; Bill"
+                            type="object" class="btn-primary"
+                            icon="fa-check"
+                            invisible="state != 'draft' or not plan_id or is_trial"/>
+
+                    <!-- Mark as Paid: manual fallback (wire transfers, trials) -->
+                    <button name="action_mark_as_paid"
+                            string="Mark as Paid"
+                            type="object" class="btn-secondary"
+                            icon="fa-money"
+                            invisible="state != 'pending_payment'"
+                            groups="saas_core.group_saas_manager"/>
+
+                    <!-- ===== Deployment ===== -->
+
+                    <!-- Deploy: draft without plan, draft trial, or retry from failed -->
                     <button name="action_deploy" string="Deploy"
                             type="object" class="btn-primary"
                             icon="fa-play"
-                            invisible="state not in ('draft', 'failed')"/>
+                            invisible="(state == 'draft' and plan_id and not is_trial) or state not in ('draft', 'failed')"/>
+
+                    <!-- ===== Instance Operations ===== -->
 
                     <!-- Restart: when running, stopped, or suspended -->
                     <button name="action_restart" string="Restart"
@@ -89,16 +113,34 @@
                             invisible="state not in ('running', 'stopped', 'failed', 'suspended')"
                             confirm="This will permanently delete the container, volumes, network, database, and all data. Are you sure?"/>
 
-                    <!-- Reset to Draft: from failed or cancelled -->
+                    <!-- Reset to Draft: from failed, cancelled, pending_payment, or paid -->
                     <button name="action_draft" string="Reset to Draft"
                             type="object"
-                            invisible="state not in ('failed', 'cancelled')"/>
+                            invisible="state not in ('failed', 'cancelled', 'pending_payment', 'paid')"/>
 
                     <!-- Statusbar -->
                     <field name="state" widget="statusbar"
-                           statusbar_visible="draft,provisioning,running,stopped,suspended,cancelled"/>
+                           statusbar_visible="draft,pending_payment,paid,provisioning,running"/>
                 </header>
                 <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_sale_order"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-shopping-cart"
+                                invisible="not sale_order_id">
+                            <field name="sale_order_count" widget="statinfo"
+                                   string="Sale Order"/>
+                        </button>
+                        <button name="action_view_invoices"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-pencil-square-o"
+                                invisible="invoice_count == 0">
+                            <field name="invoice_count" widget="statinfo"
+                                   string="Invoices"/>
+                        </button>
+                    </div>
                     <group>
                         <!-- Left Column -->
                         <group>
@@ -107,6 +149,8 @@
                             <field name="plan_id"/>
                             <field name="partner_id"/>
                             <field name="url" widget="url"/>
+                            <field name="is_trial" widget="boolean_toggle"/>
+                            <field name="next_invoice_date"/>
                             <field name="odoo_version_id"/>
                         </group>
                         <!-- Right Column -->

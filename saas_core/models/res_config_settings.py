@@ -13,6 +13,24 @@ class ResConfigSettings(models.TransientModel):
              '(HTTP, longpolling) starting from this value.',
     )
 
+    # ========== Free Trial ==========
+    saas_trial_days = fields.Integer(
+        string='Free Trial Duration (Days)',
+        config_parameter='saas_master.trial_days',
+        default=14,
+        help='Number of days for the free trial period. '
+             'After expiry the instance is suspended until the client pays.',
+    )
+
+    # ========== Rate Limiting ==========
+    saas_max_instances_per_user = fields.Integer(
+        string='Max Instances Per User',
+        config_parameter='saas_master.max_instances_per_user',
+        default=5,
+        help='Maximum number of active instances a single customer can have. '
+             '0 = unlimited.',
+    )
+
     # ========== Backup Storage ==========
     saas_backup_provider = fields.Selection([
         ('aws', 'AWS S3'),

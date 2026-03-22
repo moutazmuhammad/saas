@@ -1,0 +1,428 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================ -->
+    <!--  Portal Home: add "SaaS Instances" entry                      -->
+    <!-- ============================================================ -->
+
+    <template id="portal_my_home_saas"
+              name="SaaS Instances"
+              customize_show="True"
+              inherit_id="portal.portal_my_home"
+              priority="40">
+        <xpath expr="//div[hasclass('o_portal_docs')]" position="before">
+            <t t-set="portal_service_category_enable" t-value="True"/>
+        </xpath>
+        <div id="portal_service_category" position="inside">
+            <t t-call="portal.portal_docs_entry">
+                <t t-set="icon" t-value="'/saas_website/static/src/img/server.svg'"/>
+                <t t-set="title">SaaS Instances</t>
+                <t t-set="text">Manage your Odoo instances</t>
+                <t t-set="url" t-value="'/my/instances'"/>
+                <t t-set="placeholder_count" t-value="'instance_count'"/>
+            </t>
+        </div>
+    </template>
+
+    <!-- ============================================================ -->
+    <!--  Breadcrumbs                                                   -->
+    <!-- ============================================================ -->
+
+    <template id="portal_breadcrumbs_saas"
+              name="Portal: SaaS breadcrumbs"
+              inherit_id="portal.portal_breadcrumbs"
+              priority="40">
+        <xpath expr="//ol[hasclass('o_portal_submenu')]" position="inside">
+            <li t-if="page_name == 'saas_instances' or page_name == 'saas_instance_detail'"
+                t-attf-class="breadcrumb-item #{'active' if page_name == 'saas_instances' else ''}">
+                <a t-if="page_name == 'saas_instance_detail'" href="/my/instances">Instances</a>
+                <t t-else="">Instances</t>
+            </li>
+            <li t-if="page_name == 'saas_instance_detail' and instance"
+                class="breadcrumb-item active">
+                <t t-out="instance.name or instance.subdomain"/>
+            </li>
+        </xpath>
+    </template>
+
+    <!-- ============================================================ -->
+    <!--  Instance List: /my/instances                                  -->
+    <!-- ============================================================ -->
+
+    <template id="portal_my_instances" name="My SaaS Instances">
+        <t t-call="portal.portal_layout">
+            <t t-set="breadcrumbs_searchbar" t-value="True"/>
+
+            <t t-call="portal.portal_searchbar">
+                <t t-set="title">Instances</t>
+            </t>
+
+            <t t-if="not instances">
+                <div class="alert alert-info" role="alert">
+                    You don't have any instances yet.
+                    <a href="/plans" class="alert-link">Browse plans</a> to get started.
+                </div>
+            </t>
+
+            <t t-if="instances" t-call="portal.portal_table">
+                <thead>
+                    <tr class="active">
+                        <th>Instance</th>
+                        <th>Plan</th>
+                        <th>Status</th>
+                        <th>URL</th>
+                        <th class="text-end">Created</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <t t-foreach="instances" t-as="inst">
+                        <tr>
+                            <td>
+                                <a t-attf-href="/my/instances/#{inst.id}?access_token=#{inst.access_token or ''}">
+                                    <t t-out="inst.name or inst.subdomain"/>
+                                </a>
+                            </td>
+                            <td>
+                                <t t-if="inst.plan_id" t-out="inst.plan_id.name"/>
+                                <span t-else="" class="text-muted">—</span>
+                            </td>
+                            <td>
+                                <span t-attf-class="badge rounded-pill #{
+                                    'text-bg-success' if inst.state == 'running' else
+                                    'text-bg-info' if inst.state == 'provisioning' else
+                                    'text-bg-warning' if inst.state in ('pending_payment', 'paid') else
+                                    'text-bg-danger' if inst.state in ('failed', 'cancelled') else
+                                    'text-bg-secondary'
+                                }">
+                                    <t t-out="dict(inst._fields['state'].selection).get(inst.state, inst.state)"/>
+                                </span>
+                            </td>
+                            <td>
+                                <a t-if="inst.url and inst.state == 'running'"
+                                   t-att-href="inst.url" target="_blank">
+                                    <i class="fa fa-external-link me-1"/>Open
+                                </a>
+                                <span t-else="" class="text-muted">—</span>
+                            </td>
+                            <td class="text-end">
+                                <span t-field="inst.create_date" t-options='{"widget": "date"}'/>
+                            </td>
+                        </tr>
+                    </t>
+                </tbody>
+            </t>
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!--  Instance Detail: /my/instances/<id>                           -->
+    <!-- ============================================================ -->
+
+    <template id="portal_instance_detail" name="SaaS Instance Detail">
+        <t t-call="portal.portal_layout">
+
+            <div class="row mt-3">
+
+                <!-- Main Content -->
+                <div class="col-lg-8">
+
+                    <!-- Instance Info Card -->
+                    <div class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white d-flex align-items-center">
+                            <h4 class="mb-0 flex-grow-1">
+                                <t t-out="instance.name or instance.subdomain"/>
+                            </h4>
+                            <span t-attf-class="badge rounded-pill #{
+                                'text-bg-success' if instance.state == 'running' else
+                                'text-bg-info' if instance.state == 'provisioning' else
+                                'text-bg-warning' if instance.state in ('pending_payment', 'paid') else
+                                'text-bg-danger' if instance.state in ('failed', 'cancelled') else
+                                'text-bg-secondary'
+                            }" id="instance-state-badge">
+                                <t t-out="dict(instance._fields['state'].selection).get(instance.state, instance.state)"/>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-sm-6 mb-3">
+                                    <small class="text-muted d-block">Instance URL</small>
+                                    <a t-if="instance.url and instance.state == 'running'"
+                                       t-att-href="instance.url" target="_blank" class="fw-bold">
+                                        <i class="fa fa-external-link me-1"/>
+                                        <t t-out="instance.url"/>
+                                    </a>
+                                    <span t-elif="instance.url" class="text-muted">
+                                        <t t-out="instance.url"/> (not yet available)
+                                    </span>
+                                </div>
+                                <div class="col-sm-3 mb-3">
+                                    <small class="text-muted d-block">Plan</small>
+                                    <strong t-if="instance.plan_id" t-out="instance.plan_id.name"/>
+                                    <span t-else="" class="text-muted">—</span>
+                                </div>
+                                <div class="col-sm-3 mb-3">
+                                    <small class="text-muted d-block">Odoo Version</small>
+                                    <strong t-if="instance.odoo_version_id"
+                                            t-out="instance.odoo_version_id.name"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Resource Usage (visible when running) -->
+                    <div t-if="instance.state == 'running'" class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white">
+                            <h5 class="mb-0">Resource Usage</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row text-center">
+                                <div class="col-6 col-md-3 mb-3">
+                                    <small class="text-muted d-block">CPU</small>
+                                    <strong t-out="instance.cpu_usage or '—'"/>
+                                </div>
+                                <div class="col-6 col-md-3 mb-3">
+                                    <small class="text-muted d-block">RAM</small>
+                                    <strong t-out="instance.ram_usage or '—'"/>
+                                </div>
+                                <div class="col-6 col-md-3 mb-3">
+                                    <small class="text-muted d-block">Disk</small>
+                                    <strong t-out="instance.disk_usage or '—'"/>
+                                </div>
+                                <div class="col-6 col-md-3 mb-3">
+                                    <small class="text-muted d-block">Database</small>
+                                    <strong t-out="instance.db_size or '—'"/>
+                                </div>
+                            </div>
+                            <div t-if="instance.usage_last_updated" class="text-muted text-center">
+                                <small>
+                                    Last updated:
+                                    <t t-out="instance.usage_last_updated"
+                                       t-options='{"widget": "datetime"}'/>
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Provisioning Status (with auto-polling) -->
+                    <div t-if="instance.state in ('provisioning', 'failed') and instance.provisioning_log"
+                         class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white">
+                            <h5 class="mb-0">
+                                <t t-if="instance.state == 'provisioning'">
+                                    <i class="fa fa-spinner fa-spin me-2"/>Deploying...
+                                </t>
+                                <t t-else="">Deployment Log</t>
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <pre class="bg-dark text-light p-3 rounded mb-0"
+                                 id="provisioning-log"
+                                 style="max-height: 300px; overflow-y: auto; font-size: 0.85rem;"><t t-out="instance.provisioning_log"/></pre>
+                            <t t-if="instance.state == 'provisioning'">
+                                <p class="text-muted mt-2 mb-0">
+                                    <small>Status updates automatically every 5 seconds.</small>
+                                </p>
+                            </t>
+                        </div>
+                    </div>
+
+                    <!-- Backups Section -->
+                    <div t-if="backups" class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white">
+                            <h5 class="mb-0">Recent Backups</h5>
+                        </div>
+                        <div class="card-body p-0">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Size</th>
+                                        <th class="text-end">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <t t-foreach="backups" t-as="backup">
+                                        <tr>
+                                            <td>
+                                                <span t-field="backup.create_date"
+                                                      t-options='{"widget": "datetime"}'/>
+                                            </td>
+                                            <td>
+                                                <t t-if="backup.size_mb">
+                                                    <t t-out="'%.1f' % backup.size_mb"/> MB
+                                                </t>
+                                            </td>
+                                            <td class="text-end">
+                                                <a t-attf-href="/my/instances/#{instance.id}/backup/#{backup.id}/download"
+                                                   class="btn btn-sm btn-outline-primary">
+                                                    <i class="fa fa-download me-1"/>Download
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    </t>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Trial Info -->
+                    <div t-if="instance.is_trial and instance.state == 'running'"
+                         class="card shadow-sm border-0 mb-4 border-start border-4 border-success">
+                        <div class="card-body">
+                            <h6 class="text-success mb-1">
+                                <i class="fa fa-gift me-1"/>Free Trial
+                            </h6>
+                            <p class="mb-0">
+                                Your trial ends on
+                                <strong t-out="instance.partner_id.sudo().saas_trial_end_date"/>.
+                                Subscribe to a paid plan before it expires to keep your instances running.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Trial Expired / Suspended -->
+                    <div t-if="instance.is_trial and instance.state == 'suspended'"
+                         class="card shadow-sm border-0 mb-4">
+                        <div class="card-body text-center py-4">
+                            <i class="fa fa-exclamation-triangle fa-3x text-danger mb-3 d-block"/>
+                            <h5>Trial Expired</h5>
+                            <p class="text-muted">
+                                Your free trial has ended. Subscribe to reactivate your instance.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Pending Payment Notice -->
+                    <div t-if="instance.state == 'pending_payment'" class="card shadow-sm border-0 mb-4">
+                        <div class="card-body text-center py-4">
+                            <i class="fa fa-clock-o fa-3x text-warning mb-3 d-block"/>
+                            <h5>Awaiting Payment</h5>
+                            <p class="text-muted">
+                                Your instance will be deployed automatically once payment is received.
+                            </p>
+                            <t t-if="instance.sale_order_id and instance.sale_order_id.invoice_ids">
+                                <a t-att-href="instance.sale_order_id.invoice_ids[0].get_portal_url()"
+                                   class="btn btn-primary">
+                                    <i class="fa fa-credit-card me-2"/>Pay Now
+                                </a>
+                            </t>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Sidebar -->
+                <div class="col-lg-4">
+
+                    <!-- Self-Service Actions -->
+                    <div class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white">
+                            <h6 class="mb-0">Actions</h6>
+                        </div>
+                        <div class="list-group list-group-flush">
+                            <a t-if="instance.url and instance.state == 'running'"
+                               t-att-href="instance.url" target="_blank"
+                               class="list-group-item list-group-item-action">
+                                <i class="fa fa-external-link me-2 text-primary"/>Open Instance
+                            </a>
+                            <a t-if="instance.state == 'running'"
+                               href="#" class="list-group-item list-group-item-action saas-action"
+                               data-action="restart"
+                               t-att-data-instance-id="instance.id">
+                                <i class="fa fa-refresh me-2 text-warning"/>Restart
+                            </a>
+                            <a t-if="instance.state == 'running'"
+                               href="#" class="list-group-item list-group-item-action saas-action"
+                               data-action="stop"
+                               t-att-data-instance-id="instance.id">
+                                <i class="fa fa-stop me-2 text-danger"/>Stop
+                            </a>
+                            <a t-if="instance.state == 'stopped'"
+                               href="#" class="list-group-item list-group-item-action saas-action"
+                               data-action="start"
+                               t-att-data-instance-id="instance.id">
+                                <i class="fa fa-play me-2 text-success"/>Start
+                            </a>
+                            <a t-if="instance.sale_order_id"
+                               t-att-href="instance.sale_order_id.get_portal_url()"
+                               class="list-group-item list-group-item-action">
+                                <i class="fa fa-shopping-cart me-2 text-primary"/>View Order
+                            </a>
+                            <a t-if="instance.sale_order_id and instance.sale_order_id.invoice_ids"
+                               t-att-href="instance.sale_order_id.invoice_ids[0].get_portal_url()"
+                               class="list-group-item list-group-item-action">
+                                <i class="fa fa-file-text-o me-2 text-primary"/>View Invoice
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Plan Details -->
+                    <div t-if="instance.plan_id" class="card shadow-sm border-0 mb-4">
+                        <div class="card-header bg-white">
+                            <h6 class="mb-0">Plan: <t t-out="instance.plan_id.name"/></h6>
+                        </div>
+                        <div class="card-body">
+                            <ul class="list-unstyled mb-0">
+                                <li class="mb-2">
+                                    <i class="fa fa-microchip text-muted me-2"/>
+                                    <t t-out="instance.plan_id.cpu_limit"/> CPU
+                                </li>
+                                <li class="mb-2">
+                                    <i class="fa fa-memory text-muted me-2"/>
+                                    <t t-out="instance.plan_id.ram_limit"/> RAM
+                                </li>
+                                <li class="mb-2">
+                                    <i class="fa fa-hdd-o text-muted me-2"/>
+                                    <t t-out="int(instance.plan_id.storage_limit)"/> GB Storage
+                                </li>
+                                <li class="mb-2">
+                                    <i class="fa fa-cloud-download text-muted me-2"/>
+                                    <t t-out="instance.plan_id.max_backups"/> Backups
+                                </li>
+                                <li t-if="instance.next_invoice_date" class="mb-2">
+                                    <i class="fa fa-calendar text-muted me-2"/>
+                                    Next billing:
+                                    <span t-field="instance.next_invoice_date"
+                                          t-options='{"widget": "date"}'/>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- Auto-polling script for provisioning state -->
+            <t t-if="instance.state == 'provisioning'">
+                <script>
+                    (function() {
+                        var instanceId = <t t-out="instance.id"/>;
+                        var interval = setInterval(function() {
+                            fetch('/my/instances/' + instanceId + '/status', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({jsonrpc: '2.0', method: 'call', params: {}})
+                            })
+                            .then(function(r) { return r.json(); })
+                            .then(function(data) {
+                                var result = data.result || {};
+                                if (result.provisioning_log) {
+                                    var el = document.getElementById('provisioning-log');
+                                    if (el) el.textContent = result.provisioning_log;
+                                }
+                                if (result.state !== 'provisioning') {
+                                    clearInterval(interval);
+                                    location.reload();
+                                }
+                            })
+                            .catch(function() {});
+                        }, 5000);
+                    })();
+                </script>
+            </t>
+
+        </t>
+    </template>
+
+</odoo>

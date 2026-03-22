@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================ -->
+    <!--  Instance Deployed Successfully                               -->
+    <!-- ============================================================ -->
+    <record id="mail_template_saas_deployed" model="mail.template">
+        <field name="name">SaaS: Instance Deployed</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">Your Odoo instance {{ object.name }} is ready!</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+<div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <p>Dear {{ object.partner_id.name }},</p>
+    <p>Great news! Your Odoo instance <strong>{{ object.name }}</strong> has been
+       deployed successfully and is now running.</p>
+    <p><strong>Access URL:</strong>
+       <a href="{{ object.url }}">{{ object.url }}</a></p>
+    <p>Plan: {{ object.plan_id.name or 'N/A' }}</p>
+    <p>You can manage your instance from the
+       <a href="/my/instances/{{ object.id }}">customer portal</a>.</p>
+    <p>Best regards,<br/>{{ object.company_id.name }}</p>
+</div>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
+    <!-- ============================================================ -->
+    <!--  Instance Suspended                                           -->
+    <!-- ============================================================ -->
+    <record id="mail_template_saas_suspended" model="mail.template">
+        <field name="name">SaaS: Instance Suspended</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">Your Odoo instance {{ object.name }} has been suspended</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+<div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <p>Dear {{ object.partner_id.name }},</p>
+    <p>Your Odoo instance <strong>{{ object.name }}</strong> has been
+       <strong>suspended</strong>.</p>
+    <p>This may be due to:</p>
+    <ul>
+        <li>Free trial expiry</li>
+        <li>Overdue payment past grace period</li>
+        <li>Storage limit exceeded</li>
+    </ul>
+    <p>To reactivate your instance, please settle any outstanding invoices
+       or upgrade your plan.</p>
+    <p>Visit the <a href="/my/instances/{{ object.id }}">customer portal</a>
+       for more details.</p>
+    <p>Best regards,<br/>{{ object.company_id.name }}</p>
+</div>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
+    <!-- ============================================================ -->
+    <!--  Payment Due / Overdue Warning                                -->
+    <!-- ============================================================ -->
+    <record id="mail_template_saas_payment_due" model="mail.template">
+        <field name="name">SaaS: Payment Due</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">Payment due for your Odoo instance {{ object.name }}</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+<div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <p>Dear {{ object.partner_id.name }},</p>
+    <p>This is a reminder that payment is due for your Odoo instance
+       <strong>{{ object.name }}</strong>.</p>
+    <p>Plan: {{ object.plan_id.name or 'N/A' }}<br/>
+       Billing: {{ object.plan_id.billing_period or 'N/A' }}</p>
+    <p>Please settle any outstanding invoices to avoid service interruption.
+       Your instance may be suspended if payment is not received within the
+       grace period ({{ object.plan_id.grace_period_days }} days).</p>
+    <p>Visit the <a href="/my/instances/{{ object.id }}">customer portal</a>
+       to view your invoices and make a payment.</p>
+    <p>Best regards,<br/>{{ object.company_id.name }}</p>
+</div>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
+    <!-- ============================================================ -->
+    <!--  Deletion Warning                                             -->
+    <!-- ============================================================ -->
+    <record id="mail_template_saas_deletion_warning" model="mail.template">
+        <field name="name">SaaS: Deletion Warning</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">WARNING: Your Odoo instance {{ object.name }} will be deleted</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+<div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <p>Dear {{ object.partner_id.name }},</p>
+    <p><strong>Your Odoo instance {{ object.name }} is scheduled for deletion.</strong></p>
+    <p>All data, databases, and backups will be permanently removed.</p>
+    <p>If you wish to keep your instance, please contact support or
+       settle outstanding invoices immediately.</p>
+    <p>Best regards,<br/>{{ object.company_id.name }}</p>
+</div>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
+</odoo>

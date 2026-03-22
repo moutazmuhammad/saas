@@ -4,11 +4,11 @@
 ================================================================================
 
 MODULE: saas_core (SaaS Instance Manager)
-VERSION: 18.0.4.0.0
+VERSION: 18.0.6.0.0
 CATEGORY: SaaS
 LICENSE: LGPL-3
 AUTHOR: SaaS Platform
-DEPENDS: base, mail, sale
+DEPENDS: base, mail, sale, account
 PYTHON DEPS: paramiko, jinja2, boto3, google-cloud-storage
 
 ================================================================================
@@ -45,6 +45,7 @@ saas_core/
     __init__.py
     saas_instance.py              Main instance model (deploy, lifecycle, etc.)
     saas_plan.py                  Resource plans (CPU/RAM/storage limits)
+    account_move.py               Inherits account.move for payment detection
     saas_ssh_key_pair.py          SSH key storage
     saas_docker_server.py         Docker host server config
     saas_docker_container.py      Docker container tracking
@@ -151,28 +152,59 @@ FIELDS:
     total_storage      Char    disk + db combined
     usage_last_updated Datetime
 
+  Sales & Invoicing:
+    sale_order_id      M2O       -> sale.order (linked sale order)
+    sale_order_count   Integer   Computed
+    invoice_count      Integer   Computed from sale_order_id.invoice_ids
+
   Other:
-    state              Selection  draft/provisioning/running/stopped/failed/
-                                  suspended/cancelled
+    state              Selection  draft/pending_payment/paid/provisioning/
+                                  running/stopped/failed/suspended/cancelled
     provisioning_log   Text       Timestamped operation log
     extra_config       Text       Additional odoo.conf key=value lines
     repo_ids           O2M        -> saas.instance.repo (custom Git repos)
     backup_ids         O2M        -> saas.instance.backup
 
-STATE MACHINE:
-    draft --[deploy]--> provisioning --[success]--> running
-                                     --[error]---> failed
-    running --[stop]------> stopped
-    running --[suspend]---> suspended
-    running --[redeploy]--> provisioning --> running
-    stopped/suspended --[restart]--> running
-    any (except provisioning) --[delete]--> cancelled
-    failed/cancelled --[reset]--> draft
+STATE MACHINE (CLIENT LIFECYCLE):
+
+    The lifecycle is divided into two phases: billing and infrastructure.
+
+    Billing phase (when a plan is assigned):
+      draft --[Confirm & Bill]--> pending_payment --[payment received]--> paid
+                                  pending_payment --[Mark as Paid]------> paid
+
+    Infrastructure phase:
+      paid --[Deploy]--> provisioning --[success]--> running
+                                      --[error]---> failed
+
+    Without a plan (internal/test instances):
+      draft --[Deploy]--> provisioning --> running
+
+    Operational transitions:
+      running --[stop]------> stopped
+      running --[suspend]---> suspended
+      running --[redeploy]--> provisioning --> running
+      stopped/suspended --[restart]--> running
+      any (except provisioning) --[delete]--> cancelled
+
+    Reset paths:
+      failed/cancelled/pending_payment/paid --[Reset to Draft]--> draft
 
 KEY METHODS:
-    action_deploy()          Validate + queue background deployment
+    -- Billing --
+    action_confirm_and_bill()  Create SO, confirm, generate & post invoice,
+                               transition to pending_payment (or paid if $0)
+    action_mark_as_paid()      Manual override: pending_payment -> paid
+    action_view_sale_order()   Open linked sale order
+    action_view_invoices()     Open invoices from linked sale order
+
+    -- Deployment --
+    action_deploy()          Validate + queue background deployment.
+                             Requires paid state (or draft without plan).
     _do_deploy()             Create dirs, provision PG, render configs,
                              start container, setup Nginx+SSL
+
+    -- Operations --
     action_stop()            Queue background stop
     action_restart()         Queue background restart
     action_suspend()         Queue background suspend
@@ -210,7 +242,29 @@ FIELDS:
     instance_count Integer  Computed: number of instances on this plan
 
 --------------------------------------------------------------------------------
-3.3  saas.ssh.key.pair  (saas_ssh_key_pair.py)
+3.3  account.move (inherited)  (account_move.py)
+--------------------------------------------------------------------------------
+
+Detects invoice payment and auto-transitions linked SaaS instances.
+
+OVERRIDES:
+    write()  Watches for payment_state changes to 'paid' or 'in_payment'.
+             When detected, finds SaaS instances linked via sale_order_id
+             that are in 'pending_payment' state and transitions them to
+             'paid'. Posts a chatter message on each instance.
+
+HOW IT WORKS:
+    1. Customer pays the invoice (via bank, online, or manual reconciliation)
+    2. Odoo sets payment_state = 'paid' on the account.move
+    3. Our write() override catches this change
+    4. Searches sale.order records linked to the paid invoices
+    5. Searches saas.instance records linked to those sale orders
+    6. Transitions matching instances: pending_payment -> paid
+    7. Immediately calls action_deploy() to provision the instance
+    8. The client receives their running instance without any manual step
+
+--------------------------------------------------------------------------------
+3.4  saas.ssh.key.pair  (saas_ssh_key_pair.py)
 --------------------------------------------------------------------------------
 
 SSH private key storage for authenticating to servers.
@@ -222,7 +276,7 @@ FIELDS:
     private_key_filename Char      Original filename
 
 --------------------------------------------------------------------------------
-3.4  saas.container.physical.server  (saas_docker_server.py)
+3.5  saas.container.physical.server  (saas_docker_server.py)
 --------------------------------------------------------------------------------
 
 Docker host server configuration.
@@ -244,7 +298,7 @@ METHODS:
     action_refresh_containers() Sync containers from docker ps output
 
 --------------------------------------------------------------------------------
-3.5  saas.psql.physical.server  (saas_db_server.py)
+3.6  saas.psql.physical.server  (saas_db_server.py)
 --------------------------------------------------------------------------------
 
 PostgreSQL server configuration. Same SSH fields as Docker server.
@@ -253,7 +307,7 @@ EXTRA FIELDS:
     psql_port  Integer  PostgreSQL port, default 5432
 
 --------------------------------------------------------------------------------
-3.6  saas.docker.container  (saas_docker_container.py)
+3.7  saas.docker.container  (saas_docker_container.py)
 --------------------------------------------------------------------------------
 
 Tracks Docker containers discovered on servers.
@@ -272,7 +326,7 @@ METHODS:
     action_view_logs()
 
 --------------------------------------------------------------------------------
-3.7  saas.odoo.version  (saas_odoo_version.py)
+3.8  saas.odoo.version  (saas_odoo_version.py)
 --------------------------------------------------------------------------------
 
 Odoo version configuration with its Docker image.
@@ -295,7 +349,7 @@ METHODS:
     _do_fetch_modules()      Background execution of the above
 
 --------------------------------------------------------------------------------
-3.8  saas.based.domain  (saas_domain.py)
+3.9  saas.based.domain  (saas_domain.py)
 --------------------------------------------------------------------------------
 
 Base domain for instance subdomains.
@@ -304,7 +358,7 @@ FIELDS:
     name  Char  Domain name (e.g. "saas.example.com")
 
 --------------------------------------------------------------------------------
-3.9  saas.instance.backup  (saas_instance_backup.py)
+3.10  saas.instance.backup  (saas_instance_backup.py)
 --------------------------------------------------------------------------------
 
 Instance backups stored in cloud storage.
@@ -340,7 +394,7 @@ BACKUP FLOW:
     5. On error: set state=failed, store error_message
 
 --------------------------------------------------------------------------------
-3.10  saas.instance.module.line  (saas_instance_module_line.py)
+3.11  saas.instance.module.line  (saas_instance_module_line.py)
 --------------------------------------------------------------------------------
 
 Installation request linking an instance to a product or module.
@@ -361,7 +415,7 @@ METHODS:
                                  including dependencies from the product/module
 
 --------------------------------------------------------------------------------
-3.11  saas.instance.repo  (saas_instance_repo.py)
+3.12  saas.instance.repo  (saas_instance_repo.py)
 --------------------------------------------------------------------------------
 
 Instance-level custom Git repository (specific to one instance).
@@ -386,7 +440,7 @@ METHODS:
     All actions run in background threads.
 
 --------------------------------------------------------------------------------
-3.12  saas.version.repo  (saas_version_repo.py)
+3.13  saas.version.repo  (saas_version_repo.py)
 --------------------------------------------------------------------------------
 
 Version-level shared Git repository (shared across instances of same version).
@@ -413,7 +467,7 @@ METHODS:
                          restart affected instances
 
 --------------------------------------------------------------------------------
-3.13  product.template (inherited)  (product_template.py)
+3.14  product.template (inherited)  (product_template.py)
 --------------------------------------------------------------------------------
 
 Extends Odoo's product.template to represent SaaS modules and products.
@@ -449,7 +503,7 @@ SQL CONSTRAINTS:
     technical_name must be unique per Odoo version
 
 --------------------------------------------------------------------------------
-3.14  res.config.settings (inherited)  (res_config_settings.py)
+3.15  res.config.settings (inherited)  (res_config_settings.py)
 --------------------------------------------------------------------------------
 
 Settings page under SaaS Manager > Configuration > Settings.
@@ -587,27 +641,80 @@ SaaS Manager (root)
 10. KEY WORKFLOWS
 ================================================================================
 
-INSTANCE DEPLOYMENT:
-  1. Create instance (draft): set subdomain, domain, customer, plan, version,
-     Docker server, DB server
-  2. Add product/module lines (what to install)
-  3. Click "Deploy" -> state becomes "provisioning"
-  4. Background thread:
-     a. Auto-assigns ports (finds unused pair starting from config port)
-     b. Generates random credentials (db_user, db_password, admin_password)
-     c. Creates directory structure on Docker server via SSH:
-        {base_path}/{partner_code}/{subdomain}/
-          docker-compose.yml, config/odoo.conf, data/odoo/, addons/
-     d. Creates PostgreSQL role + database on DB server via SSH
-     e. Renders docker-compose.yml and odoo.conf from Jinja2 templates
-     f. Starts container: docker compose up -d
-     g. Waits for Odoo to be ready (polls HTTP for 120s)
-     h. Installs base modules via docker compose run
-     i. Installs selected modules (from product/module lines)
-     j. Obtains SSL certificate via Certbot
-     k. Deploys Nginx reverse proxy config
-     l. Sets state = "running"
-     m. Auto-refreshes resource usage
+CLIENT LIFECYCLE (END-TO-END):
+
+  The full flow from plan selection to a running instance:
+
+  STEP 1 -- CONFIGURE (state: draft)
+    a. Create a new instance record
+    b. Fill in: subdomain, base domain, customer, plan, Odoo version,
+       Docker server, DB server
+    c. Add product/module lines (what to install on the instance)
+
+  STEP 2 -- BILLING (state: draft -> pending_payment)
+    a. Click "Confirm & Bill" button
+    b. System validates: customer, plan, plan's product are all set
+    c. Creates a sale order with:
+       - Plan product as the main line (plan price)
+       - Any selected SaaS products with a price as additional lines
+    d. Auto-confirms the sale order
+    e. Generates and posts the invoice (state = open)
+    f. Instance transitions to "pending_payment"
+    g. If invoice amount is zero: skips to "paid" automatically
+
+  STEP 3 -- PAYMENT & AUTO-DEPLOY (state: pending_payment -> paid -> provisioning)
+    Option A -- Normal payment (fully automatic):
+      a. Customer pays the invoice (bank transfer, online payment, etc.)
+      b. Odoo reconciles the payment -> invoice payment_state = 'paid'
+      c. account.move.write() override detects the change
+      d. Finds linked SaaS instance via sale_order_id
+      e. Transitions instance to "paid" state
+      f. Immediately triggers action_deploy() -- no manual step needed
+      g. Instance goes to "provisioning" and then "running" automatically
+
+    Option B -- Manual override (managers only):
+      a. Click "Mark as Paid" button (for wire transfers, trials, etc.)
+      b. Instance transitions to "paid" and auto-deploys immediately
+
+    Zero-amount invoices:
+      Handled in Step 2 -- if invoice total is $0, the instance skips
+      pending_payment entirely and auto-deploys right after billing.
+
+  DEPLOYMENT DETAILS (state: paid -> provisioning -> running)
+    Triggered automatically by payment. Background thread executes:
+       - Auto-assigns ports (finds unused pair starting from config port)
+       - Generates random credentials (db_user, db_password, admin_password)
+       - Creates directory structure on Docker server via SSH
+       - Creates PostgreSQL role + database on DB server via SSH
+       - Renders docker-compose.yml and odoo.conf from Jinja2 templates
+       - Starts container: docker compose up -d
+       - Waits for Odoo to be ready (polls HTTP for 120s)
+       - Installs base modules via docker compose run
+       - Installs selected modules (from product/module lines)
+       - Obtains SSL certificate via Certbot
+       - Deploys Nginx reverse proxy config
+       - Sets state = "running"
+       - Auto-refreshes resource usage
+    On failure: state = "failed", Deploy button appears for manual retry
+
+  INTERNAL/TEST INSTANCES (no billing):
+    If no plan is assigned, the Deploy button is available directly from
+    draft state -- the billing flow is skipped entirely.
+
+  RESET PATHS:
+    From pending_payment, paid, failed, or cancelled:
+      Click "Reset to Draft" to return to draft and start over.
+
+INSTANCE DEPLOYMENT (DETAILED STEPS):
+  Same as Step 4 above. The background thread:
+  1. Creates dirs: {base_path}/{partner_code}/{subdomain}/
+  2. Provisions PostgreSQL role + database
+  3. Renders configs from Jinja2 templates
+  4. Runs docker compose up -d
+  5. Waits for readiness
+  6. Installs modules
+  7. Sets up SSL + Nginx
+  8. Sets state = "running"
 
 MODULE INSTALLATION (on running instance):
   1. Add new product/module lines to instance
@@ -754,6 +861,38 @@ Settings (via SaaS Manager > Configuration > Settings):
    - Created saas_usage_refresh_cron.xml data file
    - Registered in __manifest__.py
 
+5. CLIENT LIFECYCLE WITH SALES & INVOICING INTEGRATION (v18.0.6.0.0):
+   Implemented a structured billing flow tightly integrated with Odoo's
+   Sales and Accounting modules.
+
+   New states added:
+   - pending_payment: SO confirmed, invoice posted, awaiting payment
+   - paid: payment received, instance ready for deployment
+
+   New methods:
+   - action_confirm_and_bill(): single action that creates SO, confirms it,
+     generates & posts invoice, transitions to pending_payment (or paid if $0)
+   - action_mark_as_paid(): manual override for wire transfers, trials, etc.
+
+   Payment auto-detection:
+   - Created account_move.py inheriting account.move
+   - Overrides write() to watch payment_state changes
+   - Auto-transitions instances from pending_payment -> paid when invoice is paid
+   - Posts chatter message on the instance
+
+   Deploy gating:
+   - Deploy now requires "paid" state when a plan is assigned
+   - Instances without a plan can still deploy directly from draft
+   - action_draft() extended to allow reset from pending_payment and paid
+
+   View changes:
+   - "Confirm & Bill" button replaces separate "Create Sale Order" and
+     "Create Invoice" buttons
+   - "Mark as Paid" button visible in pending_payment state
+   - Deploy button gated behind billing when plan is set
+   - Statusbar updated: draft -> pending_payment -> paid -> provisioning -> running
+   - Reset to Draft available from pending_payment and paid states
+
 ================================================================================
 15. POTENTIAL NEXT STEPS / AREAS FOR IMPROVEMENT
 ================================================================================
@@ -761,7 +900,7 @@ Settings (via SaaS Manager > Configuration > Settings):
 - Database migration script for the bundle->product rename
 - Customer portal: let customers see their instances, trigger backups,
   view resource usage
-- Billing integration: auto-create invoices based on plan and usage
+- Recurring invoicing: auto-generate renewal invoices based on billing_period
 - Auto-scaling: automatically upgrade plans when limits are approached
 - Multi-server load balancing: distribute instances across servers
 - Health checks: periodic pings to detect unresponsive instances

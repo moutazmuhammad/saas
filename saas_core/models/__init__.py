@@ -1,5 +1,7 @@
 from . import saas_instance
 from . import saas_plan
+from . import account_move
+from . import res_partner
 from . import res_config_settings
 from . import saas_ssh_key_pair
 from . import saas_docker_server
