@@ -31,7 +31,7 @@ def run_in_background(record, method_name, method_args=(),
     def _target():
         import odoo
         from odoo import api as odoo_api
-        db_registry = odoo.registry(dbname)
+        db_registry = odoo.modules.registry.Registry(dbname)
         with db_registry.cursor() as new_cr:
             new_env = odoo_api.Environment(new_cr, uid, context)
             rec = new_env[model_name].browse(record_id)

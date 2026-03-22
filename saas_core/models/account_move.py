@@ -8,11 +8,17 @@ _logger = logging.getLogger(__name__)
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
-    def write(self, vals):
-        res = super().write(vals)
-        if 'payment_state' in vals and vals['payment_state'] in ('paid', 'in_payment'):
-            self._saas_check_instance_payment()
-        return res
+    def _compute_payment_state(self):
+        # Capture state before recomputation
+        old_states = {inv.id: inv.payment_state for inv in self}
+        super()._compute_payment_state()
+        # Detect invoices that just became paid
+        newly_paid = self.filtered(
+            lambda m: m.payment_state in ('paid', 'in_payment')
+            and old_states.get(m.id) not in ('paid', 'in_payment')
+        )
+        if newly_paid:
+            newly_paid._saas_check_instance_payment()
 
     def _saas_check_instance_payment(self):
         """Transition linked SaaS instances from pending_payment -> paid.

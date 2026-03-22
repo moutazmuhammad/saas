@@ -92,6 +92,13 @@ class SaasInstance(models.Model):
         tracking=True,
         help='Odoo version and Docker image used by this instance.',
     )
+
+    @api.onchange('saas_product_id')
+    def _onchange_saas_product_id(self):
+        if self.saas_product_id:
+            self.odoo_version_id = self.saas_product_id.odoo_version_id
+            if self.plan_id and self.plan_id.saas_product_id != self.saas_product_id:
+                self.plan_id = False
     docker_server_id = fields.Many2one(
         'saas.container.physical.server',
         string='Docker Server',

@@ -85,13 +85,11 @@ class SaasWebsite(http.Controller):
 
         is_trial = kw.get('trial') == '1'
         domains = request.env['saas.based.domain'].sudo().search([])
-        versions = request.env['saas.odoo.version'].sudo().search([])
 
         return request.render('saas_website.service_configure_form', {
             'product': product,
             'plan': plan,
             'domains': domains,
-            'versions': versions,
             'error': error,
             'is_trial': is_trial,
             'form_values': kw,
@@ -108,7 +106,6 @@ class SaasWebsite(http.Controller):
         plan_id = int(post.get('plan_id', 0))
         subdomain = (post.get('subdomain') or '').strip().lower()
         domain_id = int(post.get('domain_id', 0))
-        version_id = int(post.get('odoo_version_id', 0))
 
         product = request.env['saas.product'].sudo().browse(product_id)
         plan = request.env['saas.plan'].sudo().browse(plan_id)
@@ -142,11 +139,12 @@ class SaasWebsite(http.Controller):
 
         # --- Validate references ---
         domain = request.env['saas.based.domain'].sudo().browse(domain_id)
-        version = request.env['saas.odoo.version'].sudo().browse(version_id)
-        if not domain.exists() or not version.exists():
+        version = product.odoo_version_id
+        if not domain.exists() or not version:
             return self.service_configure(
                 product_id, plan_id,
-                error=_("Please select a valid domain and Odoo version."),
+                error=_("Please select a valid domain.") if not domain.exists()
+                       else _("No Odoo version configured for this service. Please contact support."),
                 **post,
             )
 
@@ -218,17 +216,9 @@ class SaasWebsite(http.Controller):
             # Paid: billing + auto-deploy flow
             instance.action_confirm_and_bill()
 
-            # If free plan: auto-deployed already
-            if instance.state in ('provisioning', 'running', 'paid'):
-                return request.redirect('/my/instances/%s?access_token=%s' % (
-                    instance.id, instance.access_token,
-                ))
-
-            # If paid plan: redirect to invoice for payment
-            invoice = instance.sale_order_id.invoice_ids[:1]
-            if invoice:
-                return request.redirect(invoice.get_portal_url())
-
+            # Always redirect to instance detail page.
+            # - Free/zero-amount: already deploying, shows provisioning progress
+            # - Paid: shows "Awaiting Payment" with Pay Now button
             return request.redirect('/my/instances/%s?access_token=%s' % (
                 instance.id, instance.access_token,
             ))

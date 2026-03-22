@@ -24,8 +24,7 @@ class ContainerLogsController(http.Controller):
         instance = request.env['saas.instance'].browse(instance_id)
         if not instance.exists():
             raise NotFound()
-        instance.check_access_rights('read')
-        instance.check_access_rule('read')
+        instance.check_access('read')
         return self._stream(
             instance.docker_server_id, instance._get_container_name(), tail,
         )
@@ -39,8 +38,7 @@ class ContainerLogsController(http.Controller):
         container = request.env['saas.docker.container'].browse(container_id)
         if not container.exists():
             raise NotFound()
-        container.check_access_rights('read')
-        container.check_access_rule('read')
+        container.check_access('read')
         return self._stream(container.server_id, container.name, tail)
 
     def _stream(self, server, container_name, tail):

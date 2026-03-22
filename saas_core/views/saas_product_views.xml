@@ -48,6 +48,7 @@
                             <field name="icon"/>
                             <field name="sequence"/>
                             <field name="is_published"/>
+                            <field name="odoo_version_id"/>
                         </group>
                     </group>
                     <notebook>

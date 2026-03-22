@@ -42,6 +42,11 @@ class SaasProduct(models.Model):
         default=True,
         help='Only published services are visible on the website.',
     )
+    odoo_version_id = fields.Many2one(
+        'saas.odoo.version',
+        string='Odoo Version',
+        help='Odoo version used by instances of this service.',
+    )
     plan_ids = fields.One2many(
         'saas.plan',
         'saas_product_id',

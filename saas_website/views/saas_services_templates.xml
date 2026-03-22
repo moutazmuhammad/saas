@@ -351,22 +351,6 @@
                                         </select>
                                     </div>
 
-                                    <!-- Odoo Version -->
-                                    <div class="mb-4">
-                                        <label for="odoo_version_id" class="form-label fw-bold">
-                                            Odoo Version
-                                        </label>
-                                        <select name="odoo_version_id" id="odoo_version_id"
-                                                class="form-select" required="required">
-                                            <t t-foreach="versions" t-as="version">
-                                                <option t-att-value="version.id"
-                                                        t-att-selected="str(version.id) == str(form_values.get('odoo_version_id', ''))">
-                                                    Odoo <t t-out="version.name"/>
-                                                </option>
-                                            </t>
-                                        </select>
-                                    </div>
-
                                     <!-- Submit -->
                                     <button t-if="is_trial" type="submit"
                                             class="btn btn-success btn-lg w-100">

@@ -148,12 +148,12 @@
                             <field name="subdomain"/>
                             <field name="domain_id" options="{'no_open': True}"/>
                             <field name="saas_product_id" string="Service"/>
-                            <field name="plan_id"/>
+                            <field name="plan_id" domain="[('saas_product_id', '=', saas_product_id)]"/>
                             <field name="partner_id"/>
                             <field name="url" widget="url"/>
                             <field name="is_trial" widget="boolean_toggle"/>
                             <field name="next_invoice_date"/>
-                            <field name="odoo_version_id"/>
+                            <field name="odoo_version_id" readonly="1"/>
                         </group>
                         <!-- Right Column -->
                         <group>

@@ -172,9 +172,6 @@
                                     <span t-else="" class="text-muted">—</span>
                                 </div>
                                 <div class="col-sm-3 mb-3">
-                                    <small class="text-muted d-block">Odoo Version</small>
-                                    <strong t-if="instance.odoo_version_id"
-                                            t-out="instance.odoo_version_id.name"/>
                                 </div>
                             </div>
                         </div>
