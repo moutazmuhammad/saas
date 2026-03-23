@@ -13,6 +13,16 @@ class ResConfigSettings(models.TransientModel):
              '(HTTP, longpolling) starting from this value.',
     )
 
+    # ========== Resource Usage ==========
+    saas_resource_usage_multiplier = fields.Float(
+        string='Resource Usage Multiplier',
+        config_parameter='saas_master.resource_usage_multiplier',
+        default=2.0,
+        help='Multiplier applied to CPU and RAM measurements to account for '
+             'shared DB server usage that cannot be measured per instance. '
+             'E.g. 2.0 means displayed usage = measured × 2.',
+    )
+
     # ========== Free Trial ==========
     saas_trial_days = fields.Integer(
         string='Free Trial Duration (Days)',
@@ -81,6 +91,12 @@ class ResConfigSettings(models.TransientModel):
     )
 
     # ========== Snapshot Storage (pre-built DB templates) ==========
+    saas_snapshot_same_as_backup = fields.Boolean(
+        string='Use Backup Storage for Snapshots',
+        config_parameter='saas_snapshot.same_as_backup',
+        default=False,
+        help='When enabled, snapshots use the same cloud storage configuration as backups.',
+    )
     saas_snapshot_provider = fields.Selection([
         ('aws', 'AWS S3'),
         ('gcs', 'Google Cloud Storage'),
@@ -121,18 +137,25 @@ class ResConfigSettings(models.TransientModel):
 
     def set_values(self):
         res = super().set_values()
+        ICP = self.env['ir.config_parameter'].sudo()
         if self.saas_backup_service_account_key_file:
             import base64
             key_json = base64.b64decode(self.saas_backup_service_account_key_file).decode('utf-8')
-            self.env['ir.config_parameter'].sudo().set_param(
-                'saas_backup.service_account_key', key_json,
-            )
-        if self.saas_snapshot_service_account_key_file:
+            ICP.set_param('saas_backup.service_account_key', key_json)
+        if self.saas_snapshot_same_as_backup:
+            # Copy backup storage config into snapshot params
+            ICP.set_param('saas_snapshot.provider', ICP.get_param('saas_backup.provider', ''))
+            ICP.set_param('saas_snapshot.bucket_name', ICP.get_param('saas_backup.bucket_name', ''))
+            ICP.set_param('saas_snapshot.region', ICP.get_param('saas_backup.region', ''))
+            ICP.set_param('saas_snapshot.access_key', ICP.get_param('saas_backup.access_key', ''))
+            ICP.set_param('saas_snapshot.secret_key', ICP.get_param('saas_backup.secret_key', ''))
+            ICP.set_param('saas_snapshot.endpoint', ICP.get_param('saas_backup.endpoint', ''))
+            ICP.set_param('saas_snapshot.service_account_key',
+                          ICP.get_param('saas_backup.service_account_key', ''))
+        elif self.saas_snapshot_service_account_key_file:
             import base64
             key_json = base64.b64decode(self.saas_snapshot_service_account_key_file).decode('utf-8')
-            self.env['ir.config_parameter'].sudo().set_param(
-                'saas_snapshot.service_account_key', key_json,
-            )
+            ICP.set_param('saas_snapshot.service_account_key', key_json)
         return res
 
     @api.model

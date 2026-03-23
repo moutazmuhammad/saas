@@ -151,9 +151,9 @@
                             <field name="plan_id" domain="[('saas_product_id', '=', saas_product_id)]"/>
                             <field name="partner_id"/>
                             <field name="url" widget="url"/>
-                            <field name="is_trial" widget="boolean_toggle"/>
-                            <field name="next_invoice_date"/>
-                            <field name="odoo_version_id" readonly="1"/>
+                            <field name="is_trial" widget="boolean_toggle" readonly="1"/>
+                            <field name="next_invoice_date" readonly="1"/>
+                            <field name="odoo_version_id" readonly="id"/>
                         </group>
                         <!-- Right Column -->
                         <group>

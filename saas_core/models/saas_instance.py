@@ -1045,22 +1045,24 @@ class SaasInstance(models.Model):
                 if mem_parts:
                     ram_used_bytes = self._parse_mem_value(mem_parts[0].strip())
 
+        # -- Resource usage multiplier (accounts for shared DB server overhead) --
+        ICP = self.env['ir.config_parameter'].sudo()
+        usage_multiplier = float(ICP.get_param('saas_master.resource_usage_multiplier', '2.0'))
+
         # -- Calculate CPU % relative to plan limit --
         # docker stats reports CPU% relative to ALL host cores.
         # E.g. on 8-core host using 1 core = 12.5%.
         # We need to convert: cores_used = raw_cpu_pct / 100
         # Then: plan_cpu_pct = (cores_used / plan_cpu) * 100
-        # Factor ×2: accounts for DB server CPU usage (not measured directly)
         cpu_pct = 0.0
         if plan_cpu > 0 and raw_cpu_pct > 0:
             cores_used = raw_cpu_pct / 100.0
-            cpu_pct = min((cores_used * 2 / plan_cpu) * 100, 999)
+            cpu_pct = min((cores_used * usage_multiplier / plan_cpu) * 100, 999)
         self.cpu_usage = '%.1f%%' % cpu_pct if cpu_pct else '0%'
         self.cpu_usage_pct = round(cpu_pct, 1)
 
         # -- Calculate RAM % relative to plan limit --
-        # Factor ×2: accounts for DB server RAM usage (not measured directly)
-        ram_used_bytes = ram_used_bytes * 2
+        ram_used_bytes = ram_used_bytes * usage_multiplier
         ram_pct = 0.0
         if plan_ram_bytes > 0 and ram_used_bytes > 0:
             ram_pct = min((ram_used_bytes / plan_ram_bytes) * 100, 999)
