@@ -12,7 +12,6 @@
                 <field name="is_trial_plan"/>
                 <field name="price" widget="monetary"/>
                 <field name="currency_id" column_invisible="1"/>
-                <field name="billing_period"/>
                 <field name="cpu_limit" optional="show"/>
                 <field name="ram_limit" optional="show"/>
                 <field name="storage_limit" optional="show"/>
@@ -42,9 +41,10 @@
                             <field name="instance_count"/>
                         </group>
                         <group string="Pricing">
-                            <field name="price" widget="monetary"/>
+                            <field name="price" widget="monetary" string="Monthly Price"/>
+                            <field name="yearly_price" widget="monetary"/>
+                            <field name="yearly_discount_pct" string="Yearly Savings"/>
                             <field name="currency_id" groups="base.group_multi_currency"/>
-                            <field name="billing_period"/>
                             <field name="grace_period_days"/>
                         </group>
                     </group>
@@ -52,6 +52,7 @@
                         <group string="Resource Limits">
                             <field name="cpu_limit"/>
                             <field name="ram_limit"/>
+                            <field name="workers"/>
                             <field name="storage_limit"/>
                             <field name="max_backups"/>
                             <field name="max_users"/>

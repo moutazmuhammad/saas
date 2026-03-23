@@ -94,6 +94,27 @@ class SaasPsqlPhysicalServer(models.Model):
             key_type=self.ssh_key_pair_id.type or 'rsa',
         )
 
+    def action_open_terminal(self):
+        """Open a web-based SSH terminal to this server."""
+        self.ensure_one()
+        # Validate SSH is configured before opening the terminal
+        self._get_ssh_ip()
+        if not self.ssh_key_pair_id or not self.ssh_key_pair_id.private_key_file:
+            raise ValidationError(
+                _("SSH key pair with a private key file is required on server '%s'.")
+                % self.name
+            )
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'ssh_terminal',
+            'name': _("Terminal: %s") % self.name,
+            'context': {
+                'server_model': self._name,
+                'server_id': self.id,
+                'server_name': self.name,
+            },
+        }
+
     def action_test_connection(self):
         """Test SSH connection to the server."""
         self.ensure_one()

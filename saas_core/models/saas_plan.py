@@ -1,6 +1,4 @@
-from dateutil.relativedelta import relativedelta
-
-from odoo import fields, models
+from odoo import api, fields, models
 
 
 class SaasPlan(models.Model):
@@ -24,22 +22,23 @@ class SaasPlan(models.Model):
 
     # ========== Pricing ==========
     price = fields.Float(
-        string='Price',
-        help='Recurring price for this plan per billing period.',
+        string='Monthly Price',
+        help='Monthly recurring price for this plan.',
+    )
+    yearly_price = fields.Float(
+        string='Yearly Price',
+        help='Yearly recurring price. Leave 0 to disable yearly billing. '
+             'Typically set lower than 12× the monthly price to offer a discount.',
+    )
+    yearly_discount_pct = fields.Float(
+        string='Yearly Discount %',
+        compute='_compute_yearly_discount_pct',
+        help='Percentage saved when choosing yearly vs monthly billing.',
     )
     currency_id = fields.Many2one(
         'res.currency',
         string='Currency',
         default=lambda self: self.env.company.currency_id,
-    )
-    billing_period = fields.Selection(
-        [
-            ('monthly', 'Monthly'),
-            ('yearly', 'Yearly'),
-        ],
-        string='Billing Period',
-        default='monthly',
-        help='How often the customer is invoiced for this plan.',
     )
 
     # ========== Resource Limits ==========
@@ -53,11 +52,20 @@ class SaasPlan(models.Model):
         default='1g',
         help='RAM limit for the Docker container (e.g. 512m, 1g, 2g).',
     )
+    workers = fields.Integer(
+        string='Odoo Workers',
+        default=2,
+        help='Number of Odoo worker processes. '
+             'Set to 0 for development/testing (threaded mode). '
+             'Recommended: 1 per 2 CPU cores.',
+    )
     storage_limit = fields.Float(
         string='Storage Limit (GB)',
         default=5.0,
         help='Maximum total storage (container disk + database) in GB. '
-             'Instances exceeding this limit will be suspended.',
+             'Instances exceeding this limit will be suspended. '
+             'Also used for downgrade eligibility (blocked if current '
+             'usage >= 75%% of target plan limit).',
     )
     max_backups = fields.Integer(
         string='Max Backups',
@@ -100,6 +108,24 @@ class SaasPlan(models.Model):
              'is automatically suspended for non-payment.',
     )
 
+    @api.depends('price', 'yearly_price')
+    def _compute_yearly_discount_pct(self):
+        for rec in self:
+            if rec.price > 0 and rec.yearly_price > 0:
+                monthly_annual = rec.price * 12
+                rec.yearly_discount_pct = round(
+                    (1 - rec.yearly_price / monthly_annual) * 100
+                )
+            else:
+                rec.yearly_discount_pct = 0
+
+    def _get_price_for_period(self, period):
+        """Return the price for the given billing period ('monthly' or 'yearly')."""
+        self.ensure_one()
+        if period == 'yearly' and self.yearly_price > 0:
+            return self.yearly_price
+        return self.price
+
     def _compute_instance_count(self):
         data = self.env['saas.instance']._read_group(
             [('plan_id', 'in', self.ids)],
@@ -110,9 +136,3 @@ class SaasPlan(models.Model):
         for rec in self:
             rec.instance_count = counts.get(rec.id, 0)
 
-    def _get_billing_interval(self):
-        """Return a relativedelta for the billing period."""
-        self.ensure_one()
-        if self.billing_period == 'yearly':
-            return relativedelta(years=1)
-        return relativedelta(months=1)

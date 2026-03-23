@@ -58,13 +58,16 @@ class SaasWebsite(http.Controller):
         if not product.exists() or not product.is_published:
             return request.redirect('/services')
 
-        plans = product.plan_ids.sorted('sequence')
+        all_plans = product.plan_ids.sorted('sequence')
+        paid_plans = all_plans.filtered(lambda p: not p.is_trial_plan)
+        trial_plan = all_plans.filtered(lambda p: p.is_trial_plan)[:1]
 
         trial_available, trial_days = self._get_trial_info()
 
         return request.render('saas_website.service_plans_page', {
             'product': product,
-            'plans': plans,
+            'plans': paid_plans,
+            'trial_plan': trial_plan,
             'trial_available': trial_available,
             'trial_days': trial_days,
         })
@@ -102,8 +105,8 @@ class SaasWebsite(http.Controller):
     @http.route('/services/order', type='http', auth='user', website=True,
                 methods=['POST'], csrf=True)
     def service_order(self, **post):
-        product_id = int(post.get('product_id', 0))
-        plan_id = int(post.get('plan_id', 0))
+        product_id = int(post.pop('product_id', 0))
+        plan_id = int(post.pop('plan_id', 0))
         subdomain = (post.get('subdomain') or '').strip().lower()
         domain_id = int(post.get('domain_id', 0))
 
@@ -113,6 +116,21 @@ class SaasWebsite(http.Controller):
                 or not plan.exists()
                 or plan.saas_product_id.id != product.id):
             return request.redirect('/services')
+
+        # --- Trial / paid plan validation ---
+        is_trial = post.get('is_trial') == '1'
+        if is_trial and not plan.is_trial_plan:
+            return self.service_configure(
+                product_id, plan_id,
+                error=_("This plan is not available for free trial."),
+                **post,
+            )
+        if not is_trial and plan.is_trial_plan:
+            return self.service_configure(
+                product_id, plan_id,
+                error=_("This plan is only available as a free trial."),
+                **post,
+            )
 
         # --- Subdomain validation ---
         if not subdomain or not SUBDOMAIN_RE.match(subdomain):
@@ -149,7 +167,6 @@ class SaasWebsite(http.Controller):
             )
 
         partner = request.env.user.partner_id
-        is_trial = post.get('is_trial') == '1'
 
         # --- Rate limiting ---
         max_instances = int(request.env['ir.config_parameter'].sudo().get_param(

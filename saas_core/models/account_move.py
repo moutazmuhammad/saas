@@ -39,6 +39,7 @@ class AccountMove(models.Model):
         if not sale_orders:
             return
 
+        # --- Handle new instance deployment (pending_payment → paid) ---
         instances = self.env['saas.instance'].search([
             ('sale_order_id', 'in', sale_orders.ids),
             ('state', '=', 'pending_payment'),
@@ -61,4 +62,27 @@ class AccountMove(models.Model):
                 error_method='_on_background_error',
                 error_args=('failed',),
                 thread_name='saas_deploy_payment_%s' % instance.subdomain,
+            )
+
+        # --- Handle pending plan changes (trial upgrade or paid plan change) ---
+        upgrade_instances = self.env['saas.instance'].search([
+            ('sale_order_id', 'in', sale_orders.ids),
+            ('pending_plan_id', '!=', False),
+        ])
+        for instance in upgrade_instances:
+            # Pick the right method: trial upgrade or paid plan change
+            if instance.is_trial:
+                method = '_apply_pending_upgrade'
+            else:
+                method = '_apply_pending_plan_change'
+            _logger.info(
+                "SaaS instance %s: payment received, applying %s.",
+                instance.subdomain, method,
+            )
+            from ..utils import run_in_background
+            run_in_background(
+                instance, method,
+                error_method='_on_background_error',
+                error_args=(),
+                thread_name='saas_planchange_%s' % instance.subdomain,
             )

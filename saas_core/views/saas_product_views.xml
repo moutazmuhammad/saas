@@ -97,9 +97,9 @@
                                 <list>
                                     <field name="sequence" widget="handle"/>
                                     <field name="name"/>
-                                    <field name="price" widget="monetary"/>
+                                    <field name="price" widget="monetary" string="Monthly"/>
+                                    <field name="yearly_price" widget="monetary" string="Yearly"/>
                                     <field name="currency_id" column_invisible="1"/>
-                                    <field name="billing_period"/>
                                     <field name="cpu_limit"/>
                                     <field name="ram_limit"/>
                                     <field name="storage_limit"/>

@@ -29,10 +29,18 @@
                                             </t>
                                             <t t-out="int(plan.price) if plan.price == int(plan.price) else '%.2f' % plan.price"/>
                                         </span>
-                                        <span class="text-muted">
-                                            / <t t-if="plan.billing_period == 'monthly'">mo</t>
-                                              <t t-if="plan.billing_period == 'yearly'">yr</t>
-                                        </span>
+                                        <span class="text-muted">/ mo</span>
+                                        <div t-if="plan.yearly_price" class="mt-1" style="font-size: 0.9rem;">
+                                            <span class="text-muted">or</span>
+                                            <strong>
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.yearly_price) if plan.yearly_price == int(plan.yearly_price) else '%.2f' % plan.yearly_price"/>
+                                            </strong>
+                                            <span class="text-muted">/ yr</span>
+                                            <span t-if="plan.yearly_discount_pct" class="badge bg-success ms-1">
+                                                Save <t t-out="int(plan.yearly_discount_pct)"/>%
+                                            </span>
+                                        </div>
                                     </div>
 
                                     <!-- Features -->

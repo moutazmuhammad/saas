@@ -121,11 +121,11 @@ class SaasInstanceBackup(models.Model):
         }
 
         if cfg['provider'] == 'digitalocean':
-            # DigitalOcean Spaces endpoint: https://{region}.digitaloceanspaces.com
-            # Users sometimes paste the full bucket URL by mistake
-            # (e.g. https://mybucket.fra1.digitaloceanspaces.com)
-            # so we always build the endpoint from the region.
+            # DigitalOcean Spaces requires virtual-hosted style addressing
+            # for presigned URLs to work correctly.
+            # Endpoint: https://{region}.digitaloceanspaces.com
             kwargs['endpoint_url'] = 'https://%s.digitaloceanspaces.com' % region
+            kwargs['config'] = BotoConfig(s3={'addressing_style': 'virtual'})
         elif cfg['endpoint']:
             kwargs['endpoint_url'] = cfg['endpoint']
             kwargs['config'] = BotoConfig(s3={'addressing_style': 'path'})
@@ -466,6 +466,36 @@ fi
             })
         except Exception as e:
             backup.write({
+                'state': 'failed',
+                'error_message': str(e),
+            })
+            raise
+
+    def _run_portal_backup(self):
+        """Run backup for an already-created record (called from portal)."""
+        self.ensure_one()
+        instance = self.instance_id
+        partner = instance.partner_id
+        partner_folder = '%s_%s' % (
+            partner.id, self._sanitize_name(partner.name),
+        ) if partner else 'no_partner'
+        db_name = instance.subdomain
+        object_key = '%s/%s/%s.zip' % (partner_folder, db_name, self.name)
+
+        self.bucket_path = object_key
+
+        try:
+            size_bytes = self._create_and_upload_backup(instance, object_key)
+            url = self._generate_presigned_url()
+            now = fields.Datetime.now()
+            self.write({
+                'state': 'done',
+                'size_mb': round(size_bytes / (1024 * 1024), 2),
+                'download_url': url,
+                'download_url_expiry': now + datetime.timedelta(seconds=PRESIGNED_URL_EXPIRY),
+            })
+        except Exception as e:
+            self.write({
                 'state': 'failed',
                 'error_message': str(e),
             })

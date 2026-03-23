@@ -169,6 +169,38 @@ class SaasInstance(models.Model):
         help='Whether this instance was created during the client free trial.',
     )
 
+    # ========== Billing Period (per-instance) ==========
+    billing_period = fields.Selection(
+        [('monthly', 'Monthly'), ('yearly', 'Yearly')],
+        string='Billing Period',
+        default='monthly',
+        help='Billing cycle chosen by the client for this instance.',
+    )
+
+    # ========== Pending Upgrade (awaiting payment) ==========
+    pending_plan_id = fields.Many2one(
+        'saas.plan',
+        string='Pending Upgrade Plan',
+        help='Plan the client has chosen but not yet paid for. '
+             'Applied automatically once payment is confirmed.',
+    )
+    pending_billing_period = fields.Selection(
+        [('monthly', 'Monthly'), ('yearly', 'Yearly')],
+        string='Pending Billing Period',
+    )
+
+
+    # ========== Scheduled Downgrade ==========
+    scheduled_plan_id = fields.Many2one(
+        'saas.plan',
+        string='Scheduled Downgrade Plan',
+        help='Lower plan to switch to at the end of the current billing cycle.',
+    )
+    scheduled_billing_period = fields.Selection(
+        [('monthly', 'Monthly'), ('yearly', 'Yearly')],
+        string='Scheduled Billing Period',
+    )
+
     # ========== Recurring Billing ==========
     next_invoice_date = fields.Date(
         string='Next Invoice Date',
@@ -199,17 +231,32 @@ class SaasInstance(models.Model):
     cpu_usage = fields.Char(
         string='CPU Usage',
         readonly=True,
-        help='Current CPU usage percentage of the Docker container.',
+        help='CPU usage as percentage of the plan CPU limit.',
+    )
+    cpu_usage_pct = fields.Float(
+        string='CPU Usage %',
+        readonly=True,
+        help='CPU usage as a float percentage of the plan CPU limit.',
     )
     ram_usage = fields.Char(
         string='RAM Usage',
         readonly=True,
-        help='Current RAM usage of the Docker container (used / limit).',
+        help='RAM usage (used / plan limit).',
     )
     ram_percent = fields.Char(
         string='RAM %',
         readonly=True,
-        help='Current RAM usage percentage of the Docker container.',
+        help='RAM usage as percentage of the plan RAM limit.',
+    )
+    ram_usage_pct = fields.Float(
+        string='RAM Usage %',
+        readonly=True,
+        help='RAM usage as a float percentage of the plan RAM limit.',
+    )
+    storage_usage_pct = fields.Float(
+        string='Storage Usage %',
+        readonly=True,
+        help='Total storage usage as percentage of the plan storage limit.',
     )
     disk_usage = fields.Char(
         string='Container Disk',
@@ -275,6 +322,7 @@ class SaasInstance(models.Model):
             ('failed', 'Failed'),
             ('suspended', 'Suspended'),
             ('cancelled', 'Cancelled'),
+            ('cancelled_by_client', 'Cancelled by Client'),
         ],
         string='Status',
         default='draft',
@@ -282,6 +330,11 @@ class SaasInstance(models.Model):
         required=True,
         index=True,
         help='Current lifecycle state of the instance.',
+    )
+    cancellation_reason = fields.Text(
+        string='Cancellation Reason',
+        readonly=True,
+        help='Details about why and when the instance was cancelled.',
     )
     company_id = fields.Many2one(
         'res.company',
@@ -291,12 +344,22 @@ class SaasInstance(models.Model):
     )
 
     # ========== Constraints ==========
+    def init(self):
+        """Create a partial unique index on subdomain+domain excluding cancelled instances.
+
+        Replaces the old absolute UNIQUE constraint that blocked reuse of
+        subdomains from cancelled instances.
+        """
+        self.env.cr.execute("""
+            ALTER TABLE saas_instance
+                DROP CONSTRAINT IF EXISTS saas_instance_unique_subdomain_per_domain;
+            DROP INDEX IF EXISTS saas_instance_unique_subdomain_per_domain;
+            CREATE UNIQUE INDEX saas_instance_unique_subdomain_per_domain
+                ON saas_instance (subdomain, domain_id)
+                WHERE state NOT IN ('cancelled', 'cancelled_by_client');
+        """)
+
     _sql_constraints = [
-        (
-            'unique_subdomain_per_domain',
-            'UNIQUE(subdomain, domain_id)',
-            'Subdomain must be unique per domain.',
-        ),
         (
             'unique_xmlrpc_port_per_server',
             'UNIQUE(docker_server_id, xmlrpc_port)',
@@ -477,6 +540,7 @@ class SaasInstance(models.Model):
                 'list_price': 0.0,
                 'sale_ok': True,
                 'purchase_ok': False,
+                'taxes_id': [(5, 0, 0)],
             })
         return product
 
@@ -909,32 +973,87 @@ class SaasInstance(models.Model):
                     "Cron: failed to refresh usage for %s", instance.subdomain,
                 )
 
+    @staticmethod
+    def _parse_ram_string(ram_str):
+        """Parse a RAM string like '512m', '1g', '2G' into bytes."""
+        if not ram_str:
+            return 0
+        ram_str = ram_str.strip().lower()
+        multipliers = {'k': 1024, 'm': 1024**2, 'g': 1024**3, 't': 1024**4}
+        for suffix, mult in multipliers.items():
+            if ram_str.endswith(suffix):
+                try:
+                    return float(ram_str[:-1]) * mult
+                except (ValueError, TypeError):
+                    return 0
+        try:
+            return float(ram_str)
+        except (ValueError, TypeError):
+            return 0
+
     def _refresh_usage_with_ssh(self, ssh):
-        """Fetch resource usage using an existing SSH connection to the docker server."""
+        """Fetch resource usage relative to plan limits.
+
+        CPU and RAM are reported as percentages of the plan's allocated
+        resources (not the physical server), giving the client a clear
+        picture of how much of *their* allocation they are consuming.
+        """
         self.ensure_one()
         container_name = self._get_container_name()
         instance_path = self._get_instance_path()
+        plan = self.plan_id
 
-        # Fetch container CPU & RAM via docker stats table output
-        stats_cmd = 'docker stats --no-stream %s' % shlex.quote(container_name)
+        # -- Plan limits --
+        plan_cpu = plan.cpu_limit if plan else 0
+        plan_ram_bytes = self._parse_ram_string(plan.ram_limit) if plan else 0
+        plan_storage_gb = plan.storage_limit if plan else 0
+
+        # -- Fetch container stats via docker stats JSON format --
+        stats_cmd = (
+            'docker stats --no-stream --format '
+            '"{{.CPUPerc}}||{{.MemUsage}}||{{.MemPerc}}" %s'
+        ) % shlex.quote(container_name)
         exit_code, stdout, stderr = ssh.execute(stats_cmd)
-        if exit_code == 0 and stdout.strip():
-            lines = stdout.strip().splitlines()
-            if len(lines) >= 2:
-                values = lines[1].split()
-                for i, val in enumerate(values):
-                    if '%' in val:
-                        self.cpu_usage = val
-                        remaining = values[i+1:]
-                        if len(remaining) >= 3:
-                            self.ram_usage = '%s %s %s' % (
-                                remaining[0], remaining[1], remaining[2],
-                            )
-                        if len(remaining) >= 4 and '%' in remaining[3]:
-                            self.ram_percent = remaining[3]
-                        break
 
-        # Fetch disk usage of the instance folder (in bytes)
+        raw_cpu_pct = 0.0  # CPU % relative to host (e.g. 150% = 1.5 cores)
+        ram_used_bytes = 0
+        if exit_code == 0 and stdout.strip():
+            parts = stdout.strip().split('||')
+            # Parse CPU % (relative to host total CPUs)
+            if len(parts) >= 1:
+                try:
+                    raw_cpu_pct = float(parts[0].strip().replace('%', ''))
+                except (ValueError, TypeError):
+                    pass
+            # Parse RAM used from "XXMiB / YYMiB" or "XXGiB / YYGiB"
+            if len(parts) >= 2:
+                mem_parts = parts[1].strip().split('/')
+                if mem_parts:
+                    ram_used_bytes = self._parse_mem_value(mem_parts[0].strip())
+
+        # -- Calculate CPU % relative to plan limit --
+        # docker stats reports CPU% relative to ALL host cores.
+        # E.g. on 8-core host using 1 core = 12.5%.
+        # We need to convert: cores_used = raw_cpu_pct / 100
+        # Then: plan_cpu_pct = (cores_used / plan_cpu) * 100
+        cpu_pct = 0.0
+        if plan_cpu > 0 and raw_cpu_pct > 0:
+            cores_used = raw_cpu_pct / 100.0
+            cpu_pct = min((cores_used / plan_cpu) * 100, 999)
+        self.cpu_usage = '%.1f%%' % cpu_pct if cpu_pct else '0%'
+        self.cpu_usage_pct = round(cpu_pct, 1)
+
+        # -- Calculate RAM % relative to plan limit --
+        ram_pct = 0.0
+        if plan_ram_bytes > 0 and ram_used_bytes > 0:
+            ram_pct = min((ram_used_bytes / plan_ram_bytes) * 100, 999)
+        ram_used_str = self._format_bytes(ram_used_bytes) if ram_used_bytes else '0'
+        ram_limit_str = plan.ram_limit.upper() if plan and plan.ram_limit else '?'
+        self.ram_usage = '%s / %s' % (ram_used_str, ram_limit_str)
+        self.ram_percent = '%.1f%%' % ram_pct if ram_pct else '0%'
+        self.ram_usage_pct = round(ram_pct, 1)
+
+        # -- Fetch disk usage of the instance folder (in bytes) --
         disk_cmd = 'du -sb %s 2>/dev/null | cut -f1' % shlex.quote(instance_path)
         exit_code, stdout, stderr = ssh.execute(disk_cmd)
         disk_bytes = 0
@@ -946,7 +1065,7 @@ class SaasInstance(models.Model):
         self.disk_usage = self._format_bytes(disk_bytes) if disk_bytes else ''
         self.disk_usage_bytes = disk_bytes
 
-        # Fetch database size from PostgreSQL server (in bytes)
+        # -- Fetch database size from PostgreSQL server (in bytes) --
         db_bytes = 0
         if self.db_server_id and self.subdomain:
             try:
@@ -968,10 +1087,44 @@ class SaasInstance(models.Model):
         self.db_size = self._format_bytes(db_bytes) if db_bytes else ''
         self.db_size_bytes = db_bytes
 
-        total_bytes = disk_bytes + db_bytes
+        # -- Total storage = disk + db + backup sizes --
+        backup_bytes = sum(
+            (b.size_mb or 0) * 1024 * 1024
+            for b in self.backup_ids
+            if b.state == 'done'
+        )
+        total_bytes = disk_bytes + db_bytes + backup_bytes
         self.total_storage = self._format_bytes(total_bytes) if total_bytes else ''
         self.total_storage_bytes = total_bytes
+
+        storage_pct = 0.0
+        if plan_storage_gb > 0 and total_bytes > 0:
+            storage_pct = (total_bytes / (plan_storage_gb * 1024**3)) * 100
+        self.storage_usage_pct = round(storage_pct, 1)
+
         self.usage_last_updated = fields.Datetime.now()
+
+    @staticmethod
+    def _parse_mem_value(mem_str):
+        """Parse docker stats memory value like '152.4MiB' or '1.5GiB' into bytes."""
+        if not mem_str:
+            return 0
+        mem_str = mem_str.strip().lower()
+        multipliers = {
+            'kib': 1024, 'mib': 1024**2, 'gib': 1024**3, 'tib': 1024**4,
+            'kb': 1000, 'mb': 1000**2, 'gb': 1000**3, 'tb': 1000**4,
+            'b': 1,
+        }
+        for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
+            if mem_str.endswith(suffix):
+                try:
+                    return float(mem_str[:-len(suffix)]) * mult
+                except (ValueError, TypeError):
+                    return 0
+        try:
+            return float(mem_str)
+        except (ValueError, TypeError):
+            return 0
 
     # ========== Config Rendering (DRY helper) ==========
 
@@ -1011,6 +1164,7 @@ class SaasInstance(models.Model):
             'db_user': self.db_user,
             'db_password': self.db_password,
             'proxy_mode': True,
+            'workers': self.plan_id.workers if self.plan_id else 2,
             'extra_config': self._parse_extra_config(),
             'repo_addons_paths': all_addons_paths,
         }
@@ -1106,21 +1260,21 @@ class SaasInstance(models.Model):
         filestore_dst = '%s/data/odoo/filestore/%s' % (instance_path, db_name)
         data_dir = '%s/data' % instance_path
         self._append_log("Placing filestore...")
+        odoo_image = self.odoo_version_id._get_docker_image()
         fs_cmd = (
-            'mkdir -p %s && '
-            'if [ -d %s ]; then '
-            '  cp -a %s/. %s/; '
+            'ODOO_UID=$(docker run --rm --entrypoint id %(image)s -u odoo 2>/dev/null || echo 101) && '
+            'mkdir -p %(dst)s && '
+            'if [ -d %(src)s ]; then '
+            '  cp -a %(src)s/. %(dst)s/; '
             'fi && '
-            'chown -R 1000:1000 %s && '
-            'chmod -R 777 %s'
-        ) % (
-            shlex.quote(filestore_dst),
-            shlex.quote(filestore_src),
-            shlex.quote(filestore_src),
-            shlex.quote(filestore_dst),
-            shlex.quote(data_dir),
-            shlex.quote(data_dir),
-        )
+            'chown -R $ODOO_UID:$ODOO_UID %(data)s && '
+            'chmod -R 755 %(data)s'
+        ) % {
+            'image': shlex.quote(odoo_image),
+            'dst': shlex.quote(filestore_dst),
+            'src': shlex.quote(filestore_src),
+            'data': shlex.quote(data_dir),
+        }
         exit_code, stdout, stderr = ssh.execute(fs_cmd, timeout=300)
         if exit_code != 0:
             self._append_log("Warning: filestore placement issue: %s" % stderr)
@@ -1289,12 +1443,17 @@ class SaasInstance(models.Model):
                 )
             self._append_log("Directory structure created.")
 
-            # Set permissions (1000:1000 = odoo user inside the container)
+            # Set permissions so the odoo user inside the container can
+            # read/write volumes.  We first try to discover the UID used by
+            # the image (the "odoo" user is UID 101 in the official image).
+            # Fallback: chmod 777 so any UID can access the files.
             self._append_log("Setting permissions...")
+            odoo_image = self.odoo_version_id._get_docker_image()
             perms_cmd = (
-                'chown -R 1000:1000 %(path)s/data %(path)s/config %(path)s/addons && '
-                'chmod -R 777 %(path)s/data %(path)s/config %(path)s/addons'
-            ) % {'path': instance_path}
+                'ODOO_UID=$(docker run --rm --entrypoint id %(image)s -u odoo 2>/dev/null || echo 101) && '
+                'chown -R $ODOO_UID:$ODOO_UID %(path)s/data %(path)s/config %(path)s/addons && '
+                'chmod -R 755 %(path)s/data %(path)s/config %(path)s/addons'
+            ) % {'path': instance_path, 'image': shlex.quote(odoo_image)}
             exit_code, stdout, stderr = ssh.execute(perms_cmd)
             if exit_code != 0:
                 raise UserError(
@@ -1745,18 +1904,130 @@ class SaasInstance(models.Model):
     def action_create_backup(self):
         """Create a backup in the background."""
         self.ensure_one()
+
+        # Block if a backup is already running
+        running = self.backup_ids.filtered(lambda b: b.state == 'running')
+        if running:
+            raise UserError(_("A backup is already in progress. Please wait for it to finish."))
+
+        # Check plan backup limit
+        if self.plan_id and self.plan_id.max_backups > 0:
+            done_count = len(self.backup_ids.filtered(lambda b: b.state == 'done'))
+            if done_count >= self.plan_id.max_backups:
+                raise UserError(_(
+                    "Backup limit reached (%d). Delete an old backup first or upgrade your plan."
+                ) % self.plan_id.max_backups)
+
+        # Create the record NOW so subsequent clicks see state=running
+        Backup = self.env['saas.instance.backup']
+        now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        backup = Backup.create({
+            'instance_id': self.id,
+            'name': 'backup_%s' % now_str,
+            'state': 'running',
+        })
+
         self._append_log("Backup queued. Running in background...")
         run_in_background(
-            self, '_do_create_backup',
+            backup, '_run_portal_backup',
             thread_name='saas_backup_%s' % self.subdomain,
         )
         return True
 
-    def _do_create_backup(self):
-        """Create backup (runs in background thread)."""
+    # ========== Module Installation ==========
+
+    def _get_xmlrpc_url(self):
+        """Return the XML-RPC URL for the running instance."""
         self.ensure_one()
-        self.env['saas.instance.backup']._perform_backup(self)
-        self._append_log("Backup completed successfully.")
+        server_ip = self.docker_server_id._get_ssh_ip()
+        return 'http://%s:%d' % (server_ip, self.xmlrpc_port)
+
+    def action_install_modules(self, module_names):
+        """Install one or more Odoo modules on the running instance via XML-RPC.
+
+        Args:
+            module_names: list of technical module names (e.g. ['sale', 'purchase'])
+        """
+        self.ensure_one()
+        if self.state != 'running':
+            raise UserError(_("Instance must be running to install apps."))
+        if not module_names:
+            raise UserError(_("No apps specified."))
+
+        # Clean and validate module names
+        clean_names = []
+        for name in module_names:
+            name = name.strip().lower()
+            if name and name.replace('_', '').replace('-', '').isalnum():
+                clean_names.append(name)
+        if not clean_names:
+            raise UserError(_("Invalid app names."))
+
+        self._append_log("App installation queued: %s" % ', '.join(clean_names))
+        run_in_background(
+            self, '_do_install_modules',
+            method_args=(clean_names,),
+            error_method='_on_module_install_error',
+            error_args=(clean_names,),
+            thread_name='saas_install_%s' % self.subdomain,
+        )
+        return True
+
+    def _do_install_modules(self, module_names):
+        """Install modules via XML-RPC (runs in background thread)."""
+        import xmlrpc.client
+        self.ensure_one()
+
+        url = self._get_xmlrpc_url()
+        db_name = self.subdomain
+
+        try:
+            # Authenticate as admin (uid=2 is default admin in Odoo)
+            common = xmlrpc.client.ServerProxy('%s/xmlrpc/2/common' % url, allow_none=True)
+            uid = common.authenticate(db_name, 'admin', self.admin_password, {})
+            if not uid:
+                raise UserError(_("Authentication failed on the instance."))
+
+            models = xmlrpc.client.ServerProxy('%s/xmlrpc/2/object' % url, allow_none=True)
+
+            # Find modules to install
+            module_ids = models.execute_kw(
+                db_name, uid, self.admin_password,
+                'ir.module.module', 'search',
+                [[('name', 'in', module_names)]],
+            )
+            if not module_ids:
+                self._append_log(
+                    "No matching apps found: %s" % ', '.join(module_names)
+                )
+                return
+
+            # Trigger installation
+            models.execute_kw(
+                db_name, uid, self.admin_password,
+                'ir.module.module', 'button_immediate_install',
+                [module_ids],
+            )
+
+            self._append_log(
+                "Apps installed successfully: %s" % ', '.join(module_names)
+            )
+            self.message_post(body=_(
+                "Apps installed: %s"
+            ) % ', '.join(module_names))
+
+        except xmlrpc.client.Fault as e:
+            raise UserError(
+                _("Failed to install apps: %s") % e.faultString
+            )
+
+    def _on_module_install_error(self, exception, module_names):
+        """Handle module installation failure."""
+        self.ensure_one()
+        self._append_log(
+            "App installation failed (%s): %s"
+            % (', '.join(module_names), str(exception))
+        )
 
 
 
@@ -2004,12 +2275,16 @@ class SaasInstance(models.Model):
     # ========== Recurring Billing ==========
 
     def _set_next_invoice_date(self):
-        """Compute and write the next invoice date based on the plan billing period."""
+        """Compute and write the next invoice date based on the instance billing period."""
         self.ensure_one()
         if not self.plan_id or self.is_trial:
             return
         today = fields.Date.today()
-        interval = self.plan_id._get_billing_interval()
+        period = self.billing_period or 'monthly'
+        if period == 'yearly':
+            interval = relativedelta(years=1)
+        else:
+            interval = relativedelta(months=1)
         self.next_invoice_date = today + interval
         self.last_invoice_date = today
         self.suspension_warning_sent = False
@@ -2037,26 +2312,69 @@ class SaasInstance(models.Model):
                 )
 
     def _generate_renewal_invoice(self):
-        """Create a new sale order + invoice for the next billing period."""
+        """Create a new sale order + invoice for the next billing period.
+
+        If a downgrade is scheduled, apply it first so the renewal
+        invoice uses the new (lower) plan price.
+        """
         self.ensure_one()
+
+        # Apply scheduled downgrade at cycle boundary
+        if self.scheduled_plan_id:
+            old_plan = self.plan_id
+            new_plan = self.scheduled_plan_id
+            new_period = self.scheduled_billing_period or self.billing_period or 'monthly'
+            self.write({
+                'plan_id': new_plan.id,
+                'billing_period': new_period,
+                'scheduled_plan_id': False,
+                'scheduled_billing_period': False,
+            })
+            self._append_log(
+                "Scheduled downgrade applied at cycle end: %s → %s"
+                % (old_plan.name if old_plan else 'None', new_plan.name)
+            )
+            self.message_post(body=_(
+                "Downgrade applied: switched from %s to %s."
+            ) % (old_plan.name if old_plan else '—', new_plan.name))
+
+            # Update container resources for the lower plan
+            if self.state == 'running':
+                try:
+                    self._update_container_resources()
+                except Exception as e:
+                    _logger.exception(
+                        "Failed to update resources after downgrade for %s",
+                        self.subdomain,
+                    )
+                try:
+                    with self.docker_server_id._get_ssh_connection() as ssh:
+                        self._render_and_write_configs(ssh)
+                except Exception as e:
+                    _logger.exception(
+                        "Failed to regenerate configs after downgrade for %s",
+                        self.subdomain,
+                    )
+
         plan = self.plan_id
         if not plan:
             return
 
+        period = self.billing_period or 'monthly'
+        price = plan._get_price_for_period(period)
+        period_label = 'Monthly' if period == 'monthly' else 'Yearly'
+
         pricelist = self.partner_id.property_product_pricelist
-        period_label = dict(plan._fields['billing_period'].selection).get(
-            plan.billing_period, plan.billing_period
-        )
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': _('Renewal: %s') % (self.name or self.subdomain),
             'order_line': [(0, 0, {
                 'product_id': self._get_billing_product().id,
-                'name': _('%s — %s (%s renewal)') % (
-                    plan.name, self.name or self.subdomain, period_label,
+                'name': _('%s (%s) — %s renewal') % (
+                    plan.name, period_label, self.name or self.subdomain,
                 ),
                 'product_uom_qty': 1,
-                'price_unit': plan.price,
+                'price_unit': price,
             })],
         }
         if pricelist:
@@ -2066,8 +2384,11 @@ class SaasInstance(models.Model):
         invoice = order._create_invoices()
         invoice.action_post()
 
-        # Advance billing cycle regardless of payment status
-        interval = plan._get_billing_interval()
+        # Advance billing cycle
+        if period == 'yearly':
+            interval = relativedelta(years=1)
+        else:
+            interval = relativedelta(months=1)
         self.write({
             'next_invoice_date': self.next_invoice_date + interval,
             'last_invoice_date': fields.Date.today(),
@@ -2149,6 +2470,374 @@ class SaasInstance(models.Model):
             )
 
     # ========== Plan Upgrade/Downgrade ==========
+
+    def action_subscribe_from_trial(self, new_plan_id, billing_period='monthly'):
+        """Start a trial-to-paid upgrade: create invoice and wait for payment.
+
+        The actual plan switch happens in _apply_pending_upgrade() which is
+        called automatically when payment is confirmed.
+
+        Args:
+            new_plan_id: ID of the target plan
+            billing_period: 'monthly' or 'yearly'
+
+        Returns the created invoice (or True if zero-amount).
+        """
+        self.ensure_one()
+        if not self.is_trial:
+            raise UserError(_("This instance is not on a trial plan."))
+        if self.state not in ('running', 'suspended'):
+            raise UserError(
+                _("Instance must be running or suspended to subscribe.")
+            )
+
+        new_plan = self.env['saas.plan'].browse(int(new_plan_id))
+        if not new_plan.exists():
+            raise UserError(_("Invalid plan."))
+        if new_plan.is_trial_plan:
+            raise UserError(_("Cannot subscribe to another trial plan."))
+        if (self.saas_product_id and new_plan.saas_product_id
+                and new_plan.saas_product_id != self.saas_product_id):
+            raise UserError(_("Selected plan does not belong to this service."))
+
+        if billing_period not in ('monthly', 'yearly'):
+            billing_period = 'monthly'
+        if billing_period == 'yearly' and not new_plan.yearly_price:
+            billing_period = 'monthly'
+
+        price = new_plan._get_price_for_period(billing_period)
+        period_label = 'Monthly' if billing_period == 'monthly' else 'Yearly'
+
+        # Store the chosen plan and period — applied on payment
+        self.write({
+            'pending_plan_id': new_plan.id,
+            'pending_billing_period': billing_period,
+        })
+
+        # Create sale order and invoice
+        pricelist = self.partner_id.property_product_pricelist
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': _('Subscription: %s') % (self.name or self.subdomain),
+            'order_line': [(0, 0, {
+                'product_id': self._get_billing_product().id,
+                'name': _('%s (%s) — %s') % (
+                    new_plan.name, period_label,
+                    self.name or self.subdomain,
+                ),
+                'product_uom_qty': 1,
+                'price_unit': price,
+            })],
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].create(order_vals)
+        order.action_confirm()
+        self.sale_order_id = order
+
+        invoice = order._create_invoices()
+        invoice.action_post()
+
+        self._append_log(
+            "Upgrade to %s (%s) requested. Invoice %s created — awaiting payment."
+            % (new_plan.name, period_label, invoice.name)
+        )
+        self.message_post(body=_(
+            "Upgrade to %s (%s) requested. Awaiting payment."
+        ) % (new_plan.name, period_label))
+
+        # Zero-amount plan: apply immediately
+        if invoice.amount_total <= 0:
+            self._apply_pending_upgrade()
+            return True
+
+        return invoice
+
+    def _apply_pending_upgrade(self):
+        """Apply the pending plan upgrade after payment is confirmed."""
+        self.ensure_one()
+        new_plan = self.pending_plan_id
+        if not new_plan:
+            return
+
+        old_plan = self.plan_id
+
+        billing_period = self.pending_billing_period or 'monthly'
+
+        self.write({
+            'plan_id': new_plan.id,
+            'is_trial': False,
+            'billing_period': billing_period,
+            'pending_plan_id': False,
+            'pending_billing_period': False,
+        })
+
+        self._set_next_invoice_date()
+
+        self._append_log(
+            "Payment received. Plan upgraded: %s → %s"
+            % (old_plan.name if old_plan else 'Trial', new_plan.name)
+        )
+        self.message_post(body=_(
+            "Payment confirmed. Upgraded from trial to paid plan: %s."
+        ) % new_plan.name)
+
+        # Update container resources if running
+        if self.state == 'running':
+            try:
+                self._update_container_resources()
+            except Exception as e:
+                _logger.exception(
+                    "Failed to update container resources on subscription for %s",
+                    self.subdomain,
+                )
+                self._append_log(
+                    "WARNING: Plan updated but container resource update failed: %s" % e
+                )
+
+        # Reactivate if suspended (trial expired)
+        if self.state == 'suspended':
+            self._append_log("Reactivating instance after paid subscription.")
+            self.action_restart()
+
+        # Regenerate configs with new plan settings (workers, etc.)
+        if self.state == 'running':
+            try:
+                with self.docker_server_id._get_ssh_connection() as ssh:
+                    self._render_and_write_configs(ssh)
+            except Exception as e:
+                _logger.exception(
+                    "Failed to regenerate configs on subscription for %s",
+                    self.subdomain,
+                )
+
+    def action_request_plan_change(self, new_plan_id, billing_period=None):
+        """Request a plan change from the portal.
+
+        UPGRADE (new price > old price):
+          - Calculate remaining value of current plan
+          - Charge: new_plan_price - remaining_value (min 0)
+          - Applied immediately after payment
+          - Billing cycle resets from today
+
+        DOWNGRADE (new price <= old price):
+          - NO refund, NO credit, NO proration
+          - Blocked if current DB size >= 75% of target plan's db_size_limit
+          - Scheduled for end of current billing cycle
+          - Client keeps current (higher) plan until then
+
+        Returns:
+          - Invoice record (upgrade, needs payment)
+          - True (upgrade, zero charge)
+          - 'scheduled' (downgrade scheduled)
+        """
+        self.ensure_one()
+        if self.state not in ('running', 'stopped', 'suspended'):
+            raise UserError(
+                _("Can only change plan on running, stopped, or suspended instances.")
+            )
+        new_plan = self.env['saas.plan'].browse(int(new_plan_id))
+        if not new_plan.exists():
+            raise UserError(_("Invalid plan."))
+        if new_plan.is_trial_plan:
+            raise UserError(_("Cannot switch to a trial plan."))
+        if new_plan.id == self.plan_id.id:
+            raise UserError(_("Already on this plan."))
+
+        billing_period = billing_period or self.billing_period or 'monthly'
+        new_price = new_plan._get_price_for_period(billing_period)
+        old_period = self.billing_period or 'monthly'
+        old_price = self.plan_id._get_price_for_period(old_period) if self.plan_id else 0
+
+        if new_price > old_price:
+            return self._request_upgrade(new_plan, billing_period, new_price, old_price)
+        else:
+            return self._request_downgrade(new_plan, billing_period)
+
+    # ---------- UPGRADE ----------
+
+    def _request_upgrade(self, new_plan, billing_period, new_price, old_price):
+        """Create proration invoice for an upgrade. Applied on payment."""
+        self.ensure_one()
+        today = fields.Date.today()
+        period_label = 'Yearly' if billing_period == 'yearly' else 'Monthly'
+
+        # Calculate remaining value of current subscription
+        remaining_value = 0.0
+        remaining_info = ''
+        if self.next_invoice_date and self.last_invoice_date:
+            total_days = (self.next_invoice_date - self.last_invoice_date).days
+            remaining_days = (self.next_invoice_date - today).days
+            if total_days > 0 and remaining_days > 0:
+                remaining_value = (old_price / total_days) * remaining_days
+                remaining_info = (
+                    ' (credit %.2f for %d remaining days on %s)'
+                    % (remaining_value, remaining_days, self.plan_id.name)
+                )
+
+        # Final charge = new plan price - remaining value (min 0)
+        final_charge = max(new_price - remaining_value, 0)
+
+        self._append_log(
+            "Upgrade calculation: new_price=%.2f, remaining_value=%.2f, "
+            "final_charge=%.2f%s"
+            % (new_price, remaining_value, final_charge, remaining_info)
+        )
+
+        # Store pending upgrade
+        self.write({
+            'pending_plan_id': new_plan.id,
+            'pending_billing_period': billing_period,
+        })
+
+        line_name = _('%s (%s) — %s — Plan upgrade%s') % (
+            new_plan.name, period_label,
+            self.name or self.subdomain, remaining_info,
+        )
+
+        # Create invoice
+        pricelist = self.partner_id.property_product_pricelist
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': _('Plan upgrade: %s') % (self.name or self.subdomain),
+            'order_line': [(0, 0, {
+                'product_id': self._get_billing_product().id,
+                'name': line_name,
+                'product_uom_qty': 1,
+                'price_unit': final_charge,
+            })],
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].create(order_vals)
+        order.action_confirm()
+        self.sale_order_id = order
+
+        invoice = order._create_invoices()
+        invoice.action_post()
+
+        self.message_post(body=_(
+            "Upgrade to %s (%s) requested. Invoice %s (%.2f) — awaiting payment."
+        ) % (new_plan.name, period_label, invoice.name, final_charge))
+
+        # Zero charge: apply immediately
+        if invoice.amount_total <= 0:
+            self._apply_pending_plan_change()
+            return True
+
+        return invoice
+
+    def _apply_pending_plan_change(self):
+        """Apply a pending upgrade after payment is confirmed."""
+        self.ensure_one()
+        new_plan = self.pending_plan_id
+        if not new_plan:
+            return
+
+        billing_period = self.pending_billing_period or self.billing_period or 'monthly'
+        old_plan = self.plan_id
+
+        # Switch plan and reset billing cycle from today
+        self.write({
+            'plan_id': new_plan.id,
+            'billing_period': billing_period,
+            'pending_plan_id': False,
+            'pending_billing_period': False,
+        })
+
+        # Reset billing cycle from today
+        self._set_next_invoice_date()
+
+        self._append_log(
+            "Payment received. Plan upgraded: %s → %s. Billing cycle reset."
+            % (old_plan.name if old_plan else 'None', new_plan.name)
+        )
+        self.message_post(body=_(
+            "Payment confirmed. Upgraded from %s to %s. Billing cycle reset."
+        ) % (old_plan.name if old_plan else '—', new_plan.name))
+
+        if self.state == 'running':
+            try:
+                self._update_container_resources()
+            except Exception as e:
+                _logger.exception(
+                    "Failed to update container resources for %s", self.subdomain,
+                )
+                self._append_log(
+                    "WARNING: Plan updated but resource update failed: %s" % e
+                )
+            try:
+                with self.docker_server_id._get_ssh_connection() as ssh:
+                    self._render_and_write_configs(ssh)
+            except Exception as e:
+                _logger.exception(
+                    "Failed to regenerate configs for %s", self.subdomain,
+                )
+
+    # ---------- DOWNGRADE ----------
+
+    DOWNGRADE_THRESHOLD = 0.75  # 75% of target plan's db_size_limit
+
+    def _request_downgrade(self, new_plan, billing_period):
+        """Validate and schedule a downgrade for end of billing cycle.
+
+        Blocked if current total storage >= 75% of the target plan's storage_limit.
+        No refund, no credit, no proration.
+        """
+        self.ensure_one()
+
+        # --- Storage threshold check (75% of target plan limit) ---
+        if new_plan.storage_limit > 0:
+            current_usage_gb = (self.total_storage_bytes or 0) / (1024 ** 3)
+            threshold_gb = self.DOWNGRADE_THRESHOLD * new_plan.storage_limit
+
+            self._append_log(
+                "Downgrade check: current_usage=%.2f GB, "
+                "target_storage_limit=%.2f GB, threshold(75%%)=%.2f GB"
+                % (current_usage_gb, new_plan.storage_limit, threshold_gb)
+            )
+
+            if current_usage_gb >= threshold_gb:
+                raise UserError(_(
+                    "Your current storage usage is too high for the selected plan.\n\n"
+                    "Current usage: %.2f GB\n"
+                    "Target plan limit: %.2f GB\n"
+                    "Minimum required headroom: 25%% free (threshold: %.2f GB)\n\n"
+                    "Please reduce your data before downgrading, "
+                    "or choose a plan with a higher limit."
+                ) % (current_usage_gb, new_plan.storage_limit, threshold_gb))
+
+        # --- Schedule the downgrade ---
+        self.write({
+            'scheduled_plan_id': new_plan.id,
+            'scheduled_billing_period': billing_period,
+        })
+
+        end_date = self.next_invoice_date or _('end of billing cycle')
+        self._append_log(
+            "Downgrade to %s scheduled for %s. No refund, no credit."
+            % (new_plan.name, end_date)
+        )
+        self.message_post(body=_(
+            "Downgrade to %s scheduled for %s. "
+            "Your current plan remains active until then."
+        ) % (new_plan.name, end_date))
+
+        return 'scheduled'
+
+    def action_cancel_scheduled_downgrade(self):
+        """Cancel a pending scheduled downgrade."""
+        self.ensure_one()
+        if self.scheduled_plan_id:
+            plan_name = self.scheduled_plan_id.name
+            self.write({
+                'scheduled_plan_id': False,
+                'scheduled_billing_period': False,
+            })
+            self._append_log("Scheduled downgrade to %s cancelled." % plan_name)
+            self.message_post(body=_(
+                "Scheduled downgrade to %s has been cancelled."
+            ) % plan_name)
 
     def action_change_plan(self, new_plan_id, prorate=True):
         """Change the plan on a running instance.
@@ -2311,6 +3000,7 @@ class SaasInstance(models.Model):
             ).get(self.state, self.state),
             'url': self.url or '',
             'provisioning_log': self.provisioning_log or '',
+            'pending_plan_id': self.pending_plan_id.id if self.pending_plan_id else False,
         }
 
     # ========== Portal Self-Service Actions ==========

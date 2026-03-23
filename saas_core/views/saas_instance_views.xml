@@ -8,7 +8,7 @@
         <field name="arch" type="xml">
             <list string="SaaS Instances"
                   decoration-success="state == 'running'"
-                  decoration-danger="state in ('cancelled', 'failed')"
+                  decoration-danger="state in ('cancelled', 'cancelled_by_client', 'failed')"
                   decoration-warning="state == 'suspended'"
                   decoration-muted="state in ('draft', 'stopped')"
                   decoration-info="state == 'provisioning'">
@@ -22,7 +22,7 @@
                 <field name="sale_order_id" optional="hide"/>
                 <field name="state" widget="badge"
                        decoration-success="state == 'running'"
-                       decoration-danger="state in ('cancelled', 'failed')"
+                       decoration-danger="state in ('cancelled', 'cancelled_by_client', 'failed')"
                        decoration-warning="state == 'suspended'"
                        decoration-muted="state == 'stopped'"
                        decoration-info="state in ('draft', 'provisioning')"/>
@@ -256,6 +256,11 @@
                         <page string="Provisioning Log"
                               invisible="not provisioning_log">
                             <field name="provisioning_log" readonly="1"
+                                   nolabel="1"/>
+                        </page>
+                        <page string="Cancellation"
+                              invisible="not cancellation_reason">
+                            <field name="cancellation_reason" readonly="1"
                                    nolabel="1"/>
                         </page>
                     </notebook>

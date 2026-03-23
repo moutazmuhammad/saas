@@ -55,6 +55,8 @@ Key capabilities:
         'web.assets_backend': [
             'saas_core/static/src/components/container_logs/container_logs.js',
             'saas_core/static/src/components/container_logs/container_logs.xml',
+            'saas_core/static/src/components/ssh_terminal/ssh_terminal.js',
+            'saas_core/static/src/components/ssh_terminal/ssh_terminal.xml',
         ],
     },
     'installable': True,

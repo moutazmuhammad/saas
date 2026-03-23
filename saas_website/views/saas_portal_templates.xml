@@ -33,14 +33,28 @@
               inherit_id="portal.portal_breadcrumbs"
               priority="40">
         <xpath expr="//ol[hasclass('o_portal_submenu')]" position="inside">
-            <li t-if="page_name == 'saas_instances' or page_name == 'saas_instance_detail'"
+            <t t-set="sub_pages" t-value="('saas_instance_detail', 'saas_instance_upgrade', 'saas_instance_change_plan', 'saas_checkout')"/>
+            <li t-if="page_name == 'saas_instances' or page_name in sub_pages"
                 t-attf-class="breadcrumb-item #{'active' if page_name == 'saas_instances' else ''}">
-                <a t-if="page_name == 'saas_instance_detail'" href="/my/instances">Instances</a>
+                <a t-if="page_name != 'saas_instances'" href="/my/instances">Instances</a>
                 <t t-else="">Instances</t>
             </li>
-            <li t-if="page_name == 'saas_instance_detail' and instance"
-                class="breadcrumb-item active">
-                <t t-out="instance.name or instance.subdomain"/>
+            <li t-if="page_name in sub_pages and instance"
+                t-attf-class="breadcrumb-item #{'active' if page_name == 'saas_instance_detail' else ''}">
+                <a t-if="page_name != 'saas_instance_detail'"
+                   t-attf-href="/my/instances/#{instance.id}">
+                    <t t-out="instance.name or instance.subdomain"/>
+                </a>
+                <t t-else="" t-out="instance.name or instance.subdomain"/>
+            </li>
+            <li t-if="page_name == 'saas_instance_upgrade'" class="breadcrumb-item active">
+                Upgrade Plan
+            </li>
+            <li t-if="page_name == 'saas_instance_change_plan'" class="breadcrumb-item active">
+                Change plan
+            </li>
+            <li t-if="page_name == 'saas_checkout'" class="breadcrumb-item active">
+                Checkout
             </li>
         </xpath>
     </template>
@@ -126,6 +140,11 @@
     <template id="portal_instance_detail" name="SaaS Instance Detail">
         <t t-call="portal.portal_layout">
 
+            <t t-set="has_unpaid_invoice" t-value="instance.sale_order_id and any(
+                inv.state == 'posted' and inv.payment_state not in ('paid', 'in_payment') and inv.amount_residual > 0
+                for inv in instance.sale_order_id.invoice_ids
+            )"/>
+
             <div class="row mt-3">
 
                 <!-- Main Content -->
@@ -179,73 +198,166 @@
 
                     <!-- Resource Usage (visible when running) -->
                     <div t-if="instance.state == 'running'" class="card shadow-sm border-0 mb-4">
-                        <div class="card-header bg-white">
-                            <h5 class="mb-0">Resource Usage</h5>
+                        <div class="card-header bg-white d-flex align-items-center">
+                            <h5 class="mb-0 flex-grow-1">Your Usage</h5>
+                            <button type="button" class="btn btn-sm btn-outline-secondary"
+                                    id="btn-refresh-usage"
+                                    t-att-data-instance-id="instance.id">
+                                <i class="fa fa-refresh me-1"/>Refresh
+                            </button>
                         </div>
                         <div class="card-body">
-                            <div class="row text-center">
-                                <div class="col-6 col-md-3 mb-3">
-                                    <small class="text-muted d-block">CPU</small>
-                                    <strong t-out="instance.cpu_usage or '—'"/>
+                            <!-- Processing Power -->
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between mb-1">
+                                    <small class="fw-bold">Processing Power</small>
+                                    <small id="usage-cpu-text" t-out="instance.cpu_usage or '0%'"/>
                                 </div>
-                                <div class="col-6 col-md-3 mb-3">
-                                    <small class="text-muted d-block">RAM</small>
-                                    <strong t-out="instance.ram_usage or '—'"/>
-                                </div>
-                                <div class="col-6 col-md-3 mb-3">
-                                    <small class="text-muted d-block">Disk</small>
-                                    <strong t-out="instance.disk_usage or '—'"/>
-                                </div>
-                                <div class="col-6 col-md-3 mb-3">
-                                    <small class="text-muted d-block">Database</small>
-                                    <strong t-out="instance.db_size or '—'"/>
+                                <div class="progress" style="height: 8px;">
+                                    <div id="usage-cpu-bar" class="progress-bar bg-success" role="progressbar"
+                                         t-attf-style="width: #{min(instance.cpu_usage_pct or 0, 100)}%"/>
                                 </div>
                             </div>
-                            <div t-if="instance.usage_last_updated" class="text-muted text-center">
-                                <small>
-                                    Last updated:
-                                    <t t-out="instance.usage_last_updated"
-                                       t-options='{"widget": "datetime"}'/>
-                                </small>
+
+                            <!-- Memory -->
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between mb-1">
+                                    <small class="fw-bold">Memory</small>
+                                    <small id="usage-ram-text" t-out="instance.ram_percent or '0%'"/>
+                                </div>
+                                <div class="progress" style="height: 8px;">
+                                    <div id="usage-ram-bar" class="progress-bar bg-success" role="progressbar"
+                                         t-attf-style="width: #{min(instance.ram_usage_pct or 0, 100)}%"/>
+                                </div>
+                            </div>
+
+                            <!-- Storage -->
+                            <div class="mb-3">
+                                <div class="d-flex justify-content-between mb-1">
+                                    <small class="fw-bold">Storage</small>
+                                    <small id="usage-storage-text">
+                                        <t t-out="instance.total_storage or '—'"/>
+                                        of <t t-out="int(instance.plan_id.storage_limit)"/> GB
+                                    </small>
+                                </div>
+                                <div class="progress" style="height: 8px;">
+                                    <div id="usage-storage-bar" class="progress-bar bg-success" role="progressbar"
+                                         t-attf-style="width: #{min(instance.storage_usage_pct or 0, 100)}%"/>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- Provisioning Status (with auto-polling) -->
-                    <div t-if="instance.state in ('provisioning', 'failed') and instance.provisioning_log"
+                    <div t-if="instance.state == 'provisioning'"
                          class="card shadow-sm border-0 mb-4">
-                        <div class="card-header bg-white">
-                            <h5 class="mb-0">
-                                <t t-if="instance.state == 'provisioning'">
-                                    <i class="fa fa-spinner fa-spin me-2"/>Deploying...
-                                </t>
-                                <t t-else="">Deployment Log</t>
-                            </h5>
-                        </div>
-                        <div class="card-body">
-                            <pre class="bg-dark text-light p-3 rounded mb-0"
-                                 id="provisioning-log"
-                                 style="max-height: 300px; overflow-y: auto; font-size: 0.85rem;"><t t-out="instance.provisioning_log"/></pre>
-                            <t t-if="instance.state == 'provisioning'">
-                                <p class="text-muted mt-2 mb-0">
-                                    <small>Status updates automatically every 5 seconds.</small>
-                                </p>
-                            </t>
+                        <div class="card-body text-center py-5">
+                            <div class="mb-3">
+                                <div class="spinner-border text-primary" role="status"
+                                     style="width: 3rem; height: 3rem;">
+                                    <span class="visually-hidden">Deploying...</span>
+                                </div>
+                            </div>
+                            <h4 class="fw-bold">Setting up your instance</h4>
+                            <p class="text-muted mb-0">
+                                This usually takes a minute or two. The page will refresh automatically when ready.
+                            </p>
                         </div>
                     </div>
 
-                    <!-- Backups Section -->
-                    <div t-if="backups" class="card shadow-sm border-0 mb-4">
+                    <!-- Billing Section -->
+                    <div t-if="instance.sale_order_id" class="card shadow-sm border-0 mb-4">
                         <div class="card-header bg-white">
-                            <h5 class="mb-0">Recent Backups</h5>
+                            <h5 class="mb-0">Billing</h5>
                         </div>
                         <div class="card-body p-0">
                             <table class="table table-sm mb-0">
                                 <thead>
                                     <tr>
+                                        <th>Reference</th>
                                         <th>Date</th>
-                                        <th>Size</th>
-                                        <th class="text-end">Action</th>
+                                        <th>Amount</th>
+                                        <th>Status</th>
+                                        <th class="text-end"/>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <t t-foreach="instance.sale_order_id.invoice_ids.sorted('create_date', reverse=True)" t-as="inv">
+                                        <tr>
+                                            <td t-out="inv.name"/>
+                                            <td>
+                                                <span t-field="inv.invoice_date"
+                                                      t-options='{"widget": "date"}'/>
+                                            </td>
+                                            <td>
+                                                <t t-if="inv.currency_id" t-out="inv.currency_id.symbol"/>
+                                                <t t-out="'%.2f' % inv.amount_total"/>
+                                            </td>
+                                            <td>
+                                                <span t-if="inv.payment_state in ('paid', 'in_payment')"
+                                                      class="badge text-bg-success">Paid</span>
+                                                <span t-elif="inv.state == 'cancel'"
+                                                      class="badge text-bg-secondary">Cancelled</span>
+                                                <span t-elif="inv.state == 'posted'"
+                                                      class="badge text-bg-warning">Unpaid</span>
+                                                <span t-else=""
+                                                      class="badge text-bg-secondary">Draft</span>
+                                            </td>
+                                            <td class="text-end">
+                                                <form t-if="inv.state == 'posted' and inv.payment_state not in ('paid', 'in_payment')"
+                                                      t-attf-action="/my/instances/#{instance.id}/cancel-invoice/#{inv.id}"
+                                                      method="POST" class="d-inline">
+                                                    <input type="hidden" name="csrf_token"
+                                                           t-att-value="request.csrf_token()"/>
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                                                            onclick="return confirm('Are you sure you want to cancel this order?')">
+                                                        Cancel
+                                                    </button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    </t>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Backups Section -->
+                    <div t-if="instance.state == 'running' or backups" class="card shadow-sm border-0 mb-4">
+                        <t t-set="backup_in_progress" t-value="any(b.state == 'running' for b in backups)"/>
+                        <t t-set="done_backup_count" t-value="len([b for b in instance.backup_ids if b.state == 'done'])"/>
+                        <t t-set="max_backups" t-value="instance.plan_id.max_backups if instance.plan_id else 0"/>
+                        <t t-set="backup_limit_reached" t-value="max_backups > 0 and done_backup_count >= max_backups"/>
+                        <div class="card-header bg-white d-flex align-items-center">
+                            <h5 class="mb-0 flex-grow-1">Backups</h5>
+                            <span t-if="backup_in_progress" class="badge text-bg-info">
+                                <i class="fa fa-spinner fa-spin me-1"/>Backup in progress...
+                            </span>
+                            <form t-elif="instance.state == 'running' and not backup_limit_reached"
+                                  t-attf-action="/my/instances/#{instance.id}/create-backup"
+                                  method="POST" class="d-inline">
+                                <input type="hidden" name="csrf_token"
+                                       t-att-value="request.csrf_token()"/>
+                                <button type="submit" class="btn btn-sm btn-primary">
+                                    <i class="fa fa-plus me-1"/>Create Backup
+                                </button>
+                            </form>
+                        </div>
+                        <div t-if="backup_limit_reached and not backup_in_progress"
+                             class="px-3 py-2 bg-light border-bottom">
+                            <small class="text-warning">
+                                <i class="fa fa-exclamation-triangle me-1"/>
+                                You've reached your backup limit (<t t-out="done_backup_count"/>/<t t-out="max_backups"/>).
+                                Delete an old backup to create a new one.
+                            </small>
+                        </div>
+                        <div t-if="backups" class="card-body p-0">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Date &amp; Time</th>
+                                        <th>Status</th>
+                                        <th class="text-end">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -256,64 +368,140 @@
                                                       t-options='{"widget": "datetime"}'/>
                                             </td>
                                             <td>
-                                                <t t-if="backup.size_mb">
-                                                    <t t-out="'%.1f' % backup.size_mb"/> MB
-                                                </t>
+                                                <span t-if="backup.state == 'done'" class="badge text-bg-success">Ready</span>
+                                                <span t-elif="backup.state == 'running'" class="badge text-bg-info">
+                                                    <i class="fa fa-spinner fa-spin me-1"/>In progress
+                                                </span>
+                                                <span t-else="" class="badge text-bg-danger">Failed</span>
                                             </td>
                                             <td class="text-end">
-                                                <a t-attf-href="/my/instances/#{instance.id}/backup/#{backup.id}/download"
-                                                   class="btn btn-sm btn-outline-primary">
-                                                    <i class="fa fa-download me-1"/>Download
+                                                <a t-if="backup.state == 'done'"
+                                                   t-attf-href="/my/instances/#{instance.id}/backup/#{backup.id}/download"
+                                                   target="_blank"
+                                                   class="btn btn-sm btn-outline-primary me-1">
+                                                    <i class="fa fa-download"/>
                                                 </a>
+                                                <form t-if="backup.state in ('done', 'failed')"
+                                                      t-attf-action="/my/instances/#{instance.id}/backup/#{backup.id}/delete"
+                                                      method="POST" class="d-inline">
+                                                    <input type="hidden" name="csrf_token"
+                                                           t-att-value="request.csrf_token()"/>
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                                                            onclick="return confirm('Are you sure you want to delete this backup?')">
+                                                        <i class="fa fa-trash"/>
+                                                    </button>
+                                                </form>
                                             </td>
                                         </tr>
                                     </t>
                                 </tbody>
                             </table>
                         </div>
+                        <div t-if="not backups" class="card-body text-center text-muted py-4">
+                            <p class="mb-0">No backups yet. Create your first backup to protect your data.</p>
+                        </div>
                     </div>
 
-                    <!-- Trial Info -->
-                    <div t-if="instance.is_trial and instance.state == 'running'"
+                    <!-- Auto-refresh when backup is in progress -->
+                    <t t-if="backup_in_progress">
+                        <script>
+                            setTimeout(function() { location.reload(); }, 10000);
+                        </script>
+                    </t>
+
+                    <!-- Pending Upgrade Payment -->
+                    <div t-if="instance.pending_plan_id and has_unpaid_invoice"
+                         class="card shadow-sm border-0 mb-4 border-start border-4 border-warning">
+                        <div class="card-body text-center py-4">
+                            <i class="fa fa-credit-card fa-3x text-warning mb-3 d-block"/>
+                            <h5 class="fw-bold">Payment Required</h5>
+                            <p class="text-muted mb-3">
+                                You selected the <strong t-out="instance.pending_plan_id.name"/> plan.
+                                Complete payment to activate your upgrade.
+                            </p>
+                            <a t-attf-href="/my/instances/#{instance.id}/checkout"
+                               class="btn btn-warning btn-lg">
+                                <i class="fa fa-lock me-2"/>Complete Payment
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Scheduled Downgrade -->
+                    <div t-if="instance.scheduled_plan_id"
+                         class="card shadow-sm border-0 mb-4 border-start border-4 border-info">
+                        <div class="card-body">
+                            <h6 class="text-info mb-1">
+                                <i class="fa fa-calendar me-1"/>Downgrade Scheduled
+                            </h6>
+                            <p class="mb-1">
+                                Your plan will switch to <strong t-out="instance.scheduled_plan_id.name"/>
+                                on <strong t-out="instance.next_invoice_date"/>.
+                                You keep your current <strong t-out="instance.plan_id.name"/> plan until then.
+                            </p>
+                            <p class="text-warning mb-2" style="font-size: 0.9rem;">
+                                <i class="fa fa-exclamation-triangle me-1"/>
+                                After downgrading, depending on your current usage, you may experience
+                                slower performance or limitations in some operations. Consider optimizing
+                                your database for best experience.
+                            </p>
+                            <form t-attf-action="/my/instances/#{instance.id}/cancel-downgrade"
+                                  method="POST" class="d-inline">
+                                <input type="hidden" name="csrf_token"
+                                       t-att-value="request.csrf_token()"/>
+                                <button type="submit" class="btn btn-outline-secondary btn-sm">
+                                    <i class="fa fa-times me-1"/>Cancel Downgrade
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Trial Info (no pending upgrade) -->
+                    <div t-if="instance.is_trial and instance.state == 'running' and not instance.pending_plan_id"
                          class="card shadow-sm border-0 mb-4 border-start border-4 border-success">
                         <div class="card-body">
                             <h6 class="text-success mb-1">
                                 <i class="fa fa-gift me-1"/>Free Trial
                             </h6>
-                            <p class="mb-0">
+                            <p class="mb-2">
                                 Your trial ends on
                                 <strong t-out="instance.partner_id.sudo().saas_trial_end_date"/>.
                                 Subscribe to a paid plan before it expires to keep your instances running.
                             </p>
+                            <a t-attf-href="/my/instances/#{instance.id}/upgrade"
+                               class="btn btn-success">
+                                <i class="fa fa-arrow-up me-1"/>Upgrade Now
+                            </a>
                         </div>
                     </div>
 
-                    <!-- Trial Expired / Suspended -->
-                    <div t-if="instance.is_trial and instance.state == 'suspended'"
+                    <!-- Trial Expired / Suspended (no pending upgrade) -->
+                    <div t-if="instance.is_trial and instance.state == 'suspended' and not instance.pending_plan_id"
                          class="card shadow-sm border-0 mb-4">
                         <div class="card-body text-center py-4">
                             <i class="fa fa-exclamation-triangle fa-3x text-danger mb-3 d-block"/>
                             <h5>Trial Expired</h5>
                             <p class="text-muted">
-                                Your free trial has ended. Subscribe to reactivate your instance.
+                                Your free trial has ended. Subscribe to a paid plan to reactivate your instance.
                             </p>
+                            <a t-attf-href="/my/instances/#{instance.id}/upgrade"
+                               class="btn btn-primary btn-lg">
+                                <i class="fa fa-arrow-up me-1"/>Subscribe Now
+                            </a>
                         </div>
                     </div>
 
                     <!-- Pending Payment Notice -->
-                    <div t-if="instance.state == 'pending_payment'" class="card shadow-sm border-0 mb-4">
+                    <div t-if="instance.state == 'pending_payment' and has_unpaid_invoice" class="card shadow-sm border-0 mb-4">
                         <div class="card-body text-center py-4">
-                            <i class="fa fa-clock-o fa-3x text-warning mb-3 d-block"/>
-                            <h5>Awaiting Payment</h5>
-                            <p class="text-muted">
-                                Your instance will be deployed automatically once payment is received.
+                            <i class="fa fa-credit-card fa-3x text-warning mb-3 d-block"/>
+                            <h5 class="fw-bold">Payment Required</h5>
+                            <p class="text-muted mb-3">
+                                Your instance will be set up automatically once payment is confirmed.
                             </p>
-                            <t t-if="instance.sale_order_id and instance.sale_order_id.invoice_ids">
-                                <a t-att-href="instance.sale_order_id.invoice_ids[0].get_portal_url()"
-                                   class="btn btn-primary">
-                                    <i class="fa fa-credit-card me-2"/>Pay Now
-                                </a>
-                            </t>
+                            <a t-attf-href="/my/instances/#{instance.id}/checkout"
+                               class="btn btn-primary btn-lg">
+                                <i class="fa fa-lock me-2"/>Complete Payment
+                            </a>
                         </div>
                     </div>
 
@@ -328,6 +516,21 @@
                             <h6 class="mb-0">Actions</h6>
                         </div>
                         <div class="list-group list-group-flush">
+                            <a t-if="instance.is_trial and instance.state in ('running', 'suspended') and not instance.pending_plan_id"
+                               t-attf-href="/my/instances/#{instance.id}/upgrade"
+                               class="list-group-item list-group-item-action list-group-item-success">
+                                <i class="fa fa-arrow-up me-2"/>Upgrade Plan
+                            </a>
+                            <a t-if="not instance.is_trial and instance.state in ('running', 'stopped', 'suspended') and instance.plan_id and not instance.pending_plan_id and not instance.scheduled_plan_id"
+                               t-attf-href="/my/instances/#{instance.id}/change-plan"
+                               class="list-group-item list-group-item-action">
+                                <i class="fa fa-exchange me-2 text-primary"/>Change Plan
+                            </a>
+                            <a t-if="instance.pending_plan_id and has_unpaid_invoice"
+                               t-attf-href="/my/instances/#{instance.id}/checkout"
+                               class="list-group-item list-group-item-action list-group-item-warning">
+                                <i class="fa fa-credit-card me-2"/>Complete Payment
+                            </a>
                             <a t-if="instance.url and instance.state == 'running'"
                                t-att-href="instance.url" target="_blank"
                                class="list-group-item list-group-item-action">
@@ -350,16 +553,6 @@
                                data-action="start"
                                t-att-data-instance-id="instance.id">
                                 <i class="fa fa-play me-2 text-success"/>Start
-                            </a>
-                            <a t-if="instance.sale_order_id"
-                               t-att-href="instance.sale_order_id.get_portal_url()"
-                               class="list-group-item list-group-item-action">
-                                <i class="fa fa-shopping-cart me-2 text-primary"/>View Order
-                            </a>
-                            <a t-if="instance.sale_order_id and instance.sale_order_id.invoice_ids"
-                               t-att-href="instance.sale_order_id.invoice_ids[0].get_portal_url()"
-                               class="list-group-item list-group-item-action">
-                                <i class="fa fa-file-text-o me-2 text-primary"/>View Invoice
                             </a>
                         </div>
                     </div>
@@ -401,11 +594,13 @@
 
             </div>
 
-            <!-- Auto-polling script for provisioning state -->
-            <t t-if="instance.state == 'provisioning'">
+            <!-- Auto-polling: reload page when state changes -->
+            <t t-if="instance.state in ('provisioning', 'pending_payment', 'paid') or instance.pending_plan_id">
                 <script>
                     (function() {
                         var instanceId = <t t-out="instance.id"/>;
+                        var currentState = '<t t-out="instance.state"/>';
+                        var hadPending = <t t-out="'true' if instance.pending_plan_id else 'false'"/>;
                         var interval = setInterval(function() {
                             fetch('/my/instances/' + instanceId + '/status', {
                                 method: 'POST',
@@ -415,20 +610,560 @@
                             .then(function(r) { return r.json(); })
                             .then(function(data) {
                                 var result = data.result || {};
-                                if (result.provisioning_log) {
-                                    var el = document.getElementById('provisioning-log');
-                                    if (el) el.textContent = result.provisioning_log;
-                                }
-                                if (result.state !== 'provisioning') {
+                                // Reload if state changed or pending upgrade was applied
+                                if (result.state !== currentState || (hadPending &amp;&amp; !result.pending_plan_id)) {
                                     clearInterval(interval);
                                     location.reload();
                                 }
                             })
                             .catch(function() {});
-                        }, 5000);
+                        }, 3000);
                     })();
                 </script>
             </t>
+
+            <!-- Refresh usage via AJAX -->
+            <script>
+                (function() {
+                    var btn = document.getElementById('btn-refresh-usage');
+                    if (!btn) return;
+                    btn.addEventListener('click', function() {
+                        var instanceId = btn.getAttribute('data-instance-id');
+                        var icon = btn.querySelector('i');
+                        btn.disabled = true;
+                        icon.classList.add('fa-spin');
+
+                        fetch('/my/instances/' + instanceId + '/refresh-usage', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({jsonrpc: '2.0', method: 'call', params: {}})
+                        })
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            var r = data.result || {};
+                            if (r.error) return;
+
+                            function barColor(pct) {
+                                if (pct >= 90) return 'bg-danger';
+                                if (pct >= 70) return 'bg-warning';
+                                return 'bg-success';
+                            }
+                            function updateBar(barId, textId, text, pct) {
+                                var bar = document.getElementById(barId);
+                                var txt = document.getElementById(textId);
+                                if (txt) txt.textContent = text;
+                                if (bar) {
+                                    bar.style.width = Math.min(pct, 100) + '%';
+                                    bar.className = 'progress-bar ' + barColor(pct);
+                                }
+                            }
+
+                            updateBar('usage-cpu-bar', 'usage-cpu-text', r.cpu_usage, r.cpu_pct);
+                            updateBar('usage-ram-bar', 'usage-ram-text', r.ram_percent, r.ram_pct);
+
+                            var storageText = r.total_storage + ' of ' + r.storage_limit + ' GB';
+                            updateBar('usage-storage-bar', 'usage-storage-text', storageText, r.storage_pct);
+                        })
+                        .catch(function() {})
+                        .finally(function() {
+                            btn.disabled = false;
+                            icon.classList.remove('fa-spin');
+                        });
+                    });
+                })();
+            </script>
+
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!--  Upgrade Plan: /my/instances/<id>/upgrade                     -->
+    <!-- ============================================================ -->
+
+    <template id="portal_instance_upgrade" name="Upgrade Instance Plan">
+        <t t-call="portal.portal_layout">
+
+            <div class="container py-4">
+
+                <!-- Back link -->
+                <a t-attf-href="/my/instances/#{instance.id}" class="btn btn-outline-secondary btn-sm mb-4">
+                    <i class="fa fa-arrow-left me-1"/> Back to Instance
+                </a>
+
+                <!-- Header -->
+                <div class="text-center mb-4">
+                    <h2 class="fw-bold">Choose a Plan</h2>
+                    <p class="text-muted">
+                        Upgrade <strong t-out="instance.name or instance.subdomain"/>
+                        to a paid plan. Your data and configuration will be preserved.
+                    </p>
+                </div>
+
+                <!-- Error -->
+                <div t-if="error" class="alert alert-danger text-center" role="alert">
+                    <t t-out="error"/>
+                </div>
+
+                <!-- Monthly / Yearly Toggle -->
+                <t t-set="has_yearly" t-value="any(p.yearly_price for p in plans)"/>
+                <div t-if="has_yearly" class="text-center mb-4">
+                    <div class="btn-group" role="group" id="billing-toggle">
+                        <button type="button"
+                                class="btn btn-primary active"
+                                data-period="monthly"
+                                onclick="document.querySelectorAll('.price-monthly').forEach(e => e.style.display='');
+                                         document.querySelectorAll('.price-yearly').forEach(e => e.style.display='none');
+                                         document.querySelectorAll('[name=billing_period]').forEach(e => e.value='monthly');
+                                         this.classList.add('active'); this.classList.remove('btn-outline-primary'); this.classList.add('btn-primary');
+                                         this.nextElementSibling.classList.remove('active','btn-primary'); this.nextElementSibling.classList.add('btn-outline-primary');">
+                            Monthly
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-primary"
+                                data-period="yearly"
+                                onclick="document.querySelectorAll('.price-monthly').forEach(e => e.style.display='none');
+                                         document.querySelectorAll('.price-yearly').forEach(e => e.style.display='');
+                                         document.querySelectorAll('[name=billing_period]').forEach(e => e.value='yearly');
+                                         this.classList.add('active'); this.classList.remove('btn-outline-primary'); this.classList.add('btn-primary');
+                                         this.previousElementSibling.classList.remove('active','btn-primary'); this.previousElementSibling.classList.add('btn-outline-primary');">
+                            Yearly
+                            <span class="badge bg-success ms-1">Save more</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Plans Grid -->
+                <div class="row justify-content-center g-4">
+                    <t t-foreach="plans" t-as="plan">
+                        <div class="col-lg-4 col-md-6">
+                            <div t-attf-class="card h-100 shadow-sm border-0 #{'border border-2 border-primary' if instance.plan_id.id == plan.id else ''}">
+                                <div class="card-header bg-primary text-white text-center py-3">
+                                    <h4 class="mb-0 fw-bold" t-out="plan.name"/>
+                                </div>
+                                <div class="card-body d-flex flex-column px-4 py-4">
+
+                                    <!-- Monthly Price -->
+                                    <div class="text-center mb-4 price-monthly">
+                                        <span class="display-6 fw-bold">
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                            <t t-out="int(plan.price) if plan.price == int(plan.price) else '%.2f' % plan.price"/>
+                                        </span>
+                                        <span class="text-muted">/ mo</span>
+                                    </div>
+
+                                    <!-- Yearly Price (hidden by default) -->
+                                    <div class="text-center mb-4 price-yearly" style="display: none;">
+                                        <t t-if="plan.yearly_price">
+                                            <span class="display-6 fw-bold">
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.yearly_price) if plan.yearly_price == int(plan.yearly_price) else '%.2f' % plan.yearly_price"/>
+                                            </span>
+                                            <span class="text-muted">/ yr</span>
+                                            <div class="mt-1">
+                                                <span class="text-muted text-decoration-line-through" style="font-size: 0.9rem;">
+                                                    <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="int(plan.price * 12)"/>
+                                                </span>
+                                                <span t-if="plan.yearly_discount_pct" class="badge bg-success ms-1">
+                                                    Save <t t-out="int(plan.yearly_discount_pct)"/>%
+                                                </span>
+                                            </div>
+                                        </t>
+                                        <t t-else="">
+                                            <span class="display-6 fw-bold">
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.price * 12)"/>
+                                            </span>
+                                            <span class="text-muted">/ yr</span>
+                                            <div class="mt-1 text-muted" style="font-size: 0.85rem;">
+                                                No yearly discount
+                                            </div>
+                                        </t>
+                                    </div>
+
+                                    <!-- Features -->
+                                    <ul class="list-unstyled mb-4 flex-grow-1">
+                                        <li class="mb-2">
+                                            <i class="fa fa-microchip text-primary me-2"/>
+                                            <strong t-out="plan.cpu_limit"/> CPU
+                                            <t t-if="plan.cpu_limit == 1"> Core</t>
+                                            <t t-else=""> Cores</t>
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-memory text-primary me-2"/>
+                                            <t t-out="plan.ram_limit.upper() if plan.ram_limit else 'N/A'"/> RAM
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-hdd-o text-primary me-2"/>
+                                            <t t-out="int(plan.storage_limit)"/> GB Storage
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-cloud-download text-primary me-2"/>
+                                            <t t-out="plan.max_backups"/> Daily Backups
+                                        </li>
+                                        <li t-if="plan.max_users" class="mb-2">
+                                            <i class="fa fa-users text-primary me-2"/>
+                                            <t t-out="plan.max_users"/> Users
+                                        </li>
+                                        <li t-if="plan.feature_api_access" class="mb-2">
+                                            <i class="fa fa-plug text-success me-2"/>
+                                            API Access
+                                        </li>
+                                        <li t-if="plan.feature_custom_domain" class="mb-2">
+                                            <i class="fa fa-globe text-success me-2"/>
+                                            Custom Domain
+                                        </li>
+                                        <li t-if="plan.feature_custom_modules" class="mb-2">
+                                            <i class="fa fa-puzzle-piece text-success me-2"/>
+                                            Custom Modules
+                                        </li>
+                                    </ul>
+
+                                    <!-- Subscribe Button -->
+                                    <form t-attf-action="/my/instances/#{instance.id}/subscribe"
+                                          method="POST">
+                                        <input type="hidden" name="csrf_token"
+                                               t-att-value="request.csrf_token()"/>
+                                        <input type="hidden" name="plan_id"
+                                               t-att-value="plan.id"/>
+                                        <input type="hidden" name="billing_period"
+                                               value="monthly"/>
+                                        <button type="submit"
+                                                class="btn btn-primary btn-lg w-100">
+                                            <i class="fa fa-check me-1"/>Subscribe
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </div>
+
+                <t t-if="not plans">
+                    <div class="text-center text-muted py-5">
+                        <p class="lead">
+                            No paid plans available at the moment. Please check back later.
+                        </p>
+                    </div>
+                </t>
+
+            </div>
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!--  Change Plan (Paid): /my/instances/<id>/change-plan           -->
+    <!-- ============================================================ -->
+
+    <template id="portal_instance_change_plan" name="Change Instance Plan">
+        <t t-call="portal.portal_layout">
+
+            <div class="container py-4">
+
+                <!-- Back link -->
+                <a t-attf-href="/my/instances/#{instance.id}" class="btn btn-outline-secondary btn-sm mb-4">
+                    <i class="fa fa-arrow-left me-1"/> Back to Instance
+                </a>
+
+                <!-- Header -->
+                <div class="text-center mb-4">
+                    <h2 class="fw-bold">Change Plan</h2>
+                    <p class="text-muted">
+                        Change <strong t-out="instance.name or instance.subdomain"/>
+                        to a different plan. Your data and configuration will be preserved.
+                    </p>
+                    <div t-if="current_plan" class="mt-2">
+                        <span class="badge bg-secondary" style="font-size: 0.95rem;">
+                            Current plan: <strong t-out="current_plan.name"/>
+                            — <t t-if="current_plan.currency_id" t-out="current_plan.currency_id.symbol"/><t t-out="int(current_plan.price) if current_plan.price == int(current_plan.price) else '%.2f' % current_plan.price"/> / mo
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Error -->
+                <div t-if="error" class="alert alert-danger text-center" role="alert">
+                    <t t-out="error"/>
+                </div>
+
+                <!-- Monthly / Yearly Toggle -->
+                <t t-set="has_yearly" t-value="any(p.yearly_price for p in plans)"/>
+                <div t-if="has_yearly" class="text-center mb-4">
+                    <div class="btn-group" role="group">
+                        <button type="button"
+                                class="btn btn-primary active"
+                                onclick="document.querySelectorAll('.price-monthly').forEach(e => e.style.display='');
+                                         document.querySelectorAll('.price-yearly').forEach(e => e.style.display='none');
+                                         document.querySelectorAll('[name=billing_period]').forEach(e => e.value='monthly');
+                                         this.classList.add('active','btn-primary'); this.classList.remove('btn-outline-primary');
+                                         this.nextElementSibling.classList.remove('active','btn-primary'); this.nextElementSibling.classList.add('btn-outline-primary');">
+                            Monthly
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-primary"
+                                onclick="document.querySelectorAll('.price-monthly').forEach(e => e.style.display='none');
+                                         document.querySelectorAll('.price-yearly').forEach(e => e.style.display='');
+                                         document.querySelectorAll('[name=billing_period]').forEach(e => e.value='yearly');
+                                         this.classList.add('active','btn-primary'); this.classList.remove('btn-outline-primary');
+                                         this.previousElementSibling.classList.remove('active','btn-primary'); this.previousElementSibling.classList.add('btn-outline-primary');">
+                            Yearly
+                            <span class="badge bg-success ms-1">Save more</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Plans Grid -->
+                <div class="row justify-content-center g-4">
+                    <t t-foreach="plans" t-as="plan">
+                        <div class="col-lg-4 col-md-6">
+                            <div class="card h-100 shadow-sm border-0">
+                                <div class="card-header bg-primary text-white text-center py-3">
+                                    <h4 class="mb-0 fw-bold" t-out="plan.name"/>
+                                </div>
+                                <div class="card-body d-flex flex-column px-4 py-4">
+
+                                    <!-- Monthly Price -->
+                                    <div class="text-center mb-4 price-monthly">
+                                        <span class="display-6 fw-bold">
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                            <t t-out="int(plan.price) if plan.price == int(plan.price) else '%.2f' % plan.price"/>
+                                        </span>
+                                        <span class="text-muted">/ mo</span>
+                                    </div>
+
+                                    <!-- Yearly Price (hidden by default) -->
+                                    <div class="text-center mb-4 price-yearly" style="display: none;">
+                                        <t t-if="plan.yearly_price">
+                                            <span class="display-6 fw-bold">
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.yearly_price) if plan.yearly_price == int(plan.yearly_price) else '%.2f' % plan.yearly_price"/>
+                                            </span>
+                                            <span class="text-muted">/ yr</span>
+                                            <div class="mt-1">
+                                                <span class="text-muted text-decoration-line-through" style="font-size: 0.9rem;">
+                                                    <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="int(plan.price * 12)"/>
+                                                </span>
+                                                <span t-if="plan.yearly_discount_pct" class="badge bg-success ms-1">
+                                                    Save <t t-out="int(plan.yearly_discount_pct)"/>%
+                                                </span>
+                                            </div>
+                                        </t>
+                                        <t t-else="">
+                                            <span class="display-6 fw-bold">
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.price * 12)"/>
+                                            </span>
+                                            <span class="text-muted">/ yr</span>
+                                        </t>
+                                    </div>
+
+                                    <!-- Features -->
+                                    <ul class="list-unstyled mb-4 flex-grow-1">
+                                        <li class="mb-2">
+                                            <i class="fa fa-microchip text-primary me-2"/>
+                                            <strong t-out="plan.cpu_limit"/> CPU
+                                            <t t-if="plan.cpu_limit == 1"> Core</t>
+                                            <t t-else=""> Cores</t>
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-memory text-primary me-2"/>
+                                            <t t-out="plan.ram_limit.upper() if plan.ram_limit else 'N/A'"/> RAM
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-hdd-o text-primary me-2"/>
+                                            <t t-out="int(plan.storage_limit)"/> GB Storage
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-cloud-download text-primary me-2"/>
+                                            <t t-out="plan.max_backups"/> Daily Backups
+                                        </li>
+                                        <li t-if="plan.max_users" class="mb-2">
+                                            <i class="fa fa-users text-primary me-2"/>
+                                            <t t-out="plan.max_users"/> Users
+                                        </li>
+                                        <li t-if="plan.feature_api_access" class="mb-2">
+                                            <i class="fa fa-plug text-success me-2"/>
+                                            API Access
+                                        </li>
+                                        <li t-if="plan.feature_custom_domain" class="mb-2">
+                                            <i class="fa fa-globe text-success me-2"/>
+                                            Custom Domain
+                                        </li>
+                                        <li t-if="plan.feature_custom_modules" class="mb-2">
+                                            <i class="fa fa-puzzle-piece text-success me-2"/>
+                                            Custom Modules
+                                        </li>
+                                    </ul>
+
+                                    <!-- Upgrade / Downgrade indicator + button -->
+                                    <t t-set="is_upgrade" t-value="plan.price > current_plan.price"/>
+
+                                    <div class="text-center mb-2">
+                                        <span t-if="is_upgrade" class="badge bg-primary">
+                                            <i class="fa fa-arrow-up me-1"/>Upgrade — applied immediately
+                                        </span>
+                                        <span t-else="" class="badge bg-info text-dark">
+                                            <i class="fa fa-arrow-down me-1"/>Downgrade — at end of billing cycle
+                                        </span>
+                                    </div>
+
+                                    <form t-attf-action="/my/instances/#{instance.id}/do-change-plan"
+                                          method="POST">
+                                        <input type="hidden" name="csrf_token"
+                                               t-att-value="request.csrf_token()"/>
+                                        <input type="hidden" name="plan_id"
+                                               t-att-value="plan.id"/>
+                                        <input type="hidden" name="billing_period"
+                                               t-att-value="instance.billing_period or 'monthly'"/>
+                                        <button t-if="is_upgrade" type="submit"
+                                                class="btn btn-primary btn-lg w-100">
+                                            <i class="fa fa-arrow-up me-1"/>Upgrade Now
+                                        </button>
+                                        <button t-else="" type="submit"
+                                                class="btn btn-outline-info btn-lg w-100">
+                                            <i class="fa fa-arrow-down me-1"/>Schedule Downgrade
+                                        </button>
+                                    </form>
+                                    <div t-if="not is_upgrade" class="mt-2">
+                                        <p class="text-muted mb-1" style="font-size: 0.85rem;">
+                                            <i class="fa fa-info-circle me-1"/>
+                                            Your downgrade will take effect at the end of your
+                                            current billing period
+                                            (<strong t-out="instance.next_invoice_date"/>).
+                                            No refunds or credits.
+                                        </p>
+                                        <p class="text-warning mb-0" style="font-size: 0.85rem;">
+                                            <i class="fa fa-exclamation-triangle me-1"/>
+                                            After downgrading, you may experience slower performance
+                                            or limitations depending on your current usage.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </div>
+
+                <t t-if="not plans">
+                    <div class="text-center text-muted py-5">
+                        <p class="lead">
+                            No other plans available at the moment.
+                        </p>
+                    </div>
+                </t>
+
+            </div>
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!--  Checkout: /my/instances/<id>/checkout                        -->
+    <!-- ============================================================ -->
+
+    <template id="portal_checkout" name="SaaS Checkout">
+        <t t-call="portal.portal_layout">
+
+            <div class="container py-4">
+                <div class="row justify-content-center">
+                    <div class="col-lg-7">
+
+                        <!-- Header -->
+                        <div class="text-center mb-4">
+                            <div class="mb-3">
+                                <i class="fa fa-shopping-cart fa-3x text-primary"/>
+                            </div>
+                            <h2 class="fw-bold">Complete Your Payment</h2>
+                            <p class="text-muted">
+                                Review your order and proceed to payment.
+                            </p>
+                        </div>
+
+                        <!-- Order Summary Card -->
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div class="card-header bg-white">
+                                <h5 class="mb-0">Order Summary</h5>
+                            </div>
+                            <div class="card-body">
+                                <!-- Instance -->
+                                <div class="d-flex justify-content-between mb-3 pb-3 border-bottom">
+                                    <div>
+                                        <small class="text-muted d-block">Instance</small>
+                                        <strong t-out="instance.name or instance.subdomain"/>
+                                    </div>
+                                    <div class="text-end">
+                                        <small class="text-muted d-block">Service</small>
+                                        <span t-if="instance.saas_product_id" t-out="instance.saas_product_id.name"/>
+                                    </div>
+                                </div>
+
+                                <!-- Plan -->
+                                <div t-if="target_plan" class="mb-3 pb-3 border-bottom">
+                                    <div class="d-flex justify-content-between mb-2">
+                                        <div>
+                                            <small class="text-muted d-block">Plan</small>
+                                            <strong t-out="target_plan.name"/>
+                                        </div>
+                                        <div class="text-end">
+                                            <small class="text-muted d-block">Resources</small>
+                                            <span>
+                                                <t t-out="target_plan.cpu_limit"/> CPU,
+                                                <t t-out="target_plan.ram_limit"/> RAM,
+                                                <t t-out="int(target_plan.storage_limit)"/> GB
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Invoice Lines -->
+                                <t t-foreach="invoice.invoice_line_ids" t-as="line">
+                                    <div class="d-flex justify-content-between mb-2">
+                                        <span t-out="line.name"/>
+                                        <strong>
+                                            <t t-if="invoice.currency_id" t-out="invoice.currency_id.symbol"/>
+                                            <t t-out="'%.2f' % line.price_total"/>
+                                        </strong>
+                                    </div>
+                                </t>
+
+                                <!-- Total -->
+                                <div class="d-flex justify-content-between pt-3 mt-3 border-top">
+                                    <h5 class="mb-0 fw-bold">Total</h5>
+                                    <h5 class="mb-0 fw-bold text-primary">
+                                        <t t-if="invoice.currency_id" t-out="invoice.currency_id.symbol"/>
+                                        <t t-out="'%.2f' % invoice.amount_total"/>
+                                    </h5>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Payment Form -->
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div class="card-header bg-white">
+                                <h5 class="mb-0">
+                                    <i class="fa fa-lock me-2 text-muted"/>Payment
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <t t-if="not company_mismatch">
+                                    <t t-call="payment.form"/>
+                                </t>
+                                <t t-else="">
+                                    <div class="alert alert-warning">
+                                        Payment is not available. Please contact support.
+                                    </div>
+                                </t>
+                            </div>
+                        </div>
+
+                        <!-- Back Link -->
+                        <div class="text-center mb-4">
+                            <a t-attf-href="/my/instances/#{instance.id}"
+                               class="text-muted">
+                                <i class="fa fa-arrow-left me-1"/>Back to instance
+                            </a>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
 
         </t>
     </template>

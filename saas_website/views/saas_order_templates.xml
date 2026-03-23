@@ -18,9 +18,7 @@
                                     </h5>
                                     <span class="text-muted">
                                         <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
-                                        <t t-out="'%.2f' % plan.price"/>
-                                        / <t t-if="plan.billing_period == 'monthly'">month</t>
-                                          <t t-if="plan.billing_period == 'yearly'">year</t>
+                                        <t t-out="'%.2f' % plan.price"/> / mo
                                         <span class="mx-2">|</span>
                                         <t t-out="plan.cpu_limit"/> CPU,
                                         <t t-out="plan.ram_limit"/> RAM,

@@ -122,6 +122,30 @@
                     </div>
                 </div>
 
+                <!-- Monthly / Yearly Toggle -->
+                <t t-set="has_yearly" t-value="any(p.yearly_price for p in plans)"/>
+                <div t-if="has_yearly" class="text-center mb-4">
+                    <div class="btn-group" role="group" id="billing-toggle">
+                        <button type="button"
+                                class="btn btn-primary active"
+                                onclick="document.querySelectorAll('.price-monthly').forEach(e => e.style.display='');
+                                         document.querySelectorAll('.price-yearly').forEach(e => e.style.display='none');
+                                         this.classList.add('active','btn-primary'); this.classList.remove('btn-outline-primary');
+                                         this.nextElementSibling.classList.remove('active','btn-primary'); this.nextElementSibling.classList.add('btn-outline-primary');">
+                            Monthly
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-primary"
+                                onclick="document.querySelectorAll('.price-monthly').forEach(e => e.style.display='none');
+                                         document.querySelectorAll('.price-yearly').forEach(e => e.style.display='');
+                                         this.classList.add('active','btn-primary'); this.classList.remove('btn-outline-primary');
+                                         this.previousElementSibling.classList.remove('active','btn-primary'); this.previousElementSibling.classList.add('btn-outline-primary');">
+                            Yearly
+                            <span class="badge bg-success ms-1">Save more</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Plans Grid -->
                 <div class="row justify-content-center g-4">
                     <t t-foreach="plans" t-as="plan">
@@ -131,18 +155,39 @@
                                     <h4 class="mb-0 fw-bold" t-field="plan.name"/>
                                 </div>
                                 <div class="card-body d-flex flex-column px-4 py-4">
-                                    <!-- Price -->
-                                    <div class="text-center mb-4">
+                                    <!-- Monthly Price -->
+                                    <div class="text-center mb-4 price-monthly">
                                         <span class="display-6 fw-bold">
-                                            <t t-if="plan.currency_id">
-                                                <t t-out="plan.currency_id.symbol"/>
-                                            </t>
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
                                             <t t-out="int(plan.price) if plan.price == int(plan.price) else '%.2f' % plan.price"/>
                                         </span>
-                                        <span class="text-muted">
-                                            / <t t-if="plan.billing_period == 'monthly'">mo</t>
-                                              <t t-if="plan.billing_period == 'yearly'">yr</t>
-                                        </span>
+                                        <span class="text-muted">/ mo</span>
+                                    </div>
+
+                                    <!-- Yearly Price (hidden by default) -->
+                                    <div class="text-center mb-4 price-yearly" style="display: none;">
+                                        <t t-if="plan.yearly_price">
+                                            <span class="display-6 fw-bold">
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.yearly_price) if plan.yearly_price == int(plan.yearly_price) else '%.2f' % plan.yearly_price"/>
+                                            </span>
+                                            <span class="text-muted">/ yr</span>
+                                            <div class="mt-1">
+                                                <span class="text-muted text-decoration-line-through" style="font-size: 0.9rem;">
+                                                    <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="int(plan.price * 12)"/>
+                                                </span>
+                                                <span t-if="plan.yearly_discount_pct" class="badge bg-success ms-1">
+                                                    Save <t t-out="int(plan.yearly_discount_pct)"/>%
+                                                </span>
+                                            </div>
+                                        </t>
+                                        <t t-else="">
+                                            <span class="display-6 fw-bold">
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.price * 12)"/>
+                                            </span>
+                                            <span class="text-muted">/ yr</span>
+                                        </t>
                                     </div>
 
                                     <!-- Features -->
@@ -183,19 +228,10 @@
                                         </li>
                                     </ul>
 
-                                    <!-- CTA: Get Started -->
+                                    <!-- CTA: Get Started (paid plan) -->
                                     <a t-attf-href="/services/#{product.id}/plans/#{plan.id}/configure"
                                        class="btn btn-primary btn-lg w-100 mt-auto">
                                         Get Started
-                                    </a>
-
-                                    <!-- CTA: Free Trial -->
-                                    <a t-if="trial_available"
-                                       t-attf-href="/services/#{product.id}/plans/#{plan.id}/configure?trial=1"
-                                       class="btn btn-outline-success w-100 mt-2">
-                                        <i class="fa fa-gift me-1"/>
-                                        Start Free Trial
-                                        (<t t-out="trial_days"/> days)
                                     </a>
                                 </div>
                             </div>
@@ -203,7 +239,30 @@
                     </t>
                 </div>
 
-                <t t-if="not plans">
+                <!-- Free Trial Banner -->
+                <div t-if="trial_available and trial_plan"
+                     class="row justify-content-center mt-4">
+                    <div class="col-lg-8">
+                        <div class="card border-0 shadow-sm bg-light">
+                            <div class="card-body d-flex align-items-center justify-content-between py-4 px-4">
+                                <div>
+                                    <h5 class="mb-1">
+                                        <i class="fa fa-gift text-success me-2"/>Not ready to commit?
+                                    </h5>
+                                    <p class="text-muted mb-0">
+                                        Try it free for <strong><t t-out="trial_days"/> days</strong> — no credit card required.
+                                    </p>
+                                </div>
+                                <a t-attf-href="/services/#{product.id}/plans/#{trial_plan.id}/configure?trial=1"
+                                   class="btn btn-success btn-lg ms-3 flex-shrink-0">
+                                    <i class="fa fa-gift me-1"/>Start Free Trial
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <t t-if="not plans and not (trial_available and trial_plan)">
                     <div class="text-center text-muted py-5">
                         <p class="lead">
                             No plans available for this service yet. Please check back later.
@@ -266,9 +325,12 @@
                                     </h5>
                                     <span class="text-muted">
                                         <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
-                                        <t t-out="'%.2f' % plan.price"/>
-                                        / <t t-if="plan.billing_period == 'monthly'">month</t>
-                                          <t t-if="plan.billing_period == 'yearly'">year</t>
+                                        <t t-out="'%.2f' % plan.price"/> / mo
+                                        <t t-if="plan.yearly_price">
+                                            <span class="mx-1">|</span>
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                            <t t-out="'%.2f' % plan.yearly_price"/> / yr
+                                        </t>
                                         <span class="mx-2">|</span>
                                         <t t-out="plan.cpu_limit"/> CPU,
                                         <t t-out="plan.ram_limit"/> RAM,

@@ -14,7 +14,7 @@ addons_path = /mnt/extra-addons
 
 proxy_mode = {{ proxy_mode | default(True) }}
 
-workers = 2
+workers = {{ workers | default(2) }}
 
 # Optional extra config for each client
 {% if extra_config %}
