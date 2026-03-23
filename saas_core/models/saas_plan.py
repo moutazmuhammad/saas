@@ -23,10 +23,16 @@ class SaasPlan(models.Model):
     # ========== Pricing ==========
     price = fields.Float(
         string='Monthly Price',
+        compute='_compute_trial_defaults',
+        inverse='_inverse_price',
+        store=True,
         help='Monthly recurring price for this plan.',
     )
     yearly_price = fields.Float(
         string='Yearly Price',
+        compute='_compute_trial_defaults',
+        inverse='_inverse_yearly_price',
+        store=True,
         help='Yearly recurring price. Leave 0 to disable yearly billing. '
              'Typically set lower than 12× the monthly price to offer a discount.',
     )
@@ -69,35 +75,23 @@ class SaasPlan(models.Model):
     )
     max_backups = fields.Integer(
         string='Max Backups',
+        compute='_compute_trial_defaults',
+        inverse='_inverse_max_backups',
+        store=True,
         default=7,
         help='Maximum number of backups to keep per instance. '
-             'Older backups are automatically deleted during cleanup.',
+             'Older backups are automatically deleted during cleanup. '
+             'Set to 0 to disable backups (forced to 0 for trial plans).',
     )
     instance_count = fields.Integer(
         string='Instances',
         compute='_compute_instance_count',
     )
-
-    # ========== Feature Flags ==========
-    feature_api_access = fields.Boolean(
-        string='API / XML-RPC Access',
-        default=False,
-        help='Allow external API access to the Odoo instance.',
-    )
-    feature_custom_domain = fields.Boolean(
-        string='Custom Domain',
-        default=False,
-        help='Allow mapping a custom domain to the instance.',
-    )
-    feature_custom_modules = fields.Boolean(
-        string='Custom Modules',
-        default=False,
-        help='Allow installing custom Git repositories on the instance.',
-    )
-    max_users = fields.Integer(
-        string='Max Users',
+    recommended_users = fields.Integer(
+        string='Recommended Users',
         default=0,
-        help='Maximum number of internal users allowed. 0 = unlimited.',
+        help='Recommended number of internal users for this plan. '
+             'Displayed as a guideline on the pricing page. 0 = not shown.',
     )
 
     # ========== Dunning / Grace ==========
@@ -107,6 +101,34 @@ class SaasPlan(models.Model):
         help='Number of days after invoice due date before the instance '
              'is automatically suspended for non-payment.',
     )
+
+    @api.depends('is_trial_plan')
+    def _compute_trial_defaults(self):
+        for rec in self:
+            if rec.is_trial_plan:
+                rec.price = 0.0
+                rec.yearly_price = 0.0
+                rec.max_backups = 0
+            else:
+                # Keep existing values for non-trial plans
+                rec.price = rec.price
+                rec.yearly_price = rec.yearly_price
+                rec.max_backups = rec.max_backups
+
+    def _inverse_price(self):
+        for rec in self:
+            if rec.is_trial_plan:
+                rec.price = 0.0
+
+    def _inverse_yearly_price(self):
+        for rec in self:
+            if rec.is_trial_plan:
+                rec.yearly_price = 0.0
+
+    def _inverse_max_backups(self):
+        for rec in self:
+            if rec.is_trial_plan:
+                rec.max_backups = 0
 
     @api.depends('price', 'yearly_price')
     def _compute_yearly_discount_pct(self):

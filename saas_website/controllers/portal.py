@@ -446,6 +446,8 @@ class SaasPortal(CustomerPortal):
             return request.redirect('/my/instances')
 
         # Only allow cancelling unpaid invoices belonging to this instance
+        if not instance_sudo.sale_order_id:
+            return request.redirect('/my/instances/%s' % instance_id)
         invoice = instance_sudo.sale_order_id.invoice_ids.filtered(
             lambda inv: inv.id == invoice_id
                         and inv.state == 'posted'
@@ -563,6 +565,10 @@ class SaasPortal(CustomerPortal):
             return request.redirect('/my/instances/%s' % instance_id)
 
         # Block if a backup is already in progress
+        # Block backups for trial plans
+        if instance_sudo.plan_id and instance_sudo.plan_id.is_trial_plan:
+            return request.redirect('/my/instances/%s' % instance_id)
+
         running = instance_sudo.backup_ids.filtered(lambda b: b.state == 'running')
         if running:
             return request.redirect('/my/instances/%s' % instance_id)

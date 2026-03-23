@@ -26,48 +26,48 @@
               name="Services"
               parent="saas_master_menu_configuration"
               action="saas_product_action"
-              sequence="5"/>
+              sequence="10"/>
 
     <!-- Configuration > Plans -->
     <menuitem id="saas_master_menu_plans"
               name="Plans"
               parent="saas_master_menu_configuration"
               action="saas_plan_action"
-              sequence="7"/>
-
-    <!-- Configuration > Settings -->
-    <menuitem id="saas_master_menu_settings"
-              name="Settings"
-              parent="saas_master_menu_configuration"
-              action="action_saas_master_config_settings"
-              sequence="10"/>
-
-    <!-- Configuration > Docker Servers -->
-    <menuitem id="saas_master_menu_physical_servers"
-              name="Docker Servers"
-              parent="saas_master_menu_configuration"
-              action="saas_physical_server_action"
-              sequence="25"/>
+              sequence="20"/>
 
     <!-- Configuration > Base Domains -->
     <menuitem id="saas_master_menu_based_domain"
               name="Base Domains"
               parent="saas_master_menu_configuration"
               action="saas_odoo_based_domain_action"
-              sequence="27"/>
-
-    <!-- Configuration > Database Servers -->
-    <menuitem id="saas_master_menu_psql_physical_servers"
-              name="Database Servers"
-              parent="saas_master_menu_configuration"
-              action="saas_psql_physical_server_action"
-              sequence="28"/>
+              sequence="30"/>
 
     <!-- Configuration > Odoo Versions -->
     <menuitem id="saas_master_menu_odoo_version"
               name="Odoo Versions"
               parent="saas_master_menu_configuration"
               action="saas_odoo_version_action"
-              sequence="29"/>
+              sequence="40"/>
+
+    <!-- Configuration > Docker Servers -->
+    <menuitem id="saas_master_menu_physical_servers"
+              name="Docker Servers"
+              parent="saas_master_menu_configuration"
+              action="saas_physical_server_action"
+              sequence="50"/>
+
+    <!-- Configuration > Database Servers -->
+    <menuitem id="saas_master_menu_psql_physical_servers"
+              name="Database Servers"
+              parent="saas_master_menu_configuration"
+              action="saas_psql_physical_server_action"
+              sequence="60"/>
+
+    <!-- Configuration > Settings -->
+    <menuitem id="saas_master_menu_settings"
+              name="Settings"
+              parent="saas_master_menu_configuration"
+              action="action_saas_master_config_settings"
+              sequence="70"/>
 
 </odoo>

@@ -43,6 +43,7 @@ class AccountMove(models.Model):
         instances = self.env['saas.instance'].search([
             ('sale_order_id', 'in', sale_orders.ids),
             ('state', '=', 'pending_payment'),
+            ('pending_plan_id', '=', False),
         ])
         for instance in instances:
             instance.state = 'paid'

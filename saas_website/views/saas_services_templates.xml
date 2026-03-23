@@ -210,21 +210,9 @@
                                             <i class="fa fa-cloud-download text-primary me-2"/>
                                             <t t-out="plan.max_backups"/> Daily Backups
                                         </li>
-                                        <li t-if="plan.max_users" class="mb-2">
+                                        <li t-if="plan.recommended_users" class="mb-2">
                                             <i class="fa fa-users text-primary me-2"/>
-                                            <t t-out="plan.max_users"/> Users
-                                        </li>
-                                        <li t-if="plan.feature_api_access" class="mb-2">
-                                            <i class="fa fa-plug text-success me-2"/>
-                                            API Access
-                                        </li>
-                                        <li t-if="plan.feature_custom_domain" class="mb-2">
-                                            <i class="fa fa-globe text-success me-2"/>
-                                            Custom Domain
-                                        </li>
-                                        <li t-if="plan.feature_custom_modules" class="mb-2">
-                                            <i class="fa fa-puzzle-piece text-success me-2"/>
-                                            Custom Modules
+                                            Recommended for up to <t t-out="plan.recommended_users"/> users
                                         </li>
                                     </ul>
 

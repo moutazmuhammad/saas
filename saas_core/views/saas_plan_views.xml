@@ -15,7 +15,7 @@
                 <field name="cpu_limit" optional="show"/>
                 <field name="ram_limit" optional="show"/>
                 <field name="storage_limit" optional="show"/>
-                <field name="max_users" optional="hide"/>
+                <field name="recommended_users" optional="hide"/>
                 <field name="max_backups" optional="hide"/>
                 <field name="instance_count"/>
             </list>
@@ -40,7 +40,7 @@
                             <field name="is_trial_plan"/>
                             <field name="instance_count"/>
                         </group>
-                        <group string="Pricing">
+                        <group string="Pricing" invisible="is_trial_plan">
                             <field name="price" widget="monetary" string="Monthly Price"/>
                             <field name="yearly_price" widget="monetary"/>
                             <field name="yearly_discount_pct" string="Yearly Savings"/>
@@ -54,13 +54,8 @@
                             <field name="ram_limit"/>
                             <field name="workers"/>
                             <field name="storage_limit"/>
-                            <field name="max_backups"/>
-                            <field name="max_users"/>
-                        </group>
-                        <group string="Feature Flags">
-                            <field name="feature_api_access"/>
-                            <field name="feature_custom_domain"/>
-                            <field name="feature_custom_modules"/>
+                            <field name="max_backups" invisible="is_trial_plan"/>
+                            <field name="recommended_users"/>
                         </group>
                     </group>
                 </sheet>

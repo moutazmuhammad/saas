@@ -22,6 +22,16 @@ class ResConfigSettings(models.TransientModel):
              'After expiry the instance is suspended until the client pays.',
     )
 
+    # ========== Extra Storage Pricing ==========
+    saas_extra_storage_price_per_gb = fields.Float(
+        string='Extra Storage Price per GB',
+        config_parameter='saas_master.extra_storage_price_per_gb',
+        default=0.0,
+        help='Price charged per extra GB of storage that exceeds the plan limit. '
+             'Added as a separate line on the renewal invoice. '
+             'Set to 0 to suspend instances instead of charging.',
+    )
+
     # ========== Rate Limiting ==========
     saas_max_instances_per_user = fields.Integer(
         string='Max Instances Per User',

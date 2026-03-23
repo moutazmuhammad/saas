@@ -411,8 +411,15 @@ fi
     # ------------------------------------------------------------------
     @api.model
     def _cron_backup_all_instances(self):
-        """Create backups for all running instances and clean up old ones."""
-        instances = self.env['saas.instance'].search([('state', '=', 'running')])
+        """Create backups for all running instances and clean up old ones.
+        Skips trial plan instances (backups not available on trial).
+        """
+        instances = self.env['saas.instance'].search([
+            ('state', '=', 'running'),
+            '|',
+            ('plan_id', '=', False),
+            ('plan_id.is_trial_plan', '=', False),
+        ])
         for instance in instances:
             try:
                 self._perform_backup_in_new_cursor(instance.id)

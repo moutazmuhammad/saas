@@ -1,5 +1,6 @@
 import datetime
 import logging
+import math
 import os
 import re
 import secrets
@@ -517,10 +518,23 @@ class SaasInstance(models.Model):
 
     def _compute_invoice_count(self):
         for rec in self:
-            if rec.sale_order_id:
-                rec.invoice_count = len(rec.sale_order_id.invoice_ids)
-            else:
-                rec.invoice_count = 0
+            rec.invoice_count = len(rec._get_all_invoices())
+
+    def _get_all_invoices(self):
+        """Return all invoices related to this instance across all sale orders."""
+        self.ensure_one()
+        instance_ref = self.name or self.subdomain
+        if not instance_ref:
+            return self.env['account.move']
+        sale_orders = self.env['sale.order'].search([
+            ('partner_id', '=', self.partner_id.id),
+            '|',
+            ('origin', 'ilike', instance_ref),
+            ('id', '=', self.sale_order_id.id if self.sale_order_id else 0),
+        ])
+        if not sale_orders:
+            return self.env['account.move']
+        return sale_orders.mapped('invoice_ids')
 
     # ========== Sales & Invoicing Actions ==========
 
@@ -643,11 +657,11 @@ class SaasInstance(models.Model):
         }
 
     def action_view_invoices(self):
-        """Open invoices related to this instance's sale order."""
+        """Open all invoices related to this instance."""
         self.ensure_one()
-        if not self.sale_order_id:
+        invoices = self._get_all_invoices()
+        if not invoices:
             return
-        invoices = self.sale_order_id.invoice_ids
         if len(invoices) == 1:
             return {
                 'type': 'ir.actions.act_window',
@@ -1036,14 +1050,17 @@ class SaasInstance(models.Model):
         # E.g. on 8-core host using 1 core = 12.5%.
         # We need to convert: cores_used = raw_cpu_pct / 100
         # Then: plan_cpu_pct = (cores_used / plan_cpu) * 100
+        # Factor ×2: accounts for DB server CPU usage (not measured directly)
         cpu_pct = 0.0
         if plan_cpu > 0 and raw_cpu_pct > 0:
             cores_used = raw_cpu_pct / 100.0
-            cpu_pct = min((cores_used / plan_cpu) * 100, 999)
+            cpu_pct = min((cores_used * 2 / plan_cpu) * 100, 999)
         self.cpu_usage = '%.1f%%' % cpu_pct if cpu_pct else '0%'
         self.cpu_usage_pct = round(cpu_pct, 1)
 
         # -- Calculate RAM % relative to plan limit --
+        # Factor ×2: accounts for DB server RAM usage (not measured directly)
+        ram_used_bytes = ram_used_bytes * 2
         ram_pct = 0.0
         if plan_ram_bytes > 0 and ram_used_bytes > 0:
             ram_pct = min((ram_used_bytes / plan_ram_bytes) * 100, 999)
@@ -1905,6 +1922,10 @@ class SaasInstance(models.Model):
         """Create a backup in the background."""
         self.ensure_one()
 
+        # Block backups for trial plans
+        if self.plan_id and self.plan_id.is_trial_plan:
+            raise UserError(_("Backups are not available on trial plans. Please upgrade to a paid plan."))
+
         # Block if a backup is already running
         running = self.backup_ids.filtered(lambda b: b.state == 'running')
         if running:
@@ -2152,33 +2173,55 @@ class SaasInstance(models.Model):
                             continue
 
                         total_bytes = instance.total_storage_bytes
-                        limit_bytes = instance.plan_id.storage_limit * (1024 ** 3)
+                        limit_bytes = int(round(instance.plan_id.storage_limit * (1024 ** 3)))
                         if total_bytes > limit_bytes:
-                            try:
-                                instance.action_suspend()
-                                instance._append_log(
-                                    "AUTO-SUSPENDED: Storage %.2f GB exceeds plan limit %.2f GB."
-                                    % (total_bytes / (1024 ** 3), instance.plan_id.storage_limit)
+                            extra_storage_price = float(
+                                self.env['ir.config_parameter'].sudo().get_param(
+                                    'saas_master.extra_storage_price_per_gb', '0'
                                 )
-                                instance.message_post(
-                                    body=_(
-                                        "Instance automatically suspended: total storage (%(used)s) "
-                                        "exceeds plan limit (%(limit).2f GB).",
-                                        used=instance.total_storage or '',
-                                        limit=instance.plan_id.storage_limit,
-                                    ),
-                                    message_type='notification',
+                            )
+                            if extra_storage_price > 0:
+                                # Extra storage pricing enabled — log overage, don't suspend
+                                extra_gb = (total_bytes - limit_bytes) / (1024 ** 3)
+                                instance._append_log(
+                                    "STORAGE OVERAGE: %.2f GB used, plan limit %.2f GB, "
+                                    "extra %.2f GB (will be charged on next renewal)."
+                                    % (total_bytes / (1024 ** 3),
+                                       instance.plan_id.storage_limit, extra_gb)
                                 )
                                 _logger.info(
-                                    "Instance %s suspended: storage %.2f GB exceeds %.2f GB limit",
+                                    "Instance %s: storage %.2f GB exceeds %.2f GB limit, "
+                                    "extra %.2f GB will be billed",
                                     instance.subdomain, total_bytes / (1024 ** 3),
-                                    instance.plan_id.storage_limit,
+                                    instance.plan_id.storage_limit, extra_gb,
                                 )
-                            except Exception:
-                                _logger.exception(
-                                    "Failed to suspend instance %s (id=%s)",
-                                    instance.subdomain, instance.id,
-                                )
+                            else:
+                                # No extra storage pricing — suspend as before
+                                try:
+                                    instance.action_suspend()
+                                    instance._append_log(
+                                        "AUTO-SUSPENDED: Storage %.2f GB exceeds plan limit %.2f GB."
+                                        % (total_bytes / (1024 ** 3), instance.plan_id.storage_limit)
+                                    )
+                                    instance.message_post(
+                                        body=_(
+                                            "Instance automatically suspended: total storage (%(used)s) "
+                                            "exceeds plan limit (%(limit).2f GB).",
+                                            used=instance.total_storage or '',
+                                            limit=instance.plan_id.storage_limit,
+                                        ),
+                                        message_type='notification',
+                                    )
+                                    _logger.info(
+                                        "Instance %s suspended: storage %.2f GB exceeds %.2f GB limit",
+                                        instance.subdomain, total_bytes / (1024 ** 3),
+                                        instance.plan_id.storage_limit,
+                                    )
+                                except Exception:
+                                    _logger.exception(
+                                        "Failed to suspend instance %s (id=%s)",
+                                        instance.subdomain, instance.id,
+                                    )
             except Exception:
                 _logger.exception(
                     "Failed to connect to docker server id=%s for storage checks", server_id,
@@ -2318,6 +2361,8 @@ class SaasInstance(models.Model):
         invoice uses the new (lower) plan price.
         """
         self.ensure_one()
+        if self.is_trial:
+            return
 
         # Apply scheduled downgrade at cycle boundary
         if self.scheduled_plan_id:
@@ -2365,22 +2410,47 @@ class SaasInstance(models.Model):
         period_label = 'Monthly' if period == 'monthly' else 'Yearly'
 
         pricelist = self.partner_id.property_product_pricelist
+        order_lines = [(0, 0, {
+            'product_id': self._get_billing_product().id,
+            'name': _('%s (%s) — %s renewal') % (
+                plan.name, period_label, self.name or self.subdomain,
+            ),
+            'product_uom_qty': 1,
+            'price_unit': price,
+        })]
+
+        # Add extra storage charge if usage exceeds plan limit
+        extra_storage_price = float(
+            self.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.extra_storage_price_per_gb', '0'
+            )
+        )
+        if extra_storage_price > 0 and plan.storage_limit > 0:
+            total_bytes = self.total_storage_bytes
+            limit_bytes = int(round(plan.storage_limit * (1024 ** 3)))
+            if total_bytes > limit_bytes:
+                extra_gb = math.ceil((total_bytes - limit_bytes) / (1024 ** 3))
+                extra_charge = extra_gb * extra_storage_price
+                order_lines.append((0, 0, {
+                    'product_id': self._get_billing_product().id,
+                    'name': _('Extra storage: %d GB over %s limit (%s)') % (
+                        extra_gb, '%.2f GB' % plan.storage_limit,
+                        self.name or self.subdomain,
+                    ),
+                    'product_uom_qty': 1,
+                    'price_unit': extra_charge,
+                }))
+
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': _('Renewal: %s') % (self.name or self.subdomain),
-            'order_line': [(0, 0, {
-                'product_id': self._get_billing_product().id,
-                'name': _('%s (%s) — %s renewal') % (
-                    plan.name, period_label, self.name or self.subdomain,
-                ),
-                'product_uom_qty': 1,
-                'price_unit': price,
-            })],
+            'order_line': order_lines,
         }
         if pricelist:
             order_vals['pricelist_id'] = pricelist.id
         order = self.env['sale.order'].create(order_vals)
         order.action_confirm()
+        self.sale_order_id = order
         invoice = order._create_invoices()
         invoice.action_post()
 
@@ -2435,20 +2505,27 @@ class SaasInstance(models.Model):
         if not self.sale_order_id:
             return
 
-        # Find all unpaid posted invoices linked to this instance's SO history
-        overdue_invoices = self.env['account.move'].search([
+        # Find all unpaid posted invoices linked to this instance's sale orders
+        so_domain = [
             ('move_type', '=', 'out_invoice'),
             ('payment_state', 'not in', ('paid', 'in_payment', 'reversed')),
             ('state', '=', 'posted'),
             ('invoice_date_due', '<', today),
             ('partner_id', '=', self.partner_id.id),
-            ('invoice_origin', 'like', self.name or self.subdomain),
-        ], limit=1)
+        ]
+        # Search by sale order link first, fall back to origin
+        if self.sale_order_id:
+            so_domain.append(('invoice_origin', '=', self.sale_order_id.name))
+        else:
+            so_domain.append(('invoice_origin', '=', self.name or self.subdomain))
+        overdue_invoices = self.env['account.move'].search(so_domain, limit=1)
         if not overdue_invoices:
             return
 
         grace_days = self.plan_id.grace_period_days if self.plan_id else 7
         oldest_due = overdue_invoices.invoice_date_due
+        if not oldest_due:
+            return
         days_overdue = (today - oldest_due).days
 
         if days_overdue > grace_days:

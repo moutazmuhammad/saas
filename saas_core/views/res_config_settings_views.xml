@@ -28,6 +28,15 @@
                         </setting>
                     </block>
 
+                    <block title="Extra Storage Pricing" name="saas_extra_storage_container">
+                        <setting id="saas_extra_storage_price_per_gb_setting"
+                                 string="Price per Extra GB"
+                                 help="Price charged per extra GB exceeding the plan storage limit. Added to renewal invoices. Set to 0 to suspend instances instead.">
+                            <field name="saas_extra_storage_price_per_gb"/>
+                            <span class="text-muted ms-1">per GB / billing cycle</span>
+                        </setting>
+                    </block>
+
                     <block title="Rate Limiting" name="saas_rate_limiting_container">
                         <setting id="saas_max_instances_per_user_setting"
                                  string="Max Instances Per User"
