@@ -64,14 +64,13 @@ class SshTerminalController(http.Controller):
         """Create a new interactive SSH terminal session.
 
         Args:
-            server_model: 'saas.container.physical.server' or 'saas.psql.physical.server'
+            server_model: 'saas.server'
             server_id: ID of the server record
         Returns:
             dict with session_id
         """
         allowed_models = (
-            'saas.container.physical.server',
-            'saas.psql.physical.server',
+            'saas.server',
         )
         if server_model not in allowed_models:
             raise Forbidden("Invalid server model")

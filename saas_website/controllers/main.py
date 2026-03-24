@@ -196,8 +196,12 @@ class SaasWebsite(http.Controller):
                 )
 
         # --- Validate infrastructure ---
-        docker_servers = request.env['saas.container.physical.server'].sudo().search([], limit=1)
-        db_servers = request.env['saas.psql.physical.server'].sudo().search([], limit=1)
+        docker_servers = request.env['saas.server'].sudo().search(
+            [('is_docker_host', '=', True)], limit=1,
+        )
+        db_servers = request.env['saas.server'].sudo().search(
+            [('is_db_server', '=', True)], limit=1,
+        )
         if not docker_servers or not db_servers:
             return self.service_configure(
                 product_id, plan_id,

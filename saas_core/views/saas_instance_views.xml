@@ -108,11 +108,11 @@
                             type="object"
                             invisible="state != 'running'"/>
 
-                    <!-- Delete: when running, stopped, failed, or suspended -->
-                    <button name="action_delete_instance" string="Delete"
+                    <!-- Cancel: deployed or pre-deployment states -->
+                    <button name="action_cancel" string="Cancel"
                             type="object" class="btn-danger"
-                            invisible="state not in ('running', 'stopped', 'failed', 'suspended')"
-                            confirm="This will permanently delete the container, volumes, network, database, and all data. Are you sure?"/>
+                            invisible="state not in ('draft', 'pending_payment', 'paid', 'running', 'stopped', 'failed', 'suspended')"
+                            confirm="This will cancel the instance. If deployed, all infrastructure (container, database, files, Nginx) will be permanently deleted. Are you sure?"/>
 
                     <!-- Reset to Draft: from failed, cancelled, pending_payment, or paid -->
                     <button name="action_draft" string="Reset to Draft"
@@ -211,6 +211,10 @@
                                     <button name="action_download" type="object"
                                             string="Download" icon="fa-download"
                                             invisible="state != 'done'"/>
+                                    <button name="action_restore" type="object"
+                                            string="Restore" icon="fa-undo"
+                                            invisible="state != 'done'"
+                                            confirm="This will stop the instance, replace the current database and filestore with this backup, then restart. All current data will be lost. Continue?"/>
                                     <button name="action_delete_backup" type="object"
                                             string="Delete" icon="fa-trash"
                                             confirm="This will permanently delete this backup from cloud storage. Continue?"/>

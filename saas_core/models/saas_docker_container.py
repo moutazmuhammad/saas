@@ -10,7 +10,7 @@ class SaasDockerContainer(models.Model):
     _order = 'name'
 
     server_id = fields.Many2one(
-        'saas.container.physical.server',
+        'saas.server',
         string='Docker Server',
         required=True,
         ondelete='cascade',

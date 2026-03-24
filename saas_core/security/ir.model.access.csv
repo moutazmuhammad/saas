@@ -5,10 +5,8 @@ access_saas_based_domain_user,saas.based.domain user,model_saas_based_domain,saa
 access_saas_based_domain_manager,saas.based.domain manager,model_saas_based_domain,saas_core.group_saas_manager,1,1,1,1
 access_saas_odoo_version_user,saas.odoo.version user,model_saas_odoo_version,saas_core.group_saas_user,1,0,0,0
 access_saas_odoo_version_manager,saas.odoo.version manager,model_saas_odoo_version,saas_core.group_saas_manager,1,1,1,1
-access_saas_container_physical_server_user,saas.container.physical.server user,model_saas_container_physical_server,saas_core.group_saas_user,1,0,0,0
-access_saas_container_physical_server_manager,saas.container.physical.server manager,model_saas_container_physical_server,saas_core.group_saas_manager,1,1,1,1
-access_saas_psql_physical_server_user,saas.psql.physical.server user,model_saas_psql_physical_server,saas_core.group_saas_user,1,0,0,0
-access_saas_psql_physical_server_manager,saas.psql.physical.server manager,model_saas_psql_physical_server,saas_core.group_saas_manager,1,1,1,1
+access_saas_server_user,saas.server user,model_saas_server,saas_core.group_saas_user,1,0,0,0
+access_saas_server_manager,saas.server manager,model_saas_server,saas_core.group_saas_manager,1,1,1,1
 access_saas_ssh_key_pair_manager,saas.ssh.key.pair manager,model_saas_ssh_key_pair,saas_core.group_saas_manager,1,1,1,1
 access_saas_docker_container_user,saas.docker.container user,model_saas_docker_container,saas_core.group_saas_user,1,0,0,0
 access_saas_docker_container_manager,saas.docker.container manager,model_saas_docker_container,saas_core.group_saas_manager,1,1,1,1

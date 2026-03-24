@@ -14,7 +14,14 @@
                             <field name="name" placeholder="e.g. saas.example.com"/>
                         </h1>
                     </div>
+                    <group>
+                        <group string="Routing">
+                            <field name="proxy_server_id"
+                                   help="When set, Nginx configs are deployed on this proxy server instead of on each Docker server. The wildcard DNS for this domain should point to this server's IP."/>
+                        </group>
+                    </group>
                 </sheet>
+                <chatter/>
             </form>
         </field>
     </record>

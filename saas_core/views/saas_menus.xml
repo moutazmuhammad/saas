@@ -49,19 +49,12 @@
               action="saas_odoo_version_action"
               sequence="40"/>
 
-    <!-- Configuration > Docker Servers -->
-    <menuitem id="saas_master_menu_physical_servers"
-              name="Docker Servers"
+    <!-- Configuration > Servers -->
+    <menuitem id="saas_master_menu_servers"
+              name="Servers"
               parent="saas_master_menu_configuration"
-              action="saas_physical_server_action"
+              action="saas_server_action"
               sequence="50"/>
-
-    <!-- Configuration > Database Servers -->
-    <menuitem id="saas_master_menu_psql_physical_servers"
-              name="Database Servers"
-              parent="saas_master_menu_configuration"
-              action="saas_psql_physical_server_action"
-              sequence="60"/>
 
     <!-- Configuration > Settings -->
     <menuitem id="saas_master_menu_settings"

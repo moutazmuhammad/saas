@@ -68,6 +68,12 @@ class SaasInstanceBackup(models.Model):
             'target': 'new',
         }
 
+    def action_restore(self):
+        """Restore this backup to its instance."""
+        self.ensure_one()
+        self.instance_id.action_restore_backup(self.id)
+        return True
+
     def action_delete_backup(self):
         self.ensure_one()
         if self.state == 'done' and self.bucket_path:
@@ -268,7 +274,7 @@ class SaasInstanceBackup(models.Model):
         container_name = instance._get_container_name()
         db_name = instance.subdomain
         db_server = instance.db_server_id
-        db_host = db_server.private_ip_v4 or db_server.ip_v4
+        db_host = instance._get_db_host()
         db_port = db_server.psql_port or 5432
         ts = fields.Datetime.now().strftime('%Y%m%d%H%M%S')
         tmp_dir = '/tmp/saas_backup_%s_%s' % (db_name, ts)

@@ -514,6 +514,42 @@ class SaasPortal(CustomerPortal):
 
         return request.redirect('/my/instances/%s' % instance_id)
 
+    # ==================== Restore Backup ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/backup/<int:backup_id>/restore',
+        type='http', auth='user', website=True, methods=['POST'],
+    )
+    def portal_restore_backup(self, instance_id, backup_id, access_token=None, **kw):
+        """Restore a backup to the instance from the portal."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        if instance_sudo.state not in ('running', 'stopped'):
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        backup = instance_sudo.backup_ids.filtered(
+            lambda b: b.id == backup_id and b.state == 'done'
+        )
+        if not backup:
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        try:
+            instance_sudo.action_restore_backup(backup.id)
+        except Exception:
+            _logger.exception(
+                "Backup restore failed for instance %s", instance_sudo.name
+            )
+            # Reset state if it was changed before the error
+            if instance_sudo.state == 'provisioning':
+                instance_sudo.state = 'running'
+
+        return request.redirect('/my/instances/%s' % instance_id)
+
     # ==================== Refresh Usage ====================
 
     @http.route(

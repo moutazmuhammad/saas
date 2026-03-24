@@ -6,23 +6,45 @@ from odoo.exceptions import UserError, ValidationError
 from ..utils import SSHConnection
 
 
-class SaasContainerPhysicalServer(models.Model):
-    _name = 'saas.container.physical.server'
-    _description = 'Docker Host Server'
+class SaasServer(models.Model):
+    _name = 'saas.server'
+    _description = 'Server'
     _inherit = ['mail.thread']
     _order = 'sequence, name'
 
     sequence = fields.Integer(
         string='Sequence',
         default=10,
-        help='Order in which servers are displayed and selected as defaults.',
     )
     name = fields.Char(
         string='Name',
         required=True,
         tracking=True,
-        help='Human-readable label for this Docker host server (e.g. "EU Production 1").',
+        help='Human-readable label for this server (e.g. "EU Production 1").',
     )
+
+    # ========== Roles ==========
+    is_docker_host = fields.Boolean(
+        string='Docker Host',
+        default=False,
+        tracking=True,
+        help='This server runs Docker containers for SaaS instances.',
+    )
+    is_db_server = fields.Boolean(
+        string='Database Server',
+        default=False,
+        tracking=True,
+        help='This server runs PostgreSQL for SaaS instance databases.',
+    )
+    is_proxy_server = fields.Boolean(
+        string='Reverse Proxy',
+        default=False,
+        tracking=True,
+        help='This server acts as a reverse proxy (Nginx) for routing '
+             'traffic from wildcard domains to Docker servers.',
+    )
+
+    # ========== SSH Configuration ==========
     ssh_key_pair_id = fields.Many2one(
         'saas.ssh.key.pair',
         string='SSH Key Pair',
@@ -38,6 +60,8 @@ class SaasContainerPhysicalServer(models.Model):
         default=22,
         help='TCP port on which the SSH daemon listens.',
     )
+
+    # ========== Network ==========
     ip_v4 = fields.Char(
         string='Public IPv4',
         help='Public IPv4 address of this server, reachable from the internet.',
@@ -57,6 +81,8 @@ class SaasContainerPhysicalServer(models.Model):
         required=True,
         help='Which IP address the SaaS manager should use when opening SSH sessions.',
     )
+
+    # ========== Docker Host Fields ==========
     docker_base_path = fields.Char(
         string='Docker Base Path',
         default='/home/odoo',
@@ -70,13 +96,23 @@ class SaasContainerPhysicalServer(models.Model):
         help='Containers currently running on this server (populated via Refresh).',
     )
 
+    # ========== Database Server Fields ==========
+    psql_port = fields.Integer(
+        string='PostgreSQL Port',
+        default=5432,
+        help='TCP port on which the PostgreSQL service listens.',
+    )
+
+    # ========== SSH Methods ==========
+
     def _get_ssh_ip(self):
         """Return the IP to use for SSH based on ssh_connect_using."""
         self.ensure_one()
         if self.ssh_connect_using == 'private_ip':
             if not self.private_ip_v4:
                 raise ValidationError(
-                    _("Private IP address is required on server '%s' when SSH is set to use Private IP.")
+                    _("Private IP address is required on server '%s' "
+                      "when SSH is set to use Private IP.")
                     % self.name
                 )
             return self.private_ip_v4
@@ -139,7 +175,6 @@ class SaasContainerPhysicalServer(models.Model):
     def action_open_terminal(self):
         """Open a web-based SSH terminal to this server."""
         self.ensure_one()
-        # Validate SSH is configured before opening the terminal
         self._get_ssh_ip()
         if not self.ssh_key_pair_id or not self.ssh_key_pair_id.private_key_file:
             raise ValidationError(
@@ -156,6 +191,8 @@ class SaasContainerPhysicalServer(models.Model):
                 'server_name': self.name,
             },
         }
+
+    # ========== Docker Host Actions ==========
 
     def action_refresh_containers(self):
         """Fetch all Docker containers from the server via SSH and update the list."""

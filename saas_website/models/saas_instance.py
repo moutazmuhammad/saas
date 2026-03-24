@@ -26,7 +26,9 @@ class SaasInstance(models.Model):
 
         for rec in self:
             if not rec.docker_server_id:
-                servers = self.env['saas.container.physical.server'].search([])
+                servers = self.env['saas.server'].search(
+                    [('is_docker_host', '=', True)],
+                )
                 if not servers:
                     continue
                 rec.docker_server_id = self._pick_least_loaded_server(
@@ -34,7 +36,9 @@ class SaasInstance(models.Model):
                 )
 
             if not rec.db_server_id:
-                servers = self.env['saas.psql.physical.server'].search([])
+                servers = self.env['saas.server'].search(
+                    [('is_db_server', '=', True)],
+                )
                 if not servers:
                     continue
                 rec.db_server_id = self._pick_least_loaded_server(

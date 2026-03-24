@@ -101,17 +101,23 @@ class SaasInstance(models.Model):
             if self.plan_id and self.plan_id.saas_product_id != self.saas_product_id:
                 self.plan_id = False
     docker_server_id = fields.Many2one(
-        'saas.container.physical.server',
+        'saas.server',
         string='Docker Server',
         tracking=True,
-        default=lambda self: self.env['saas.container.physical.server'].search([], limit=1),
+        domain="[('is_docker_host', '=', True)]",
+        default=lambda self: self.env['saas.server'].search(
+            [('is_docker_host', '=', True)], limit=1,
+        ),
         help='Physical server where the Docker container for this instance runs.',
     )
     db_server_id = fields.Many2one(
-        'saas.psql.physical.server',
+        'saas.server',
         string='Database Server',
         tracking=True,
-        default=lambda self: self.env['saas.psql.physical.server'].search([], limit=1),
+        domain="[('is_db_server', '=', True)]",
+        default=lambda self: self.env['saas.server'].search(
+            [('is_db_server', '=', True)], limit=1,
+        ),
         help='PostgreSQL server that hosts the database for this instance.',
     )
     xmlrpc_port = fields.Integer(
@@ -722,6 +728,24 @@ class SaasInstance(models.Model):
         self.ensure_one()
         return 'odoo_%s' % self.subdomain
 
+    def _get_db_host(self):
+        """Return the hostname/IP the Odoo container should use to reach PostgreSQL.
+
+        When Docker and DB are on the same server, the container cannot
+        reach the host via 127.0.0.1 or the server's own private/public
+        IP (DigitalOcean and similar providers block this).  Instead we
+        use the Docker bridge gateway (172.17.0.1) which is always
+        reachable from containers.
+
+        When they are on different servers, we use the DB server's
+        private IP (preferred) or public IP.
+        """
+        self.ensure_one()
+        psql_server = self.db_server_id
+        if psql_server == self.docker_server_id:
+            return '172.17.0.1'
+        return psql_server.private_ip_v4 or psql_server.ip_v4
+
     def _append_log(self, message):
         """Append a timestamped message to provisioning_log."""
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1079,11 +1103,12 @@ class SaasInstance(models.Model):
         db_bytes = 0
         if self.db_server_id and self.subdomain:
             try:
+                safe_db = self.subdomain.replace("'", "''")
                 with self.db_server_id._get_ssh_connection() as db_ssh:
                     db_size_cmd = (
-                        'sudo -u postgres psql -At -c '
-                        '"SELECT pg_database_size(\'%s\');"'
-                    ) % self.subdomain
+                        "sudo -u postgres psql -At -c "
+                        "\"SELECT pg_database_size('%s');\""
+                    ) % safe_db
                     exit_code, stdout, stderr = db_ssh.execute(db_size_cmd)
                     if exit_code == 0 and stdout.strip():
                         try:
@@ -1146,11 +1171,17 @@ class SaasInstance(models.Model):
 
         # docker-compose.yml
         self._append_log("Writing docker-compose.yml...")
+        # When a proxy server is configured, bind ports to 0.0.0.0 so the
+        # remote proxy can reach the container.  Otherwise keep 127.0.0.1.
+        proxy_server = self.domain_id.proxy_server_id
+        # Only bind to 0.0.0.0 when the proxy is on a different machine
+        needs_remote_access = proxy_server and proxy_server != self.docker_server_id
+        host_ip = '0.0.0.0' if needs_remote_access else '127.0.0.1'
         dc_context = {
             'odoo_image': self.odoo_version_id.docker_image,
             'odoo_version': self.odoo_version_id.docker_image_tag,
             'subdomain': self.subdomain,
-            'host_ip': '127.0.0.1',
+            'host_ip': host_ip,
             'xmlrpc_port': self.xmlrpc_port,
             'longpolling_port': self.longpolling_port,
             'network_name': 'net_%s' % self.subdomain,
@@ -1166,7 +1197,7 @@ class SaasInstance(models.Model):
         # odoo.conf
         self._append_log("Writing odoo.conf...")
         psql_server = self.db_server_id
-        db_host = psql_server.private_ip_v4 or psql_server.ip_v4
+        db_host = self._get_db_host()
         conf_context = {
             'master_pass': self.admin_password,
             'db_host': db_host,
@@ -1242,7 +1273,7 @@ class SaasInstance(models.Model):
         self._append_log("Restoring database from dump.sql into %s..." % db_name)
 
         psql_server = self.db_server_id
-        db_host = psql_server.private_ip_v4 or psql_server.ip_v4
+        db_host = self._get_db_host()
         db_port = psql_server.psql_port or 5432
 
         # Use psql on the Docker server to restore — connect to the DB server
@@ -1555,7 +1586,17 @@ class SaasInstance(models.Model):
 
             # Configure Nginx reverse proxy with SSL
             self._append_log("Configuring Nginx reverse proxy with SSL...")
-            self._provision_nginx(ssh)
+            proxy_server = self.domain_id.proxy_server_id
+            if proxy_server and proxy_server != self.docker_server_id:
+                # Proxy is on a different server — deploy Nginx there
+                with proxy_server._get_ssh_connection() as proxy_ssh:
+                    self._provision_nginx(proxy_ssh, backend_ip=self.docker_server_id.ip_v4)
+            elif proxy_server:
+                # Proxy and Docker are the same server — use localhost
+                self._provision_nginx(ssh)
+            else:
+                # No proxy configured — deploy Nginx on the Docker server
+                self._provision_nginx(ssh)
             self._append_log("Nginx configured successfully.")
 
         self.state = 'running'
@@ -1750,8 +1791,24 @@ class SaasInstance(models.Model):
         self._append_log("Instance suspended successfully.")
 
     def action_cancel(self):
+        """Cancel the instance, cleaning up infrastructure if it was deployed."""
         for rec in self:
-            rec.state = 'cancelled'
+            deployed_states = ('running', 'stopped', 'suspended', 'failed')
+            if rec.state in deployed_states and rec.docker_server_id:
+                # Infrastructure exists — do a full async deletion
+                rec._ensure_can_ssh()
+                prev_state = rec.state
+                rec.state = 'provisioning'
+                rec._append_log("Cancellation queued. Cleaning up infrastructure...")
+                run_in_background(
+                    rec, '_do_delete_instance',
+                    error_method='_on_background_error',
+                    error_args=(prev_state,),
+                    thread_name='saas_cancel_%s' % rec.subdomain,
+                )
+            else:
+                # Not yet deployed — just mark as cancelled
+                rec.state = 'cancelled'
 
     def action_draft(self):
         """Reset to draft state."""
@@ -1776,22 +1833,32 @@ class SaasInstance(models.Model):
 
         with psql_server._get_ssh_connection() as ssh:
             if db_name:
+                safe_db = db_name.replace("'", "''")
                 drop_db_cmd = (
                     "sudo -u postgres psql -tc "
-                    "\"SELECT 1 FROM pg_database WHERE datname=%s\" "
+                    "\"SELECT 1 FROM pg_database WHERE datname='%s'\" "
                     "| grep -q 1 "
-                    "&& sudo -u postgres dropdb %s"
-                ) % (shlex.quote("'%s'" % db_name), shlex.quote(db_name))
-                ssh.execute(drop_db_cmd)
+                    "&& sudo -u postgres dropdb --force %s"
+                ) % (safe_db, shlex.quote(db_name))
+                exit_code, stdout, stderr = ssh.execute(drop_db_cmd)
+                if exit_code != 0:
+                    _logger.warning(
+                        "Failed to drop database %s: %s", db_name, stderr
+                    )
 
             if db_user:
+                safe_user = db_user.replace("'", "''")
                 drop_role_cmd = (
                     "sudo -u postgres psql -tc "
-                    "\"SELECT 1 FROM pg_roles WHERE rolname=%s\" "
+                    "\"SELECT 1 FROM pg_roles WHERE rolname='%s'\" "
                     "| grep -q 1 "
                     "&& sudo -u postgres dropuser %s"
-                ) % (shlex.quote("'%s'" % db_user), shlex.quote(db_user))
-                ssh.execute(drop_role_cmd)
+                ) % (safe_user, shlex.quote(db_user))
+                exit_code, stdout, stderr = ssh.execute(drop_role_cmd)
+                if exit_code != 0:
+                    _logger.warning(
+                        "Failed to drop role %s: %s", db_user, stderr
+                    )
 
     def action_delete_instance(self):
         """Remove container, volumes, network, database, db user, and instance folder (async)."""
@@ -1837,14 +1904,13 @@ class SaasInstance(models.Model):
                 )
 
             # Remove Nginx config and SSL certificate
-            nginx_path = '/etc/nginx/sites-enabled/%s' % self.subdomain
-            ssh.execute('rm -f %s' % shlex.quote(nginx_path))
-            ssh.execute('systemctl reload nginx 2>&1')
-            if self.name:
-                ssh.execute(
-                    'certbot delete --cert-name %s --non-interactive 2>&1'
-                    % shlex.quote(self.name)
-                )
+            proxy_server = self.domain_id.proxy_server_id
+            if proxy_server and proxy_server != self.docker_server_id:
+                # Nginx is on a separate proxy server
+                with proxy_server._get_ssh_connection() as proxy_ssh:
+                    self._remove_nginx(proxy_ssh)
+            else:
+                self._remove_nginx(ssh)
 
         self._drop_postgresql()
 
@@ -1947,6 +2013,162 @@ class SaasInstance(models.Model):
             thread_name='saas_backup_%s' % self.subdomain,
         )
         return True
+
+    def action_restore_backup(self, backup_id):
+        """Restore a backup to this instance (async).
+
+        Stops the container, drops the current database, restores the
+        backup database and filestore, then restarts the container.
+        """
+        self.ensure_one()
+        if self.state not in ('running', 'stopped'):
+            raise UserError(
+                _("Instance must be Running or Stopped to restore a backup.")
+            )
+
+        backup = self.env['saas.instance.backup'].browse(backup_id)
+        if not backup.exists() or backup.instance_id != self:
+            raise UserError(_("Invalid backup."))
+        if backup.state != 'done':
+            raise UserError(_("Only completed backups can be restored."))
+
+        self._ensure_can_ssh()
+        prev_state = self.state
+        self.state = 'provisioning'
+        self._append_log("Restore from backup '%s' queued..." % backup.name)
+        run_in_background(
+            self, '_do_restore_backup',
+            method_args=(backup.id,),
+            error_method='_on_background_error',
+            error_args=(prev_state,),
+            thread_name='saas_restore_%s' % self.subdomain,
+        )
+        return True
+
+    def _do_restore_backup(self, backup_id):
+        """Restore a backup — replace current DB and filestore (background)."""
+        self.ensure_one()
+        backup = self.env['saas.instance.backup'].browse(backup_id)
+        server = self.docker_server_id
+        container_name = self._get_container_name()
+        instance_path = self._get_instance_path()
+        db_name = self.subdomain
+        psql_server = self.db_server_id
+        db_host = self._get_db_host()
+        db_port = psql_server.psql_port or 5432
+
+        with server._get_ssh_connection() as ssh:
+            # 1. Stop container
+            self._append_log("Stopping container...")
+            ssh.execute('docker stop %s 2>&1' % shlex.quote(container_name))
+
+            # 2. Download backup from cloud
+            self._append_log("Downloading backup...")
+            download_url = backup._generate_presigned_url()
+            tmp_zip = '/tmp/saas_restore_%s.zip' % db_name
+            extract_dir = '/tmp/saas_restore_%s' % db_name
+
+            dl_cmd = 'curl -fsSL -o %s %s 2>&1' % (
+                shlex.quote(tmp_zip), shlex.quote(download_url),
+            )
+            exit_code, stdout, stderr = ssh.execute(dl_cmd, timeout=600)
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to download backup:\n%s\n%s") % (stdout, stderr)
+                )
+
+            # 3. Extract
+            self._append_log("Extracting...")
+            ssh.execute('rm -rf %s && mkdir -p %s' % (
+                shlex.quote(extract_dir), shlex.quote(extract_dir),
+            ))
+            exit_code, stdout, stderr = ssh.execute(
+                'unzip -o %s -d %s 2>&1' % (
+                    shlex.quote(tmp_zip), shlex.quote(extract_dir),
+                ),
+                timeout=300,
+            )
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to extract backup:\n%s\n%s") % (stdout, stderr)
+                )
+
+            # 4. Drop current DB and recreate empty
+            self._append_log("Dropping current database...")
+            def _run_on_db_server(cmd):
+                if psql_server == server:
+                    return ssh.execute(cmd)
+                with psql_server._get_ssh_connection() as db_ssh:
+                    return db_ssh.execute(cmd)
+
+            _run_on_db_server(
+                'sudo -u postgres dropdb --force --if-exists %s 2>&1'
+                % shlex.quote(db_name)
+            )
+            _run_on_db_server(
+                'sudo -u postgres createdb -O %s %s 2>&1'
+                % (shlex.quote(self.db_user), shlex.quote(db_name))
+            )
+
+            # 5. Restore dump.sql
+            self._append_log("Restoring database...")
+            dump_path = '%s/dump.sql' % extract_dir
+            restore_cmd = (
+                'PGPASSWORD=%s psql -h %s -p %d -U %s -d %s -f %s 2>&1'
+            ) % (
+                shlex.quote(self.db_password),
+                shlex.quote(db_host),
+                db_port,
+                shlex.quote(self.db_user),
+                shlex.quote(db_name),
+                shlex.quote(dump_path),
+            )
+            exit_code, stdout, stderr = ssh.execute(restore_cmd, timeout=600)
+            if exit_code != 0:
+                self._append_log("Restore output:\n%s" % stdout[-2000:])
+                raise UserError(
+                    _("Database restore failed:\n%s") % stderr[-500:]
+                )
+
+            # 6. Replace filestore
+            self._append_log("Restoring filestore...")
+            filestore_src = '%s/filestore' % extract_dir
+            filestore_dst = '%s/data/odoo/filestore/%s' % (instance_path, db_name)
+            data_dir = '%s/data' % instance_path
+            odoo_image = self.odoo_version_id._get_docker_image()
+            fs_cmd = (
+                'ODOO_UID=$(docker run --rm --entrypoint id %(image)s -u odoo 2>/dev/null || echo 101) && '
+                'rm -rf %(dst)s && mkdir -p %(dst)s && '
+                'if [ -d %(src)s ]; then '
+                '  cp -a %(src)s/. %(dst)s/; '
+                'fi && '
+                'chown -R $ODOO_UID:$ODOO_UID %(data)s && '
+                'chmod -R 755 %(data)s'
+            ) % {
+                'image': shlex.quote(odoo_image),
+                'dst': shlex.quote(filestore_dst),
+                'src': shlex.quote(filestore_src),
+                'data': shlex.quote(data_dir),
+            }
+            ssh.execute(fs_cmd, timeout=300)
+
+            # 7. Cleanup temp files
+            ssh.execute('rm -rf %s %s' % (
+                shlex.quote(tmp_zip), shlex.quote(extract_dir),
+            ))
+
+            # 8. Restart container
+            self._append_log("Starting container...")
+            start_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
+            exit_code, stdout, stderr = ssh.execute(start_cmd)
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to start container:\n%s") % stderr
+                )
+
+        self.state = 'running'
+        self._append_log("Backup '%s' restored successfully." % backup.name)
+        self._safe_refresh_usage()
 
     # ========== Module Installation ==========
 
@@ -2052,8 +2274,16 @@ class SaasInstance(models.Model):
             return 'nginx_old_odoo_versions.jinja'
         return 'nginx_new_odoo_versions.jinja'
 
-    def _provision_nginx(self, ssh):
-        """Obtain SSL certificate via Certbot and deploy Nginx config on the Docker server."""
+    def _provision_nginx(self, ssh, backend_ip=None):
+        """Obtain SSL certificate via Certbot and deploy Nginx config.
+
+        Args:
+            ssh: SSH connection to the server where Nginx will be configured
+                 (proxy server or Docker server).
+            backend_ip: IP address of the Docker server. When None (single-server
+                        setup), the Nginx upstream uses 127.0.0.1. When set
+                        (proxy server setup), it uses the Docker server's IP.
+        """
         self.ensure_one()
         domain = self.name  # e.g. acme.odoo.example.com
         if not domain:
@@ -2094,6 +2324,8 @@ class SaasInstance(models.Model):
             'longpolling_port': self.longpolling_port,
             'domain': domain,
         }
+        if backend_ip:
+            nginx_context['backend_ip'] = backend_ip
         nginx_content = self._render_template(template_name, nginx_context)
 
         # Step 3: Write Nginx config to sites-enabled
@@ -2116,6 +2348,18 @@ class SaasInstance(models.Model):
                 _("Failed to reload Nginx:\n%s\n%s") % (stdout, stderr)
             )
         self._append_log("Nginx reloaded successfully.")
+
+    def _remove_nginx(self, ssh):
+        """Remove Nginx config and SSL certificate from the given server."""
+        self.ensure_one()
+        nginx_path = '/etc/nginx/sites-enabled/%s' % self.subdomain
+        ssh.execute('rm -f %s' % shlex.quote(nginx_path))
+        ssh.execute('systemctl reload nginx 2>&1')
+        if self.name:
+            ssh.execute(
+                'certbot delete --cert-name %s --non-interactive 2>&1'
+                % shlex.quote(self.name)
+            )
 
     def action_view_logs(self):
         """Open a live log stream for this instance's Odoo container."""
