@@ -22,8 +22,9 @@ def run_in_background(record, method_name, method_args=(),
     Uses ``postcommit`` so the current transaction is committed before the
     thread starts, ensuring the thread sees the latest DB state.
     """
+    from odoo import SUPERUSER_ID
     dbname = record.env.cr.dbname
-    uid = record.env.uid
+    uid = SUPERUSER_ID
     context = dict(record.env.context)
     model_name = record._name
     record_id = record.id

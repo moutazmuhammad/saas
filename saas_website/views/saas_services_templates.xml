@@ -217,7 +217,13 @@
                                     </ul>
 
                                     <!-- CTA: Get Started (paid plan) -->
-                                    <a t-attf-href="/services/#{product.id}/plans/#{plan.id}/configure"
+                                    <a t-if="request.env.user._is_public()"
+                                       t-attf-href="/services/register?product_id=#{product.id}&amp;plan_id=#{plan.id}"
+                                       class="btn btn-primary btn-lg w-100 mt-auto">
+                                        Get Started
+                                    </a>
+                                    <a t-else=""
+                                       t-attf-href="/services/#{product.id}/plans/#{plan.id}/configure"
                                        class="btn btn-primary btn-lg w-100 mt-auto">
                                         Get Started
                                     </a>
@@ -241,7 +247,13 @@
                                         Try it free for <strong><t t-out="trial_days"/> days</strong> — no credit card required.
                                     </p>
                                 </div>
-                                <a t-attf-href="/services/#{product.id}/plans/#{trial_plan.id}/configure?trial=1"
+                                <a t-if="request.env.user._is_public()"
+                                   t-attf-href="/services/register?product_id=#{product.id}&amp;plan_id=#{trial_plan.id}&amp;is_trial=1"
+                                   class="btn btn-success btn-lg ms-3 flex-shrink-0">
+                                    <i class="fa fa-gift me-1"/>Start Free Trial
+                                </a>
+                                <a t-else=""
+                                   t-attf-href="/services/#{product.id}/plans/#{trial_plan.id}/configure?trial=1"
                                    class="btn btn-success btn-lg ms-3 flex-shrink-0">
                                     <i class="fa fa-gift me-1"/>Start Free Trial
                                 </a>

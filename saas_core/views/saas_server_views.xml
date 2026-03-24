@@ -35,6 +35,9 @@
                             <field name="is_db_server"/>
                             <field name="is_proxy_server"/>
                         </group>
+                        <group string="Topology" invisible="not is_docker_host">
+                            <field name="db_server_id"/>
+                        </group>
                     </group>
                     <group>
                         <group string="SSH Configuration">
@@ -48,6 +51,19 @@
                             <field name="private_ip_v4"/>
                             <field name="docker_base_path" invisible="not is_docker_host"/>
                             <field name="psql_port" invisible="not is_db_server"/>
+                        </group>
+                    </group>
+                    <group string="Capacity" invisible="not is_docker_host">
+                        <group>
+                            <field name="max_instances"/>
+                            <field name="max_cpu_cores"/>
+                            <field name="max_ram_gb"/>
+                            <field name="allow_overcommit"/>
+                        </group>
+                        <group>
+                            <field name="instance_count"/>
+                            <field name="allocated_cpu"/>
+                            <field name="allocated_ram_gb"/>
                         </group>
                     </group>
                     <notebook invisible="not is_docker_host">
@@ -74,6 +90,8 @@
                 <field name="is_docker_host"/>
                 <field name="is_db_server"/>
                 <field name="is_proxy_server"/>
+                <field name="instance_count" string="Instances" optional="show"/>
+                <field name="max_instances" optional="hide"/>
                 <field name="ssh_connect_using"/>
             </list>
         </field>

@@ -109,7 +109,7 @@
                                 <span t-attf-class="badge rounded-pill #{
                                     'text-bg-success' if inst.state == 'running' else
                                     'text-bg-info' if inst.state == 'provisioning' else
-                                    'text-bg-warning' if inst.state in ('pending_payment', 'paid') else
+                                    'text-bg-warning' if inst.state in ('pending_payment', 'paid', 'pending_provision') else
                                     'text-bg-danger' if inst.state in ('failed', 'cancelled') else
                                     'text-bg-secondary'
                                 }">
@@ -159,7 +159,7 @@
                             <span t-attf-class="badge rounded-pill #{
                                 'text-bg-success' if instance.state == 'running' else
                                 'text-bg-info' if instance.state == 'provisioning' else
-                                'text-bg-warning' if instance.state in ('pending_payment', 'paid') else
+                                'text-bg-warning' if instance.state in ('pending_payment', 'paid', 'pending_provision') else
                                 'text-bg-danger' if instance.state in ('failed', 'cancelled') else
                                 'text-bg-secondary'
                             }" id="instance-state-badge">

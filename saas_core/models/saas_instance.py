@@ -105,20 +105,49 @@ class SaasInstance(models.Model):
         string='Docker Server',
         tracking=True,
         domain="[('is_docker_host', '=', True)]",
-        default=lambda self: self.env['saas.server'].search(
-            [('is_docker_host', '=', True)], limit=1,
-        ),
-        help='Physical server where the Docker container for this instance runs.',
+        help='Physical server where the Docker container for this instance runs. '
+             'Leave empty for automatic allocation based on server capacity.',
     )
     db_server_id = fields.Many2one(
         'saas.server',
         string='Database Server',
         tracking=True,
         domain="[('is_db_server', '=', True)]",
-        default=lambda self: self.env['saas.server'].search(
-            [('is_db_server', '=', True)], limit=1,
-        ),
-        help='PostgreSQL server that hosts the database for this instance.',
+        help='PostgreSQL server that hosts the database for this instance. '
+             'Auto-derived from the Docker server topology when left empty.',
+    )
+    provisioning_mode = fields.Selection(
+        selection=[
+            ('strict', 'Strict'),
+            ('flexible', 'Flexible'),
+            ('manual', 'Manual'),
+        ],
+        string='Provisioning Mode',
+        default='flexible',
+        required=True,
+        help='Controls how servers are allocated for this instance:\n'
+             '- Strict: fail if no server has capacity.\n'
+             '- Flexible: fallback to overcommit or pending state.\n'
+             '- Manual: skip auto-allocation, expect manual assignment.',
+    )
+    is_overcommitted = fields.Boolean(
+        string='Overcommitted',
+        default=False,
+        readonly=True,
+        help='Set automatically when the instance was placed on a server '
+             'that exceeded its capacity limits (overcommit fallback).',
+    )
+    deploy_retry_count = fields.Integer(
+        string='Deploy Retries',
+        default=0,
+        readonly=True,
+        help='Number of times deployment has been automatically retried.',
+    )
+    max_deploy_retries = fields.Integer(
+        string='Max Retries',
+        default=3,
+        help='Maximum automatic deploy retries before marking as permanently failed. '
+             '0 = no auto-retry.',
     )
     xmlrpc_port = fields.Integer(
         string='HTTP Port',
@@ -323,6 +352,7 @@ class SaasInstance(models.Model):
             ('draft', 'Draft'),
             ('pending_payment', 'Pending Payment'),
             ('paid', 'Paid'),
+            ('pending_provision', 'Pending Provision'),
             ('provisioning', 'Provisioning'),
             ('running', 'Running'),
             ('stopped', 'Stopped'),
@@ -877,6 +907,126 @@ class SaasInstance(models.Model):
             )
         server._get_ssh_ip()
 
+    def _allocate_servers(self):
+        """Auto-allocate Docker and DB servers using a multi-level strategy.
+
+        Respects ``provisioning_mode``:
+        - **manual**: skip allocation entirely (operator assigns servers).
+        - **strict**: Level 1 only — fail hard if no capacity.
+        - **flexible** (default): Level 1 → Level 2 → Level 3.
+
+        Levels (flexible mode):
+            1. Ideal — least-loaded host with available capacity.
+            2. Overcommit — any host with ``allow_overcommit`` enabled,
+               ignoring capacity limits.
+            3. Pending — no server assigned; instance enters
+               ``pending_provision`` state and waits for capacity.
+
+        Returns True if a Docker server was assigned, False if the instance
+        was marked as pending (caller should abort deployment).
+        """
+        self.ensure_one()
+        Server = self.env['saas.server']
+        mode = self.provisioning_mode or 'flexible'
+
+        # -- Manual mode: operator is responsible for server assignment --
+        if mode == 'manual':
+            return bool(self.docker_server_id)
+
+        # -- Docker server allocation --
+        if not self.docker_server_id:
+            plan = self.plan_id
+
+            # Level 1 — Ideal allocation (respect capacity)
+            if mode == 'strict':
+                self.docker_server_id = Server._allocate_docker_server(
+                    plan=plan, raise_on_failure=True,
+                )
+                self._append_log(
+                    "Allocated Docker server (strict): %s"
+                    % self.docker_server_id.name
+                )
+            else:
+                server = Server._allocate_docker_server(plan=plan)
+                if server:
+                    self.docker_server_id = server
+                    self._append_log(
+                        "Allocated Docker server (ideal): %s" % server.name
+                    )
+                else:
+                    # Level 2 — Overcommit fallback
+                    server = Server._allocate_overcommit_server(plan=plan)
+                    if server:
+                        self.docker_server_id = server
+                        self.is_overcommitted = True
+                        self._append_log(
+                            "Allocated Docker server (overcommit): %s"
+                            % server.name
+                        )
+                        _logger.warning(
+                            "Instance %s allocated to overcommitted "
+                            "server %s (plan: %s).",
+                            self.subdomain, server.name,
+                            plan.name if plan else 'none',
+                        )
+                    else:
+                        # Level 3 — No server available → pending
+                        self._mark_as_pending()
+                        return False
+
+        # -- DB server allocation --
+        if not self.db_server_id and self.docker_server_id:
+            self._allocate_db_server()
+
+        return True
+
+    def _allocate_db_server(self):
+        """Derive the DB server from the Docker host topology.
+
+        Falls back to all-in-one detection, then any DB server.
+        """
+        self.ensure_one()
+        Server = self.env['saas.server']
+        docker_srv = self.docker_server_id
+
+        if docker_srv.db_server_id:
+            self.db_server_id = docker_srv.db_server_id
+        elif docker_srv.is_db_server:
+            self.db_server_id = docker_srv
+        else:
+            db_srv = Server.search(
+                [('is_db_server', '=', True)], limit=1,
+            )
+            if not db_srv:
+                if self.provisioning_mode == 'flexible':
+                    self._mark_as_pending()
+                    return
+                raise ValidationError(
+                    _("No database server is configured. Please set up a "
+                      "DB server or configure one on the Docker host '%s'.")
+                    % docker_srv.name
+                )
+            self.db_server_id = db_srv
+
+        self._append_log(
+            "Allocated DB server: %s" % self.db_server_id.name
+        )
+
+    def _mark_as_pending(self):
+        """Set instance to pending_provision — deployment deferred until
+        server capacity becomes available.
+        """
+        self.ensure_one()
+        self.state = 'pending_provision'
+        self._append_log(
+            "No server available — instance marked as pending provision. "
+            "Deployment will be retried automatically when capacity is freed."
+        )
+        _logger.info(
+            "Instance %s moved to pending_provision (no available server).",
+            self.subdomain,
+        )
+
     def _auto_assign_ports(self):
         """Auto-assign xmlrpc_port and longpolling_port if not already set."""
         self.ensure_one()
@@ -1000,6 +1150,31 @@ class SaasInstance(models.Model):
                 self.env.cr.rollback()
                 _logger.exception(
                     "Cron: failed to refresh usage for %s", instance.subdomain,
+                )
+
+    @api.model
+    def _cron_retry_pending_provision(self):
+        """Cron: attempt to deploy instances stuck in pending_provision.
+
+        For each pending instance, re-runs ``action_deploy()``.  If capacity
+        is still unavailable the instance stays in ``pending_provision``;
+        otherwise it proceeds to ``provisioning`` normally.
+        """
+        pending = self.search([('state', '=', 'pending_provision')])
+        if not pending:
+            return
+        _logger.info(
+            "Cron: retrying %d pending_provision instance(s).", len(pending),
+        )
+        for instance in pending:
+            try:
+                instance.action_deploy()
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Cron: retry failed for pending instance %s",
+                    instance.subdomain,
                 )
 
     @staticmethod
@@ -1423,8 +1598,13 @@ class SaasInstance(models.Model):
     def action_deploy(self):
         """Full deployment flow: provision Docker container over SSH (async).
 
-        Allowed from ``paid`` and ``failed`` states.  Also allowed from
-        ``draft`` when no plan is set (internal / test instances).
+        Allowed from ``paid``, ``failed``, and ``pending_provision`` states.
+        Also allowed from ``draft`` when no plan is set (internal / test
+        instances).
+
+        In **flexible** provisioning mode the instance may transition to
+        ``pending_provision`` instead of deploying immediately when no
+        server capacity is available.
         """
         for rec in self:
             if rec.state == 'draft' and rec.plan_id and not rec.is_trial:
@@ -1433,12 +1613,18 @@ class SaasInstance(models.Model):
                       "Please use 'Confirm & Bill' to create a sale order and "
                       "invoice before deploying.") % rec.subdomain
                 )
-            if rec.state not in ('draft', 'paid', 'failed'):
+            if rec.state not in ('draft', 'paid', 'failed', 'pending_provision'):
                 raise UserError(
-                    _("Cannot deploy instance '%s': must be in Draft (trial/no plan), "
-                      "Paid, or Failed state (current: %s).")
+                    _("Cannot deploy instance '%s': must be in Draft "
+                      "(trial/no plan), Paid, Failed, or Pending Provision "
+                      "state (current: %s).")
                     % (rec.subdomain, rec.state)
                 )
+
+            servers_ready = rec._allocate_servers()
+            if not servers_ready:
+                # Instance moved to pending_provision — skip deployment
+                continue
 
             rec._validate_deploy_fields()
 
@@ -1450,9 +1636,13 @@ class SaasInstance(models.Model):
                 rec.admin_password = rec._generate_random_password()
 
             rec._auto_assign_ports()
-            rec.provisioning_log = ''
+            if not rec.deploy_retry_count:
+                rec.provisioning_log = ''
             rec.state = 'provisioning'
-            rec._append_log("Deployment queued. Running in background...")
+            rec._append_log(
+                "Deployment queued (attempt %d). Running in background..."
+                % (rec.deploy_retry_count + 1)
+            )
             run_in_background(
                 rec, '_do_deploy',
                 error_method='_on_background_error',
@@ -1600,6 +1790,7 @@ class SaasInstance(models.Model):
             self._append_log("Nginx configured successfully.")
 
         self.state = 'running'
+        self.deploy_retry_count = 0
         self._append_log("Deployment completed successfully. State: running.")
         self._safe_refresh_usage()
         self._send_notification('saas_core.mail_template_saas_deployed')
@@ -1812,12 +2003,15 @@ class SaasInstance(models.Model):
 
     def action_draft(self):
         """Reset to draft state."""
-        allowed = ('failed', 'cancelled', 'pending_payment', 'paid')
+        allowed = (
+            'failed', 'cancelled', 'pending_payment', 'paid',
+            'pending_provision',
+        )
         for rec in self:
             if rec.state not in allowed:
                 raise UserError(
                     _("Can only reset to draft from Failed, Cancelled, "
-                      "Pending Payment, or Paid state.")
+                      "Pending Payment, Paid, or Pending Provision state.")
                 )
             rec.state = 'draft'
 
@@ -1973,9 +2167,35 @@ class SaasInstance(models.Model):
         }
 
     def _on_background_error(self, exception, prev_state):
-        """Handle background operation failure by reverting state."""
-        self.state = prev_state
+        """Handle background operation failure.
+
+        For deploy failures: if retries remain, queue the instance back to
+        ``pending_provision`` so the cron picks it up automatically.
+        Otherwise fall back to ``failed``.
+
+        For non-deploy failures: revert to the previous state.
+        """
         self._append_log("OPERATION FAILED: %s" % str(exception))
+
+        if prev_state == 'failed':
+            # This was a deploy attempt (error_args=('failed',))
+            if self.max_deploy_retries and self.deploy_retry_count < self.max_deploy_retries:
+                self.deploy_retry_count += 1
+                self.state = 'pending_provision'
+                self._append_log(
+                    "Auto-queued for retry (%d/%d). Will retry automatically."
+                    % (self.deploy_retry_count, self.max_deploy_retries)
+                )
+                return
+            # Max retries exhausted
+            self.state = 'failed'
+            if self.max_deploy_retries:
+                self._append_log(
+                    "Max retries exhausted (%d/%d). Manual intervention required."
+                    % (self.deploy_retry_count, self.max_deploy_retries)
+                )
+        else:
+            self.state = prev_state
 
     def action_create_backup(self):
         """Create a backup in the background."""

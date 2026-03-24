@@ -19,8 +19,8 @@ class SaasPortal(CustomerPortal):
     # States visible to clients in the portal
     # Excludes: cancelled, cancelled_by_client
     _PORTAL_VISIBLE_STATES = (
-        'draft', 'pending_payment', 'paid', 'provisioning',
-        'running', 'stopped', 'suspended', 'failed',
+        'draft', 'pending_payment', 'paid', 'pending_provision',
+        'provisioning', 'running', 'stopped', 'suspended', 'failed',
     )
 
     def _prepare_home_portal_values(self, counters):
@@ -469,6 +469,9 @@ class SaasPortal(CustomerPortal):
             instance_sudo.message_post(body=_(
                 "Pending plan change cancelled. Invoice %s voided."
             ) % invoice.name)
+            instance_sudo._send_notification(
+                'saas_core.mail_template_saas_payment_cancelled',
+            )
             return request.redirect('/my/instances/%s' % instance_id)
 
         # If instance was never deployed (pending_payment or draft),
@@ -509,6 +512,10 @@ class SaasPortal(CustomerPortal):
                 ) % (partner_name, subdomain, plan_name, invoice.name),
                 message_type='notification',
                 subtype_xmlid='mail.mt_note',
+            )
+            # Notify support team to follow up with the client
+            instance_sudo._send_notification(
+                'saas_core.mail_template_saas_payment_cancelled',
             )
             return request.redirect('/my/instances')
 

@@ -1,6 +1,6 @@
 import shlex
 
-from odoo import fields, models, _
+from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
 from ..utils import SSHConnection
@@ -42,6 +42,55 @@ class SaasServer(models.Model):
         tracking=True,
         help='This server acts as a reverse proxy (Nginx) for routing '
              'traffic from wildcard domains to Docker servers.',
+    )
+
+    # ========== Topology ==========
+    db_server_id = fields.Many2one(
+        'saas.server',
+        string='Database Server',
+        tracking=True,
+        domain="[('is_db_server', '=', True)]",
+        help='The PostgreSQL server that instances on this Docker host '
+             'should use. Set to this server itself for an all-in-one setup, '
+             'or to a dedicated DB server for a distributed topology.',
+    )
+
+    # ========== Capacity ==========
+    max_instances = fields.Integer(
+        string='Max Instances',
+        default=0,
+        help='Maximum number of running instances on this Docker host. '
+             '0 = unlimited.',
+    )
+    max_cpu_cores = fields.Float(
+        string='Max CPU Cores',
+        default=0,
+        help='Total CPU cores available for allocation on this Docker host. '
+             '0 = unlimited.',
+    )
+    max_ram_gb = fields.Float(
+        string='Max RAM (GB)',
+        default=0,
+        help='Total RAM in GB available for allocation on this Docker host. '
+             '0 = unlimited.',
+    )
+    allow_overcommit = fields.Boolean(
+        string='Allow Overcommit',
+        default=False,
+        help='When enabled, this server can accept instances beyond its '
+             'capacity limits as a fallback when no ideal server is available.',
+    )
+    instance_count = fields.Integer(
+        string='Running Instances',
+        compute='_compute_capacity_usage',
+    )
+    allocated_cpu = fields.Float(
+        string='Allocated CPU',
+        compute='_compute_capacity_usage',
+    )
+    allocated_ram_gb = fields.Float(
+        string='Allocated RAM (GB)',
+        compute='_compute_capacity_usage',
     )
 
     # ========== SSH Configuration ==========
@@ -102,6 +151,133 @@ class SaasServer(models.Model):
         default=5432,
         help='TCP port on which the PostgreSQL service listens.',
     )
+
+    # ========== Capacity ==========
+
+    def _compute_capacity_usage(self):
+        """Compute current allocation from running/provisioning instances."""
+        Instance = self.env['saas.instance']
+        active_states = ('provisioning', 'running')
+        data = Instance._read_group(
+            [
+                ('docker_server_id', 'in', self.ids),
+                ('state', 'in', active_states),
+            ],
+            ['docker_server_id'],
+            ['__count'],
+        )
+        count_map = {srv.id: count for srv, count in data}
+
+        for rec in self:
+            rec.instance_count = count_map.get(rec.id, 0)
+            if rec.is_docker_host:
+                instances = Instance.search([
+                    ('docker_server_id', '=', rec.id),
+                    ('state', 'in', active_states),
+                    ('plan_id', '!=', False),
+                ])
+                total_cpu = 0.0
+                total_ram = 0.0
+                for inst in instances:
+                    total_cpu += inst.plan_id.cpu_limit
+                    total_ram += self._parse_ram_to_gb(
+                        inst.plan_id.ram_limit or '0'
+                    )
+                rec.allocated_cpu = total_cpu
+                rec.allocated_ram_gb = total_ram
+            else:
+                rec.allocated_cpu = 0.0
+                rec.allocated_ram_gb = 0.0
+
+    @staticmethod
+    def _parse_ram_to_gb(ram_str):
+        """Parse a RAM string like '512m', '1g', '2g' to GB float."""
+        ram_str = (ram_str or '0').strip().lower()
+        if ram_str.endswith('g'):
+            return float(ram_str[:-1])
+        if ram_str.endswith('m'):
+            return float(ram_str[:-1]) / 1024.0
+        try:
+            return float(ram_str) / (1024.0 ** 3)
+        except (ValueError, TypeError):
+            return 0.0
+
+    def _has_capacity_for(self, plan, ignore_limits=False):
+        """Check if this Docker host can accommodate one more instance.
+
+        Args:
+            plan: saas.plan record (or falsy) defining resource needs.
+            ignore_limits: when True, skip capacity checks (overcommit mode).
+        """
+        self.ensure_one()
+        if ignore_limits:
+            return True
+        if self.max_instances and self.instance_count >= self.max_instances:
+            return False
+        if plan and self.max_cpu_cores:
+            if self.allocated_cpu + plan.cpu_limit > self.max_cpu_cores:
+                return False
+        if plan and self.max_ram_gb:
+            ram_needed = self._parse_ram_to_gb(plan.ram_limit or '0')
+            if self.allocated_ram_gb + ram_needed > self.max_ram_gb:
+                return False
+        return True
+
+    @api.model
+    def _allocate_docker_server(self, plan=None, raise_on_failure=False):
+        """Level 1 — Ideal allocation: least-loaded host with capacity.
+
+        Returns a saas.server record, or None if no host qualifies.
+        When *raise_on_failure* is True, raises ValidationError instead of
+        returning None (used by strict provisioning mode).
+        """
+        candidates = self.search([('is_docker_host', '=', True)])
+        if not candidates:
+            if raise_on_failure:
+                raise ValidationError(
+                    _("No Docker host servers are configured.")
+                )
+            return None
+
+        eligible = candidates.filtered(lambda s: s._has_capacity_for(plan))
+        if not eligible:
+            if raise_on_failure:
+                raise ValidationError(
+                    _("All Docker host servers are at full capacity. "
+                      "No server can accommodate a new instance%s.")
+                    % (' with plan "%s"' % plan.name if plan else '')
+                )
+            return None
+
+        return min(eligible, key=lambda s: s.instance_count)
+
+    @api.model
+    def _allocate_overcommit_server(self, plan=None):
+        """Level 2 — Overcommit fallback: least-loaded host that allows overcommit.
+
+        Ignores capacity limits, but only considers servers that have
+        ``allow_overcommit`` enabled.
+
+        Returns a saas.server record, or None.
+        """
+        candidates = self.search([
+            ('is_docker_host', '=', True),
+            ('allow_overcommit', '=', True),
+        ])
+        if not candidates:
+            return None
+        return min(candidates, key=lambda s: s.instance_count)
+
+    @api.model
+    def _allocate_any_available_server(self):
+        """Emergency fallback: return any Docker host (least-loaded), ignoring all limits.
+
+        Returns a saas.server record, or None.
+        """
+        candidates = self.search([('is_docker_host', '=', True)])
+        if not candidates:
+            return None
+        return min(candidates, key=lambda s: s.instance_count)
 
     # ========== SSH Methods ==========
 

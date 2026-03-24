@@ -104,4 +104,41 @@
         <field name="auto_delete" eval="True"/>
     </record>
 
+    <!-- ============================================================ -->
+    <!--  Client Cancelled Payment (internal notification to support) -->
+    <!-- ============================================================ -->
+    <record id="mail_template_saas_payment_cancelled" model="mail.template">
+        <field name="name">SaaS: Client Cancelled Payment (Internal)</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">[Action Required] Client cancelled payment — {{ object.name }}</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ (object.company_id.email or user.email) }}</field>
+        <field name="body_html" type="html">
+<div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <p>A client started a payment but cancelled before completing it.
+       Please follow up to help close the sale.</p>
+    <table style="border-collapse: collapse; margin: 12px 0;">
+        <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Client</td>
+            <td><t t-out="object.partner_id.name"/></td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Email</td>
+            <td><t t-out="object.partner_id.email or 'N/A'"/></td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Phone</td>
+            <td><t t-out="object.partner_id.phone or object.partner_id.mobile or 'N/A'"/></td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Instance</td>
+            <td><t t-out="object.name or object.subdomain"/></td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Plan</td>
+            <td><t t-out="object.plan_id.name or 'N/A'"/></td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; font-weight: bold;">Billing</td>
+            <td><t t-out="object.billing_period or 'N/A'"/></td></tr>
+    </table>
+    <p>View the instance in the backend:
+       <a t-attf-href="/odoo/saas-instance-manager/{{ object.id }}">
+           <t t-out="object.name or object.subdomain"/>
+       </a>
+    </p>
+</div>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
 </odoo>

@@ -9,7 +9,7 @@
             <list string="SaaS Instances"
                   decoration-success="state == 'running'"
                   decoration-danger="state in ('cancelled', 'cancelled_by_client', 'failed')"
-                  decoration-warning="state == 'suspended'"
+                  decoration-warning="state in ('suspended', 'pending_provision')"
                   decoration-muted="state in ('draft', 'stopped')"
                   decoration-info="state == 'provisioning'">
                 <field name="subdomain"/>
@@ -19,11 +19,12 @@
                 <field name="odoo_version_id"/>
                 <field name="docker_server_id"/>
                 <field name="db_server_id"/>
+                <field name="is_overcommitted" optional="hide"/>
                 <field name="sale_order_id" optional="hide"/>
                 <field name="state" widget="badge"
                        decoration-success="state == 'running'"
                        decoration-danger="state in ('cancelled', 'cancelled_by_client', 'failed')"
-                       decoration-warning="state == 'suspended'"
+                       decoration-warning="state in ('suspended', 'pending_provision')"
                        decoration-muted="state == 'stopped'"
                        decoration-info="state in ('draft', 'provisioning')"/>
             </list>
@@ -58,11 +59,12 @@
 
                     <!-- ===== Deployment ===== -->
 
-                    <!-- Deploy: draft without plan, draft trial, or retry from failed -->
+                    <!-- Deploy: draft without plan, draft trial, retry from failed,
+                         or retry from pending_provision -->
                     <button name="action_deploy" string="Deploy"
                             type="object" class="btn-primary"
                             icon="fa-play"
-                            invisible="(state == 'draft' and plan_id and not is_trial) or state not in ('draft', 'failed')"/>
+                            invisible="(state == 'draft' and plan_id and not is_trial) or state not in ('draft', 'failed', 'pending_provision')"/>
 
                     <!-- ===== Instance Operations ===== -->
 
@@ -111,17 +113,17 @@
                     <!-- Cancel: deployed or pre-deployment states -->
                     <button name="action_cancel" string="Cancel"
                             type="object" class="btn-danger"
-                            invisible="state not in ('draft', 'pending_payment', 'paid', 'running', 'stopped', 'failed', 'suspended')"
+                            invisible="state not in ('draft', 'pending_payment', 'paid', 'pending_provision', 'running', 'stopped', 'failed', 'suspended')"
                             confirm="This will cancel the instance. If deployed, all infrastructure (container, database, files, Nginx) will be permanently deleted. Are you sure?"/>
 
-                    <!-- Reset to Draft: from failed, cancelled, pending_payment, or paid -->
+                    <!-- Reset to Draft: from failed, cancelled, pending_payment, paid, or pending_provision -->
                     <button name="action_draft" string="Reset to Draft"
                             type="object"
-                            invisible="state not in ('failed', 'cancelled', 'pending_payment', 'paid')"/>
+                            invisible="state not in ('failed', 'cancelled', 'pending_payment', 'paid', 'pending_provision')"/>
 
                     <!-- Statusbar -->
                     <field name="state" widget="statusbar"
-                           statusbar_visible="draft,pending_payment,paid,provisioning,running"/>
+                           statusbar_visible="draft,pending_payment,paid,pending_provision,provisioning,running"/>
                 </header>
                 <sheet>
                     <div class="oe_button_box" name="button_box">
@@ -157,8 +159,10 @@
                         </group>
                         <!-- Right Column -->
                         <group>
+                            <field name="provisioning_mode"/>
                             <field name="docker_server_id"/>
                             <field name="db_server_id"/>
+                            <field name="is_overcommitted" invisible="not is_overcommitted"/>
                             <field name="xmlrpc_port"/>
                             <field name="longpolling_port"/>
                             <field name="admin_password" password="True"/>

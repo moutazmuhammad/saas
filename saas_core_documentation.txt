@@ -918,3 +918,51 @@ Settings (via SaaS Manager > Configuration > Settings):
 ================================================================================
 END OF DOCUMENTATION
 ================================================================================
+
+
+
+  Testing (right now)
+
+  Since you don't have an SMS provider configured, the phone OTP code appears:
+
+  1. On the page — the yellow [DEBUG] banner shows the code directly
+  2. In server logs — WARNING ... SMS not sent (no provider) — phone OTP for +123456: 849271
+
+  Just copy the code from either place and paste it into the input.
+
+  Production
+
+  You need an SMS gateway to actually deliver the codes. There are two paths:
+
+  Option A: Odoo SMS module (easiest)
+
+  1. Install the sms module in Odoo
+  2. Go to Settings > Technical > SMS > SMS Providers
+  3. Configure a provider (Odoo IAP, or a third-party like Twilio via an Odoo connector)
+  4. The code already tries sms.api automatically — no code changes needed
+
+  Option B: Direct Twilio/API integration
+
+  If you prefer Twilio directly without the Odoo SMS module, I can add a config parameter approach. Want me to implement that?
+
+  What to do before going live
+
+  Remove the debug lines. Let me show you exactly what to remove:
+
+  Searched for 1 pattern (ctrl+o to expand)
+
+● When you're ready for production, remove these 2 spots:
+
+  1. Controller (registration.py lines 142-143) — delete:
+  # TODO: REMOVE before production — shows OTP on page for testing
+  ctx['debug_phone_otp'] = phone_otp.code
+
+  2. Template (saas_registration_templates.xml lines 64-69) — delete:
+  <!-- TODO: REMOVE before production -->
+  <div t-if="debug_phone_otp" ...>
+      ...
+  </div>
+
+==============================================================================================
+
+

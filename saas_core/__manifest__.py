@@ -37,6 +37,7 @@ Key capabilities:
         'data/saas_usage_refresh_cron.xml',
         'data/saas_trial_expiry_cron.xml',
         'data/saas_recurring_billing_cron.xml',
+        'data/saas_pending_provision_cron.xml',
         'views/saas_product_views.xml',
         'views/saas_plan_views.xml',
         'views/saas_instance_views.xml',

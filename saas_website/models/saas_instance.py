@@ -20,8 +20,8 @@ class SaasInstance(models.Model):
         """
         Instance = self.env['saas.instance']
         active_states = (
-            'draft', 'pending_payment', 'paid', 'provisioning',
-            'running', 'stopped', 'suspended',
+            'draft', 'pending_payment', 'paid', 'pending_provision',
+            'provisioning', 'running', 'stopped', 'suspended',
         )
 
         for rec in self:

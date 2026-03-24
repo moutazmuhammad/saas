@@ -9,8 +9,8 @@ SUBDOMAIN_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
 
 # States that represent "alive" instances (block subdomain reuse)
 _ACTIVE_STATES = (
-    'draft', 'pending_payment', 'paid', 'provisioning',
-    'running', 'stopped', 'suspended',
+    'draft', 'pending_payment', 'paid', 'pending_provision',
+    'provisioning', 'running', 'stopped', 'suspended',
 )
 
 
