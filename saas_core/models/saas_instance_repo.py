@@ -96,20 +96,16 @@ class SaasInstanceRepo(models.Model):
         return url
 
     def _get_remote_repo_path(self):
-        """Return the full remote path: custom_repos/{odoo_version}/{subdomain}/{repo}."""
+        """Return the full remote path inside the instance's addons directory."""
         self.ensure_one()
         instance = self.instance_id
-        server = instance.docker_server_id
-        base = server.docker_base_path.rstrip('/')
-        version_name = instance.odoo_version_id.name
-        return '%s/custom_repos/%s/%s/%s' % (
-            base, version_name, instance.subdomain, self._get_repo_dir_name(),
-        )
+        instance_path = instance._get_instance_path()
+        return '%s/addons/%s' % (instance_path, self._get_repo_dir_name())
 
     def _get_container_addons_path(self):
         """Return the addons path inside the container for this repo."""
         self.ensure_one()
-        base = '/mnt/repos/%s' % self._get_repo_dir_name()
+        base = '/mnt/extra-addons/%s' % self._get_repo_dir_name()
         if self.addons_subdir:
             return '%s/%s' % (base, self.addons_subdir.strip('/'))
         return base

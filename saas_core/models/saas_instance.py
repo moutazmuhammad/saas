@@ -743,29 +743,20 @@ class SaasInstance(models.Model):
         server = self.docker_server_id
         instance_path = self._get_instance_path()
 
-        # Instance-level repos (absolute mount from custom_repos/)
+        # All repos (instance + product) are cloned into addons/ dir,
+        # already mounted at /mnt/extra-addons — no extra volume mounts needed.
+        repos = []
+        version_repos = []
+
+        # Instance-level repos
         instance_repos = self.repo_ids.filtered(lambda r: r.state == 'cloned')
-        repos = [{
-            'dir_name': r._get_repo_dir_name(),
-            'host_path': r._get_remote_repo_path(),
-        } for r in instance_repos]
         addons_paths = [r._get_container_addons_path() for r in instance_repos]
 
-        # Product-level repos (cloned into instance's product_repos/ dir)
+        # Product-level repos
         product = self.saas_product_id
         if product:
             for pr in product.repo_ids:
-                host_path = '%s/product_repos/%s' % (
-                    instance_path, pr._get_repo_dir_name(),
-                )
-                repos.append({
-                    'dir_name': pr._get_repo_dir_name(),
-                    'host_path': host_path,
-                })
                 addons_paths.append(pr._get_container_addons_path())
-
-        # Version-level repos not used in snapshot approach
-        version_repos = []
 
         return repos, version_repos, addons_paths
 
@@ -1318,7 +1309,7 @@ class SaasInstance(models.Model):
         instance_path = self._get_instance_path()
 
         for repo in product.repo_ids:
-            repo_dir = '%s/product_repos/%s' % (
+            repo_dir = '%s/addons/%s' % (
                 instance_path, repo._get_repo_dir_name(),
             )
             clone_url = repo._get_clone_url()
@@ -1327,7 +1318,7 @@ class SaasInstance(models.Model):
                 "Cloning product repo %s (branch: %s)..." % (repo.repo_url, repo.branch)
             )
             ssh.execute('mkdir -p %s' % shlex.quote(
-                '%s/product_repos' % instance_path
+                '%s/addons' % instance_path
             ))
             # Remove existing if re-cloning
             ssh.execute('rm -rf %s' % shlex.quote(repo_dir))
@@ -1359,7 +1350,7 @@ class SaasInstance(models.Model):
         instance_path = self._get_instance_path()
 
         for repo in product.repo_ids:
-            repo_dir = '%s/product_repos/%s' % (
+            repo_dir = '%s/addons/%s' % (
                 instance_path, repo._get_repo_dir_name(),
             )
             clone_url = repo._get_clone_url()

@@ -278,7 +278,7 @@ class SaasProductRepo(models.Model):
     def _get_container_addons_path(self):
         """Return the addons path inside the container for this repo."""
         self.ensure_one()
-        base = '/mnt/product-repos/%s' % self._get_repo_dir_name()
+        base = '/mnt/extra-addons/%s' % self._get_repo_dir_name()
         if self.addons_subdir:
             return '%s/%s' % (base, self.addons_subdir.strip('/'))
         return base
