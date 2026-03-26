@@ -8,10 +8,14 @@ class SaasPlan(models.Model):
 
     sequence = fields.Integer(default=10)
     name = fields.Char(string='Plan Name', required=True)
-    saas_product_id = fields.Many2one(
+    saas_product_ids = fields.Many2many(
         'saas.product',
-        string='Service',
-        help='The service this plan belongs to (e.g. "Pharmacy Management").',
+        'saas_plan_product_rel',
+        'plan_id',
+        'product_id',
+        string='Services',
+        help='Services this plan is available for. '
+             'Leave empty to make the plan available for all services.',
     )
     is_trial_plan = fields.Boolean(
         string='Trial Plan',

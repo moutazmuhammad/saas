@@ -1,5 +1,3 @@
-import shlex
-
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
@@ -264,17 +262,6 @@ class SaasServer(models.Model):
             ('is_docker_host', '=', True),
             ('allow_overcommit', '=', True),
         ])
-        if not candidates:
-            return None
-        return min(candidates, key=lambda s: s.instance_count)
-
-    @api.model
-    def _allocate_any_available_server(self):
-        """Emergency fallback: return any Docker host (least-loaded), ignoring all limits.
-
-        Returns a saas.server record, or None.
-        """
-        candidates = self.search([('is_docker_host', '=', True)])
         if not candidates:
             return None
         return min(candidates, key=lambda s: s.instance_count)

@@ -47,9 +47,11 @@ class SaasProduct(models.Model):
         string='Odoo Version',
         help='Odoo version used by instances of this service.',
     )
-    plan_ids = fields.One2many(
+    plan_ids = fields.Many2many(
         'saas.plan',
-        'saas_product_id',
+        'saas_plan_product_rel',
+        'product_id',
+        'plan_id',
         string='Plans',
     )
     plan_count = fields.Integer(
@@ -88,14 +90,8 @@ class SaasProduct(models.Model):
 
     @api.depends('plan_ids')
     def _compute_plan_count(self):
-        data = self.env['saas.plan']._read_group(
-            [('saas_product_id', 'in', self.ids)],
-            ['saas_product_id'],
-            ['__count'],
-        )
-        counts = {prod.id: count for prod, count in data}
         for rec in self:
-            rec.plan_count = counts.get(rec.id, 0)
+            rec.plan_count = len(rec.plan_ids)
 
     def action_view_plans(self):
         self.ensure_one()
@@ -104,8 +100,7 @@ class SaasProduct(models.Model):
             'name': 'Plans',
             'res_model': 'saas.plan',
             'view_mode': 'list,form',
-            'domain': [('saas_product_id', '=', self.id)],
-            'context': {'default_saas_product_id': self.id},
+            'domain': [('id', 'in', self.plan_ids.ids)],
         }
 
     def action_view_instances(self):
@@ -120,14 +115,10 @@ class SaasProduct(models.Model):
         }
 
     def _compute_instance_count(self):
-        data = self.env['saas.instance']._read_group(
-            [('saas_product_id', 'in', self.ids)],
-            ['saas_product_id'],
-            ['__count'],
-        )
-        counts = {prod.id: count for prod, count in data}
         for rec in self:
-            rec.instance_count = counts.get(rec.id, 0)
+            rec.instance_count = self.env['saas.instance'].search_count(
+                [('saas_product_id', '=', rec.id)]
+            )
 
     # ========== Snapshot Helpers ==========
 

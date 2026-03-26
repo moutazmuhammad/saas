@@ -98,7 +98,7 @@ class SaasInstance(models.Model):
     def _onchange_saas_product_id(self):
         if self.saas_product_id:
             self.odoo_version_id = self.saas_product_id.odoo_version_id
-            if self.plan_id and self.plan_id.saas_product_id != self.saas_product_id:
+            if self.plan_id and self.plan_id.saas_product_ids and self.saas_product_id not in self.plan_id.saas_product_ids:
                 self.plan_id = False
     docker_server_id = fields.Many2one(
         'saas.server',
@@ -417,6 +417,7 @@ class SaasInstance(models.Model):
                     ('partner_id', '=', rec.partner_id.id),
                     ('is_trial', '=', True),
                     ('id', '!=', rec.id),
+                    ('state', 'not in', ('cancelled', 'cancelled_by_client')),
                 ], limit=1)
                 if existing:
                     raise ValidationError(
@@ -496,7 +497,7 @@ class SaasInstance(models.Model):
         from the database.  Everything else must go through the
         action_delete_instance() teardown workflow first.
         """
-        safe_states = ('draft', 'cancelled')
+        safe_states = ('draft', 'cancelled', 'cancelled_by_client')
         unsafe = self.filtered(lambda r: r.state not in safe_states)
         if unsafe:
             raise UserError(
@@ -611,13 +612,16 @@ class SaasInstance(models.Model):
             raise UserError(_("Please set a plan before confirming."))
 
         plan = self.plan_id
+        period = self.billing_period or 'monthly'
+        price = plan._get_price_for_period(period)
+        period_label = 'Monthly' if period == 'monthly' else 'Yearly'
         # -- Build order lines (respect partner pricelist when available) --
         pricelist = self.partner_id.property_product_pricelist
         order_lines = [(0, 0, {
             'product_id': self._get_billing_product().id,
-            'name': _('%s — %s') % (plan.name, self.name or self.subdomain),
+            'name': _('%s (%s) — %s') % (plan.name, period_label, self.name or self.subdomain),
             'product_uom_qty': 1,
-            'price_unit': plan.price,
+            'price_unit': price,
         })]
 
         # -- Create & confirm sale order --
@@ -1037,18 +1041,19 @@ class SaasInstance(models.Model):
             'saas_master.default_instance_starting_port', '32000',
         ))
 
-        siblings = self.env['saas.instance'].search([
-            ('docker_server_id', '=', self.docker_server_id.id),
-            ('id', '!=', self.id),
-            ('xmlrpc_port', '>', 0),
-        ])
-
+        # Lock sibling rows to prevent concurrent port allocation races
+        self.env.cr.execute(
+            "SELECT xmlrpc_port, longpolling_port FROM saas_instance "
+            "WHERE docker_server_id = %s AND id != %s AND xmlrpc_port > 0 "
+            "FOR UPDATE",
+            (self.docker_server_id.id, self.id or 0),
+        )
         used_ports = set()
-        for sibling in siblings:
-            if sibling.xmlrpc_port:
-                used_ports.add(sibling.xmlrpc_port)
-            if sibling.longpolling_port:
-                used_ports.add(sibling.longpolling_port)
+        for row in self.env.cr.fetchall():
+            if row[0]:
+                used_ports.add(row[0])
+            if row[1]:
+                used_ports.add(row[1])
 
         candidate = starting_port
         while candidate < 65535:
@@ -1894,54 +1899,67 @@ class SaasInstance(models.Model):
         """Internal redeploy logic for a single record."""
         self.ensure_one()
         server = self.docker_server_id
+        instance_path = self._get_instance_path()
 
         # 1. Clone any pending instance repos
         pending_repos = self.repo_ids.filtered(lambda r: r.state == 'pending')
         if pending_repos:
             pending_repos._clone_repo()
 
-        # 2. Pull all cloned instance repos
-        cloned_repos = self.repo_ids.filtered(lambda r: r.state == 'cloned')
-        if cloned_repos:
-            with server._get_ssh_connection() as ssh:
-                for repo in cloned_repos:
-                    repo_path = repo._get_remote_repo_path()
-                    clone_url = repo._get_clone_url()
-                    ssh.execute(
-                        'cd %s && git remote set-url origin %s'
-                        % (shlex.quote(repo_path), shlex.quote(clone_url))
-                    )
-                    self._append_log("Pulling %s..." % repo.name)
-                    pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
-                        shlex.quote(repo_path), shlex.quote(repo.branch),
-                    )
-                    exit_code, stdout, stderr = ssh.execute(
-                        pull_cmd, timeout=300,
-                    )
-                    if exit_code != 0:
-                        repo.error_message = stdout + '\n' + stderr
-                        raise UserError(
-                            _("Git pull failed for '%s':\n%s\n%s")
-                            % (repo.name, stdout[-500:], stderr[-500:])
-                        )
-                    repo.last_pull = fields.Datetime.now()
-                    repo.error_message = False
-                    self._append_log(
-                        "Pulled %s: %s" % (repo.name, stdout.strip()[:200])
-                    )
-
-        # 3. Pull product repos
+        # 2-5. Single SSH connection for pull, config update, and restart
         with server._get_ssh_connection() as ssh:
+            # Pull all cloned instance repos
+            cloned_repos = self.repo_ids.filtered(lambda r: r.state == 'cloned')
+            for repo in cloned_repos:
+                repo_path = repo._get_remote_repo_path()
+                clone_url = repo._get_clone_url()
+                ssh.execute(
+                    'cd %s && git remote set-url origin %s'
+                    % (shlex.quote(repo_path), shlex.quote(clone_url))
+                )
+                self._append_log("Pulling %s..." % repo.name)
+                pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
+                    shlex.quote(repo_path), shlex.quote(repo.branch),
+                )
+                exit_code, stdout, stderr = ssh.execute(
+                    pull_cmd, timeout=300,
+                )
+                if exit_code != 0:
+                    repo.error_message = stdout + '\n' + stderr
+                    raise UserError(
+                        _("Git pull failed for '%s':\n%s\n%s")
+                        % (repo.name, stdout[-500:], stderr[-500:])
+                    )
+                repo.last_pull = fields.Datetime.now()
+                repo.error_message = False
+                self._append_log(
+                    "Pulled %s: %s" % (repo.name, stdout.strip()[:200])
+                )
+
+            # Pull product repos
             self._pull_product_repos(ssh)
 
-        # 4. Update docker-compose.yml and odoo.conf with current mounts
-        self._append_log("Updating configuration...")
-        with server._get_ssh_connection() as ssh:
+            # Update docker-compose.yml and odoo.conf with current mounts
+            self._append_log("Updating configuration...")
             self._render_and_write_configs(ssh)
-        self._append_log("Configuration updated.")
+            self._append_log("Configuration updated.")
 
-        # 5. Restart the container
-        self._restart_container()
+            # Restart the container (down + up to pick up volume changes)
+            self._append_log("Restarting container...")
+            down_cmd = 'cd %s && docker compose down 2>&1' % shlex.quote(instance_path)
+            exit_code, stdout, stderr = ssh.execute(down_cmd)
+            if exit_code != 0:
+                raise UserError(
+                    _("docker compose down failed:\n%s\n%s") % (stdout, stderr)
+                )
+            up_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
+            exit_code, stdout, stderr = ssh.execute(up_cmd)
+            if exit_code != 0:
+                raise UserError(
+                    _("docker compose up -d failed:\n%s\n%s") % (stdout, stderr)
+                )
+            self._append_log("Container restarted successfully.")
+
         self.state = 'running'
         self._safe_refresh_usage()
 
@@ -2390,101 +2408,6 @@ class SaasInstance(models.Model):
         self._append_log("Backup '%s' restored successfully." % backup.name)
         self._safe_refresh_usage()
 
-    # ========== Module Installation ==========
-
-    def _get_xmlrpc_url(self):
-        """Return the XML-RPC URL for the running instance."""
-        self.ensure_one()
-        server_ip = self.docker_server_id._get_ssh_ip()
-        return 'http://%s:%d' % (server_ip, self.xmlrpc_port)
-
-    def action_install_modules(self, module_names):
-        """Install one or more Odoo modules on the running instance via XML-RPC.
-
-        Args:
-            module_names: list of technical module names (e.g. ['sale', 'purchase'])
-        """
-        self.ensure_one()
-        if self.state != 'running':
-            raise UserError(_("Instance must be running to install apps."))
-        if not module_names:
-            raise UserError(_("No apps specified."))
-
-        # Clean and validate module names
-        clean_names = []
-        for name in module_names:
-            name = name.strip().lower()
-            if name and name.replace('_', '').replace('-', '').isalnum():
-                clean_names.append(name)
-        if not clean_names:
-            raise UserError(_("Invalid app names."))
-
-        self._append_log("App installation queued: %s" % ', '.join(clean_names))
-        run_in_background(
-            self, '_do_install_modules',
-            method_args=(clean_names,),
-            error_method='_on_module_install_error',
-            error_args=(clean_names,),
-            thread_name='saas_install_%s' % self.subdomain,
-        )
-        return True
-
-    def _do_install_modules(self, module_names):
-        """Install modules via XML-RPC (runs in background thread)."""
-        import xmlrpc.client
-        self.ensure_one()
-
-        url = self._get_xmlrpc_url()
-        db_name = self.subdomain
-
-        try:
-            # Authenticate as admin (uid=2 is default admin in Odoo)
-            common = xmlrpc.client.ServerProxy('%s/xmlrpc/2/common' % url, allow_none=True)
-            uid = common.authenticate(db_name, 'admin', self.admin_password, {})
-            if not uid:
-                raise UserError(_("Authentication failed on the instance."))
-
-            models = xmlrpc.client.ServerProxy('%s/xmlrpc/2/object' % url, allow_none=True)
-
-            # Find modules to install
-            module_ids = models.execute_kw(
-                db_name, uid, self.admin_password,
-                'ir.module.module', 'search',
-                [[('name', 'in', module_names)]],
-            )
-            if not module_ids:
-                self._append_log(
-                    "No matching apps found: %s" % ', '.join(module_names)
-                )
-                return
-
-            # Trigger installation
-            models.execute_kw(
-                db_name, uid, self.admin_password,
-                'ir.module.module', 'button_immediate_install',
-                [module_ids],
-            )
-
-            self._append_log(
-                "Apps installed successfully: %s" % ', '.join(module_names)
-            )
-            self.message_post(body=_(
-                "Apps installed: %s"
-            ) % ', '.join(module_names))
-
-        except xmlrpc.client.Fault as e:
-            raise UserError(
-                _("Failed to install apps: %s") % e.faultString
-            )
-
-    def _on_module_install_error(self, exception, module_names):
-        """Handle module installation failure."""
-        self.ensure_one()
-        self._append_log(
-            "App installation failed (%s): %s"
-            % (', '.join(module_names), str(exception))
-        )
-
 
 
     def _get_nginx_template_name(self):
@@ -2907,7 +2830,8 @@ class SaasInstance(models.Model):
             order_vals['pricelist_id'] = pricelist.id
         order = self.env['sale.order'].create(order_vals)
         order.action_confirm()
-        self.sale_order_id = order
+        # Keep sale_order_id pointing to the original SO for payment detection;
+        # renewal invoices are tracked via partner + origin for dunning.
         invoice = order._create_invoices()
         invoice.action_post()
 
@@ -2957,32 +2881,34 @@ class SaasInstance(models.Model):
                 )
 
     def _check_dunning(self, today):
-        """Check if any linked invoices are overdue and act accordingly."""
+        """Check if any linked invoices are overdue and act accordingly.
+
+        Searches ALL invoices related to this instance (across all sale
+        orders, including renewals) so that unpaid renewal invoices are
+        caught even though sale_order_id points to the original order.
+        """
         self.ensure_one()
-        if not self.sale_order_id:
+        if not self.partner_id:
             return
 
-        # Find all unpaid posted invoices linked to this instance's sale orders
-        so_domain = [
-            ('move_type', '=', 'out_invoice'),
-            ('payment_state', 'not in', ('paid', 'in_payment', 'reversed')),
-            ('state', '=', 'posted'),
-            ('invoice_date_due', '<', today),
-            ('partner_id', '=', self.partner_id.id),
-        ]
-        # Search by sale order link first, fall back to origin
-        if self.sale_order_id:
-            so_domain.append(('invoice_origin', '=', self.sale_order_id.name))
-        else:
-            so_domain.append(('invoice_origin', '=', self.name or self.subdomain))
-        overdue_invoices = self.env['account.move'].search(so_domain, limit=1)
+        # Find all invoices related to this instance (initial + renewals)
+        all_invoices = self._get_all_invoices()
+        if not all_invoices:
+            return
+
+        overdue_invoices = all_invoices.filtered(
+            lambda m: m.move_type == 'out_invoice'
+            and m.payment_state not in ('paid', 'in_payment', 'reversed')
+            and m.state == 'posted'
+            and m.invoice_date_due
+            and m.invoice_date_due < today
+        )
         if not overdue_invoices:
             return
 
         grace_days = self.plan_id.grace_period_days if self.plan_id else 7
-        oldest_due = overdue_invoices.invoice_date_due
-        if not oldest_due:
-            return
+        oldest = min(overdue_invoices, key=lambda m: m.invoice_date_due)
+        oldest_due = oldest.invoice_date_due
         days_overdue = (today - oldest_due).days
 
         if days_overdue > grace_days:
@@ -2990,7 +2916,7 @@ class SaasInstance(models.Model):
             self.action_suspend()
             self._append_log(
                 "AUTO-SUSPENDED: Invoice %s overdue by %d days (grace: %d)."
-                % (overdue_invoices.name, days_overdue, grace_days)
+                % (oldest.name, days_overdue, grace_days)
             )
             self._send_notification('saas_core.mail_template_saas_suspended')
         elif not self.suspension_warning_sent:
@@ -3000,7 +2926,7 @@ class SaasInstance(models.Model):
             self._append_log(
                 "Payment overdue warning sent. Invoice %s due %s. "
                 "Grace period: %d days."
-                % (overdue_invoices.name, oldest_due, grace_days)
+                % (oldest.name, oldest_due, grace_days)
             )
 
     # ========== Plan Upgrade/Downgrade ==========
@@ -3030,8 +2956,8 @@ class SaasInstance(models.Model):
             raise UserError(_("Invalid plan."))
         if new_plan.is_trial_plan:
             raise UserError(_("Cannot subscribe to another trial plan."))
-        if (self.saas_product_id and new_plan.saas_product_id
-                and new_plan.saas_product_id != self.saas_product_id):
+        if (self.saas_product_id and new_plan.saas_product_ids
+                and self.saas_product_id not in new_plan.saas_product_ids):
             raise UserError(_("Selected plan does not belong to this service."))
 
         if billing_period not in ('monthly', 'yearly'):
@@ -3320,6 +3246,10 @@ class SaasInstance(models.Model):
         """
         self.ensure_one()
 
+        # Refresh storage usage before checking threshold to avoid
+        # blocking on stale data (e.g. client deleted data recently).
+        self._safe_refresh_usage()
+
         # --- Storage threshold check (75% of target plan limit) ---
         if new_plan.storage_limit > 0:
             current_usage_gb = (self.total_storage_bytes or 0) / (1024 ** 3)
@@ -3372,108 +3302,6 @@ class SaasInstance(models.Model):
             self.message_post(body=_(
                 "Scheduled downgrade to %s has been cancelled."
             ) % plan_name)
-
-    def action_change_plan(self, new_plan_id, prorate=True):
-        """Change the plan on a running instance.
-
-        Updates resource limits on the running container and optionally
-        creates a prorated credit/charge.
-        """
-        self.ensure_one()
-        if self.state not in ('running', 'stopped', 'suspended'):
-            raise UserError(
-                _("Can only change plan on running, stopped, or suspended instances.")
-            )
-        new_plan = self.env['saas.plan'].browse(new_plan_id)
-        if not new_plan.exists():
-            raise UserError(_("Invalid plan."))
-
-        old_plan = self.plan_id
-
-        # Generate prorated invoice if applicable
-        if prorate and old_plan and new_plan.price != old_plan.price and self.next_invoice_date:
-            self._create_proration_invoice(old_plan, new_plan)
-
-        self.plan_id = new_plan
-        self._append_log(
-            "Plan changed: %s → %s" % (
-                old_plan.name if old_plan else 'None', new_plan.name
-            )
-        )
-        self.message_post(body=_(
-            "Plan changed from %s to %s.",
-        ) % (old_plan.name if old_plan else '—', new_plan.name))
-
-        # Update resource limits on the live container
-        if self.state == 'running':
-            try:
-                self._update_container_resources()
-            except Exception as e:
-                _logger.exception(
-                    "Failed to update container resources for %s",
-                    self.subdomain,
-                )
-                self._append_log(
-                    "WARNING: Plan updated but container resource update failed: %s" % e
-                )
-
-    def _create_proration_invoice(self, old_plan, new_plan):
-        """Create a prorated charge or credit note for the plan change."""
-        self.ensure_one()
-        today = fields.Date.today()
-        if not self.next_invoice_date or not self.last_invoice_date:
-            return
-
-        total_days = (self.next_invoice_date - self.last_invoice_date).days
-        if total_days <= 0:
-            return
-        remaining_days = (self.next_invoice_date - today).days
-        if remaining_days <= 0:
-            return
-
-        fraction = remaining_days / total_days
-        price_diff = new_plan.price - old_plan.price
-        proration_amount = price_diff * fraction
-
-        if abs(proration_amount) < 0.01:
-            return
-
-        pricelist = self.partner_id.property_product_pricelist
-        order_vals = {
-            'partner_id': self.partner_id.id,
-            'origin': _('Plan change: %s') % (self.name or self.subdomain),
-            'order_line': [(0, 0, {
-                'product_id': self._get_billing_product().id,
-                'name': _('Plan change proration: %s → %s (%d days remaining)')
-                        % (old_plan.name, new_plan.name, remaining_days),
-                'product_uom_qty': 1,
-                'price_unit': abs(proration_amount),
-            })],
-        }
-        if pricelist:
-            order_vals['pricelist_id'] = pricelist.id
-        order = self.env['sale.order'].create(order_vals)
-        order.action_confirm()
-
-        if proration_amount > 0:
-            invoice = order._create_invoices()
-            invoice.action_post()
-            self._append_log(
-                "Proration invoice %s: %.2f for plan upgrade."
-                % (invoice.name, proration_amount)
-            )
-        else:
-            invoice = order._create_invoices(final=True)
-            credit = invoice._reverse_moves(
-                default_values_list=[{
-                    'ref': _('Proration credit: %s → %s') % (old_plan.name, new_plan.name),
-                }],
-            )
-            credit.action_post()
-            self._append_log(
-                "Proration credit %s: %.2f for plan downgrade."
-                % (credit.name, abs(proration_amount))
-            )
 
     def _update_container_resources(self):
         """Update CPU/RAM limits on a running container via docker update."""
