@@ -109,6 +109,12 @@ class SshTerminal extends Component {
             // Attach to DOM
             this.terminal.open(this.termRef.el);
             this.fitAddon.fit();
+            // Re-fit after a tick so the layout has fully settled
+            requestAnimationFrame(() => {
+                if (this.fitAddon) {
+                    try { this.fitAddon.fit(); } catch {}
+                }
+            });
 
             // Handle user input -> send to server
             this.terminal.onData((data) => {

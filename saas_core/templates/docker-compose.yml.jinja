@@ -11,24 +11,16 @@ services:
       - ./data/odoo:/var/lib/odoo
       - ./config:/etc/odoo
       - ./addons:/mnt/extra-addons
-{%- for repo in repos | default([]) %}
-      - {{ repo.host_path }}:/mnt/repos/{{ repo.dir_name }}
-{%- endfor %}
-{%- for vrepo in version_repos | default([]) %}
-      - {{ vrepo.host_path }}:/mnt/version-repos/{{ vrepo.dir_name }}
-{%- endfor %}
     networks:
       - {{ network_name | default("net") }}
-{%- if cpu_limit or ram_limit %}
-    deploy:
-      resources:
-        limits:
-{%- if cpu_limit %}
-          cpus: "{{ cpu_limit }}"
+{%- if docker_cpu %}
+    cpus: {{ docker_cpu }}
 {%- endif %}
-{%- if ram_limit %}
-          memory: {{ ram_limit }}
+{%- if docker_mem %}
+    mem_limit: {{ docker_mem }}
 {%- endif %}
+{%- if docker_swap %}
+    memswap_limit: {{ docker_swap }}
 {%- endif %}
 
 

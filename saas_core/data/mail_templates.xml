@@ -20,6 +20,9 @@
     <p>Plan: <t t-out="object.plan_id.name or 'N/A'"/></p>
     <p>You can manage your instance from the
        <a t-attf-href="/my/instances/{{ object.id }}">customer portal</a>.</p>
+    <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
+    <p t-if="support_email">Need help? Contact us at
+       <a t-att-href="'mailto:' + support_email"><t t-out="support_email"/></a>.</p>
     <p>Best regards,<br/><t t-out="object.company_id.name"/></p>
 </div>
         </field>
@@ -37,6 +40,7 @@
         <field name="email_to">{{ object.partner_id.email }}</field>
         <field name="body_html" type="html">
 <div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
     <p>Dear <t t-out="object.partner_id.name"/>,</p>
     <p>Your instance <strong><t t-out="object.name"/></strong> has been
        <strong>suspended</strong>.</p>
@@ -50,6 +54,8 @@
        or upgrade your plan.</p>
     <p>Visit the <a t-attf-href="/my/instances/{{ object.id }}">customer portal</a>
        for more details.</p>
+    <p t-if="support_email">Need help? Contact us at
+       <a t-att-href="'mailto:' + support_email"><t t-out="support_email"/></a>.</p>
     <p>Best regards,<br/><t t-out="object.company_id.name"/></p>
 </div>
         </field>
@@ -67,6 +73,7 @@
         <field name="email_to">{{ object.partner_id.email }}</field>
         <field name="body_html" type="html">
 <div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
     <p>Dear <t t-out="object.partner_id.name"/>,</p>
     <p>This is a reminder that payment is due for your instance
        <strong><t t-out="object.name"/></strong>.</p>
@@ -76,6 +83,8 @@
        grace period (<t t-out="object.plan_id.grace_period_days"/> days).</p>
     <p>Visit the <a t-attf-href="/my/instances/{{ object.id }}">customer portal</a>
        to view your invoices and make a payment.</p>
+    <p t-if="support_email">Need help? Contact us at
+       <a t-att-href="'mailto:' + support_email"><t t-out="support_email"/></a>.</p>
     <p>Best regards,<br/><t t-out="object.company_id.name"/></p>
 </div>
         </field>
@@ -93,11 +102,14 @@
         <field name="email_to">{{ object.partner_id.email }}</field>
         <field name="body_html" type="html">
 <div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
     <p>Dear <t t-out="object.partner_id.name"/>,</p>
     <p><strong>Your instance <t t-out="object.name"/> is scheduled for deletion.</strong></p>
     <p>All data, databases, and backups will be permanently removed.</p>
-    <p>If you wish to keep your instance, please contact support or
-       settle outstanding invoices immediately.</p>
+    <p t-if="support_email">If you wish to keep your instance, please contact us at
+       <a t-att-href="'mailto:' + support_email"><t t-out="support_email"/></a>
+       or settle outstanding invoices immediately.</p>
+    <p t-else="">If you wish to keep your instance, please settle outstanding invoices immediately.</p>
     <p>Best regards,<br/><t t-out="object.company_id.name"/></p>
 </div>
         </field>

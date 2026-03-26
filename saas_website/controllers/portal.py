@@ -1,5 +1,6 @@
 import datetime
 import logging
+from urllib.parse import quote as url_quote
 
 import werkzeug.utils
 
@@ -17,21 +18,20 @@ _logger = logging.getLogger(__name__)
 class SaasPortal(CustomerPortal):
 
     # States visible to clients in the portal
-    # Excludes: cancelled, cancelled_by_client
     _PORTAL_VISIBLE_STATES = (
         'draft', 'pending_payment', 'paid', 'pending_provision',
         'provisioning', 'running', 'stopped', 'suspended', 'failed',
+        'cancelled', 'cancelled_by_client',
     )
 
     def _prepare_home_portal_values(self, counters):
         values = super()._prepare_home_portal_values(counters)
         if 'instance_count' in counters:
             partner = request.env.user.partner_id
-            Instance = request.env['saas.instance']
-            values['instance_count'] = Instance.search_count([
+            values['instance_count'] = request.env['saas.instance'].sudo().search_count([
                 ('partner_id', '=', partner.id),
                 ('state', 'in', self._PORTAL_VISIBLE_STATES),
-            ]) if Instance.has_access('read') else 0
+            ])
         return values
 
     # ==================== Instance List ====================
@@ -42,7 +42,7 @@ class SaasPortal(CustomerPortal):
     )
     def portal_my_instances(self, page=1, sortby=None, **kw):
         partner = request.env.user.partner_id
-        Instance = request.env['saas.instance']
+        Instance = request.env['saas.instance'].sudo()
         domain = [
             ('partner_id', '=', partner.id),
             ('state', 'in', self._PORTAL_VISIBLE_STATES),
@@ -104,11 +104,16 @@ class SaasPortal(CustomerPortal):
         # Fetch all invoices across all sale orders (initial + renewals + upgrades)
         invoices = instance_sudo._get_all_invoices().sorted('create_date', reverse=True)
 
+        support_email = request.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.support_email', ''
+        )
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance_sudo,
             'backups': backups,
             'invoices': invoices,
+            'support_email': support_email,
             'page_name': 'saas_instance_detail',
         })
         return request.render('saas_website.portal_instance_detail', values)
@@ -235,7 +240,7 @@ class SaasPortal(CustomerPortal):
         billing_period = kw.get('billing_period', 'monthly')
         if not plan_id:
             return request.redirect(
-                '/my/instances/%s/upgrade?error=%s' % (instance_id, 'Please select a plan.')
+                '/my/instances/%s/upgrade?error=%s' % (instance_id, url_quote('Please select a plan.'))
             )
 
         try:
@@ -244,7 +249,7 @@ class SaasPortal(CustomerPortal):
             )
         except UserError as e:
             return request.redirect(
-                '/my/instances/%s/upgrade?error=%s' % (instance_id, str(e))
+                '/my/instances/%s/upgrade?error=%s' % (instance_id, url_quote(str(e)))
             )
 
         # If result is an invoice, redirect to checkout page
@@ -337,6 +342,9 @@ class SaasPortal(CustomerPortal):
             ),
             'expected_company': invoice_company,
             'invoice_id': invoice.id,
+            'support_email': request.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.support_email', ''
+            ),
         })
         return request.render('saas_website.portal_checkout', values)
 
@@ -367,10 +375,14 @@ class SaasPortal(CustomerPortal):
             domain.append(('saas_product_ids', 'in', instance_sudo.saas_product_id.id))
         plans = request.env['saas.plan'].sudo().search(domain, order='sequence, price')
 
-        # Compute proration info for each upgrade plan (both monthly and yearly)
+        # Compute proration info for each upgrade plan (both monthly and yearly).
+        # Upgrade vs downgrade is determined by comparing effective monthly
+        # costs so that cross-period changes are classified correctly
+        # (e.g. $10/month vs $100/year = $8.33/month is a downgrade).
         today = fields.Date.today()
         old_period = instance_sudo.billing_period or 'monthly'
         old_price = instance_sudo.plan_id._get_price_for_period(old_period) if instance_sudo.plan_id else 0
+        old_monthly = instance_sudo._to_monthly_equivalent(old_price, old_period)
         # Exclude today (already consumed) from remaining days
         remaining_value = 0.0
         remaining_days = 0
@@ -381,21 +393,31 @@ class SaasPortal(CustomerPortal):
                 remaining_value = (old_price / total_days) * remaining_days
 
         # Build dict: plan_id -> {'monthly': {...}, 'yearly': {...}}
+        # Each period entry is either an upgrade (with proration details)
+        # or a downgrade (scheduled, no charge).
         proration_info = {}
         for plan in plans:
             plan_proration = {}
             for period in ('monthly', 'yearly'):
                 new_price = plan._get_price_for_period(period)
-                if new_price > old_price and remaining_value > 0:
-                    final_charge = max(new_price - remaining_value, 0)
+                new_monthly = instance_sudo._to_monthly_equivalent(new_price, period)
+                if new_monthly > old_monthly:
+                    # Upgrade — show proration charge
+                    final_charge = max(new_price - remaining_value, 0) if remaining_value > 0 else new_price
                     plan_proration[period] = {
+                        'is_upgrade': True,
                         'credit': remaining_value,
                         'remaining_days': remaining_days,
                         'new_price': new_price,
                         'final_charge': final_charge,
                     }
-            if plan_proration:
-                proration_info[plan.id] = plan_proration
+                else:
+                    # Downgrade — scheduled, no charge
+                    plan_proration[period] = {
+                        'is_upgrade': False,
+                        'new_price': new_price,
+                    }
+            proration_info[plan.id] = plan_proration
 
         values = self._prepare_portal_layout_values()
         values.update({
@@ -425,7 +447,7 @@ class SaasPortal(CustomerPortal):
         billing_period = kw.get('billing_period', instance_sudo.billing_period or 'monthly')
         if not plan_id:
             return request.redirect(
-                '/my/instances/%s/change-plan?error=%s' % (instance_id, 'Please select a plan.')
+                '/my/instances/%s/change-plan?error=%s' % (instance_id, url_quote('Please select a plan.'))
             )
 
         try:
@@ -438,7 +460,7 @@ class SaasPortal(CustomerPortal):
             )
         except UserError as e:
             return request.redirect(
-                '/my/instances/%s/change-plan?error=%s' % (instance_id, str(e))
+                '/my/instances/%s/change-plan?error=%s' % (instance_id, url_quote(str(e)))
             )
 
         # Upgrade: redirect to checkout
@@ -489,6 +511,20 @@ class SaasPortal(CustomerPortal):
                         and inv.payment_state not in ('paid', 'in_payment')
         )
         if not invoice:
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        # Block cancellation of mandatory invoices.
+        # Only optional invoices (plan upgrades, subscriptions) can be
+        # cancelled by the client. Renewal and restoration invoices are
+        # mandatory — the dunning system enforces payment.
+        # invoice_origin is the SO name (e.g. S00123), so we trace
+        # back to the sale order's origin field.
+        so_origins = invoice.line_ids.sale_line_ids.order_id.mapped('origin')
+        non_cancellable_prefixes = ('Renewal:', 'Data restoration:')
+        if any(
+            o and any(o.startswith(prefix) for prefix in non_cancellable_prefixes)
+            for o in so_origins
+        ):
             return request.redirect('/my/instances/%s' % instance_id)
 
         # Cancel the invoice
@@ -697,20 +733,7 @@ class SaasPortal(CustomerPortal):
         type='http', auth='user', website=True, methods=['POST'],
     )
     def portal_delete_backup(self, instance_id, backup_id, access_token=None, **kw):
-        """Delete a backup from the portal."""
-        try:
-            instance_sudo = self._document_check_access(
-                'saas.instance', instance_id, access_token=access_token,
-            )
-        except (AccessError, MissingError):
-            return request.redirect('/my/instances')
-
-        backup = instance_sudo.backup_ids.filtered(
-            lambda b: b.id == backup_id and b.state in ('done', 'failed')
-        )
-        if backup:
-            backup.action_delete_backup()
-
+        """Backup deletion is not available from the portal."""
         return request.redirect('/my/instances/%s' % instance_id)
 
     # ==================== Backup Download Regeneration ====================
@@ -720,7 +743,22 @@ class SaasPortal(CustomerPortal):
         type='http', auth='user',
     )
     def portal_backup_download(self, instance_id, backup_id, access_token=None, **kw):
-        """Generate a fresh presigned URL and redirect to it for download."""
+        """Backup download is not available from the portal."""
+        return request.redirect('/my/instances/%s' % instance_id)
+
+    # ==================== Reactivate Cancelled Instance ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/reactivate',
+        type='http', auth='user', website=True,
+    )
+    def portal_instance_reactivate(self, instance_id, access_token=None, **kw):
+        """Show plan selection to reactivate a cancelled instance.
+
+        Reuses the same instance record — no new record is created.
+        The client picks a plan, pays, and the instance is redeployed.
+        Data is NOT restored; the client must contact support for that.
+        """
         try:
             instance_sudo = self._document_check_access(
                 'saas.instance', instance_id, access_token=access_token,
@@ -728,17 +766,71 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        backup = instance_sudo.backup_ids.filtered(
-            lambda b: b.id == backup_id and b.state == 'done'
-        )
-        if not backup:
+        if instance_sudo.state not in ('cancelled', 'cancelled_by_client'):
             return request.redirect('/my/instances/%s' % instance_id)
 
-        try:
-            url = backup._generate_presigned_url()
-            if url:
-                return werkzeug.utils.redirect(url, 302)
-        except Exception as e:
-            _logger.exception("Failed to generate download URL for backup %s", backup_id)
+        product = instance_sudo.saas_product_id
+        if not product or not product.is_published:
+            return request.redirect('/services')
 
+        # Fetch paid plans for the same service
+        domain = [('is_trial_plan', '=', False)]
+        if product:
+            domain.append(('saas_product_ids', 'in', product.id))
+        plans = request.env['saas.plan'].sudo().search(domain, order='sequence, price')
+
+        support_email = request.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.support_email', ''
+        )
+
+        values = self._prepare_portal_layout_values()
+        values.update({
+            'instance': instance_sudo,
+            'plans': plans,
+            'support_email': support_email,
+            'page_name': 'saas_instance_reactivate',
+            'error': kw.get('error'),
+        })
+        return request.render('saas_website.portal_instance_reactivate', values)
+
+    @http.route(
+        '/my/instances/<int:instance_id>/do-reactivate',
+        type='http', auth='user', website=True, methods=['POST'],
+    )
+    def portal_instance_do_reactivate(self, instance_id, access_token=None, **kw):
+        """Process reactivation: reset the cancelled instance with the
+        chosen plan and run the billing flow."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        plan_id = kw.get('plan_id')
+        billing_period = kw.get('billing_period', 'monthly')
+        if not plan_id:
+            return request.redirect(
+                '/my/instances/%s/reactivate?error=%s'
+                % (instance_id, url_quote('Please select a plan.'))
+            )
+
+        try:
+            instance_sudo.action_reactivate(int(plan_id), billing_period)
+        except UserError as e:
+            return request.redirect(
+                '/my/instances/%s/reactivate?error=%s'
+                % (instance_id, url_quote(str(e)))
+            )
+
+        # Redirect to checkout if there's an unpaid invoice, else to detail
+        if (instance_sudo.sale_order_id
+                and instance_sudo.sale_order_id.invoice_ids.filtered(
+                    lambda i: i.state == 'posted'
+                    and i.payment_state not in ('paid', 'in_payment')
+                    and i.amount_residual > 0
+                )):
+            return request.redirect(
+                '/my/instances/%s/checkout' % instance_id
+            )
         return request.redirect('/my/instances/%s' % instance_id)

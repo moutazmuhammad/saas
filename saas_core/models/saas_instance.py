@@ -6,7 +6,6 @@ import re
 import secrets
 import shlex
 import string
-import uuid
 from dateutil.relativedelta import relativedelta
 from jinja2 import Environment, FileSystemLoader
 
@@ -34,7 +33,7 @@ DB_USER_RE = re.compile(r'^[a-z_][a-z0-9_]*$')
 class SaasInstance(models.Model):
     _name = 'saas.instance'
     _description = 'SaaS Instance'
-    _inherit = ['mail.thread', 'mail.activity.mixin']
+    _inherit = ['mail.thread', 'mail.activity.mixin', 'portal.mixin']
     _order = 'create_date desc'
 
     # ========== Identity ==========
@@ -336,7 +335,28 @@ class SaasInstance(models.Model):
     extra_config = fields.Text(
         string='Extra Configuration',
         help='Additional odoo.conf directives, one key = value pair per line. '
-             'Lines starting with # are ignored.',
+             'Lines starting with # are ignored. '
+             'Values here override auto-calculated settings (e.g. '
+             'limit_memory_soft, limit_memory_hard, limit_time_real).',
+    )
+    override_docker_cpu = fields.Char(
+        string='Docker CPU Override',
+        groups='saas_core.group_saas_manager',
+        help='Override cpus in docker-compose.yml (e.g. "2.0"). '
+             'Leave empty to use the plan default.',
+    )
+    override_docker_mem = fields.Char(
+        string='Docker Memory Override',
+        groups='saas_core.group_saas_manager',
+        help='Override mem_limit in docker-compose.yml (e.g. "2g", "2500m"). '
+             'Leave empty to use the plan-based default (plan RAM × 1.3).',
+    )
+    override_docker_swap = fields.Char(
+        string='Docker Swap Override',
+        groups='saas_core.group_saas_manager',
+        help='Override memswap_limit in docker-compose.yml (e.g. "3g"). '
+             'Leave empty to use the same value as mem_limit. '
+             'Set to "-1" for unlimited swap.',
     )
 
     # ========== Custom Repos ==========
@@ -372,6 +392,14 @@ class SaasInstance(models.Model):
         string='Cancellation Reason',
         readonly=True,
         help='Details about why and when the instance was cancelled.',
+    )
+    retained_backup_path = fields.Char(
+        string='Retained Backup',
+        readonly=True,
+        groups='saas_core.group_saas_manager',
+        help='Cloud storage path of the most recent backup kept after '
+             'instance deletion. Can be used to restore client data if '
+             'they return. Not visible to the client.',
     )
     company_id = fields.Many2one(
         'res.company',
@@ -440,7 +468,6 @@ class SaasInstance(models.Model):
 
     @api.model_create_multi
     def create(self, vals_list):
-        alphabet = string.ascii_letters + string.digits + '-_.~+='
         for vals in vals_list:
             # Block trial if the client has already used their free trial.
             # Use SELECT ... FOR UPDATE to prevent race conditions where
@@ -459,21 +486,14 @@ class SaasInstance(models.Model):
                           "Only one trial is allowed per client.")
                         % partner.name
                     )
-            # Generate access token for portal security (field added by saas_website)
-            if 'access_token' in self._fields and not vals.get('access_token'):
-                vals['access_token'] = uuid.uuid4().hex
             subdomain = vals.get('subdomain', '')
             if subdomain and not vals.get('db_user'):
                 safe_subdomain = subdomain.replace('-', '_').replace('.', '_')
                 vals['db_user'] = 'saas_%s' % safe_subdomain
             if not vals.get('db_password'):
-                vals['db_password'] = ''.join(
-                    secrets.choice(alphabet) for _ in range(24)
-                )
+                vals['db_password'] = SaasInstance._generate_random_password()
             if not vals.get('admin_password'):
-                vals['admin_password'] = ''.join(
-                    secrets.choice(alphabet) for _ in range(24)
-                )
+                vals['admin_password'] = SaasInstance._generate_random_password()
         records = super().create(vals_list)
         for rec in records:
             if rec.docker_server_id and (not rec.xmlrpc_port or not rec.longpolling_port):
@@ -481,12 +501,7 @@ class SaasInstance(models.Model):
         return records
 
     def write(self, vals):
-        res = super().write(vals)
-        if vals.get('is_trial'):
-            for rec in self:
-                if rec.is_trial and rec.partner_id:
-                    rec._sync_partner_trial()
-        return res
+        return super().write(vals)
 
     def unlink(self):
         """Block deletion of instances that have live infrastructure.
@@ -556,17 +571,30 @@ class SaasInstance(models.Model):
             rec.invoice_count = len(rec._get_all_invoices())
 
     def _get_all_invoices(self):
-        """Return all invoices related to this instance across all sale orders."""
+        """Return all invoices related to this instance across all sale orders.
+
+        Matches sale orders by exact origin patterns to avoid false
+        positives (e.g. instance "app" matching "app-pro" orders).
+        """
         self.ensure_one()
         instance_ref = self.name or self.subdomain
         if not instance_ref:
             return self.env['account.move']
-        sale_orders = self.env['sale.order'].search([
+        # Match all known origin patterns set by this module
+        expected_origins = [
+            instance_ref,
+            _('Renewal: %s') % instance_ref,
+            _('Subscription: %s') % instance_ref,
+            _('Plan upgrade: %s') % instance_ref,
+            _('Data restoration: %s') % instance_ref,
+        ]
+        domain = [
             ('partner_id', '=', self.partner_id.id),
             '|',
-            ('origin', 'ilike', instance_ref),
+            ('origin', 'in', expected_origins),
             ('id', '=', self.sale_order_id.id if self.sale_order_id else 0),
-        ])
+        ]
+        sale_orders = self.env['sale.order'].search(domain)
         if not sale_orders:
             return self.env['account.move']
         return sale_orders.mapped('invoice_ids')
@@ -719,7 +747,8 @@ class SaasInstance(models.Model):
 
     # ========== Private Helpers ==========
 
-    def _generate_random_password(self, length=24):
+    @staticmethod
+    def _generate_random_password(length=24):
         """Generate a cryptographically secure random password."""
         alphabet = string.ascii_letters + string.digits + '-_.~+='
         return ''.join(secrets.choice(alphabet) for _ in range(length))
@@ -790,19 +819,13 @@ class SaasInstance(models.Model):
         template = _JINJA_ENV.get_template(template_name)
         return template.render(context)
 
-    def _get_all_repo_context(self):
-        """Return repo context dicts for docker-compose and addons paths.
+    def _get_all_addons_paths(self):
+        """Return addons paths for odoo.conf from instance and product repos.
 
-        Combines instance-level repos and product-level repos.
+        All repos are cloned into the addons/ dir, already mounted at
+        /mnt/extra-addons — no extra volume mounts needed.
         """
         self.ensure_one()
-        server = self.docker_server_id
-        instance_path = self._get_instance_path()
-
-        # All repos (instance + product) are cloned into addons/ dir,
-        # already mounted at /mnt/extra-addons — no extra volume mounts needed.
-        repos = []
-        version_repos = []
 
         # Instance-level repos
         instance_repos = self.repo_ids.filtered(lambda r: r.state == 'cloned')
@@ -814,7 +837,7 @@ class SaasInstance(models.Model):
             for pr in product.repo_ids:
                 addons_paths.append(pr._get_container_addons_path())
 
-        return repos, version_repos, addons_paths
+        return addons_paths
 
     def _parse_extra_config(self):
         """Parse the extra_config text field into a dict."""
@@ -1300,13 +1323,11 @@ class SaasInstance(models.Model):
         self.db_size = self._format_bytes(db_bytes) if db_bytes else ''
         self.db_size_bytes = db_bytes
 
-        # -- Total storage = disk + db + backup sizes --
-        backup_bytes = sum(
-            (b.size_mb or 0) * 1024 * 1024
-            for b in self.backup_ids
-            if b.state == 'done'
-        )
-        total_bytes = disk_bytes + db_bytes + backup_bytes
+        # -- Total storage = disk + db (server-side only) --
+        # Cloud backups (S3/GCS) are excluded: they live in external
+        # storage, not on the server, and should not count against the
+        # instance's plan storage limit.
+        total_bytes = disk_bytes + db_bytes
         self.total_storage = self._format_bytes(total_bytes) if total_bytes else ''
         self.total_storage_bytes = total_bytes
 
@@ -1345,7 +1366,7 @@ class SaasInstance(models.Model):
         """Render docker-compose.yml and odoo.conf from templates and write them via SSH."""
         self.ensure_one()
         instance_path = self._get_instance_path()
-        repos, version_repos, all_addons_paths = self._get_all_repo_context()
+        all_addons_paths = self._get_all_addons_paths()
 
         # docker-compose.yml
         self._append_log("Writing docker-compose.yml...")
@@ -1355,6 +1376,36 @@ class SaasInstance(models.Model):
         # Only bind to 0.0.0.0 when the proxy is on a different machine
         needs_remote_access = proxy_server and proxy_server != self.docker_server_id
         host_ip = '0.0.0.0' if needs_remote_access else '127.0.0.1'
+        # Compute memory limits from plan RAM
+        plan = self.plan_id
+        ram_limit_str = plan.ram_limit if plan else ''
+        ram_bytes = self._parse_ram_string(ram_limit_str)
+        cpu_limit = plan.cpu_limit if plan else 0
+        workers = plan.workers if plan else 2
+
+        # Odoo memory limits per worker:
+        #   soft = RAM / max(workers, 1) — recycle after current request
+        #   hard = soft * 1.3 — kill worker immediately (last resort)
+        # Docker limit = plan RAM * 1.3 — safety net above Odoo hard limit
+        if ram_bytes and workers:
+            limit_memory_soft = int(ram_bytes / max(workers, 1))
+            limit_memory_hard = int(limit_memory_soft * 1.3)
+            docker_mem_bytes = int(ram_bytes * 1.3)
+        elif ram_bytes:
+            limit_memory_soft = int(ram_bytes * 0.8)
+            limit_memory_hard = int(ram_bytes)
+            docker_mem_bytes = int(ram_bytes * 1.3)
+        else:
+            limit_memory_soft = 2684354560   # 2.5 GB default
+            limit_memory_hard = 3355443200   # ~3.1 GB default
+            docker_mem_bytes = 0             # no Docker limit
+
+        # Per-instance overrides take priority over plan-computed values.
+        auto_mem = '%dm' % (docker_mem_bytes // (1024 * 1024)) if docker_mem_bytes else ''
+        docker_cpu = self.override_docker_cpu.strip() if self.override_docker_cpu else str(cpu_limit) if cpu_limit else ''
+        docker_mem = self.override_docker_mem.strip() if self.override_docker_mem else auto_mem
+        docker_swap = self.override_docker_swap.strip() if self.override_docker_swap else docker_mem
+
         dc_context = {
             'odoo_image': self.odoo_version_id.docker_image,
             'odoo_version': self.odoo_version_id.docker_image_tag,
@@ -1363,10 +1414,9 @@ class SaasInstance(models.Model):
             'xmlrpc_port': self.xmlrpc_port,
             'longpolling_port': self.longpolling_port,
             'network_name': 'net_%s' % self.subdomain,
-            'cpu_limit': self.plan_id.cpu_limit if self.plan_id else 0,
-            'ram_limit': self.plan_id.ram_limit if self.plan_id else '',
-            'repos': repos,
-            'version_repos': version_repos,
+            'docker_cpu': docker_cpu,
+            'docker_mem': docker_mem,
+            'docker_swap': docker_swap,
         }
         dc_content = self._render_template('docker-compose.yml.jinja', dc_context)
         ssh.write_file('%s/docker-compose.yml' % instance_path, dc_content)
@@ -1376,6 +1426,10 @@ class SaasInstance(models.Model):
         self._append_log("Writing odoo.conf...")
         psql_server = self.db_server_id
         db_host = self._get_db_host()
+        extra_config = self._parse_extra_config()
+        # Collect keys the admin has overridden so the template can
+        # skip the auto-generated lines and avoid duplicates.
+        override_keys = set(extra_config.keys()) if extra_config else set()
         conf_context = {
             'master_pass': self.admin_password,
             'db_host': db_host,
@@ -1383,8 +1437,11 @@ class SaasInstance(models.Model):
             'db_user': self.db_user,
             'db_password': self.db_password,
             'proxy_mode': True,
-            'workers': self.plan_id.workers if self.plan_id else 2,
-            'extra_config': self._parse_extra_config(),
+            'workers': workers,
+            'limit_memory_soft': limit_memory_soft,
+            'limit_memory_hard': limit_memory_hard,
+            'extra_config': extra_config,
+            'override_keys': override_keys,
             'repo_addons_paths': all_addons_paths,
         }
         conf_content = self._render_template('odoo.conf.jinja', conf_context)
@@ -1798,6 +1855,12 @@ class SaasInstance(models.Model):
         self._safe_refresh_usage()
         self._send_notification('saas_core.mail_template_saas_deployed')
 
+        # Mark partner trial as used only after the deployment actually
+        # succeeds.  This runs inside the background thread so a failed
+        # deploy does not lock the customer out of retrying their trial.
+        if self.is_trial:
+            self._sync_partner_trial()
+
     # ========== Lifecycle Actions ==========
 
     def action_stop(self):
@@ -2091,17 +2154,74 @@ class SaasInstance(models.Model):
         return True
 
     def _do_delete_instance(self):
-        """Delete instance (runs in background thread)."""
+        """Delete instance (runs in background thread).
+
+        Order of operations:
+        1. Create a final backup (needs container + DB alive)
+        2. Tear down infrastructure (container, files, nginx, DB)
+        3. Upload final backup directly to cancelled_backups/ folder
+        4. Delete ALL client backups from cloud (regular folder)
+        5. Clean up backup records, set state to cancelled
+        """
         self.ensure_one()
         server = self.docker_server_id
         instance_path = self._get_instance_path()
+        Backup = self.env['saas.instance.backup']
 
+        # 1. Create a final backup BEFORE tearing down infrastructure.
+        #    Upload directly to cancelled_backups/ so there is no need
+        #    to move it later — simpler and avoids copy+delete issues.
+        retained_path = False
+        try:
+            self._append_log("Creating final backup before deletion...")
+            now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+            partner = self.partner_id
+            partner_folder = '%s_%s' % (
+                partner.id, Backup._sanitize_name(partner.name),
+            ) if partner else 'no_partner'
+            backup_name = 'final_backup_%s' % now_str
+            # Upload directly into cancelled_backups/ folder
+            object_key = 'cancelled_backups/%s/%s/%s.zip' % (
+                partner_folder, self.subdomain, backup_name,
+            )
+            final_backup = Backup.create({
+                'instance_id': self.id,
+                'name': backup_name,
+                'bucket_path': object_key,
+                'state': 'running',
+            })
+            size_bytes = final_backup._create_and_upload_backup(
+                self, object_key,
+            )
+            final_backup.write({
+                'state': 'done',
+                'size_mb': round(size_bytes / (1024 * 1024), 2),
+            })
+            retained_path = object_key
+            self._append_log(
+                "Final backup uploaded to cancelled folder: %s" % object_key
+            )
+        except Exception:
+            _logger.exception(
+                "Failed to create final backup for %s before deletion",
+                self.subdomain,
+            )
+            self._append_log(
+                "WARNING: Final backup creation failed. "
+                "Proceeding with deletion without a retained backup."
+            )
+
+        # 2. Tear down infrastructure
         with server._get_ssh_connection() as ssh:
-            down_cmd = 'cd %s && docker compose down -v --remove-orphans 2>&1' % shlex.quote(instance_path)
+            down_cmd = (
+                'cd %s && docker compose down -v --remove-orphans 2>&1'
+                % shlex.quote(instance_path)
+            )
             exit_code, stdout, stderr = ssh.execute(down_cmd)
             if exit_code != 0:
                 _logger.warning(
-                    "docker compose down failed for %s: %s", self.subdomain, stderr
+                    "docker compose down failed for %s: %s",
+                    self.subdomain, stderr,
                 )
 
             exit_code, stdout, stderr = ssh.execute(
@@ -2116,7 +2236,6 @@ class SaasInstance(models.Model):
             # Remove Nginx config and SSL certificate
             proxy_server = self.domain_id.proxy_server_id
             if proxy_server and proxy_server != self.docker_server_id:
-                # Nginx is on a separate proxy server
                 with proxy_server._get_ssh_connection() as proxy_ssh:
                     self._remove_nginx(proxy_ssh)
             else:
@@ -2124,12 +2243,17 @@ class SaasInstance(models.Model):
 
         self._drop_postgresql()
 
-        # Delete all backups from cloud storage
-        for backup in self.backup_ids.filtered(
-            lambda b: b.state == 'done' and b.bucket_path
-        ):
-            backup._delete_from_bucket()
-        self.backup_ids.unlink()
+        # 3. Delete ALL client backups from cloud storage (regular folder).
+        #    The final backup is already in cancelled_backups/ so it
+        #    won't be touched.  Re-fetch from DB to avoid stale cache.
+        all_backups = Backup.search([('instance_id', '=', self.id)])
+        for backup in all_backups:
+            if backup.bucket_path and not backup.bucket_path.startswith('cancelled_backups/'):
+                backup._delete_from_bucket()
+
+        # 4. Clean up and finalize
+        all_backups.unlink()
+        self.retained_backup_path = retained_path
 
         self.state = 'cancelled'
         self._append_log("Instance deleted successfully.")
@@ -2626,6 +2750,16 @@ class SaasInstance(models.Model):
         ])
         for instance in expired_instances:
             try:
+                # Clear any pending upgrade that was never paid
+                if instance.pending_plan_id:
+                    instance.write({
+                        'pending_plan_id': False,
+                        'pending_billing_period': False,
+                    })
+                    instance._append_log(
+                        "Pending upgrade to %s cleared (trial expired)."
+                        % instance.pending_plan_id.name
+                    )
                 instance.action_suspend()
                 instance._append_log(
                     "AUTO-SUSPENDED: Client free trial expired on %s. "
@@ -2779,6 +2913,15 @@ class SaasInstance(models.Model):
                         self.subdomain,
                     )
 
+            # Remove excess backups that exceed the new plan's lower limit
+            try:
+                self.env['saas.instance.backup']._cleanup_excess_for_instance(self)
+            except Exception:
+                _logger.exception(
+                    "Failed to cleanup excess backups after downgrade for %s",
+                    self.subdomain,
+                )
+
         plan = self.plan_id
         if not plan:
             return
@@ -2860,11 +3003,15 @@ class SaasInstance(models.Model):
     def _cron_check_overdue_invoices(self):
         """Suspend instances whose invoices are overdue past the grace period.
 
+        Checks both running AND stopped instances so that a customer
+        cannot dodge suspension by stopping their instance before the
+        cron runs.
+
         Also sends a warning email when the invoice first becomes overdue.
         """
         today = fields.Date.today()
         instances = self.search([
-            ('state', '=', 'running'),
+            ('state', 'in', ('running', 'stopped')),
             ('is_trial', '=', False),
             ('sale_order_id', '!=', False),
         ])
@@ -2878,12 +3025,37 @@ class SaasInstance(models.Model):
                     "Dunning check failed for %s", instance.subdomain,
                 )
 
+    # SO origins for optional charges (upgrades the client can back out of).
+    # Unpaid invoices with these origins should NOT trigger suspension.
+    _OPTIONAL_INVOICE_ORIGINS = (
+        'Subscription:',   # trial → paid (client can cancel)
+        'Plan upgrade:',   # paid plan upgrade (client can cancel)
+    )
+
+    def _is_optional_invoice(self, invoice):
+        """Return True if the invoice is for an optional upgrade that
+        the client can back out of without losing their current service."""
+        so_origins = invoice.line_ids.sale_line_ids.order_id.mapped('origin')
+        return any(
+            origin and any(origin.startswith(prefix) for prefix in self._OPTIONAL_INVOICE_ORIGINS)
+            for origin in so_origins
+        )
+
     def _check_dunning(self, today):
         """Check if any linked invoices are overdue and act accordingly.
 
         Searches ALL invoices related to this instance (across all sale
         orders, including renewals) so that unpaid renewal invoices are
         caught even though sale_order_id points to the original order.
+
+        Skips optional upgrade/subscription invoices — the client may
+        have requested an upgrade but decided not to pay. These should
+        not cause suspension of an otherwise active subscription.
+
+        Handles both running and stopped instances:
+        - Running: calls action_suspend() to stop the container via SSH.
+        - Stopped: container is already stopped, so we just mark the
+          state as 'suspended' directly (no SSH needed).
         """
         self.ensure_one()
         if not self.partner_id:
@@ -2896,13 +3068,24 @@ class SaasInstance(models.Model):
 
         overdue_invoices = all_invoices.filtered(
             lambda m: m.move_type == 'out_invoice'
-            and m.payment_state not in ('paid', 'in_payment', 'reversed')
+            and m.payment_state not in ('paid', 'in_payment')
             and m.state == 'posted'
             and m.invoice_date_due
             and m.invoice_date_due < today
         )
         if not overdue_invoices:
             return
+
+        # Exclude optional upgrade invoices — these are charges the
+        # client initiated but can choose not to pay (they keep their
+        # current plan).  Only mandatory invoices (initial subscription,
+        # renewals, data restoration) should trigger suspension.
+        mandatory_overdue = overdue_invoices.filtered(
+            lambda m: not self._is_optional_invoice(m)
+        )
+        if not mandatory_overdue:
+            return
+        overdue_invoices = mandatory_overdue
 
         grace_days = self.plan_id.grace_period_days if self.plan_id else 7
         oldest = min(overdue_invoices, key=lambda m: m.invoice_date_due)
@@ -2911,7 +3094,12 @@ class SaasInstance(models.Model):
 
         if days_overdue > grace_days:
             # Grace period exceeded — suspend
-            self.action_suspend()
+            if self.state == 'running':
+                self.action_suspend()
+            elif self.state == 'stopped':
+                # Container is already stopped — just mark as suspended
+                # so the customer cannot restart without paying.
+                self.state = 'suspended'
             self._append_log(
                 "AUTO-SUSPENDED: Invoice %s overdue by %d days (grace: %d)."
                 % (oldest.name, days_overdue, grace_days)
@@ -3069,20 +3257,31 @@ class SaasInstance(models.Model):
                     self.subdomain,
                 )
 
+    @staticmethod
+    def _to_monthly_equivalent(price, period):
+        """Normalize a period price to its monthly equivalent for comparison."""
+        if period == 'yearly' and price > 0:
+            return price / 12.0
+        return price
+
     def action_request_plan_change(self, new_plan_id, billing_period=None):
         """Request a plan change from the portal.
 
-        UPGRADE (new price > old price):
+        UPGRADE (new effective monthly cost > old effective monthly cost):
           - Calculate remaining value of current plan
           - Charge: new_plan_price - remaining_value (min 0)
           - Applied immediately after payment
           - Billing cycle resets from today
 
-        DOWNGRADE (new price <= old price):
+        DOWNGRADE (new effective monthly cost <= old effective monthly cost):
           - NO refund, NO credit, NO proration
           - Blocked if current DB size >= 75% of target plan's db_size_limit
           - Scheduled for end of current billing cycle
           - Client keeps current (higher) plan until then
+
+        Upgrade vs downgrade is determined by comparing effective monthly
+        costs so that switching periods (monthly ↔ yearly) is classified
+        correctly.
 
         Returns:
           - Invoice record (upgrade, needs payment)
@@ -3090,10 +3289,33 @@ class SaasInstance(models.Model):
           - 'scheduled' (downgrade scheduled)
         """
         self.ensure_one()
+        # Lock the instance row to prevent concurrent plan changes
+        # (two browser tabs submitting at the same time).
+        self.env.cr.execute(
+            "SELECT id FROM saas_instance WHERE id = %s FOR UPDATE NOWAIT",
+            (self.id,),
+        )
+        # Re-read fields after lock to get latest state
+        self.invalidate_recordset()
+
         if self.state not in ('running', 'stopped', 'suspended'):
             raise UserError(
                 _("Can only change plan on running, stopped, or suspended instances.")
             )
+
+        # Block if there's already a pending plan change (prevents
+        # concurrent conflicting requests and double billing).
+        if self.pending_plan_id:
+            raise UserError(_(
+                "A plan change is already pending payment. "
+                "Please complete or cancel the current upgrade before requesting another."
+            ))
+        if self.scheduled_plan_id:
+            raise UserError(_(
+                "A downgrade is already scheduled. "
+                "Please cancel the scheduled downgrade before requesting another plan change."
+            ))
+
         new_plan = self.env['saas.plan'].browse(int(new_plan_id))
         if not new_plan.exists():
             raise UserError(_("Invalid plan."))
@@ -3107,7 +3329,12 @@ class SaasInstance(models.Model):
         old_period = self.billing_period or 'monthly'
         old_price = self.plan_id._get_price_for_period(old_period) if self.plan_id else 0
 
-        if new_price > old_price:
+        # Compare effective monthly costs to correctly classify
+        # cross-period changes (e.g. $10/month vs $100/year = $8.33/month)
+        new_monthly = self._to_monthly_equivalent(new_price, billing_period)
+        old_monthly = self._to_monthly_equivalent(old_price, old_period)
+
+        if new_monthly > old_monthly:
             return self._request_upgrade(new_plan, billing_period, new_price, old_price)
         else:
             return self._request_downgrade(new_plan, billing_period)
@@ -3303,7 +3530,12 @@ class SaasInstance(models.Model):
             ) % plan_name)
 
     def _update_container_resources(self):
-        """Update CPU/RAM limits on a running container via docker update."""
+        """Update CPU/RAM limits on a running container via docker update.
+
+        Respects per-instance overrides (override_docker_cpu,
+        override_docker_mem) so admin changes take effect immediately
+        without a full redeploy.
+        """
         self.ensure_one()
         if not self.plan_id or self.state != 'running':
             return
@@ -3311,17 +3543,23 @@ class SaasInstance(models.Model):
         container_name = self._get_container_name()
         plan = self.plan_id
 
-        # docker update --cpus=X --memory=Y container
-        update_cmd = 'docker update --cpus=%s %s' % (
-            shlex.quote(str(plan.cpu_limit)),
-            shlex.quote(container_name),
-        )
-        if plan.ram_limit:
-            update_cmd = 'docker update --cpus=%s --memory=%s %s' % (
-                shlex.quote(str(plan.cpu_limit)),
-                shlex.quote(plan.ram_limit),
-                shlex.quote(container_name),
-            )
+        # Resolve effective values (override > plan)
+        cpu = self.override_docker_cpu.strip() if self.override_docker_cpu else str(plan.cpu_limit)
+        ram_bytes = self._parse_ram_string(plan.ram_limit)
+        auto_mem = '%dm' % (int(ram_bytes * 1.3) // (1024 * 1024)) if ram_bytes else ''
+        mem = self.override_docker_mem.strip() if self.override_docker_mem else auto_mem
+        swap = self.override_docker_swap.strip() if self.override_docker_swap else mem
+
+        # docker update --cpus=X --memory=Y --memory-swap=Z container
+        parts = ['docker update']
+        if cpu:
+            parts.append('--cpus=%s' % shlex.quote(cpu))
+        if mem:
+            parts.append('--memory=%s' % shlex.quote(mem))
+        if swap:
+            parts.append('--memory-swap=%s' % shlex.quote(swap))
+        parts.append(shlex.quote(container_name))
+        update_cmd = ' '.join(parts)
 
         with self.docker_server_id._get_ssh_connection() as ssh:
             exit_code, stdout, stderr = ssh.execute(update_cmd)
@@ -3329,9 +3567,7 @@ class SaasInstance(models.Model):
                 raise UserError(
                     _("Failed to update container resources:\n%s") % stderr
                 )
-
-        # Also regenerate docker-compose.yml so next restart uses new limits
-        with self.docker_server_id._get_ssh_connection() as ssh:
+            # Also regenerate docker-compose.yml so next restart uses new limits
             self._render_and_write_configs(ssh)
 
         self._append_log(
@@ -3380,10 +3616,96 @@ class SaasInstance(models.Model):
             raise UserError(_("Instance must be running to stop."))
         self.action_stop()
 
+    def _has_overdue_invoices_past_grace(self):
+        """Return True if this instance has invoices overdue past the grace period."""
+        self.ensure_one()
+        if self.is_trial or not self.partner_id:
+            return False
+        all_invoices = self._get_all_invoices()
+        if not all_invoices:
+            return False
+        today = fields.Date.today()
+        overdue = all_invoices.filtered(
+            lambda m: m.move_type == 'out_invoice'
+            and m.payment_state not in ('paid', 'in_payment', 'reversed')
+            and m.state == 'posted'
+            and m.invoice_date_due
+            and m.invoice_date_due < today
+        )
+        if not overdue:
+            return False
+        grace_days = self.plan_id.grace_period_days if self.plan_id else 7
+        oldest_due = min(overdue, key=lambda m: m.invoice_date_due).invoice_date_due
+        return (today - oldest_due).days > grace_days
+
     def action_portal_start(self):
-        """Start from portal — only allowed for stopped instances."""
+        """Start from portal — only allowed for stopped instances with no overdue invoices."""
         self.ensure_one()
         if self.state != 'stopped':
             raise UserError(_("Instance must be stopped to start."))
+        if self._has_overdue_invoices_past_grace():
+            raise UserError(
+                _("Cannot start instance: you have overdue invoices. "
+                  "Please complete your payment first.")
+            )
         self.action_restart()
+
+    def action_reactivate(self, new_plan_id, billing_period='monthly'):
+        """Reactivate a cancelled instance with a new plan.
+
+        Reuses the same record — resets state to draft, assigns the new
+        plan, clears old infrastructure fields, then runs the billing /
+        deploy flow.  The retained_backup_path is preserved so the admin
+        can still restore data if the client requests it.
+        """
+        self.ensure_one()
+        if self.state not in ('cancelled', 'cancelled_by_client'):
+            raise UserError(_("Only cancelled instances can be reactivated."))
+
+        new_plan = self.env['saas.plan'].browse(int(new_plan_id))
+        if not new_plan.exists() or new_plan.is_trial_plan:
+            raise UserError(_("Please select a valid paid plan."))
+
+        if billing_period not in ('monthly', 'yearly'):
+            billing_period = 'monthly'
+        if billing_period == 'yearly' and not new_plan.yearly_price:
+            billing_period = 'monthly'
+
+        # Reset to draft with new plan — clear old infra but keep history.
+        # cancellation_reason and retained_backup_path are intentionally
+        # NOT cleared so the admin can still see the history and restore
+        # the retained backup after reactivation.
+        self.write({
+            'state': 'draft',
+            'plan_id': new_plan.id,
+            'billing_period': billing_period,
+            'is_trial': False,
+            # Clear stale infrastructure (will be re-allocated on deploy)
+            'docker_server_id': False,
+            'db_server_id': False,
+            'xmlrpc_port': False,
+            'longpolling_port': False,
+            'deploy_retry_count': 0,
+            'is_overcommitted': False,
+            # Clear stale billing refs (new SO will be created)
+            'sale_order_id': False,
+            'pending_plan_id': False,
+            'pending_billing_period': False,
+            'scheduled_plan_id': False,
+            'scheduled_billing_period': False,
+            'suspension_warning_sent': False,
+            # retained_backup_path is intentionally NOT cleared
+        })
+
+        self._append_log(
+            "Instance reactivated by client. New plan: %s (%s)."
+            % (new_plan.name, billing_period)
+        )
+        self.message_post(body=_(
+            "Instance reactivated. New plan: %s (%s)."
+        ) % (new_plan.name, billing_period))
+
+        # Run billing flow (creates SO + invoice)
+        self.action_confirm_and_bill()
+        return True
 

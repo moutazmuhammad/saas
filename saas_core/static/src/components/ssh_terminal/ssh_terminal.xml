@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <templates xml:space="preserve">
     <t t-name="saas_core.SshTerminal">
-        <div class="o_ssh_terminal d-flex flex-column h-100">
+        <div class="o_ssh_terminal d-flex flex-column"
+             style="height: calc(100vh - 50px); min-height: 300px;">
             <!-- Toolbar -->
             <div class="d-flex align-items-center gap-2 px-3 py-2"
                  style="background: #1e1e2e; border-bottom: 1px solid #45475a;">
@@ -52,8 +53,8 @@
 
             <!-- Terminal container -->
             <div t-ref="terminalContainer"
-                 class="flex-grow-1"
-                 style="background: #1e1e2e; padding: 4px;"/>
+                 class="flex-grow-1 overflow-hidden"
+                 style="background: #1e1e2e; padding: 4px 4px 0 4px;"/>
         </div>
     </t>
 </templates>

@@ -72,9 +72,16 @@
             </t>
 
             <t t-if="not instances">
-                <div class="alert alert-info" role="alert">
-                    You don't have any instances yet.
-                    <a href="/services" class="alert-link">Browse services</a> to get started.
+                <div class="text-center py-5">
+                    <i class="fa fa-cloud fa-3x text-muted mb-3 d-block"/>
+                    <h5 class="fw-bold">No instances yet</h5>
+                    <p class="text-muted mb-3">
+                        Get started by choosing a service and plan.
+                        Free trials are available!
+                    </p>
+                    <a href="/services" class="btn btn-primary btn-lg">
+                        <i class="fa fa-rocket me-2"/>Browse Services
+                    </a>
                 </div>
             </t>
 
@@ -110,7 +117,7 @@
                                     'text-bg-success' if inst.state == 'running' else
                                     'text-bg-info' if inst.state == 'provisioning' else
                                     'text-bg-warning' if inst.state in ('pending_payment', 'paid', 'pending_provision') else
-                                    'text-bg-danger' if inst.state in ('failed', 'cancelled') else
+                                    'text-bg-danger' if inst.state in ('failed', 'cancelled', 'cancelled_by_client') else
                                     'text-bg-secondary'
                                 }">
                                     <t t-out="dict(inst._fields['state'].selection).get(inst.state, inst.state)"/>
@@ -160,7 +167,7 @@
                                 'text-bg-success' if instance.state == 'running' else
                                 'text-bg-info' if instance.state == 'provisioning' else
                                 'text-bg-warning' if instance.state in ('pending_payment', 'paid', 'pending_provision') else
-                                'text-bg-danger' if instance.state in ('failed', 'cancelled') else
+                                'text-bg-danger' if instance.state in ('failed', 'cancelled', 'cancelled_by_client') else
                                 'text-bg-secondary'
                             }" id="instance-state-badge">
                                 <t t-out="dict(instance._fields['state'].selection).get(instance.state, instance.state)"/>
@@ -196,8 +203,8 @@
                         </div>
                     </div>
 
-                    <!-- Resource Usage (visible when running) -->
-                    <div t-if="instance.state == 'running'" class="card shadow-sm border-0 mb-4">
+                    <!-- Resource Usage (visible when running or stopped — last known data) -->
+                    <div t-if="instance.state in ('running', 'stopped') and instance.usage_last_updated" class="card shadow-sm border-0 mb-4">
                         <div class="card-header bg-white d-flex align-items-center">
                             <h5 class="mb-0 flex-grow-1">Your Usage</h5>
                             <button type="button" class="btn btn-sm btn-outline-secondary"
@@ -259,8 +266,11 @@
                                 </div>
                             </div>
                             <h4 class="fw-bold">Setting up your instance</h4>
-                            <p class="text-muted mb-0">
-                                This usually takes a minute or two. The page will refresh automatically when ready.
+                            <p class="text-muted mb-1">
+                                This usually takes 1-3 minutes. The page will refresh automatically when ready.
+                            </p>
+                            <p class="text-muted mb-0" style="font-size: 0.85rem;">
+                                Please do not close this page. In rare cases, setup may take up to 10 minutes.
                             </p>
                         </div>
                     </div>
@@ -306,7 +316,9 @@
                                                       class="badge text-bg-secondary">Draft</span>
                                             </td>
                                             <td class="text-end">
-                                                <form t-if="inv.state == 'posted' and inv.payment_state not in ('paid', 'in_payment')"
+                                                <t t-set="inv_so_origins" t-value="inv.line_ids.sale_line_ids.order_id.mapped('origin')"/>
+                                                <t t-set="is_non_cancellable" t-value="any(o and (o.startswith('Renewal:') or o.startswith('Data restoration:')) for o in inv_so_origins)"/>
+                                                <form t-if="inv.state == 'posted' and inv.payment_state not in ('paid', 'in_payment') and not is_non_cancellable"
                                                       t-attf-action="/my/instances/#{instance.id}/cancel-invoice/#{inv.id}"
                                                       method="POST" class="d-inline">
                                                     <input type="hidden" name="csrf_token"
@@ -324,7 +336,19 @@
                         </div>
                     </div>
 
-                    <!-- Backups Section (hidden for trial plans) -->
+                    <!-- Backups: trial plan notice -->
+                    <div t-if="instance.plan_id and instance.plan_id.is_trial_plan and instance.state == 'running'"
+                         class="card shadow-sm border-0 mb-4">
+                        <div class="card-body text-center py-4">
+                            <i class="fa fa-cloud-upload fa-2x text-muted mb-2 d-block"/>
+                            <p class="text-muted mb-1">Backups are not available on trial plans.</p>
+                            <p class="text-muted mb-0" style="font-size: 0.85rem;">
+                                Upgrade to a paid plan to enable automatic backups and data protection.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Backups Section -->
                     <div t-if="(instance.state == 'running' or backups) and not (instance.plan_id and instance.plan_id.is_trial_plan)" class="card shadow-sm border-0 mb-4">
                         <t t-set="backup_in_progress" t-value="any(b.state == 'running' for b in backups)"/>
                         <t t-set="done_backup_count" t-value="len([b for b in instance.backup_ids if b.state == 'done'])"/>
@@ -349,8 +373,12 @@
                              class="px-3 py-2 bg-light border-bottom">
                             <small class="text-warning">
                                 <i class="fa fa-exclamation-triangle me-1"/>
-                                You've reached your backup limit (<t t-out="done_backup_count"/>/<t t-out="max_backups"/>).
-                                Delete an old backup to create a new one.
+                                Backup limit reached (<t t-out="done_backup_count"/>/<t t-out="max_backups"/>).
+                                Older backups are replaced automatically.
+                                <a t-if="not instance.is_trial and instance.state in ('running', 'stopped', 'suspended')"
+                                   t-attf-href="/my/instances/#{instance.id}/change-plan"
+                                   class="text-primary">Upgrade your plan</a>
+                                for more backup slots.
                             </small>
                         </div>
                         <div t-if="backups" class="card-body p-0">
@@ -359,7 +387,7 @@
                                     <tr>
                                         <th>Date &amp; Time</th>
                                         <th>Status</th>
-                                        <th class="text-end">Actions</th>
+                                        <th class="text-end"/>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -377,31 +405,14 @@
                                                 <span t-else="" class="badge text-bg-danger">Failed</span>
                                             </td>
                                             <td class="text-end">
-                                                <a t-if="backup.state == 'done'"
-                                                   t-attf-href="/my/instances/#{instance.id}/backup/#{backup.id}/download"
-                                                   target="_blank"
-                                                   class="btn btn-sm btn-outline-primary me-1">
-                                                    <i class="fa fa-download"/>
-                                                </a>
                                                 <form t-if="backup.state == 'done' and instance.state in ('running', 'stopped')"
                                                       t-attf-action="/my/instances/#{instance.id}/backup/#{backup.id}/restore"
                                                       method="POST" class="d-inline">
                                                     <input type="hidden" name="csrf_token"
                                                            t-att-value="request.csrf_token()"/>
-                                                    <button type="submit" class="btn btn-sm btn-outline-warning me-1"
-                                                            title="Restore backup"
+                                                    <button type="submit" class="btn btn-sm btn-outline-warning"
                                                             onclick="return confirm('This will replace your current database and files with this backup. All current data will be lost. Are you sure?')">
-                                                        <i class="fa fa-undo"/>
-                                                    </button>
-                                                </form>
-                                                <form t-if="backup.state in ('done', 'failed')"
-                                                      t-attf-action="/my/instances/#{instance.id}/backup/#{backup.id}/delete"
-                                                      method="POST" class="d-inline">
-                                                    <input type="hidden" name="csrf_token"
-                                                           t-att-value="request.csrf_token()"/>
-                                                    <button type="submit" class="btn btn-sm btn-outline-danger"
-                                                            onclick="return confirm('Are you sure you want to delete this backup?')">
-                                                        <i class="fa fa-trash"/>
+                                                        <i class="fa fa-undo me-1"/>Restore
                                                     </button>
                                                 </form>
                                             </td>
@@ -415,15 +426,26 @@
                         </div>
                     </div>
 
-                    <!-- Auto-refresh when backup is in progress -->
+                    <!-- Auto-refresh when backup is in progress (30s interval, max 20 retries = 10 min) -->
                     <t t-if="backup_in_progress">
                         <script>
-                            setTimeout(function() { location.reload(); }, 10000);
+                            (function() {
+                                var count = parseInt(sessionStorage.getItem('backup_poll_count') || '0');
+                                if (count &lt; 20) {
+                                    sessionStorage.setItem('backup_poll_count', count + 1);
+                                    setTimeout(function() { location.reload(); }, 30000);
+                                } else {
+                                    sessionStorage.removeItem('backup_poll_count');
+                                }
+                            })();
                         </script>
+                    </t>
+                    <t t-if="not backup_in_progress">
+                        <script>sessionStorage.removeItem('backup_poll_count');</script>
                     </t>
 
                     <!-- Pending Upgrade Payment -->
-                    <div t-if="instance.pending_plan_id and has_unpaid_invoice"
+                    <div t-if="instance.pending_plan_id and has_unpaid_invoice and instance.state not in ('cancelled', 'cancelled_by_client')"
                          class="card shadow-sm border-0 mb-4 border-start border-4 border-warning">
                         <div class="card-body text-center py-4">
                             <i class="fa fa-credit-card fa-3x text-warning mb-3 d-block"/>
@@ -440,7 +462,7 @@
                     </div>
 
                     <!-- Scheduled Downgrade -->
-                    <div t-if="instance.scheduled_plan_id"
+                    <div t-if="instance.scheduled_plan_id and instance.state not in ('cancelled', 'cancelled_by_client')"
                          class="card shadow-sm border-0 mb-4 border-start border-4 border-info">
                         <div class="card-body">
                             <h6 class="text-info mb-1">
@@ -503,6 +525,26 @@
                         </div>
                     </div>
 
+                    <!-- Suspended (non-trial) — overdue payment or storage limit -->
+                    <div t-if="not instance.is_trial and instance.state == 'suspended'"
+                         class="card shadow-sm border-0 mb-4 border-start border-4 border-danger">
+                        <div class="card-body text-center py-4">
+                            <i class="fa fa-pause-circle fa-3x text-danger mb-3 d-block"/>
+                            <h5 class="fw-bold">Instance Suspended</h5>
+                            <p class="text-muted mb-3">
+                                Your instance has been suspended, most likely due to an overdue payment
+                                or exceeding your storage limit. Please settle any outstanding invoices
+                                to reactivate your service.
+                            </p>
+                            <t t-if="support_email">
+                                <p class="text-muted mb-0" style="font-size: 0.85rem;">
+                                    Need help? Contact us at
+                                    <a t-attf-href="mailto:#{support_email}"><t t-out="support_email"/></a>
+                                </p>
+                            </t>
+                        </div>
+                    </div>
+
                     <!-- Pending Payment Notice -->
                     <div t-if="instance.state == 'pending_payment' and has_unpaid_invoice" class="card shadow-sm border-0 mb-4">
                         <div class="card-body text-center py-4">
@@ -515,6 +557,58 @@
                                class="btn btn-primary btn-lg">
                                 <i class="fa fa-lock me-2"/>Complete Payment
                             </a>
+                        </div>
+                    </div>
+
+                    <!-- Failed Instance Notice -->
+                    <div t-if="instance.state == 'failed'"
+                         class="card shadow-sm border-0 mb-4 border-start border-4 border-danger">
+                        <div class="card-body">
+                            <h5 class="fw-bold text-danger mb-2">
+                                <i class="fa fa-exclamation-triangle me-2"/>Setup Failed
+                            </h5>
+                            <p class="mb-2">
+                                Something went wrong while setting up your instance.
+                                Our team has been notified and will look into it.
+                            </p>
+                            <p class="mb-2">
+                                This is usually a temporary issue. Your instance will be
+                                retried automatically, or you can contact support for help.
+                            </p>
+                            <t t-if="support_email">
+                                <a t-attf-href="mailto:#{support_email}"
+                                   class="btn btn-outline-primary">
+                                    <i class="fa fa-envelope me-2"/><t t-out="support_email"/>
+                                </a>
+                            </t>
+                        </div>
+                    </div>
+
+                    <!-- Cancelled Instance Notice -->
+                    <div t-if="instance.state in ('cancelled', 'cancelled_by_client')"
+                         class="card shadow-sm border-0 mb-4 border-start border-4 border-danger">
+                        <div class="card-body">
+                            <h5 class="fw-bold text-danger mb-2">
+                                <i class="fa fa-ban me-2"/>Instance Cancelled
+                            </h5>
+                            <p class="mb-2">
+                                This instance has been cancelled and all its data has been removed.
+                            </p>
+                            <p class="mb-2">
+                                You can start a fresh new instance with the same name using the
+                                <strong>"Start New Instance"</strong> button.
+                            </p>
+                            <p class="mb-2">
+                                If you would like to check whether your previous data can still
+                                be restored, please contact our support team.
+                                <strong>Data restoration may incur additional charges.</strong>
+                            </p>
+                            <t t-if="support_email">
+                                <a t-attf-href="mailto:#{support_email}"
+                                   class="btn btn-outline-primary mt-2">
+                                    <i class="fa fa-envelope me-2"/><t t-out="support_email"/>
+                                </a>
+                            </t>
                         </div>
                     </div>
 
@@ -567,6 +661,11 @@
                                t-att-data-instance-id="instance.id">
                                 <i class="fa fa-play me-2 text-success"/>Start
                             </a>
+                            <a t-if="instance.state in ('cancelled', 'cancelled_by_client') and instance.saas_product_id"
+                               t-attf-href="/my/instances/#{instance.id}/reactivate"
+                               class="list-group-item list-group-item-action list-group-item-success">
+                                <i class="fa fa-plus-circle me-2"/>Start New Instance
+                            </a>
                         </div>
                     </div>
 
@@ -607,14 +706,21 @@
 
             </div>
 
-            <!-- Auto-polling: reload page when state changes -->
+            <!-- Auto-polling: reload page when state changes (stops after 10 min) -->
             <t t-if="instance.state in ('provisioning', 'pending_payment', 'paid') or instance.pending_plan_id">
                 <script>
                     (function() {
                         var instanceId = <t t-out="instance.id"/>;
                         var currentState = '<t t-out="instance.state"/>';
                         var hadPending = <t t-out="'true' if instance.pending_plan_id else 'false'"/>;
+                        var pollCount = 0;
+                        var maxPolls = 200; // ~10 min at 3s intervals
                         var interval = setInterval(function() {
+                            pollCount++;
+                            if (pollCount > maxPolls) {
+                                clearInterval(interval);
+                                return;
+                            }
                             fetch('/my/instances/' + instanceId + '/status', {
                                 method: 'POST',
                                 headers: {'Content-Type': 'application/json'},
@@ -623,7 +729,6 @@
                             .then(function(r) { return r.json(); })
                             .then(function(data) {
                                 var result = data.result || {};
-                                // Reload if state changed or pending upgrade was applied
                                 if (result.state !== currentState || (hadPending &amp;&amp; !result.pending_plan_id)) {
                                     clearInterval(interval);
                                     location.reload();
@@ -843,6 +948,174 @@
                     <div class="text-center text-muted py-5">
                         <p class="lead">
                             No paid plans available at the moment. Please check back later.
+                        </p>
+                    </div>
+                </t>
+
+            </div>
+        </t>
+    </template>
+
+    <!-- ============================================================ -->
+    <!--  Reactivate: /my/instances/<id>/reactivate                    -->
+    <!-- ============================================================ -->
+
+    <template id="portal_instance_reactivate" name="Reactivate Cancelled Instance">
+        <t t-call="portal.portal_layout">
+
+            <div class="container py-4">
+
+                <!-- Back link -->
+                <a t-attf-href="/my/instances/#{instance.id}" class="btn btn-outline-secondary btn-sm mb-4">
+                    <i class="fa fa-arrow-left me-1"/> Back to Instance
+                </a>
+
+                <!-- Header -->
+                <div class="text-center mb-4">
+                    <h2 class="fw-bold">Reactivate Instance</h2>
+                    <p class="text-muted">
+                        Choose a plan to reactivate
+                        <strong t-out="instance.name or instance.subdomain"/>.
+                        Your instance will start fresh with a new database.
+                    </p>
+                    <div class="alert alert-info d-inline-block">
+                        <i class="fa fa-info-circle me-1"/>
+                        Need your previous data restored? Contact support
+                        <t t-if="support_email">
+                            at <a t-attf-href="mailto:#{support_email}"><t t-out="support_email"/></a>
+                        </t>
+                        — data restoration may incur additional charges.
+                    </div>
+                </div>
+
+                <!-- Error -->
+                <div t-if="error" class="alert alert-danger text-center" role="alert">
+                    <t t-out="error"/>
+                </div>
+
+                <!-- Monthly / Yearly Toggle -->
+                <t t-set="has_yearly" t-value="any(p.yearly_price for p in plans)"/>
+                <div t-if="has_yearly" class="text-center mb-4">
+                    <div class="btn-group" role="group" id="billing-toggle">
+                        <button type="button"
+                                class="btn btn-primary active"
+                                data-period="monthly"
+                                onclick="document.querySelectorAll('.price-monthly').forEach(e => e.style.display='');
+                                         document.querySelectorAll('.price-yearly').forEach(e => e.style.display='none');
+                                         document.querySelectorAll('[name=billing_period]').forEach(e => e.value='monthly');
+                                         this.classList.add('active'); this.classList.remove('btn-outline-primary'); this.classList.add('btn-primary');
+                                         this.nextElementSibling.classList.remove('active','btn-primary'); this.nextElementSibling.classList.add('btn-outline-primary');">
+                            Monthly
+                        </button>
+                        <button type="button"
+                                class="btn btn-outline-primary"
+                                data-period="yearly"
+                                onclick="document.querySelectorAll('.price-monthly').forEach(e => e.style.display='none');
+                                         document.querySelectorAll('.price-yearly').forEach(e => e.style.display='');
+                                         document.querySelectorAll('[name=billing_period]').forEach(e => e.value='yearly');
+                                         this.classList.add('active'); this.classList.remove('btn-outline-primary'); this.classList.add('btn-primary');
+                                         this.previousElementSibling.classList.remove('active','btn-primary'); this.previousElementSibling.classList.add('btn-outline-primary');">
+                            Yearly
+                            <span class="badge bg-success ms-1">Save more</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Plans Grid -->
+                <div class="row justify-content-center g-4">
+                    <t t-foreach="plans" t-as="plan">
+                        <div class="col-lg-4 col-md-6">
+                            <div class="card h-100 shadow-sm border-0">
+                                <div class="card-header bg-primary text-white text-center py-3">
+                                    <h4 class="mb-0 fw-bold" t-out="plan.name"/>
+                                </div>
+                                <div class="card-body d-flex flex-column px-4 py-4">
+
+                                    <!-- Monthly Price -->
+                                    <div class="text-center mb-4 price-monthly">
+                                        <span class="display-6 fw-bold">
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                            <t t-out="int(plan.price) if plan.price == int(plan.price) else '%.2f' % plan.price"/>
+                                        </span>
+                                        <span class="text-muted">/ mo</span>
+                                    </div>
+
+                                    <!-- Yearly Price (hidden by default) -->
+                                    <div class="text-center mb-4 price-yearly" style="display: none;">
+                                        <t t-if="plan.yearly_price">
+                                            <span class="display-6 fw-bold">
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.yearly_price) if plan.yearly_price == int(plan.yearly_price) else '%.2f' % plan.yearly_price"/>
+                                            </span>
+                                            <span class="text-muted">/ yr</span>
+                                            <div class="mt-1">
+                                                <span class="text-muted text-decoration-line-through" style="font-size: 0.9rem;">
+                                                    <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="int(plan.price * 12)"/>
+                                                </span>
+                                                <span t-if="plan.yearly_discount_pct" class="badge bg-success ms-1">
+                                                    Save <t t-out="int(plan.yearly_discount_pct)"/>%
+                                                </span>
+                                            </div>
+                                        </t>
+                                        <t t-else="">
+                                            <span class="display-6 fw-bold">
+                                                <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/>
+                                                <t t-out="int(plan.price * 12)"/>
+                                            </span>
+                                            <span class="text-muted">/ yr</span>
+                                        </t>
+                                    </div>
+
+                                    <!-- Features -->
+                                    <ul class="list-unstyled mb-4 flex-grow-1">
+                                        <li class="mb-2">
+                                            <i class="fa fa-microchip text-primary me-2"/>
+                                            <strong t-out="plan.cpu_limit"/> CPU
+                                            <t t-if="plan.cpu_limit == 1"> Core</t>
+                                            <t t-else=""> Cores</t>
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-memory text-primary me-2"/>
+                                            <t t-out="plan.ram_limit.upper() if plan.ram_limit else 'N/A'"/> RAM
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-hdd-o text-primary me-2"/>
+                                            <t t-out="int(plan.storage_limit)"/> GB Storage
+                                        </li>
+                                        <li class="mb-2">
+                                            <i class="fa fa-cloud-download text-primary me-2"/>
+                                            <t t-out="plan.max_backups"/> Daily Backups
+                                        </li>
+                                        <li t-if="plan.recommended_users" class="mb-2">
+                                            <i class="fa fa-users text-primary me-2"/>
+                                            Up to <t t-out="plan.recommended_users"/> users
+                                        </li>
+                                    </ul>
+
+                                    <!-- Reactivate Button -->
+                                    <form t-attf-action="/my/instances/#{instance.id}/do-reactivate"
+                                          method="POST">
+                                        <input type="hidden" name="csrf_token"
+                                               t-att-value="request.csrf_token()"/>
+                                        <input type="hidden" name="plan_id"
+                                               t-att-value="plan.id"/>
+                                        <input type="hidden" name="billing_period"
+                                               value="monthly"/>
+                                        <button type="submit"
+                                                class="btn btn-success btn-lg w-100">
+                                            <i class="fa fa-check me-1"/>Reactivate
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </t>
+                </div>
+
+                <t t-if="not plans">
+                    <div class="text-center text-muted py-5">
+                        <p class="lead">
+                            No plans available at the moment. Please check back later.
                         </p>
                     </div>
                 </t>
@@ -1177,7 +1450,14 @@
                                 </t>
                                 <t t-else="">
                                     <div class="alert alert-warning">
-                                        Payment is not available. Please contact support.
+                                        Payment is not available.
+                                        <t t-if="support_email">
+                                            Please contact us at
+                                            <a t-attf-href="mailto:#{support_email}"><t t-out="support_email"/></a>.
+                                        </t>
+                                        <t t-else="">
+                                            Please contact support.
+                                        </t>
                                     </div>
                                 </t>
                             </div>

@@ -1,11 +1,10 @@
-import re
 from datetime import timedelta
 
 from odoo import http, fields, _
 from odoo.exceptions import UserError, ValidationError
 from odoo.http import request
 
-SUBDOMAIN_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
+from odoo.addons.saas_core.models.saas_instance import SUBDOMAIN_RE
 
 # States that represent "alive" instances (block subdomain reuse)
 _ACTIVE_STATES = (
@@ -160,10 +159,17 @@ class SaasWebsite(http.Controller):
         domain = request.env['saas.based.domain'].sudo().browse(domain_id)
         version = product.odoo_version_id
         if not domain.exists() or not version:
+            support_email = request.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.support_email', ''
+            )
+            support_msg = (
+                _(" Please contact us at %s.") % support_email
+                if support_email else _(" Please contact support.")
+            )
             return self.service_configure(
                 product_id, plan_id,
                 error=_("Please select a valid domain.") if not domain.exists()
-                       else _("No Odoo version configured for this service. Please contact support."),
+                       else _("No Odoo version configured for this service.") + support_msg,
                 **post,
             )
 
@@ -204,11 +210,17 @@ class SaasWebsite(http.Controller):
             [('is_db_server', '=', True)], limit=1,
         )
         if not docker_servers or not db_servers:
+            support_email = request.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.support_email', ''
+            )
+            support_msg = (
+                _("Please contact us at %s.") % support_email
+                if support_email else _("Please contact support.")
+            )
             return self.service_configure(
                 product_id, plan_id,
                 error=_("Service is temporarily unavailable. "
-                        "No infrastructure servers are configured. "
-                        "Please contact support."),
+                        "No infrastructure servers are configured. ") + support_msg,
                 **post,
             )
 
@@ -227,13 +239,20 @@ class SaasWebsite(http.Controller):
                 vals['is_trial'] = True
 
             instance = request.env['saas.instance'].sudo().create(vals)
-            instance._auto_assign_infrastructure()
+
+            # Server allocation is handled by _allocate_servers() inside
+            # action_deploy(), which enforces capacity limits
+            # (max_instances, max_cpu_cores, max_ram_gb) and falls back
+            # to overcommit servers only when explicitly allowed from
+            # the backend.  Do NOT pre-assign servers here.
 
             if is_trial:
-                # Trial: skip billing, deploy immediately
+                # Trial: skip billing, deploy immediately.
+                # The partner's trial flag (saas_trial_used) is set inside
+                # _do_deploy() only after the deployment actually succeeds,
+                # so that a failed deploy does not permanently lock the
+                # customer out of their trial.
                 instance.action_deploy()
-                # Mark trial as used only after successful deploy
-                instance._sync_partner_trial()
                 return request.redirect('/my/instances/%s?access_token=%s' % (
                     instance.id, instance.access_token,
                 ))

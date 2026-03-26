@@ -46,6 +46,30 @@
                         </setting>
                     </block>
 
+                    <!-- ==================== Support ==================== -->
+                    <block title="Support" name="saas_support_container">
+                        <setting id="saas_support_email_setting"
+                                 string="Support Email"
+                                 help="Email shown to clients in notifications and portal pages when they need to contact support.">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_support_email" string="Email" class="col-3 col-lg-3 o_light_label"/>
+                                    <field name="saas_support_email" class="col-4" placeholder="support@example.com"/>
+                                </div>
+                            </div>
+                        </setting>
+                        <setting id="saas_data_restoration_fee_setting"
+                                 string="Data Restoration Fee"
+                                 help="Fee charged when restoring data from a retained backup to a client's new instance. An invoice is generated automatically.">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_data_restoration_fee" string="Fee" class="col-3 col-lg-3 o_light_label"/>
+                                    <field name="saas_data_restoration_fee" class="col-2"/>
+                                </div>
+                            </div>
+                        </setting>
+                    </block>
+
                     <!-- ==================== Billing ==================== -->
                     <block title="Billing" name="saas_billing_container">
                         <setting id="saas_extra_storage_price_per_gb_setting"

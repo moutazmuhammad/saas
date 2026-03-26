@@ -42,6 +42,23 @@ class ResConfigSettings(models.TransientModel):
              'Set to 0 to suspend instances instead of charging.',
     )
 
+    # ========== Support ==========
+    saas_support_email = fields.Char(
+        string='Support Email',
+        config_parameter='saas_master.support_email',
+        help='Support email address shown to clients in email notifications '
+             'and portal pages when they need to contact support.',
+    )
+    saas_data_restoration_fee = fields.Float(
+        string='Data Restoration Fee',
+        config_parameter='saas_master.data_restoration_fee',
+        default=0.0,
+        help='Fee charged to clients when restoring data from a retained '
+             'backup of a cancelled instance. An invoice is created '
+             'automatically when the admin performs the restoration. '
+             'Set to 0 for no charge.',
+    )
+
     # ========== Rate Limiting ==========
     saas_max_instances_per_user = fields.Integer(
         string='Max Instances Per User',

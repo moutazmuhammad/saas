@@ -261,6 +261,46 @@ class SaasInstanceBackup(models.Model):
         except Exception as e:
             _logger.warning("Failed to delete backup object %s: %s", self.bucket_path, e)
 
+    def _move_to_cancelled_folder(self):
+        """Move this backup's cloud object into the cancelled_backups/ prefix.
+
+        Returns the new object key, or False on failure.
+        Used when an instance is deleted to keep one retained backup in
+        a separate folder for easy identification and lifecycle management.
+        """
+        self.ensure_one()
+        if not self.bucket_path:
+            return False
+        new_key = 'cancelled_backups/%s' % self.bucket_path
+        try:
+            cfg = self._get_backup_config()
+            if cfg['provider'] == 'gcs':
+                client, bucket_name = self._get_gcs_client()
+                bucket = client.bucket(bucket_name)
+                src_blob = bucket.blob(self.bucket_path)
+                bucket.copy_blob(src_blob, bucket, new_key)
+                src_blob.delete()
+            else:
+                client, bucket_name = self._get_s3_client()
+                client.copy_object(
+                    Bucket=bucket_name,
+                    CopySource={'Bucket': bucket_name, 'Key': self.bucket_path},
+                    Key=new_key,
+                )
+                client.delete_object(Bucket=bucket_name, Key=self.bucket_path)
+            _logger.info(
+                "Moved backup %s → %s in bucket %s",
+                self.bucket_path, new_key, bucket_name,
+            )
+            return new_key
+        except Exception as e:
+            _logger.warning(
+                "Failed to move backup %s to cancelled folder: %s",
+                self.bucket_path, e,
+            )
+            # Fallback: keep the original path rather than losing track
+            return self.bucket_path
+
     # ------------------------------------------------------------------
     # Backup creation — zip on server, upload directly to bucket
     # ------------------------------------------------------------------
@@ -532,17 +572,15 @@ fi
             except Exception as e:
                 _logger.error("Failed to cleanup stale backup %s: %s", backup.name, e)
 
-        # Use read_group to find instances that have excess backups
+        # Use read_group to find instances that have completed backups
         data = self._read_group(
             [('state', '=', 'done')],
             ['instance_id'],
             ['__count'],
         )
-        # Only process instances that might have excess backups
         for instance, count in data:
-            if count <= DEFAULT_MAX_BACKUPS:
-                continue
-            # Get the actual limit from the plan
+            # Get the actual limit from the plan (may be lower than
+            # DEFAULT_MAX_BACKUPS after a downgrade)
             max_backups = DEFAULT_MAX_BACKUPS
             if instance.plan_id and instance.plan_id.max_backups > 0:
                 max_backups = instance.plan_id.max_backups
@@ -560,6 +598,30 @@ fi
                     backup.unlink()
                 except Exception as e:
                     _logger.error("Failed to cleanup backup %s: %s", backup.name, e)
+
+    def _cleanup_excess_for_instance(self, instance):
+        """Remove excess backups for a single instance based on its plan limit.
+
+        Called immediately after a plan downgrade to enforce the new
+        lower backup limit without waiting for the daily cron.
+        """
+        max_backups = DEFAULT_MAX_BACKUPS
+        if instance.plan_id and instance.plan_id.max_backups > 0:
+            max_backups = instance.plan_id.max_backups
+        backups = self.search([
+            ('instance_id', '=', instance.id),
+            ('state', '=', 'done'),
+        ], order='create_date desc')
+        if len(backups) <= max_backups:
+            return
+        excess = backups[max_backups:]
+        for backup in excess:
+            try:
+                if backup.bucket_path:
+                    backup._delete_from_bucket()
+                backup.unlink()
+            except Exception as e:
+                _logger.error("Failed to cleanup backup %s: %s", backup.name, e)
 
     @staticmethod
     def _sanitize_name(name):
