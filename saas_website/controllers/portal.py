@@ -101,10 +101,14 @@ class SaasPortal(CustomerPortal):
             lambda b: b.state in ('done', 'running')
         ).sorted('create_date', reverse=True)[:10]
 
+        # Fetch all invoices across all sale orders (initial + renewals + upgrades)
+        invoices = instance_sudo._get_all_invoices().sorted('create_date', reverse=True)
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance_sudo,
             'backups': backups,
+            'invoices': invoices,
             'page_name': 'saas_instance_detail',
         })
         return request.render('saas_website.portal_instance_detail', values)
@@ -202,7 +206,7 @@ class SaasPortal(CustomerPortal):
         # Fetch paid plans for the same service
         domain = [('is_trial_plan', '=', False)]
         if instance_sudo.saas_product_id:
-            domain.append(('saas_product_id', '=', instance_sudo.saas_product_id.id))
+            domain.append(('saas_product_ids', 'in', instance_sudo.saas_product_id.id))
         plans = request.env['saas.plan'].sudo().search(domain, order='sequence, price')
 
         values = self._prepare_portal_layout_values()
@@ -360,14 +364,45 @@ class SaasPortal(CustomerPortal):
             ('id', '!=', instance_sudo.plan_id.id),
         ]
         if instance_sudo.saas_product_id:
-            domain.append(('saas_product_id', '=', instance_sudo.saas_product_id.id))
+            domain.append(('saas_product_ids', 'in', instance_sudo.saas_product_id.id))
         plans = request.env['saas.plan'].sudo().search(domain, order='sequence, price')
+
+        # Compute proration info for each upgrade plan (both monthly and yearly)
+        today = fields.Date.today()
+        old_period = instance_sudo.billing_period or 'monthly'
+        old_price = instance_sudo.plan_id._get_price_for_period(old_period) if instance_sudo.plan_id else 0
+        # Exclude today (already consumed) from remaining days
+        remaining_value = 0.0
+        remaining_days = 0
+        if instance_sudo.next_invoice_date and instance_sudo.last_invoice_date:
+            total_days = (instance_sudo.next_invoice_date - instance_sudo.last_invoice_date).days
+            remaining_days = (instance_sudo.next_invoice_date - today).days - 1
+            if total_days > 0 and remaining_days > 0:
+                remaining_value = (old_price / total_days) * remaining_days
+
+        # Build dict: plan_id -> {'monthly': {...}, 'yearly': {...}}
+        proration_info = {}
+        for plan in plans:
+            plan_proration = {}
+            for period in ('monthly', 'yearly'):
+                new_price = plan._get_price_for_period(period)
+                if new_price > old_price and remaining_value > 0:
+                    final_charge = max(new_price - remaining_value, 0)
+                    plan_proration[period] = {
+                        'credit': remaining_value,
+                        'remaining_days': remaining_days,
+                        'new_price': new_price,
+                        'final_charge': final_charge,
+                    }
+            if plan_proration:
+                proration_info[plan.id] = plan_proration
 
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance_sudo,
             'plans': plans,
             'current_plan': instance_sudo.plan_id,
+            'proration_info': proration_info,
             'page_name': 'saas_instance_change_plan',
             'error': kw.get('error'),
         })
@@ -461,17 +496,29 @@ class SaasPortal(CustomerPortal):
 
         # Clear pending upgrade if this was the related invoice
         if instance_sudo.pending_plan_id:
+            instance_sudo._append_log("Pending upgrade cancelled by client.")
+            from markupsafe import Markup
+            instance_sudo.message_post(body=Markup(
+                "<b>Client cancelled plan upgrade payment</b><br/>"
+                "Was upgrading to: <b>%s</b> (%s)<br/>"
+                "Invoice: %s — %s %s<br/>"
+                "Current plan: %s"
+            ) % (
+                instance_sudo.pending_plan_id.name,
+                instance_sudo.pending_billing_period or instance_sudo.billing_period or 'monthly',
+                invoice.name,
+                invoice.currency_id.symbol if invoice.currency_id else '',
+                '%.2f' % invoice.amount_total,
+                instance_sudo.plan_id.name if instance_sudo.plan_id else 'N/A',
+            ))
+            # Send notification before clearing pending plan so template can access it
+            instance_sudo._send_notification(
+                'saas_core.mail_template_saas_payment_cancelled',
+            )
             instance_sudo.write({
                 'pending_plan_id': False,
                 'pending_billing_period': False,
             })
-            instance_sudo._append_log("Pending upgrade cancelled by client.")
-            instance_sudo.message_post(body=_(
-                "Pending plan change cancelled. Invoice %s voided."
-            ) % invoice.name)
-            instance_sudo._send_notification(
-                'saas_core.mail_template_saas_payment_cancelled',
-            )
             return request.redirect('/my/instances/%s' % instance_id)
 
         # If instance was never deployed (pending_payment or draft),

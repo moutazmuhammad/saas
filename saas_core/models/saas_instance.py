@@ -478,8 +478,6 @@ class SaasInstance(models.Model):
         for rec in records:
             if rec.docker_server_id and (not rec.xmlrpc_port or not rec.longpolling_port):
                 rec._auto_assign_ports()
-            if rec.is_trial and rec.partner_id:
-                rec._sync_partner_trial()
         return records
 
     def write(self, vals):
@@ -3123,11 +3121,12 @@ class SaasInstance(models.Model):
         period_label = 'Yearly' if billing_period == 'yearly' else 'Monthly'
 
         # Calculate remaining value of current subscription
+        # Exclude today (already consumed) from remaining days
         remaining_value = 0.0
         remaining_info = ''
         if self.next_invoice_date and self.last_invoice_date:
             total_days = (self.next_invoice_date - self.last_invoice_date).days
-            remaining_days = (self.next_invoice_date - today).days
+            remaining_days = (self.next_invoice_date - today).days - 1
             if total_days > 0 and remaining_days > 0:
                 remaining_value = (old_price / total_days) * remaining_days
                 remaining_info = (

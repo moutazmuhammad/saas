@@ -23,7 +23,7 @@ Key capabilities:
 """,
     'author': 'SaaS Platform',
     'license': 'LGPL-3',
-    'depends': ['base', 'mail', 'sale', 'account'],
+    'depends': ['base', 'mail', 'sale', 'account', 'phone_validation'],
     'external_dependencies': {
         'python': ['paramiko', 'jinja2', 'boto3', 'google-cloud-storage'],
     },

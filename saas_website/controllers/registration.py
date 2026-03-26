@@ -82,6 +82,40 @@ class SaasRegistration(http.Controller):
                 "Please log in instead."
             )
 
+        # Check email uniqueness across partners
+        existing_partner = request.env['res.partner'].sudo().search([
+            ('email', '=ilike', email),
+        ], limit=1)
+        if existing_partner:
+            return _(
+                "This email address is already registered. "
+                "Please log in or use a different email."
+            )
+
+        # Check phone uniqueness
+        existing_phone = request.env['res.partner'].sudo().search([
+            ('phone', '=', phone),
+        ], limit=1)
+        if existing_phone:
+            return _("This phone number is already registered to another account.")
+
+        # Validate phone matches the selected country
+        if country_id:
+            country = request.env['res.country'].sudo().browse(int(country_id))
+            if country.exists():
+                try:
+                    from odoo.addons.phone_validation.tools.phone_validation import phone_format
+                    phone_format(
+                        phone, country.code, country.phone_code,
+                        force_format='E164', raise_exception=True,
+                    )
+                except Exception:
+                    return _(
+                        "The phone number '%s' is not valid for %s. "
+                        "Please enter a number that matches your country.",
+                        phone, country.name,
+                    )
+
         return None
 
     def _build_redirect_url(self, post):

@@ -22,12 +22,13 @@ class SaasWebsite(http.Controller):
 
     def _get_trial_info(self):
         """Return (trial_available, trial_days) for the current user."""
-        if request.env.user._is_public():
-            return False, 0
-        partner = request.env.user.partner_id.sudo()
         trial_days = int(request.env['ir.config_parameter'].sudo().get_param(
             'saas_master.trial_days', '14',
         ))
+        if request.env.user._is_public():
+            # Show trial to public users so they know it's available
+            return trial_days > 0, trial_days
+        partner = request.env.user.partner_id.sudo()
         trial_available = not partner.saas_trial_used and trial_days > 0
         return trial_available, trial_days
 
@@ -83,7 +84,7 @@ class SaasWebsite(http.Controller):
         plan = request.env['saas.plan'].sudo().browse(plan_id)
         if (not product.exists() or not product.is_published
                 or not plan.exists()
-                or plan.saas_product_id.id != product.id):
+                or product not in plan.saas_product_ids):
             return request.redirect('/services')
 
         is_trial = kw.get('trial') == '1'
@@ -114,7 +115,7 @@ class SaasWebsite(http.Controller):
         plan = request.env['saas.plan'].sudo().browse(plan_id)
         if (not product.exists() or not product.is_published
                 or not plan.exists()
-                or plan.saas_product_id.id != product.id):
+                or product not in plan.saas_product_ids):
             return request.redirect('/services')
 
         # --- Trial / paid plan validation ---
@@ -212,6 +213,7 @@ class SaasWebsite(http.Controller):
             )
 
         # --- Create instance ---
+        instance = None
         try:
             vals = {
                 'subdomain': subdomain,
@@ -230,6 +232,8 @@ class SaasWebsite(http.Controller):
             if is_trial:
                 # Trial: skip billing, deploy immediately
                 instance.action_deploy()
+                # Mark trial as used only after successful deploy
+                instance._sync_partner_trial()
                 return request.redirect('/my/instances/%s?access_token=%s' % (
                     instance.id, instance.access_token,
                 ))
@@ -245,6 +249,9 @@ class SaasWebsite(http.Controller):
             ))
 
         except (UserError, ValidationError) as e:
+            # Clean up the draft instance so the user can retry
+            if instance and instance.exists() and instance.state == 'draft':
+                instance.unlink()
             return self.service_configure(
                 product_id, plan_id,
                 error=str(e),

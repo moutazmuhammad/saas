@@ -140,9 +140,9 @@
     <template id="portal_instance_detail" name="SaaS Instance Detail">
         <t t-call="portal.portal_layout">
 
-            <t t-set="has_unpaid_invoice" t-value="instance.sale_order_id and any(
+            <t t-set="has_unpaid_invoice" t-value="invoices and any(
                 inv.state == 'posted' and inv.payment_state not in ('paid', 'in_payment') and inv.amount_residual > 0
-                for inv in instance.sale_order_id.invoice_ids
+                for inv in invoices
             )"/>
 
             <div class="row mt-3">
@@ -266,7 +266,7 @@
                     </div>
 
                     <!-- Billing Section -->
-                    <div t-if="instance.sale_order_id" class="card shadow-sm border-0 mb-4">
+                    <div t-if="invoices" class="card shadow-sm border-0 mb-4">
                         <div class="card-header bg-white">
                             <h5 class="mb-0">Billing</h5>
                         </div>
@@ -282,9 +282,11 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <t t-foreach="instance.sale_order_id.invoice_ids.sorted('create_date', reverse=True)" t-as="inv">
+                                    <t t-foreach="invoices" t-as="inv">
                                         <tr>
-                                            <td t-out="inv.name"/>
+                                            <td>
+                                                <a t-att-href="inv.get_portal_url()" t-out="inv.name"/>
+                                            </td>
                                             <td>
                                                 <span t-field="inv.invoice_date"
                                                       t-options='{"widget": "date"}'/>
@@ -982,6 +984,7 @@
 
                                     <!-- Upgrade / Downgrade indicator + button -->
                                     <t t-set="is_upgrade" t-value="plan.price > current_plan.price"/>
+                                    <t t-set="plan_proration" t-value="proration_info.get(plan.id, {})"/>
 
                                     <div class="text-center mb-2">
                                         <span t-if="is_upgrade" class="badge bg-primary">
@@ -990,6 +993,46 @@
                                         <span t-else="" class="badge bg-info text-dark">
                                             <i class="fa fa-arrow-down me-1"/>Downgrade — at end of billing cycle
                                         </span>
+                                    </div>
+
+                                    <!-- Proration details for upgrades (monthly) -->
+                                    <t t-set="proration_monthly" t-value="plan_proration.get('monthly')"/>
+                                    <div t-if="is_upgrade and proration_monthly"
+                                         class="alert alert-success py-2 px-3 mb-3 price-monthly" style="font-size: 0.85rem;">
+                                        <div class="mb-1">
+                                            <i class="fa fa-tag me-1"/>
+                                            <strong>Credit applied:</strong>
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="'%.2f' % proration_monthly['credit']"/>
+                                            for <t t-out="proration_monthly['remaining_days']"/> remaining days on your current plan
+                                        </div>
+                                        <div>
+                                            <i class="fa fa-calculator me-1"/>
+                                            <strong>You pay today:</strong>
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="'%.2f' % proration_monthly['final_charge']"/>
+                                            <span class="text-muted">
+                                                (instead of <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="'%.2f' % proration_monthly['new_price']"/>)
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Proration details for upgrades (yearly) -->
+                                    <t t-set="proration_yearly" t-value="plan_proration.get('yearly')"/>
+                                    <div t-if="is_upgrade and proration_yearly"
+                                         class="alert alert-success py-2 px-3 mb-3 price-yearly" style="display: none; font-size: 0.85rem;">
+                                        <div class="mb-1">
+                                            <i class="fa fa-tag me-1"/>
+                                            <strong>Credit applied:</strong>
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="'%.2f' % proration_yearly['credit']"/>
+                                            for <t t-out="proration_yearly['remaining_days']"/> remaining days on your current plan
+                                        </div>
+                                        <div>
+                                            <i class="fa fa-calculator me-1"/>
+                                            <strong>You pay today:</strong>
+                                            <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="'%.2f' % proration_yearly['final_charge']"/>
+                                            <span class="text-muted">
+                                                (instead of <t t-if="plan.currency_id" t-out="plan.currency_id.symbol"/><t t-out="'%.2f' % proration_yearly['new_price']"/>)
+                                            </span>
+                                        </div>
                                     </div>
 
                                     <form t-attf-action="/my/instances/#{instance.id}/do-change-plan"
