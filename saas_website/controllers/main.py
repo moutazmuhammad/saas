@@ -77,8 +77,16 @@ class SaasWebsite(http.Controller):
     # ==================================================================
 
     @http.route('/services/<int:product_id>/plans/<int:plan_id>/configure',
-                type='http', auth='user', website=True)
+                type='http', auth='public', website=True)
     def service_configure(self, product_id, plan_id, error=None, **kw):
+        # Public users must register/login first
+        if request.env.user._is_public():
+            is_trial = kw.get('trial') == '1'
+            params = 'product_id=%d&plan_id=%d' % (product_id, plan_id)
+            if is_trial:
+                params += '&is_trial=1'
+            return request.redirect('/services/register?%s' % params)
+
         product = request.env['saas.product'].sudo().browse(product_id)
         plan = request.env['saas.plan'].sudo().browse(plan_id)
         if (not product.exists() or not product.is_published

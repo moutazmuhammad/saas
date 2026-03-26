@@ -285,7 +285,6 @@ class SaasRegistration(http.Controller):
 
         except Exception as exc:
             _logger.exception("Registration failed for %s", email)
-            from odoo import _  # re-import to avoid shadowing
             return request.render(
                 'saas_website.registration_form',
                 self._registration_context(

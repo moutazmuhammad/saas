@@ -17,6 +17,14 @@ _logger = logging.getLogger(__name__)
 
 class SaasPortal(CustomerPortal):
 
+    # Only show paid orders to customers in the portal.
+    # Unpaid/cancelled orders are internal artifacts from plan changes.
+    def _prepare_orders_domain(self, partner):
+        domain = super()._prepare_orders_domain(partner)
+        # Only include orders where at least one invoice is paid
+        domain.append(('invoice_ids.payment_state', 'in', ('paid', 'in_payment')))
+        return domain
+
     # States visible to clients in the portal
     _PORTAL_VISIBLE_STATES = (
         'draft', 'pending_payment', 'paid', 'pending_provision',
@@ -102,7 +110,12 @@ class SaasPortal(CustomerPortal):
         ).sorted('create_date', reverse=True)[:10]
 
         # Fetch all invoices across all sale orders (initial + renewals + upgrades)
-        invoices = instance_sudo._get_all_invoices().sorted('create_date', reverse=True)
+        # Hide cancelled invoices from the client — they are internal artifacts
+        # from plan change replacements and would only confuse the customer.
+        all_invoices = instance_sudo._get_all_invoices()
+        invoices = all_invoices.filtered(
+            lambda inv: inv.state != 'cancel'
+        ).sorted('create_date', reverse=True)
 
         support_email = request.env['ir.config_parameter'].sudo().get_param(
             'saas_master.support_email', ''
@@ -317,12 +330,35 @@ class SaasPortal(CustomerPortal):
         # Get the invoice's portal access token
         invoice_access_token = invoice._portal_ensure_token()
 
+        # Compute proration details for display
+        proration_credit = 0.0
+        proration_remaining_days = 0
+        original_plan_name = ''
+        target_full_price = target_plan._get_price_for_period(
+            instance_sudo.pending_billing_period or instance_sudo.billing_period or 'monthly'
+        ) if target_plan else 0
+        if instance_sudo.plan_id and instance_sudo.pending_plan_id:
+            # This is an upgrade — calculate what was credited
+            old_period = instance_sudo.billing_period or 'monthly'
+            old_price = instance_sudo.plan_id._get_price_for_period(old_period)
+            original_plan_name = instance_sudo.plan_id.name
+            if instance_sudo.next_invoice_date and instance_sudo.last_invoice_date:
+                total_days = (instance_sudo.next_invoice_date - instance_sudo.last_invoice_date).days
+                remaining_days = (instance_sudo.next_invoice_date - fields.Date.today()).days - 2
+                if total_days > 0 and remaining_days > 0:
+                    proration_credit = (old_price / total_days) * remaining_days
+                    proration_remaining_days = remaining_days
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance_sudo,
             'invoice': invoice,
             'target_plan': target_plan,
             'page_name': 'saas_checkout',
+            'proration_credit': proration_credit,
+            'proration_remaining_days': proration_remaining_days,
+            'original_plan_name': original_plan_name,
+            'target_full_price': target_full_price,
             # Payment form context (required by payment.form template)
             'amount': invoice.amount_residual,
             'currency': invoice.currency_id,
@@ -366,10 +402,10 @@ class SaasPortal(CustomerPortal):
         if instance_sudo.is_trial or instance_sudo.state not in ('running', 'stopped', 'suspended'):
             return request.redirect('/my/instances/%s' % instance_id)
 
-        # Fetch all paid plans for the same service, excluding the current one
+        # Fetch all paid plans for the same service (including current plan
+        # so users can switch billing period, e.g. monthly → yearly)
         domain = [
             ('is_trial_plan', '=', False),
-            ('id', '!=', instance_sudo.plan_id.id),
         ]
         if instance_sudo.saas_product_id:
             domain.append(('saas_product_ids', 'in', instance_sudo.saas_product_id.id))
@@ -383,12 +419,12 @@ class SaasPortal(CustomerPortal):
         old_period = instance_sudo.billing_period or 'monthly'
         old_price = instance_sudo.plan_id._get_price_for_period(old_period) if instance_sudo.plan_id else 0
         old_monthly = instance_sudo._to_monthly_equivalent(old_price, old_period)
-        # Exclude today (already consumed) from remaining days
+        # Deduct 2 days (today + processing day) from remaining days
         remaining_value = 0.0
         remaining_days = 0
         if instance_sudo.next_invoice_date and instance_sudo.last_invoice_date:
             total_days = (instance_sudo.next_invoice_date - instance_sudo.last_invoice_date).days
-            remaining_days = (instance_sudo.next_invoice_date - today).days - 1
+            remaining_days = (instance_sudo.next_invoice_date - today).days - 2
             if total_days > 0 and remaining_days > 0:
                 remaining_value = (old_price / total_days) * remaining_days
 
@@ -471,6 +507,22 @@ class SaasPortal(CustomerPortal):
         return request.redirect('/my/instances/%s' % instance_id)
 
     # ==================== Cancel Scheduled Downgrade ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/cancel-upgrade',
+        type='http', auth='user', website=True, methods=['POST'],
+    )
+    def portal_cancel_upgrade(self, instance_id, access_token=None, **kw):
+        """Cancel a pending plan upgrade and its unpaid invoice."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+        if instance_sudo.pending_plan_id:
+            instance_sudo._cancel_pending_upgrade()
+        return request.redirect('/my/instances/%s' % instance_id)
 
     @http.route(
         '/my/instances/<int:instance_id>/cancel-downgrade',

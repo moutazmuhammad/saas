@@ -3270,13 +3270,10 @@ class SaasInstance(models.Model):
                 _("Can only change plan on running, stopped, or suspended instances.")
             )
 
-        # Block if there's already a pending plan change (prevents
-        # concurrent conflicting requests and double billing).
+        # Auto-cancel existing pending upgrade if client changes their mind.
+        # This allows switching to a different plan without manual cancellation.
         if self.pending_plan_id:
-            raise UserError(_(
-                "A plan change is already pending payment. "
-                "Please complete or cancel the current upgrade before requesting another."
-            ))
+            self._cancel_pending_upgrade()
         if self.scheduled_plan_id:
             raise UserError(_(
                 "A downgrade is already scheduled. "
@@ -3288,13 +3285,34 @@ class SaasInstance(models.Model):
             raise UserError(_("Invalid plan."))
         if new_plan.is_trial_plan:
             raise UserError(_("Cannot switch to a trial plan."))
-        if new_plan.id == self.plan_id.id:
-            raise UserError(_("Already on this plan."))
-
         billing_period = billing_period or self.billing_period or 'monthly'
+
+        if new_plan.id == self.plan_id.id and billing_period == (self.billing_period or 'monthly'):
+            raise UserError(_("Already on this plan and billing period."))
+
+        # Block yearly → monthly on the same plan.
+        # Annual subscribers must wait until their subscription period ends.
+        if (new_plan.id == self.plan_id.id
+                and (self.billing_period or 'monthly') == 'yearly'
+                and billing_period == 'monthly'):
+            raise UserError(_(
+                "You cannot switch from yearly to monthly billing before your "
+                "current annual subscription ends%s. "
+                "Your yearly plan will remain active until then."
+            ) % (
+                ' (%s)' % self.next_invoice_date.strftime('%B %d, %Y')
+                if self.next_invoice_date else ''
+            ))
         new_price = new_plan._get_price_for_period(billing_period)
         old_period = self.billing_period or 'monthly'
         old_price = self.plan_id._get_price_for_period(old_period) if self.plan_id else 0
+
+        # Monthly → Yearly on the same plan is always an immediate upgrade
+        # (customer commits to paying more upfront, with remaining days credited).
+        if (new_plan.id == self.plan_id.id
+                and old_period == 'monthly'
+                and billing_period == 'yearly'):
+            return self._request_upgrade(new_plan, billing_period, new_price, old_price)
 
         # Compare effective monthly costs to correctly classify
         # cross-period changes (e.g. $10/month vs $100/year = $8.33/month)
@@ -3306,6 +3324,35 @@ class SaasInstance(models.Model):
         else:
             return self._request_downgrade(new_plan, billing_period)
 
+    # ---------- AUTO-CANCEL PENDING ----------
+
+    def _cancel_pending_upgrade(self):
+        """Cancel the current pending upgrade and its unpaid invoice.
+
+        Called automatically when the client selects a different plan
+        while an upgrade is still awaiting payment.
+        """
+        self.ensure_one()
+        old_plan_name = self.pending_plan_id.name if self.pending_plan_id else 'Unknown'
+
+        # Find and cancel the unpaid invoice for this pending upgrade
+        if self.sale_order_id:
+            for inv in self.sale_order_id.invoice_ids.sorted('create_date', reverse=True):
+                if (inv.state == 'posted'
+                        and inv.payment_state not in ('paid', 'in_payment')
+                        and inv.amount_residual > 0):
+                    inv.button_cancel()
+                    break
+
+        self._append_log(
+            "Auto-cancelled pending upgrade to %s (client selected a different plan)."
+            % old_plan_name
+        )
+        self.write({
+            'pending_plan_id': False,
+            'pending_billing_period': False,
+        })
+
     # ---------- UPGRADE ----------
 
     def _request_upgrade(self, new_plan, billing_period, new_price, old_price):
@@ -3315,12 +3362,12 @@ class SaasInstance(models.Model):
         period_label = 'Yearly' if billing_period == 'yearly' else 'Monthly'
 
         # Calculate remaining value of current subscription
-        # Exclude today (already consumed) from remaining days
+        # Deduct 2 days (today + processing day) from remaining days
         remaining_value = 0.0
         remaining_info = ''
         if self.next_invoice_date and self.last_invoice_date:
             total_days = (self.next_invoice_date - self.last_invoice_date).days
-            remaining_days = (self.next_invoice_date - today).days - 1
+            remaining_days = (self.next_invoice_date - today).days - 2
             if total_days > 0 and remaining_days > 0:
                 remaining_value = (old_price / total_days) * remaining_days
                 remaining_info = (

@@ -1,312 +1,256 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <!-- ============================================================ -->
-    <!--  Registration Form  –  /services/register                     -->
-    <!-- ============================================================ -->
+    <!-- ============================================================
+         Registration Page  —  /services/register
+         Two-step: form + OTP verification
+         ============================================================ -->
+
     <template id="registration_form" name="SaaS Registration">
-        <t t-call="website.layout">
-            <t t-set="additional_title">Create Your Account</t>
+        <t t-call="saas_website.cloudodoo_layout">
+            <section class="py-6 d-flex align-items-center min-vh-100" style="padding-top:100px;">
+                <div class="container">
+                    <div class="row justify-content-center">
+                        <div class="col-md-8 col-lg-6 col-xl-5">
+                            <div class="info-card">
 
-            <div class="container py-5">
-                <div class="row justify-content-center">
-                    <div class="col-lg-7">
+                                <!-- ===== STEP 2: OTP Verification ===== -->
+                                <t t-if="otp_sent">
+                                    <div class="step-indicator">
+                                        <div class="step completed">
+                                            <span class="step-number"><i class="fas fa-check"></i></span>
+                                            <span class="step-label">Account Details</span>
+                                        </div>
+                                        <div class="step-line completed"></div>
+                                        <div class="step active">
+                                            <span class="step-number">2</span>
+                                            <span class="step-label">Verify Phone</span>
+                                        </div>
+                                    </div>
 
-                        <!-- Breadcrumb -->
-                        <nav aria-label="breadcrumb" class="mb-4">
-                            <ol class="breadcrumb">
-                                <li class="breadcrumb-item">
-                                    <a href="/services">Services</a>
-                                </li>
-                                <li class="breadcrumb-item active" aria-current="page">
-                                    Create Account
-                                </li>
-                            </ol>
-                        </nav>
-
-                        <!-- Plan summary (if coming from a plan) -->
-                        <div t-if="product and plan" class="card border-0 shadow-sm mb-4">
-                            <div class="card-body d-flex align-items-center">
-                                <div class="me-3">
-                                    <t t-if="product.image">
-                                        <img t-att-src="'data:image/png;base64,%s' % product.image.decode()"
-                                             class="rounded"
-                                             style="max-height:36px;"
-                                             t-att-alt="product.name"/>
-                                    </t>
-                                    <t t-else="">
-                                        <i t-att-class="'%s fa-2x text-primary' % (product.icon or 'fa fa-cogs')"/>
-                                    </t>
-                                </div>
-                                <div class="flex-grow-1">
-                                    <strong><t t-out="product.name"/></strong>
-                                    <span class="text-muted mx-1">|</span>
-                                    <t t-out="plan.name"/>
-                                    <t t-if="is_trial">
-                                        <span class="badge bg-success ms-2">Free Trial</span>
-                                    </t>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Error -->
-                        <div t-if="error" class="alert alert-danger" role="alert">
-                            <t t-out="error"/>
-                        </div>
-
-                        <!-- Success (OTP sent) -->
-                        <div t-if="otp_sent" class="alert alert-info" role="alert">
-                            A verification code has been sent to
-                            <strong><t t-out="form_values.get('phone', '')"/></strong>.
-                            Please enter it below.
-                        </div>
-
-                        <!-- TODO: REMOVE before production -->
-                        <div t-if="debug_phone_otp"
-                             class="alert alert-warning" role="alert">
-                            <strong>[DEBUG]</strong>
-                            Phone OTP: <code t-out="debug_phone_otp"/>
-                        </div>
-
-                        <!-- Registration Card -->
-                        <div class="card border-0 shadow-sm">
-                            <div class="card-header bg-white">
-                                <h4 class="mb-0">
-                                    <t t-if="otp_sent">Verify Your Phone</t>
-                                    <t t-else="">Create Your Account</t>
-                                </h4>
-                            </div>
-                            <div class="card-body">
-                                <form method="POST"
-                                      t-att-action="'/services/register/verify' if otp_sent else '/services/register'">
-                                    <input type="hidden" name="csrf_token"
-                                           t-att-value="request.csrf_token()"/>
-                                    <input type="hidden" name="product_id"
-                                           t-att-value="product.id if product else ''"/>
-                                    <input type="hidden" name="plan_id"
-                                           t-att-value="plan.id if plan else ''"/>
-                                    <input type="hidden" name="is_trial"
-                                           t-att-value="'1' if is_trial else ''"/>
-
-                                    <t t-if="otp_sent">
-                                        <!-- ===== OTP Verification Step ===== -->
-                                        <!-- Keep all fields as hidden so they survive the POST -->
-                                        <input type="hidden" name="name"
-                                               t-att-value="form_values.get('name', '')"/>
-                                        <input type="hidden" name="email"
-                                               t-att-value="form_values.get('email', '')"/>
-                                        <input type="hidden" name="phone"
-                                               t-att-value="form_values.get('phone', '')"/>
-                                        <input type="hidden" name="company_name"
-                                               t-att-value="form_values.get('company_name', '')"/>
-                                        <input type="hidden" name="country_id"
-                                               t-att-value="form_values.get('country_id', '')"/>
-                                        <input type="hidden" name="city"
-                                               t-att-value="form_values.get('city', '')"/>
-                                        <input type="hidden" name="street"
-                                               t-att-value="form_values.get('street', '')"/>
-                                        <input type="hidden" name="job_title"
-                                               t-att-value="form_values.get('job_title', '')"/>
-                                        <input type="hidden" name="password"
-                                               t-att-value="form_values.get('password', '')"/>
-
-                                        <div class="mb-4 text-center">
-                                            <label for="phone_otp" class="form-label fw-bold fs-5">
-                                                Verification Code
-                                            </label>
-                                            <input type="text" name="phone_otp" id="phone_otp"
-                                                   class="form-control form-control-lg text-center mx-auto"
-                                                   style="max-width: 200px; letter-spacing: 0.5em; font-size: 1.5rem;"
-                                                   maxlength="6" required="required"
-                                                   placeholder="000000"
-                                                   autocomplete="one-time-code"
-                                                   inputmode="numeric"
-                                                   pattern="[0-9]{6}"/>
-                                            <small class="text-muted d-block mt-2">
-                                                Enter the 6-digit code sent to
-                                                <strong><t t-out="form_values.get('phone', '')"/></strong>.
-                                                It expires in 10 minutes.
-                                            </small>
+                                    <div class="text-center">
+                                        <div class="mb-4">
+                                            <div class="empty-state-icon mx-auto mb-3">
+                                                <i class="fas fa-sms"></i>
+                                            </div>
+                                            <h3 class="mb-2">Verify Your Phone Number</h3>
+                                            <p class="text-muted">
+                                                We sent a 6-digit code to
+                                                <strong t-esc="form_values.get('phone', '')"/>
+                                            </p>
                                         </div>
 
-                                        <button type="submit" class="btn btn-primary btn-lg w-100">
-                                            <i class="fa fa-check me-2"/>Verify &amp; Create Account
+                                        <!-- Debug: show OTP for testing (remove before production) -->
+                                        <t t-if="debug_phone_otp">
+                                            <div class="alert-banner alert-warning mb-4">
+                                                <i class="fas fa-bug"></i>
+                                                <div>
+                                                    <strong>DEBUG OTP:</strong>
+                                                    <span t-esc="debug_phone_otp" style="font-family:monospace;font-size:1.25rem;letter-spacing:0.3em;margin-left:0.5rem;"/>
+                                                </div>
+                                            </div>
+                                        </t>
+
+                                        <!-- Error -->
+                                        <t t-if="error">
+                                            <div class="alert-banner alert-danger mb-4">
+                                                <i class="fas fa-exclamation-circle"></i>
+                                                <div t-esc="error"/>
+                                            </div>
+                                        </t>
+
+                                        <form action="/services/register/verify" method="post" id="otp-form">
+                                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                            <!-- Preserve all form data -->
+                                            <input type="hidden" name="name" t-att-value="form_values.get('name', '')"/>
+                                            <input type="hidden" name="email" t-att-value="form_values.get('email', '')"/>
+                                            <input type="hidden" name="phone" t-att-value="form_values.get('phone', '')"/>
+                                            <input type="hidden" name="company_name" t-att-value="form_values.get('company_name', '')"/>
+                                            <input type="hidden" name="country_id" t-att-value="form_values.get('country_id', '')"/>
+                                            <input type="hidden" name="city" t-att-value="form_values.get('city', '')"/>
+                                            <input type="hidden" name="street" t-att-value="form_values.get('street', '')"/>
+                                            <input type="hidden" name="job_title" t-att-value="form_values.get('job_title', '')"/>
+                                            <input type="hidden" name="password" t-att-value="form_values.get('password', '')"/>
+                                            <input type="hidden" name="confirm_password" t-att-value="form_values.get('confirm_password', '')"/>
+                                            <input type="hidden" name="product_id" t-att-value="form_values.get('product_id', '')"/>
+                                            <input type="hidden" name="plan_id" t-att-value="form_values.get('plan_id', '')"/>
+                                            <input type="hidden" name="is_trial" t-att-value="form_values.get('is_trial', '')"/>
+                                            <!-- Hidden field for combined OTP -->
+                                            <input type="hidden" name="phone_otp" id="phone_otp_hidden" value=""/>
+
+                                            <div class="otp-inputs mb-4">
+                                                <input type="text" class="otp-input" maxlength="1" data-index="0"/>
+                                                <input type="text" class="otp-input" maxlength="1" data-index="1"/>
+                                                <input type="text" class="otp-input" maxlength="1" data-index="2"/>
+                                                <input type="text" class="otp-input" maxlength="1" data-index="3"/>
+                                                <input type="text" class="otp-input" maxlength="1" data-index="4"/>
+                                                <input type="text" class="otp-input" maxlength="1" data-index="5"/>
+                                            </div>
+
+                                            <p class="text-muted mb-4">
+                                                Code expires in
+                                                <span class="countdown-timer" id="otp-timer" data-seconds="600">10:00</span>
+                                            </p>
+
+                                            <button type="submit" class="btn btn-primary btn-lg w-100 mb-3">
+                                                Verify &amp; Create Account
+                                            </button>
+                                        </form>
+
+                                        <!-- Resend: re-POST the registration form -->
+                                        <form action="/services/register" method="post">
+                                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                            <input type="hidden" name="name" t-att-value="form_values.get('name', '')"/>
+                                            <input type="hidden" name="email" t-att-value="form_values.get('email', '')"/>
+                                            <input type="hidden" name="phone" t-att-value="form_values.get('phone', '')"/>
+                                            <input type="hidden" name="company_name" t-att-value="form_values.get('company_name', '')"/>
+                                            <input type="hidden" name="country_id" t-att-value="form_values.get('country_id', '')"/>
+                                            <input type="hidden" name="city" t-att-value="form_values.get('city', '')"/>
+                                            <input type="hidden" name="street" t-att-value="form_values.get('street', '')"/>
+                                            <input type="hidden" name="job_title" t-att-value="form_values.get('job_title', '')"/>
+                                            <input type="hidden" name="password" t-att-value="form_values.get('password', '')"/>
+                                            <input type="hidden" name="confirm_password" t-att-value="form_values.get('confirm_password', '')"/>
+                                            <input type="hidden" name="product_id" t-att-value="form_values.get('product_id', '')"/>
+                                            <input type="hidden" name="plan_id" t-att-value="form_values.get('plan_id', '')"/>
+                                            <input type="hidden" name="is_trial" t-att-value="form_values.get('is_trial', '')"/>
+                                            <button type="submit" class="btn btn-outline-secondary w-100">
+                                                <i class="fas fa-redo me-2"></i>Resend Code
+                                            </button>
+                                        </form>
+                                    </div>
+                                </t>
+
+                                <!-- ===== STEP 1: Registration Form ===== -->
+                                <t t-if="not otp_sent">
+                                    <div class="step-indicator">
+                                        <div class="step active">
+                                            <span class="step-number">1</span>
+                                            <span class="step-label">Account Details</span>
+                                        </div>
+                                        <div class="step-line"></div>
+                                        <div class="step">
+                                            <span class="step-number">2</span>
+                                            <span class="step-label">Verify Phone</span>
+                                        </div>
+                                    </div>
+
+                                    <h3 class="text-center mb-2">Create Your Account</h3>
+                                    <p class="text-center text-muted mb-4">Get started in minutes</p>
+
+                                    <!-- Error -->
+                                    <t t-if="error">
+                                        <div class="alert-banner alert-danger mb-4">
+                                            <i class="fas fa-exclamation-circle"></i>
+                                            <div t-esc="error"/>
+                                        </div>
+                                    </t>
+
+                                    <form action="/services/register" method="post" id="register-form">
+                                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                        <input type="hidden" name="product_id" t-att-value="form_values.get('product_id', '')"/>
+                                        <input type="hidden" name="plan_id" t-att-value="form_values.get('plan_id', '')"/>
+                                        <input type="hidden" name="is_trial" t-att-value="form_values.get('is_trial', '')"/>
+
+                                        <div class="row g-3">
+                                            <div class="col-12">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-user"></i>
+                                                    <input type="text" class="form-control" name="name"
+                                                           placeholder="Full Name" required=""
+                                                           t-att-value="form_values.get('name', '')"/>
+                                                </div>
+                                            </div>
+                                            <div class="col-12">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-envelope"></i>
+                                                    <input type="email" class="form-control" name="email"
+                                                           placeholder="Email Address" required=""
+                                                           t-att-value="form_values.get('email', '')"/>
+                                                </div>
+                                            </div>
+                                            <div class="col-12">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-phone"></i>
+                                                    <input type="tel" class="form-control" name="phone"
+                                                           placeholder="Phone Number" required=""
+                                                           t-att-value="form_values.get('phone', '')"/>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-building"></i>
+                                                    <input type="text" class="form-control" name="company_name"
+                                                           placeholder="Company Name (optional)"
+                                                           t-att-value="form_values.get('company_name', '')"/>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-globe"></i>
+                                                    <select class="form-select" name="country_id" required=""
+                                                            style="padding-left:2.75rem;">
+                                                        <option value="">Select Country</option>
+                                                        <t t-foreach="countries" t-as="c">
+                                                            <option t-att-value="c.id"
+                                                                    t-att-selected="str(c.id) == str(form_values.get('country_id', ''))"
+                                                                    t-esc="c.name"/>
+                                                        </t>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-map-marker-alt"></i>
+                                                    <input type="text" class="form-control" name="city"
+                                                           placeholder="City" required=""
+                                                           t-att-value="form_values.get('city', '')"/>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-briefcase"></i>
+                                                    <input type="text" class="form-control" name="job_title"
+                                                           placeholder="Job Title (optional)"
+                                                           t-att-value="form_values.get('job_title', '')"/>
+                                                </div>
+                                            </div>
+                                            <div class="col-12">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-lock"></i>
+                                                    <input type="password" class="form-control" id="password"
+                                                           name="password" placeholder="Password (min 8 characters)"
+                                                           required="" minlength="8"/>
+                                                </div>
+                                                <div class="password-strength mt-2">
+                                                    <div class="strength-bar" id="strength-bar"></div>
+                                                </div>
+                                            </div>
+                                            <div class="col-12">
+                                                <div class="input-icon">
+                                                    <i class="fas fa-lock"></i>
+                                                    <input type="password" class="form-control" id="confirm-password"
+                                                           name="confirm_password" placeholder="Confirm Password"
+                                                           required=""/>
+                                                </div>
+                                                <div id="password-match" class="mt-2"></div>
+                                            </div>
+                                        </div>
+
+                                        <button type="submit" class="btn btn-primary btn-lg w-100 mt-4">
+                                            Continue <i class="fas fa-arrow-right ms-2"></i>
                                         </button>
 
-                                        <div class="text-center mt-3">
-                                            <form action="/services/register" method="POST"
-                                                  class="d-inline">
-                                                <input type="hidden" name="csrf_token"
-                                                       t-att-value="request.csrf_token()"/>
-                                                <input type="hidden" name="name"
-                                                       t-att-value="form_values.get('name', '')"/>
-                                                <input type="hidden" name="email"
-                                                       t-att-value="form_values.get('email', '')"/>
-                                                <input type="hidden" name="phone"
-                                                       t-att-value="form_values.get('phone', '')"/>
-                                                <input type="hidden" name="company_name"
-                                                       t-att-value="form_values.get('company_name', '')"/>
-                                                <input type="hidden" name="country_id"
-                                                       t-att-value="form_values.get('country_id', '')"/>
-                                                <input type="hidden" name="city"
-                                                       t-att-value="form_values.get('city', '')"/>
-                                                <input type="hidden" name="street"
-                                                       t-att-value="form_values.get('street', '')"/>
-                                                <input type="hidden" name="job_title"
-                                                       t-att-value="form_values.get('job_title', '')"/>
-                                                <input type="hidden" name="password"
-                                                       t-att-value="form_values.get('password', '')"/>
-                                                <input type="hidden" name="product_id"
-                                                       t-att-value="product.id if product else ''"/>
-                                                <input type="hidden" name="plan_id"
-                                                       t-att-value="plan.id if plan else ''"/>
-                                                <input type="hidden" name="is_trial"
-                                                       t-att-value="'1' if is_trial else ''"/>
-                                                <input type="hidden" name="resend" value="1"/>
-                                                <button type="submit"
-                                                        class="btn btn-link text-muted p-0">
-                                                    Didn't receive it? Resend code
-                                                </button>
-                                            </form>
-                                        </div>
-                                    </t>
-
-                                    <t t-else="">
-                                        <!-- ===== Registration Fields ===== -->
-
-                                        <!-- Name + Email -->
-                                        <div class="row mb-3">
-                                            <div class="col-md-6 mb-3 mb-md-0">
-                                                <label for="name" class="form-label fw-bold">
-                                                    Full Name <span class="text-danger">*</span>
-                                                </label>
-                                                <input type="text" name="name" id="name"
-                                                       class="form-control" required="required"
-                                                       t-att-value="form_values.get('name', '')"/>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="email" class="form-label fw-bold">
-                                                    Email <span class="text-danger">*</span>
-                                                </label>
-                                                <input type="email" name="email" id="email"
-                                                       class="form-control" required="required"
-                                                       t-att-value="form_values.get('email', '')"/>
-                                            </div>
-                                        </div>
-
-                                        <!-- Phone + Company -->
-                                        <div class="row mb-3">
-                                            <div class="col-md-6 mb-3 mb-md-0">
-                                                <label for="phone" class="form-label fw-bold">
-                                                    Phone <span class="text-danger">*</span>
-                                                </label>
-                                                <input type="tel" name="phone" id="phone"
-                                                       class="form-control" required="required"
-                                                       t-att-value="form_values.get('phone', '')"/>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="company_name" class="form-label fw-bold">
-                                                    Company Name
-                                                </label>
-                                                <input type="text" name="company_name"
-                                                       id="company_name"
-                                                       class="form-control"
-                                                       t-att-value="form_values.get('company_name', '')"/>
-                                            </div>
-                                        </div>
-
-                                        <!-- Country + City -->
-                                        <div class="row mb-3">
-                                            <div class="col-md-6 mb-3 mb-md-0">
-                                                <label for="country_id" class="form-label fw-bold">
-                                                    Country <span class="text-danger">*</span>
-                                                </label>
-                                                <select name="country_id" id="country_id"
-                                                        class="form-select" required="required">
-                                                    <option value="">-- Select Country --</option>
-                                                    <t t-foreach="countries" t-as="c">
-                                                        <option t-att-value="c.id"
-                                                                t-att-selected="str(c.id) == str(form_values.get('country_id', ''))">
-                                                            <t t-out="c.name"/>
-                                                        </option>
-                                                    </t>
-                                                </select>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="city" class="form-label fw-bold">
-                                                    City <span class="text-danger">*</span>
-                                                </label>
-                                                <input type="text" name="city" id="city"
-                                                       class="form-control" required="required"
-                                                       t-att-value="form_values.get('city', '')"/>
-                                            </div>
-                                        </div>
-
-                                        <!-- Street + Job Title -->
-                                        <div class="row mb-3">
-                                            <div class="col-md-6 mb-3 mb-md-0">
-                                                <label for="street" class="form-label fw-bold">
-                                                    Street Address
-                                                </label>
-                                                <input type="text" name="street" id="street"
-                                                       class="form-control"
-                                                       t-att-value="form_values.get('street', '')"/>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="job_title" class="form-label fw-bold">
-                                                    Job Title
-                                                </label>
-                                                <input type="text" name="job_title"
-                                                       id="job_title"
-                                                       class="form-control"
-                                                       t-att-value="form_values.get('job_title', '')"/>
-                                            </div>
-                                        </div>
-
-                                        <hr class="my-3"/>
-
-                                        <!-- Password -->
-                                        <div class="row mb-4">
-                                            <div class="col-md-6 mb-3 mb-md-0">
-                                                <label for="password" class="form-label fw-bold">
-                                                    Password <span class="text-danger">*</span>
-                                                </label>
-                                                <input type="password" name="password"
-                                                       id="password"
-                                                       class="form-control" required="required"
-                                                       minlength="8"/>
-                                                <small class="text-muted">Minimum 8 characters.</small>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <label for="confirm_password" class="form-label fw-bold">
-                                                    Confirm Password <span class="text-danger">*</span>
-                                                </label>
-                                                <input type="password" name="confirm_password"
-                                                       id="confirm_password"
-                                                       class="form-control" required="required"
-                                                       minlength="8"/>
-                                            </div>
-                                        </div>
-
-                                        <button type="submit" class="btn btn-primary btn-lg w-100">
-                                            <i class="fa fa-shield me-2"/>Verify &amp; Continue
-                                        </button>
-
-                                        <p class="text-center text-muted mt-3 mb-0">
-                                            Already have an account?
-                                            <a t-attf-href="/web/login?redirect=/services/#{product.id if product else ''}/plans/#{plan.id if plan else ''}/configure#{ '?trial=1' if is_trial else '' }">
-                                                Log in
-                                            </a>
+                                        <p class="text-center text-muted mt-4 mb-0">
+                                            Already have an account? <a href="/web/login">Sign in</a>
                                         </p>
-                                    </t>
-                                </form>
+                                    </form>
+                                </t>
+
                             </div>
                         </div>
-
                     </div>
                 </div>
-            </div>
-
+            </section>
         </t>
     </template>
 
