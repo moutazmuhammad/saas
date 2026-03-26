@@ -525,16 +525,15 @@
                         </div>
                     </div>
 
-                    <!-- Suspended (non-trial) — overdue payment or storage limit -->
+                    <!-- Suspended (non-trial) — overdue payment -->
                     <div t-if="not instance.is_trial and instance.state == 'suspended'"
                          class="card shadow-sm border-0 mb-4 border-start border-4 border-danger">
                         <div class="card-body text-center py-4">
                             <i class="fa fa-pause-circle fa-3x text-danger mb-3 d-block"/>
                             <h5 class="fw-bold">Instance Suspended</h5>
                             <p class="text-muted mb-3">
-                                Your instance has been suspended, most likely due to an overdue payment
-                                or exceeding your storage limit. Please settle any outstanding invoices
-                                to reactivate your service.
+                                Your instance has been suspended due to an overdue payment.
+                                Please settle any outstanding invoices to reactivate your service.
                             </p>
                             <t t-if="support_email">
                                 <p class="text-muted mb-0" style="font-size: 0.85rem;">

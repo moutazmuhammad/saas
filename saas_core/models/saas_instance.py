@@ -2677,53 +2677,20 @@ class SaasInstance(models.Model):
                         total_bytes = instance.total_storage_bytes
                         limit_bytes = int(round(instance.plan_id.storage_limit * (1024 ** 3)))
                         if total_bytes > limit_bytes:
-                            extra_storage_price = float(
-                                self.env['ir.config_parameter'].sudo().get_param(
-                                    'saas_master.extra_storage_price_per_gb', '0'
-                                )
+                            # Log overage — extra GB will be charged on next renewal
+                            extra_gb = (total_bytes - limit_bytes) / (1024 ** 3)
+                            instance._append_log(
+                                "STORAGE OVERAGE: %.2f GB used, plan limit %.2f GB, "
+                                "extra %.2f GB (will be charged on next renewal)."
+                                % (total_bytes / (1024 ** 3),
+                                   instance.plan_id.storage_limit, extra_gb)
                             )
-                            if extra_storage_price > 0:
-                                # Extra storage pricing enabled — log overage, don't suspend
-                                extra_gb = (total_bytes - limit_bytes) / (1024 ** 3)
-                                instance._append_log(
-                                    "STORAGE OVERAGE: %.2f GB used, plan limit %.2f GB, "
-                                    "extra %.2f GB (will be charged on next renewal)."
-                                    % (total_bytes / (1024 ** 3),
-                                       instance.plan_id.storage_limit, extra_gb)
-                                )
-                                _logger.info(
-                                    "Instance %s: storage %.2f GB exceeds %.2f GB limit, "
-                                    "extra %.2f GB will be billed",
-                                    instance.subdomain, total_bytes / (1024 ** 3),
-                                    instance.plan_id.storage_limit, extra_gb,
-                                )
-                            else:
-                                # No extra storage pricing — suspend as before
-                                try:
-                                    instance.action_suspend()
-                                    instance._append_log(
-                                        "AUTO-SUSPENDED: Storage %.2f GB exceeds plan limit %.2f GB."
-                                        % (total_bytes / (1024 ** 3), instance.plan_id.storage_limit)
-                                    )
-                                    instance.message_post(
-                                        body=_(
-                                            "Instance automatically suspended: total storage (%(used)s) "
-                                            "exceeds plan limit (%(limit).2f GB).",
-                                            used=instance.total_storage or '',
-                                            limit=instance.plan_id.storage_limit,
-                                        ),
-                                        message_type='notification',
-                                    )
-                                    _logger.info(
-                                        "Instance %s suspended: storage %.2f GB exceeds %.2f GB limit",
-                                        instance.subdomain, total_bytes / (1024 ** 3),
-                                        instance.plan_id.storage_limit,
-                                    )
-                                except Exception:
-                                    _logger.exception(
-                                        "Failed to suspend instance %s (id=%s)",
-                                        instance.subdomain, instance.id,
-                                    )
+                            _logger.info(
+                                "Instance %s: storage %.2f GB exceeds %.2f GB limit, "
+                                "extra %.2f GB will be billed",
+                                instance.subdomain, total_bytes / (1024 ** 3),
+                                instance.plan_id.storage_limit, extra_gb,
+                            )
             except Exception:
                 _logger.exception(
                     "Failed to connect to docker server id=%s for storage checks", server_id,

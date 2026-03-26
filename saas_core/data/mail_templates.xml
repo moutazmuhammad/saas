@@ -48,7 +48,6 @@
     <ul>
         <li>Free trial expiry</li>
         <li>Overdue payment past grace period</li>
-        <li>Storage limit exceeded</li>
     </ul>
     <p>To reactivate your instance, please settle any outstanding invoices
        or upgrade your plan.</p>
