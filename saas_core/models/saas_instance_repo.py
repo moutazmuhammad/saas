@@ -1,5 +1,6 @@
 import logging
 import shlex
+from urllib.parse import urlparse, urlunparse
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
@@ -84,16 +85,34 @@ class SaasInstanceRepo(models.Model):
         self.ensure_one()
         return self.name or 'repo_%d' % self.id
 
+    @staticmethod
+    def _strip_userinfo(url):
+        """Remove any user:pass@ credentials from an HTTPS URL."""
+        if not url or not url.startswith('https://'):
+            return url
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            # Rebuild without userinfo
+            parsed = parsed._replace(netloc=parsed.hostname + (
+                ':%s' % parsed.port if parsed.port else ''))
+            return urlunparse(parsed)
+        return url
+
     def _get_clone_url(self):
         """Return the clone URL, injecting token if needed for private repos."""
         self.ensure_one()
-        url = self.repo_url
+        url = self._strip_userinfo(self.repo_url)
         token = self.sudo().github_token
         if token and url.startswith('https://'):
             url = 'https://x-access-token:%s@%s' % (
                 token, url[len('https://'):]
             )
         return url
+
+    @api.onchange('repo_url')
+    def _onchange_repo_url(self):
+        if self.repo_url:
+            self.repo_url = self._strip_userinfo(self.repo_url.strip())
 
     def _get_remote_repo_path(self):
         """Return the full remote path inside the instance's addons directory."""
