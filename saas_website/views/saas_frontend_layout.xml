@@ -2,6 +2,23 @@
 <odoo>
 
     <!-- ============================================================
+         Inject early theme script to prevent FOUC (flash of wrong theme).
+         Runs synchronously before CSS paints.
+         ============================================================ -->
+
+    <template id="cloudodoo_theme_init" name="CloudOdoo Theme Init"
+              inherit_id="web.frontend_layout" customize_show="False">
+        <xpath expr="//head" position="inside">
+            <script>
+                (function(){
+                    var t = localStorage.getItem('co-theme') || 'dark';
+                    document.documentElement.setAttribute('data-theme', t);
+                })();
+            </script>
+        </xpath>
+    </template>
+
+    <!-- ============================================================
          Override Odoo's website header with CloudOdoo dark navbar.
          This applies to ALL website pages (services, portal, login,
          contact, etc.) so the entire site looks consistent.
@@ -11,7 +28,7 @@
               inherit_id="website.layout" customize_show="False">
         <xpath expr="//header" position="replace">
             <header id="top" data-anchor="true">
-                <nav class="navbar navbar-expand-lg navbar-dark fixed-top co-navbar">
+                <nav class="navbar navbar-expand-lg fixed-top co-navbar">
                     <div class="container">
                         <a class="navbar-brand d-flex align-items-center" href="/">
                             <i class="fas fa-cloud me-2"></i>
@@ -24,6 +41,16 @@
                             <ul class="navbar-nav ms-auto align-items-center">
                                 <li class="nav-item">
                                     <a class="nav-link" href="/services">Services</a>
+                                </li>
+
+                                <!-- Theme toggle -->
+                                <li class="nav-item ms-lg-2">
+                                    <button class="nav-link btn btn-link co-theme-toggle"
+                                            id="themeToggle" type="button"
+                                            aria-label="Toggle theme"
+                                            title="Toggle dark/light mode">
+                                        <i class="fas fa-sun" id="themeIcon"></i>
+                                    </button>
                                 </li>
 
                                 <!-- Logged-in user nav -->

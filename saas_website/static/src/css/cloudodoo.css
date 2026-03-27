@@ -1,72 +1,149 @@
 /* ============================================
    CloudOdoo - Modern SaaS Platform Styles
+   Dark/Light Theme Support
    ============================================ */
 
 /* Font Awesome 5 (not bundled with Odoo) */
 @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css');
 
 /* ============================================
-   Global: Apply dark theme to ALL website pages
+   CSS Variables / Design Tokens
+   Default = Dark theme
+   ============================================ */
+
+:root {
+    --primary: #0066FF;
+    --primary-hover: #0052CC;
+    --primary-light: rgba(0, 102, 255, 0.1);
+    --success: #10B981;
+    --success-light: rgba(16, 185, 129, 0.1);
+    --warning: #F59E0B;
+    --warning-light: rgba(245, 158, 11, 0.1);
+    --danger: #EF4444;
+    --danger-light: rgba(239, 68, 68, 0.1);
+    --info: #3B82F6;
+    --info-light: rgba(59, 130, 246, 0.1);
+
+    --bg-dark: #0A0A0B;
+    --bg-card: #111113;
+    --bg-card-hover: #18181B;
+    --bg-elevated: #1A1A1D;
+    --bg-input: #18181B;
+    --bg-navbar: rgba(10, 10, 11, 0.95);
+
+    --text-primary: #FAFAFA;
+    --text-secondary: #A1A1AA;
+    --text-muted: #71717A;
+
+    --border-color: #27272A;
+    --border-light: #3F3F46;
+
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+    --shadow-glow: 0 0 40px rgba(0, 102, 255, 0.15);
+
+    --transition-fast: 150ms ease;
+    --transition-base: 250ms ease;
+
+    /* Aliases for inline styles in QWeb templates */
+    --co-primary: var(--primary);
+    --co-text-primary: var(--text-primary);
+    --co-text-secondary: var(--text-secondary);
+    --co-text-muted: var(--text-muted);
+}
+
+/* ============================================
+   Light Theme Override
+   ============================================ */
+
+[data-theme="light"] {
+    --bg-dark: #FFFFFF;
+    --bg-card: #F9FAFB;
+    --bg-card-hover: #F3F4F6;
+    --bg-elevated: #F3F4F6;
+    --bg-input: #FFFFFF;
+    --bg-navbar: rgba(255, 255, 255, 0.95);
+
+    --text-primary: #111827;
+    --text-secondary: #4B5563;
+    --text-muted: #9CA3AF;
+
+    --border-color: #E5E7EB;
+    --border-light: #D1D5DB;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+    --shadow-glow: 0 0 40px rgba(0, 102, 255, 0.08);
+}
+
+/* ============================================
+   Global: Apply theme to ALL website pages
    (including portal, login, contact, etc.)
    ============================================ */
 
 #wrapwrap {
-    background-color: #0A0A0B !important;
-    color: #FAFAFA !important;
+    background-color: var(--bg-dark) !important;
+    color: var(--text-primary) !important;
 }
 
-/* Dark theme for Odoo portal/login pages */
 #wrapwrap .container,
 #wrapwrap .oe_structure {
-    color: #FAFAFA;
+    color: var(--text-primary);
 }
 
 /* Style Odoo's default form controls on portal/login */
 #wrapwrap .form-control,
 #wrapwrap .form-select {
-    background: #18181B !important;
-    border-color: #27272A !important;
-    color: #FAFAFA !important;
+    background: var(--bg-input) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
 }
 #wrapwrap .form-control:focus,
 #wrapwrap .form-select:focus {
-    border-color: #0066FF !important;
-    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1) !important;
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px var(--primary-light) !important;
 }
 #wrapwrap .form-control::placeholder {
-    color: #71717A !important;
+    color: var(--text-muted) !important;
 }
 
 /* Cards and panels on portal pages */
 #wrapwrap .card,
 #wrapwrap .o_portal_wrap .card {
-    background: #111113 !important;
-    border-color: #27272A !important;
-    color: #FAFAFA !important;
+    background: var(--bg-card) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
 }
 #wrapwrap .card-header {
-    background: #1A1A1D !important;
-    border-color: #27272A !important;
+    background: var(--bg-elevated) !important;
+    border-color: var(--border-color) !important;
 }
 #wrapwrap .card-footer {
-    background: #1A1A1D !important;
-    border-color: #27272A !important;
+    background: var(--bg-elevated) !important;
+    border-color: var(--border-color) !important;
 }
 #wrapwrap .list-group-item {
-    background: #111113 !important;
-    border-color: #27272A !important;
-    color: #FAFAFA !important;
+    background: var(--bg-card) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
 }
 
 /* Tables */
 #wrapwrap .table {
     --bs-table-bg: transparent;
-    --bs-table-border-color: #27272A;
-    color: #FAFAFA;
+    --bs-table-border-color: var(--border-color);
+    color: var(--text-primary);
 }
 #wrapwrap .table th {
-    background: #1A1A1D;
-    color: #A1A1AA;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
 }
 
 /* Breadcrumbs */
@@ -74,88 +151,93 @@
     background: transparent;
 }
 #wrapwrap .breadcrumb-item a {
-    color: #71717A;
+    color: var(--text-muted);
 }
 #wrapwrap .breadcrumb-item.active {
-    color: #A1A1AA;
+    color: var(--text-secondary);
 }
 
 /* Text colors for Odoo pages */
 #wrapwrap .text-muted {
-    color: #A1A1AA !important;
+    color: var(--text-secondary) !important;
 }
 #wrapwrap h1, #wrapwrap h2, #wrapwrap h3, #wrapwrap h4, #wrapwrap h5, #wrapwrap h6 {
-    color: #FAFAFA;
+    color: var(--text-primary);
 }
 /* Links — exclude buttons, nav-links, and dropdown items */
 #wrapwrap a:not(.btn):not(.nav-link):not(.navbar-brand):not(.dropdown-item):not(.action-btn):not(.badge) {
-    color: #0066FF;
+    color: var(--primary);
 }
 #wrapwrap a:not(.btn):not(.nav-link):not(.navbar-brand):not(.dropdown-item):not(.action-btn):not(.badge):hover {
-    color: #0052CC;
+    color: var(--primary-hover);
 }
 
 /* Dropdown menus (header, etc.) */
 #wrapwrap .dropdown-menu {
-    background: #111113 !important;
-    border: 1px solid #27272A !important;
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-color) !important;
 }
 #wrapwrap .dropdown-item {
-    color: #A1A1AA !important;
+    color: var(--text-secondary) !important;
 }
 #wrapwrap .dropdown-item:hover,
 #wrapwrap .dropdown-item:focus {
-    background: #1A1A1D !important;
-    color: #FAFAFA !important;
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
 }
 #wrapwrap .dropdown-divider {
-    border-color: #27272A !important;
+    border-color: var(--border-color) !important;
 }
 
 /* CloudOdoo custom header */
 .co-navbar {
-    background: rgba(10, 10, 11, 0.95) !important;
+    background: var(--bg-navbar) !important;
     backdrop-filter: blur(12px);
-    border-bottom: 1px solid #27272A;
+    border-bottom: 1px solid var(--border-color);
     padding: 0.75rem 0;
     z-index: 1000;
 }
 .co-navbar .navbar-brand {
     font-size: 1.25rem;
-    color: #FAFAFA !important;
+    color: var(--text-primary) !important;
 }
 .co-navbar .nav-link {
-    color: #A1A1AA !important;
+    color: var(--text-secondary) !important;
     font-weight: 500;
     font-size: 0.9rem;
     padding: 0.5rem 1rem !important;
 }
 .co-navbar .nav-link:hover,
 .co-navbar .nav-link.active {
-    color: #FAFAFA !important;
+    color: var(--text-primary) !important;
 }
 .co-navbar .navbar-toggler {
-    border: 1px solid #27272A;
+    border: 1px solid var(--border-color);
+}
+/* Toggler icon: use filter to handle both themes */
+.co-navbar .navbar-toggler-icon {
+    filter: none;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(160,160,170,1)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
 }
 
 /* CloudOdoo custom footer */
 .co-footer {
-    background: #111113 !important;
-    border-top: 1px solid #27272A;
-    color: #FAFAFA;
+    background: var(--bg-card) !important;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-primary);
 }
 .co-footer h6 {
-    color: #FAFAFA;
+    color: var(--text-primary);
 }
 .co-footer-link {
-    color: #71717A !important;
+    color: var(--text-muted) !important;
     font-size: 0.875rem;
     display: block;
     padding: 0.25rem 0;
     text-decoration: none;
 }
 .co-footer-link:hover {
-    color: #FAFAFA !important;
+    color: var(--text-primary) !important;
 }
 
 /* Ensure fixed navbar doesn't overlap content */
@@ -195,12 +277,10 @@ div[name="portal_contact"],
     display: none !important;
 }
 
-/* Salesperson block on invoice/SO detail pages
-   (the flex-grow-1 div with "Salesperson" heading + contact widget) */
+/* Salesperson block on invoice/SO detail pages */
 #wrapwrap .o_portal_sidebar .flex-grow-1:has(.o_portal_contact_details) {
     display: none !important;
 }
-/* Fallback for browsers without :has() — hide by content pattern */
 #wrapwrap .o_portal_sidebar h6:has(small) + .o_portal_contact_details,
 #wrapwrap .o_portal_sidebar .portal_my_contact {
     display: none !important;
@@ -217,7 +297,6 @@ img[src*="odoo-logo"],
 #wrapwrap .o_footer_copyright_name + span,
 footer .o_brand_promotion,
 footer a[href*="odoo.com"],
-/* Login page "Powered by Odoo" */
 .oe_login_form a[href*="odoo.com"],
 .o_login_auth a[href*="odoo.com"] {
     display: none !important;
@@ -225,7 +304,7 @@ footer a[href*="odoo.com"],
 
 /* Portal home card hover effects */
 #wrapwrap .o_portal_my_home .info-card:hover {
-    background: var(--bg-card-hover, #18181B) !important;
+    background: var(--bg-card-hover) !important;
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
@@ -236,73 +315,347 @@ footer a[href*="odoo.com"],
 }
 #wrapwrap .o_portal_my_details,
 #wrapwrap .o_portal_my_doc_table {
-    color: var(--co-text-primary, #FAFAFA);
+    color: var(--text-primary);
 }
 
 /* Style the "My account" wrapper area */
 #wrapwrap .wrapper h3 {
-    color: var(--co-text-primary, #FAFAFA) !important;
+    color: var(--text-primary) !important;
 }
 
-/* Portal sidebar dark theme */
+/* Portal sidebar */
 #wrapwrap .o_portal_sidebar .card {
-    background: #111113 !important;
+    background: var(--bg-card) !important;
 }
 
-/* Login page dark styling */
-#wrapwrap .oe_login_form .btn-primary {
-    background: #0066FF !important;
-    border-color: #0066FF !important;
-}
-#wrapwrap .oe_login_form .btn-primary:hover {
-    background: #0052CC !important;
-}
-#wrapwrap .oe_login_form .oe_login_buttons {
-    color: #A1A1AA;
+/* ============================================
+   CloudOdoo Login Page — Full Redesign
+   ============================================ */
+
+.co-login-page {
+    display: flex;
+    min-height: 100vh;
+    width: 100%;
+    background: var(--bg-dark);
 }
 
-/* CSS Variables / Design Tokens */
-:root {
-    --primary: #0066FF;
-    --primary-hover: #0052CC;
-    --primary-light: rgba(0, 102, 255, 0.1);
-    --success: #10B981;
-    --success-light: rgba(16, 185, 129, 0.1);
-    --warning: #F59E0B;
-    --warning-light: rgba(245, 158, 11, 0.1);
-    --danger: #EF4444;
-    --danger-light: rgba(239, 68, 68, 0.1);
-    --info: #3B82F6;
-    --info-light: rgba(59, 130, 246, 0.1);
-    
-    --bg-dark: #0A0A0B;
-    --bg-card: #111113;
-    --bg-card-hover: #18181B;
-    --bg-elevated: #1A1A1D;
-    --bg-input: #18181B;
-    
-    --text-primary: #FAFAFA;
-    --text-secondary: #A1A1AA;
-    --text-muted: #71717A;
-    
-    --border-color: #27272A;
-    --border-light: #3F3F46;
-    
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 20px;
-    
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
-    --shadow-glow: 0 0 40px rgba(0, 102, 255, 0.15);
-    
-    --transition-fast: 150ms ease;
-    --transition-base: 250ms ease;
+/* Hide default Odoo card styling on login */
+.co-login-page .card,
+.co-login-page .o_database_list {
+    display: contents !important;
+    background: none !important;
+    border: none !important;
+    box-shadow: none !important;
+    max-width: none !important;
+}
+.co-login-page .card-body {
+    display: contents;
 }
 
-/* Reset & Base Styles */
+/* Hide Odoo's default logo and footer on the login page */
+.co-login-page .card-body > .text-center.pb-3.border-bottom,
+.co-login-page .card-body > .text-center.small.mt-4 {
+    display: none !important;
+}
+
+/* ---- Left Brand Panel ---- */
+.co-login-brand {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 3rem;
+    background: linear-gradient(135deg, #0A0A0B 0%, #111827 50%, #0A0A0B 100%);
+    position: relative;
+    overflow: hidden;
+}
+[data-theme="light"] .co-login-brand {
+    background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 50%, #EFF6FF 100%);
+}
+.co-login-brand::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(ellipse at 30% 50%, rgba(0, 102, 255, 0.08) 0%, transparent 60%);
+    pointer-events: none;
+}
+.co-login-brand-content {
+    position: relative;
+    z-index: 1;
+    max-width: 480px;
+    margin: 0 auto;
+}
+.co-login-brand-logo {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 3rem;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+.co-login-brand-logo i {
+    font-size: 1.75rem;
+    color: var(--primary);
+}
+.co-login-brand-title {
+    font-size: 2.75rem;
+    font-weight: 800;
+    line-height: 1.1;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, #FAFAFA 0%, #A1A1AA 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+[data-theme="light"] .co-login-brand-title {
+    background: linear-gradient(135deg, #111827 0%, #4B5563 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.co-login-brand-subtitle {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    line-height: 1.7;
+    margin-bottom: 2.5rem;
+}
+.co-login-brand-features {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+.co-login-brand-feature {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+}
+.co-login-brand-feature i {
+    color: var(--primary);
+    font-size: 0.85rem;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--primary-light);
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+.co-login-brand-footer {
+    position: absolute;
+    bottom: 2rem;
+    left: 3rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+/* ---- Right Form Panel ---- */
+.co-login-form-panel {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    background: var(--bg-dark);
+}
+.co-login-form-wrapper {
+    width: 100%;
+    max-width: 420px;
+}
+
+/* Mobile logo */
+.co-login-mobile-logo {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 2rem;
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+.co-login-mobile-logo i {
+    font-size: 1.5rem;
+    color: var(--primary);
+}
+
+/* Form header */
+.co-login-form-header {
+    margin-bottom: 2rem;
+}
+.co-login-form-header h2 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+}
+.co-login-form-header p {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* Form fields */
+.co-login-page .oe_login_form {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+.co-login-page .oe_login_form .form-label {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    margin-bottom: 0.4rem;
+}
+.co-login-page .oe_login_form .form-control {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 10px !important;
+    color: var(--text-primary) !important;
+    padding: 0.7rem 1rem !important;
+    font-size: 0.95rem !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+.co-login-page .oe_login_form .form-control:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px var(--primary-light) !important;
+    outline: none !important;
+}
+.co-login-page .oe_login_form .form-control::placeholder {
+    color: var(--text-muted) !important;
+}
+
+/* Forgot password link */
+.co-forgot-link {
+    color: var(--primary) !important;
+    font-size: 0.8rem;
+    font-weight: 400;
+    text-decoration: none;
+}
+.co-forgot-link:hover {
+    color: var(--primary-hover) !important;
+    text-decoration: underline;
+}
+
+/* Primary button */
+.co-btn-primary {
+    background: linear-gradient(135deg, #0066FF 0%, #0052CC 100%) !important;
+    border: none !important;
+    border-radius: 10px !important;
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    padding: 0.75rem 1.5rem !important;
+    transition: all 0.2s ease !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.co-btn-primary:hover {
+    background: linear-gradient(135deg, #0052CC 0%, #003D99 100%) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(0, 102, 255, 0.3) !important;
+}
+.co-btn-primary:active {
+    transform: translateY(0);
+}
+
+/* Login buttons area */
+.co-login-buttons {
+    color: var(--text-secondary);
+}
+
+/* Form footer */
+.co-login-form-footer {
+    text-align: center;
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+.co-login-form-footer p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: 0;
+}
+.co-login-form-footer a {
+    color: var(--primary);
+    font-weight: 500;
+    text-decoration: none;
+}
+.co-login-form-footer a:hover {
+    color: var(--primary-hover);
+    text-decoration: underline;
+}
+
+/* Alert styling on login page */
+.co-login-page .alert-danger {
+    background: rgba(239, 68, 68, 0.1) !important;
+    border: 1px solid rgba(239, 68, 68, 0.3) !important;
+    color: #FCA5A5 !important;
+    border-radius: 10px !important;
+}
+.co-login-page .alert-success {
+    background: rgba(16, 185, 129, 0.1) !important;
+    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+    color: #6EE7B7 !important;
+    border-radius: 10px !important;
+}
+[data-theme="light"] .co-login-page .alert-danger {
+    color: #DC2626 !important;
+}
+[data-theme="light"] .co-login-page .alert-success {
+    color: #059669 !important;
+}
+
+/* Override Odoo's bg-100 on body for login page */
+body.bg-100 {
+    background: var(--bg-dark) !important;
+}
+/* Remove padding from wrapwrap on login */
+#wrapwrap:has(.co-login-page) {
+    padding: 0 !important;
+}
+#wrapwrap:has(.co-login-page) > main {
+    padding: 0 !important;
+}
+
+/* Login responsive */
+@media (max-width: 991.98px) {
+    .co-login-page {
+        flex-direction: column;
+    }
+    .co-login-form-panel {
+        min-height: 100vh;
+    }
+}
+
+/* ============================================
+   Theme Toggle Button
+   ============================================ */
+
+.co-theme-toggle {
+    background: none !important;
+    border: none !important;
+    color: var(--text-secondary) !important;
+    font-size: 1.1rem;
+    cursor: pointer;
+    transition: color var(--transition-fast);
+    line-height: 1;
+    padding: 0.5rem !important;
+}
+.co-theme-toggle:hover {
+    color: var(--text-primary) !important;
+}
+
+/* ============================================
+   Reset & Base Styles
+   ============================================ */
+
 * {
     margin: 0;
     padding: 0;
@@ -341,6 +694,12 @@ h1, h2, h3, h4, h5, h6 {
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
+[data-theme="light"] .text-gradient {
+    background: linear-gradient(135deg, var(--primary) 0%, #0099CC 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
 
 .text-muted {
     color: var(--text-secondary) !important;
@@ -348,7 +707,7 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Navigation */
 .navbar {
-    background: rgba(10, 10, 11, 0.8);
+    background: var(--bg-navbar);
     backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border-color);
     padding: 0.75rem 0;
@@ -457,9 +816,14 @@ h1, h2, h3, h4, h5, h6 {
 .hero-bg {
     position: absolute;
     inset: 0;
-    background: 
+    background:
         radial-gradient(ellipse at 20% 20%, rgba(0, 102, 255, 0.15) 0%, transparent 50%),
         radial-gradient(ellipse at 80% 80%, rgba(0, 212, 255, 0.1) 0%, transparent 50%);
+}
+[data-theme="light"] .hero-bg {
+    background:
+        radial-gradient(ellipse at 20% 20%, rgba(0, 102, 255, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(0, 212, 255, 0.04) 0%, transparent 50%);
 }
 
 .hero-visual {
@@ -1476,6 +1840,9 @@ h1, h2, h3, h4, h5, h6 {
 .modal-header .btn-close {
     filter: invert(1);
 }
+[data-theme="light"] .modal-header .btn-close {
+    filter: none;
+}
 
 .modal-body {
     padding: 1.5rem;
@@ -1491,7 +1858,7 @@ h1, h2, h3, h4, h5, h6 {
     .hero-section {
         padding-top: 6rem;
     }
-    
+
     .stat-number {
         font-size: 2rem;
     }
@@ -1502,11 +1869,11 @@ h1, h2, h3, h4, h5, h6 {
         padding-top: 3rem;
         padding-bottom: 3rem;
     }
-    
+
     .plan-price .amount {
         font-size: 2rem;
     }
-    
+
     .otp-input {
         width: 42px;
         height: 52px;

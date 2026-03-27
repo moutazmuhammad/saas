@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================
+         Override the website module's login_layout.
+         The website module (priority 20) replaces web.login_layout to:
+           <t t-call="website.layout">
+               <div class="oe_website_login_container" t-out="0"/>
+           </t>
+         We replace that with web.frontend_layout (keeps assets) but
+         with no header/footer, giving us a fully custom login page.
+         ============================================================ -->
+
+    <template id="cloudodoo_login_layout" name="CloudOdoo Login Layout"
+              inherit_id="web.login_layout" customize_show="False" priority="30">
+        <xpath expr="//t[@t-call='website.layout']" position="replace">
+            <t t-call="web.frontend_layout">
+                <t t-set="no_header" t-value="True"/>
+                <t t-set="no_footer" t-value="True"/>
+
+                <div class="co-login-page">
+                    <!-- Left panel: branding -->
+                    <div class="co-login-brand d-none d-lg-flex">
+                        <div class="co-login-brand-content">
+                            <div class="co-login-brand-logo">
+                                <i class="fas fa-cloud"></i>
+                                <span>CloudOdoo</span>
+                            </div>
+                            <h1 class="co-login-brand-title">Welcome Back</h1>
+                            <p class="co-login-brand-subtitle">
+                                Sign in to manage your cloud instances, monitor performance, and scale your business.
+                            </p>
+                            <div class="co-login-brand-features">
+                                <div class="co-login-brand-feature">
+                                    <i class="fas fa-shield-alt"></i>
+                                    <span>Enterprise-grade security</span>
+                                </div>
+                                <div class="co-login-brand-feature">
+                                    <i class="fas fa-server"></i>
+                                    <span>Isolated containers</span>
+                                </div>
+                                <div class="co-login-brand-feature">
+                                    <i class="fas fa-clock"></i>
+                                    <span>99.9% uptime SLA</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="co-login-brand-footer">
+                            <span>&#169; 2026 CloudOdoo. All rights reserved.</span>
+                        </div>
+                    </div>
+
+                    <!-- Right panel: login form -->
+                    <div class="co-login-form-panel">
+                        <div class="co-login-form-wrapper">
+                            <!-- Mobile logo -->
+                            <div class="co-login-mobile-logo d-lg-none">
+                                <i class="fas fa-cloud"></i>
+                                <span>CloudOdoo</span>
+                            </div>
+
+                            <div class="co-login-form-header">
+                                <h2>Sign In</h2>
+                                <p>Enter your credentials to access your account</p>
+                            </div>
+
+                            <t t-out="0"/>
+
+                            <div class="co-login-form-footer">
+                                <p>Don't have an account? <a href="/services/register">Sign up</a></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </t>
+        </xpath>
+    </template>
+
+    <!-- ============================================================
+         Override the login form itself to style the button and labels
+         ============================================================ -->
+
+    <template id="cloudodoo_login_form" name="CloudOdoo Login Form"
+              inherit_id="web.login" customize_show="False">
+        <!-- Replace the Log in button with styled version -->
+        <xpath expr="//div[hasclass('oe_login_buttons')]" position="replace">
+            <div class="oe_login_buttons co-login-buttons d-grid gap-2 pt-3">
+                <button type="submit" class="btn co-btn-primary">
+                    <span>Sign In</span>
+                    <i class="fas fa-arrow-right ms-2"></i>
+                </button>
+                <t t-if="debug">
+                    <button type="submit" name="redirect" value="/web/become" class="btn btn-link btn-sm">Log in as superuser</button>
+                </t>
+                <div class="o_login_auth"/>
+            </div>
+        </xpath>
+
+        <!-- Add forgot password link next to password label -->
+        <xpath expr="//div[hasclass('mb-3')][.//input[@id='password']]//label" position="replace">
+            <label for="password" class="form-label d-flex justify-content-between">
+                <span>Password</span>
+                <a href="/web/reset_password" class="co-forgot-link">Forgot password?</a>
+            </label>
+        </xpath>
+    </template>
+
+</odoo>

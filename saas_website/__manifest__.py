@@ -11,6 +11,7 @@
         'security/ir.model.access.csv',
         'data/mail_templates.xml',
         'views/saas_frontend_layout.xml',
+        'views/saas_login_templates.xml',
         'views/saas_services_templates.xml',
         'views/saas_registration_templates.xml',
         'views/saas_portal_templates.xml',

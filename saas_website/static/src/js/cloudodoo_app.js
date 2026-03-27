@@ -92,6 +92,34 @@ const CloudOdoo = {
 };
 
 // ============================================
+// Theme Toggle (Dark/Light)
+// ============================================
+
+function initThemeToggle() {
+    var saved = localStorage.getItem('co-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+
+    var toggle = document.getElementById('themeToggle');
+    var icon = document.getElementById('themeIcon');
+    if (!toggle || !icon) return;
+
+    function updateIcon(theme) {
+        // Show sun icon in dark mode (click to go light), moon in light mode (click to go dark)
+        icon.className = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+    }
+
+    updateIcon(saved);
+
+    toggle.addEventListener('click', function() {
+        var current = document.documentElement.getAttribute('data-theme') || 'dark';
+        var next = current === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('co-theme', next);
+        updateIcon(next);
+    });
+}
+
+// ============================================
 // Billing Toggle (Plans Page)
 // ============================================
 
@@ -533,6 +561,7 @@ function initLoginForm() {
 
 function initAll() {
     // Initialize all interactive components
+    initThemeToggle();
     initBillingToggle();
     initSubdomainCheck();
     initOTPInputs();
