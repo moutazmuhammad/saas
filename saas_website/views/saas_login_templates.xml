@@ -23,8 +23,7 @@
                     <div class="co-login-brand d-none d-lg-flex">
                         <div class="co-login-brand-content">
                             <div class="co-login-brand-logo">
-                                <i class="fas fa-cloud"></i>
-                                <span>CloudOdoo</span>
+                                <img src="/saas_website/static/src/img/sudud-logo-name.svg" alt="SUDUD" style="height:80px;"/>
                             </div>
                             <h1 class="co-login-brand-title">Welcome Back</h1>
                             <p class="co-login-brand-subtitle">
@@ -46,7 +45,7 @@
                             </div>
                         </div>
                         <div class="co-login-brand-footer">
-                            <span>&#169; 2026 CloudOdoo. All rights reserved.</span>
+                            <span>&#169; 2026 SUDUD. All rights reserved.</span>
                         </div>
                     </div>
 
@@ -55,8 +54,7 @@
                         <div class="co-login-form-wrapper">
                             <!-- Mobile logo -->
                             <div class="co-login-mobile-logo d-lg-none">
-                                <i class="fas fa-cloud"></i>
-                                <span>CloudOdoo</span>
+                                <img src="/saas_website/static/src/img/sudud-logo-name.svg" alt="SUDUD" style="height:60px;"/>
                             </div>
 
                             <div class="co-login-form-header">

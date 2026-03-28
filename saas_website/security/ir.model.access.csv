@@ -12,4 +12,6 @@ access_saas_product_portal,saas.product portal,saas_core.model_saas_product,base
 access_saas_product_public,saas.product public,saas_core.model_saas_product,base.group_public,1,0,0,0
 access_saas_product_feature_portal,saas.product.feature portal,saas_core.model_saas_product_feature,base.group_portal,1,0,0,0
 access_saas_product_feature_public,saas.product.feature public,saas_core.model_saas_product_feature,base.group_public,1,0,0,0
+access_saas_instance_folder_portal,saas.instance.folder portal,model_saas_instance_folder,base.group_portal,1,1,1,1
+access_saas_instance_folder_admin,saas.instance.folder admin,model_saas_instance_folder,saas_core.group_saas_manager,1,1,1,1
 access_saas_registration_otp_admin,saas.registration.otp admin,model_saas_registration_otp,saas_core.group_saas_manager,1,1,1,1

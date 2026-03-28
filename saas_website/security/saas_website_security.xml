@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
+    <!-- Portal users can manage their own folders -->
+    <record id="rule_saas_instance_folder_portal" model="ir.rule">
+        <field name="name">Portal: own instance folders</field>
+        <field name="model_id" ref="model_saas_instance_folder"/>
+        <field name="domain_force">[('partner_id', '=', user.partner_id.id)]</field>
+        <field name="groups" eval="[(4, ref('base.group_portal'))]"/>
+        <field name="perm_read" eval="True"/>
+        <field name="perm_write" eval="True"/>
+        <field name="perm_create" eval="True"/>
+        <field name="perm_unlink" eval="True"/>
+    </record>
+
     <!-- Portal users can read their own instances only -->
     <record id="rule_saas_instance_portal" model="ir.rule">
         <field name="name">Portal: own SaaS instances</field>

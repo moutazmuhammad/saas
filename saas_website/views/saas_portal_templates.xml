@@ -34,10 +34,10 @@
                         <!-- SaaS Instances card -->
                         <div class="col-md-6 col-lg-4">
                             <a href="/my/instances" class="text-decoration-none">
-                                <div class="info-card h-100" style="transition:all 0.2s ease;border-left:3px solid var(--co-primary, #0066FF);">
+                                <div class="info-card h-100" style="transition:all 0.2s ease;border-left:3px solid var(--co-primary, #203c86);">
                                     <div class="d-flex align-items-center gap-3">
                                         <div class="d-flex align-items-center justify-content-center rounded"
-                                             style="width:48px;height:48px;background:rgba(0,102,255,0.1);color:var(--co-primary, #0066FF);font-size:1.25rem;flex-shrink:0;">
+                                             style="width:48px;height:48px;background:rgba(32,60,134,0.1);color:var(--co-primary, #203c86);font-size:1.25rem;flex-shrink:0;">
                                             <i class="fas fa-server"></i>
                                         </div>
                                         <div>
@@ -194,12 +194,64 @@
                                 </div>
                             </div>
 
+                            <!-- Folder Tabs -->
+                            <div class="d-flex align-items-center gap-2 mb-3 flex-wrap" id="folder-tabs">
+                                <a t-attf-href="/my/instances?sortby=#{sortby}"
+                                   t-attf-class="btn btn-sm #{active_folder == 'all' and 'btn-primary' or 'btn-outline-secondary'}">
+                                    All <span class="badge bg-light text-dark ms-1" t-esc="all_count"/>
+                                </a>
+                                <a t-attf-href="/my/instances?sortby=#{sortby}&amp;folder=unfiled"
+                                   t-attf-class="btn btn-sm #{active_folder == 'unfiled' and 'btn-primary' or 'btn-outline-secondary'}">
+                                    <i class="fas fa-inbox me-1"></i>Unfiled
+                                    <span class="badge bg-light text-dark ms-1" t-esc="unfiled_count"/>
+                                </a>
+                                <t t-foreach="folders" t-as="f">
+                                    <div class="btn-group btn-group-sm folder-tab-group">
+                                        <a t-attf-href="/my/instances?sortby=#{sortby}&amp;folder=#{f.id}"
+                                           t-attf-class="btn #{str(active_folder_id) == str(f.id) and 'btn-primary' or 'btn-outline-secondary'}">
+                                            <i class="fas fa-folder me-1"></i>
+                                            <span class="folder-name" t-esc="f.name"/>
+                                            <span class="badge bg-light text-dark ms-1" t-esc="f.instance_count"/>
+                                        </a>
+                                        <button type="button"
+                                                t-attf-class="btn dropdown-toggle dropdown-toggle-split #{str(active_folder_id) == str(f.id) and 'btn-primary' or 'btn-outline-secondary'}"
+                                                data-bs-toggle="dropdown" aria-expanded="false">
+                                            <span class="visually-hidden">Toggle Dropdown</span>
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end">
+                                            <li>
+                                                <a class="dropdown-item folder-rename-btn" href="#"
+                                                   t-att-data-folder-id="f.id"
+                                                   t-att-data-folder-name="f.name">
+                                                    <i class="fas fa-pen me-2"></i>Rename
+                                                </a>
+                                            </li>
+                                            <li><hr class="dropdown-divider"/></li>
+                                            <li>
+                                                <a class="dropdown-item text-danger folder-delete-btn" href="#"
+                                                   t-att-data-folder-id="f.id"
+                                                   t-att-data-folder-name="f.name">
+                                                    <i class="fas fa-trash me-2"></i>Delete
+                                                </a>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </t>
+                                <button class="btn btn-sm btn-outline-secondary" id="btn-create-folder"
+                                        title="Create folder">
+                                    <i class="fas fa-folder-plus"></i>
+                                </button>
+                            </div>
+
                             <div class="info-card">
                                 <t t-if="instances">
                                     <div class="table-responsive">
                                         <table class="table table-dark-custom">
                                             <thead>
                                                 <tr>
+                                                    <th style="width:30px;">
+                                                        <input type="checkbox" class="form-check-input" id="select-all-instances"/>
+                                                    </th>
                                                     <th>Instance</th>
                                                     <th>Service</th>
                                                     <th>Plan</th>
@@ -212,9 +264,20 @@
                                                 <t t-foreach="instances" t-as="inst">
                                                     <tr>
                                                         <td>
+                                                            <input type="checkbox" class="form-check-input instance-checkbox"
+                                                                   t-att-value="inst.id"/>
+                                                        </td>
+                                                        <td>
                                                             <a t-attf-href="/my/instances/#{inst.id}"
                                                                class="fw-semibold text-primary"
                                                                t-esc="inst.subdomain or inst.name"/>
+                                                            <t t-if="inst.folder_id and active_folder == 'all'">
+                                                                <span class="badge bg-secondary ms-1 small"
+                                                                      style="font-size:0.7em;">
+                                                                    <i class="fas fa-folder me-1"></i>
+                                                                    <t t-esc="inst.folder_id.name"/>
+                                                                </span>
+                                                            </t>
                                                         </td>
                                                         <td t-esc="inst.saas_product_id.name"/>
                                                         <td>
@@ -251,16 +314,56 @@
                                             </tbody>
                                         </table>
                                     </div>
+
+                                    <!-- Bulk action bar (shown when instances selected) -->
+                                    <div class="d-none align-items-center gap-2 p-2 border-top" id="bulk-actions">
+                                        <span class="text-muted small me-2">
+                                            <span id="selected-count">0</span> selected
+                                        </span>
+                                        <div class="dropdown">
+                                            <button class="btn btn-sm btn-outline-secondary dropdown-toggle"
+                                                    type="button" data-bs-toggle="dropdown">
+                                                <i class="fas fa-folder me-1"></i>Move to folder
+                                            </button>
+                                            <ul class="dropdown-menu" id="move-folder-menu">
+                                                <li>
+                                                    <a class="dropdown-item move-to-folder" href="#" data-folder-id="0">
+                                                        <i class="fas fa-inbox me-2"></i>Unfiled
+                                                    </a>
+                                                </li>
+                                                <t t-foreach="folders" t-as="f">
+                                                    <li>
+                                                        <a class="dropdown-item move-to-folder" href="#"
+                                                           t-att-data-folder-id="f.id">
+                                                            <i class="fas fa-folder me-2"></i>
+                                                            <t t-esc="f.name"/>
+                                                        </a>
+                                                    </li>
+                                                </t>
+                                            </ul>
+                                        </div>
+                                    </div>
                                 </t>
 
                                 <!-- Empty state -->
                                 <t t-if="not instances">
                                     <div class="empty-state">
                                         <div class="empty-state-icon">
-                                            <i class="fas fa-server"></i>
+                                            <t t-if="active_folder != 'all'">
+                                                <i class="fas fa-folder-open"></i>
+                                            </t>
+                                            <t t-else="">
+                                                <i class="fas fa-server"></i>
+                                            </t>
                                         </div>
-                                        <h5>No instances yet</h5>
-                                        <p>Create your first cloud instance to get started.</p>
+                                        <t t-if="active_folder != 'all'">
+                                            <h5>No instances in this folder</h5>
+                                            <p>Move instances here to organize your work.</p>
+                                        </t>
+                                        <t t-else="">
+                                            <h5>No instances yet</h5>
+                                            <p>Create your first cloud instance to get started.</p>
+                                        </t>
                                         <a href="/services" class="btn btn-primary">
                                             <i class="fas fa-plus me-2"></i>Browse Services
                                         </a>
@@ -1175,7 +1278,7 @@
                     </div>
 
                     <!-- Current plan summary card -->
-                    <div class="info-card mb-4" style="border-left:3px solid var(--co-primary, #0066FF);">
+                    <div class="info-card mb-4" style="border-left:3px solid var(--co-primary, #203c86);">
                         <div class="d-flex flex-wrap align-items-center justify-content-between">
                             <div>
                                 <div class="small" style="color:var(--co-text-muted,#71717A);text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">Your Current Plan</div>
@@ -1275,7 +1378,7 @@
 
                                     <!-- Badge -->
                                     <t t-if="is_current">
-                                        <span class="plan-badge" style="background:var(--co-primary, #0066FF);">Current Plan</span>
+                                        <span class="plan-badge" style="background:var(--co-primary, #203c86);">Current Plan</span>
                                     </t>
                                     <t t-elif="is_upgrade">
                                         <span class="plan-badge" style="background:#10B981;">Upgrade</span>
@@ -1367,7 +1470,7 @@
                                         </t>
                                         <t t-elif="cur_period == 'yearly'">
                                             <div class="mb-3 p-3" style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);border-radius:10px;font-size:0.85rem;">
-                                                <div class="fw-semibold mb-2" style="color:var(--co-primary, #0066FF);">
+                                                <div class="fw-semibold mb-2" style="color:var(--co-primary, #203c86);">
                                                     <i class="fas fa-check-circle me-1"></i>Annual Plan Active
                                                 </div>
                                                 <ul class="list-unstyled mb-0" style="color:var(--co-text-secondary, #A1A1AA);">

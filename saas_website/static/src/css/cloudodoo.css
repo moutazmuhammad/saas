@@ -12,9 +12,11 @@
    ============================================ */
 
 :root {
-    --primary: #0066FF;
-    --primary-hover: #0052CC;
-    --primary-light: rgba(0, 102, 255, 0.1);
+    --primary: #203c86;
+    --primary-hover: #192e6b;
+    --primary-light: rgba(32, 60, 134, 0.1);
+    --accent: #0db3d0;
+    --accent-hover: #0a95ad;
     --success: #10B981;
     --success-light: rgba(16, 185, 129, 0.1);
     --warning: #F59E0B;
@@ -46,7 +48,7 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
-    --shadow-glow: 0 0 40px rgba(0, 102, 255, 0.15);
+    --shadow-glow: 0 0 40px rgba(32, 60, 134, 0.15);
 
     --transition-fast: 150ms ease;
     --transition-base: 250ms ease;
@@ -80,7 +82,7 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
-    --shadow-glow: 0 0 40px rgba(0, 102, 255, 0.08);
+    --shadow-glow: 0 0 40px rgba(32, 60, 134, 0.08);
 }
 
 /* ============================================
@@ -379,7 +381,7 @@ footer a[href*="odoo.com"],
     left: -50%;
     width: 200%;
     height: 200%;
-    background: radial-gradient(ellipse at 30% 50%, rgba(0, 102, 255, 0.08) 0%, transparent 60%);
+    background: radial-gradient(ellipse at 30% 50%, rgba(32, 60, 134, 0.08) 0%, transparent 60%);
     pointer-events: none;
 }
 .co-login-brand-content {
@@ -544,7 +546,7 @@ footer a[href*="odoo.com"],
 
 /* Primary button */
 .co-btn-primary {
-    background: linear-gradient(135deg, #0066FF 0%, #0052CC 100%) !important;
+    background: linear-gradient(135deg, #203c86 0%, #192e6b 100%) !important;
     border: none !important;
     border-radius: 10px !important;
     color: #FFFFFF !important;
@@ -557,9 +559,9 @@ footer a[href*="odoo.com"],
     justify-content: center;
 }
 .co-btn-primary:hover {
-    background: linear-gradient(135deg, #0052CC 0%, #003D99 100%) !important;
+    background: linear-gradient(135deg, #192e6b 0%, #0db3d0 100%) !important;
     transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(0, 102, 255, 0.3) !important;
+    box-shadow: 0 4px 16px rgba(32, 60, 134, 0.3) !important;
 }
 .co-btn-primary:active {
     transform: translateY(0);
@@ -689,13 +691,13 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .text-gradient {
-    background: linear-gradient(135deg, var(--primary) 0%, #00D4FF 100%);
+    background: linear-gradient(135deg, var(--primary) 0%, #0db3d0 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
 }
 [data-theme="light"] .text-gradient {
-    background: linear-gradient(135deg, var(--primary) 0%, #0099CC 100%);
+    background: linear-gradient(135deg, var(--primary) 0%, #0db3d0 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -817,12 +819,12 @@ h1, h2, h3, h4, h5, h6 {
     position: absolute;
     inset: 0;
     background:
-        radial-gradient(ellipse at 20% 20%, rgba(0, 102, 255, 0.15) 0%, transparent 50%),
+        radial-gradient(ellipse at 20% 20%, rgba(32, 60, 134, 0.15) 0%, transparent 50%),
         radial-gradient(ellipse at 80% 80%, rgba(0, 212, 255, 0.1) 0%, transparent 50%);
 }
 [data-theme="light"] .hero-bg {
     background:
-        radial-gradient(ellipse at 20% 20%, rgba(0, 102, 255, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 20% 20%, rgba(32, 60, 134, 0.06) 0%, transparent 50%),
         radial-gradient(ellipse at 80% 80%, rgba(0, 212, 255, 0.04) 0%, transparent 50%);
 }
 

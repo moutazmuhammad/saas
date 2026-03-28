@@ -48,13 +48,26 @@ class SaasPortal(CustomerPortal):
         ['/my/instances', '/my/instances/page/<int:page>'],
         type='http', auth='user', website=True,
     )
-    def portal_my_instances(self, page=1, sortby=None, **kw):
+    def portal_my_instances(self, page=1, sortby=None, folder=None, **kw):
         partner = request.env.user.partner_id
         Instance = request.env['saas.instance'].sudo()
+        Folder = request.env['saas.instance.folder'].sudo()
+
         domain = [
             ('partner_id', '=', partner.id),
             ('state', 'in', self._PORTAL_VISIBLE_STATES),
         ]
+
+        # Folder filtering
+        active_folder_id = False
+        if folder == 'unfiled':
+            domain.append(('folder_id', '=', False))
+        elif folder:
+            try:
+                active_folder_id = int(folder)
+                domain.append(('folder_id', '=', active_folder_id))
+            except (ValueError, TypeError):
+                pass
 
         sortings = {
             'date': {'label': _('Newest'), 'order': 'create_date desc'},
@@ -63,13 +76,17 @@ class SaasPortal(CustomerPortal):
         }
         sortby = sortby if sortby in sortings else 'date'
 
+        url_args = {'sortby': sortby}
+        if folder:
+            url_args['folder'] = folder
+
         instance_count = Instance.search_count(domain)
         pager = portal_pager(
             url='/my/instances',
             total=instance_count,
             page=page,
             step=20,
-            url_args={'sortby': sortby},
+            url_args=url_args,
         )
 
         instances = Instance.search(
@@ -79,6 +96,19 @@ class SaasPortal(CustomerPortal):
             offset=pager['offset'],
         )
 
+        # Fetch user's folders with instance counts
+        folders = Folder.search([('partner_id', '=', partner.id)])
+
+        # Total instance count (all folders) for "All" tab
+        all_domain = [
+            ('partner_id', '=', partner.id),
+            ('state', 'in', self._PORTAL_VISIBLE_STATES),
+        ]
+        all_count = Instance.search_count(all_domain)
+
+        # Unfiled count
+        unfiled_count = Instance.search_count(all_domain + [('folder_id', '=', False)])
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instances': instances,
@@ -87,6 +117,11 @@ class SaasPortal(CustomerPortal):
             'sortby': sortby,
             'searchbar_sortings': sortings,
             'default_url': '/my/instances',
+            'folders': folders,
+            'active_folder': folder or 'all',
+            'active_folder_id': active_folder_id,
+            'all_count': all_count,
+            'unfiled_count': unfiled_count,
         })
         return request.render('saas_website.portal_my_instances', values)
 
@@ -886,3 +921,81 @@ class SaasPortal(CustomerPortal):
                 '/my/instances/%s/checkout' % instance_id
             )
         return request.redirect('/my/instances/%s' % instance_id)
+
+    # ==================== Instance Folders ====================
+
+    @http.route(
+        '/my/instances/folder/create',
+        type='json', auth='user', website=True,
+    )
+    def portal_folder_create(self, name, **kw):
+        """Create a new instance folder."""
+        name = (name or '').strip()
+        if not name:
+            return {'error': _('Folder name is required.')}
+        partner = request.env.user.partner_id
+        folder = request.env['saas.instance.folder'].sudo().create({
+            'name': name,
+            'partner_id': partner.id,
+        })
+        return {'success': True, 'folder_id': folder.id, 'name': folder.name}
+
+    @http.route(
+        '/my/instances/folder/<int:folder_id>/rename',
+        type='json', auth='user', website=True,
+    )
+    def portal_folder_rename(self, folder_id, name, **kw):
+        """Rename an instance folder."""
+        name = (name or '').strip()
+        if not name:
+            return {'error': _('Folder name is required.')}
+        partner = request.env.user.partner_id
+        folder = request.env['saas.instance.folder'].sudo().search([
+            ('id', '=', folder_id),
+            ('partner_id', '=', partner.id),
+        ], limit=1)
+        if not folder:
+            return {'error': _('Folder not found.')}
+        folder.name = name
+        return {'success': True, 'folder_id': folder.id, 'name': folder.name}
+
+    @http.route(
+        '/my/instances/folder/<int:folder_id>/delete',
+        type='json', auth='user', website=True,
+    )
+    def portal_folder_delete(self, folder_id, **kw):
+        """Delete an instance folder. Instances are moved to unfiled."""
+        partner = request.env.user.partner_id
+        folder = request.env['saas.instance.folder'].sudo().search([
+            ('id', '=', folder_id),
+            ('partner_id', '=', partner.id),
+        ], limit=1)
+        if not folder:
+            return {'error': _('Folder not found.')}
+        folder.instance_ids.write({'folder_id': False})
+        folder.unlink()
+        return {'success': True}
+
+    @http.route(
+        '/my/instances/move',
+        type='json', auth='user', website=True,
+    )
+    def portal_instance_move_to_folder(self, instance_ids, folder_id=False, **kw):
+        """Move instances to a folder (or unfiled if folder_id is False)."""
+        partner = request.env.user.partner_id
+        Instance = request.env['saas.instance'].sudo()
+        instances = Instance.search([
+            ('id', 'in', instance_ids),
+            ('partner_id', '=', partner.id),
+        ])
+        if not instances:
+            return {'error': _('No instances found.')}
+        if folder_id:
+            folder = request.env['saas.instance.folder'].sudo().search([
+                ('id', '=', folder_id),
+                ('partner_id', '=', partner.id),
+            ], limit=1)
+            if not folder:
+                return {'error': _('Folder not found.')}
+        instances.write({'folder_id': folder_id or False})
+        return {'success': True}

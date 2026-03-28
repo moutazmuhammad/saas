@@ -556,6 +556,220 @@ function initLoginForm() {
 }
 
 // ============================================
+// Instance Folders
+// ============================================
+
+var _coInputOnConfirm = null;
+
+function _coShowInputModal(title, placeholder, value, confirmText, onConfirm) {
+    var modal = document.getElementById('co-input-modal');
+    if (!modal) {
+        document.body.insertAdjacentHTML('beforeend',
+            '<div id="co-input-modal" class="co-modal-overlay">' +
+            '  <div class="co-modal-dialog">' +
+            '    <div class="co-modal-content">' +
+            '      <div class="co-modal-header">' +
+            '        <div style="display:flex;align-items:center;gap:12px;">' +
+            '          <div id="co-input-icon" class="co-modal-icon" style="background:rgba(59,130,246,0.15);color:#3B82F6;">' +
+            '            <i class="fas fa-folder-plus"></i>' +
+            '          </div>' +
+            '          <h5 id="co-input-title" style="margin:0;font-size:1.1rem;"></h5>' +
+            '        </div>' +
+            '        <button type="button" class="co-modal-close" id="co-input-close">&times;</button>' +
+            '      </div>' +
+            '      <div class="co-modal-body">' +
+            '        <input type="text" id="co-input-field" class="form-control"' +
+            '               style="background:var(--bg-tertiary,#1a1a1d);border-color:var(--border-color,#27272A);color:var(--text-primary,#FAFAFA);"' +
+            '               maxlength="80" autocomplete="off"/>' +
+            '      </div>' +
+            '      <div class="co-modal-footer">' +
+            '        <button type="button" class="btn btn-outline-secondary" id="co-input-cancel">' +
+            '          <i class="fas fa-times me-1"></i>Cancel' +
+            '        </button>' +
+            '        <button type="button" class="btn btn-primary" id="co-input-ok">' +
+            '          <i class="fas fa-check me-1"></i>Create' +
+            '        </button>' +
+            '      </div>' +
+            '    </div>' +
+            '  </div>' +
+            '</div>');
+        modal = document.getElementById('co-input-modal');
+
+        var hideInput = function () {
+            modal.classList.remove('co-show');
+            var b = document.getElementById('co-confirm-backdrop');
+            if (b) b.classList.remove('co-show');
+            setTimeout(function () {
+                modal.style.display = 'none';
+                if (b) b.style.display = 'none';
+            }, 200);
+            _coInputOnConfirm = null;
+        };
+
+        document.getElementById('co-input-close').addEventListener('click', hideInput);
+        document.getElementById('co-input-cancel').addEventListener('click', hideInput);
+        document.getElementById('co-input-ok').addEventListener('click', function () {
+            var val = document.getElementById('co-input-field').value.trim();
+            var fn = _coInputOnConfirm;
+            hideInput();
+            if (fn && val) setTimeout(function () { fn(val); }, 50);
+        });
+        document.getElementById('co-input-field').addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('co-input-ok').click();
+            }
+        });
+        modal.addEventListener('click', function (e) {
+            if (e.target === modal) hideInput();
+        });
+    }
+
+    document.getElementById('co-input-title').textContent = title;
+    document.getElementById('co-input-field').setAttribute('placeholder', placeholder || '');
+    document.getElementById('co-input-field').value = value || '';
+    document.getElementById('co-input-ok').innerHTML = '<i class="fas fa-check me-1"></i>' + (confirmText || 'OK');
+    _coInputOnConfirm = onConfirm;
+
+    // Reuse the shared backdrop
+    var b = document.getElementById('co-confirm-backdrop');
+    if (!b) {
+        b = document.createElement('div');
+        b.id = 'co-confirm-backdrop';
+        document.body.appendChild(b);
+    }
+    b.style.display = 'block';
+    modal.style.display = 'flex';
+    requestAnimationFrame(function () {
+        b.classList.add('co-show');
+        modal.classList.add('co-show');
+        document.getElementById('co-input-field').focus();
+        document.getElementById('co-input-field').select();
+    });
+}
+
+function initInstanceFolders() {
+    var createBtn = document.getElementById('btn-create-folder');
+    if (!createBtn) return;
+
+    // Create folder
+    createBtn.addEventListener('click', function () {
+        _coShowInputModal('New Folder', 'Folder name', '', 'Create', function (name) {
+            CloudOdoo.jsonRpc('/my/instances/folder/create', { name: name })
+                .then(function (res) {
+                    if (res.error) {
+                        CloudOdoo.showToast(res.error, 'error');
+                    } else {
+                        window.location.reload();
+                    }
+                })
+                .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
+        });
+    });
+
+    // Rename folder
+    document.querySelectorAll('.folder-rename-btn').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            var folderId = parseInt(this.dataset.folderId);
+            var currentName = this.dataset.folderName;
+            _coShowInputModal('Rename Folder', 'Folder name', currentName, 'Rename', function (name) {
+                if (name === currentName) return;
+                CloudOdoo.jsonRpc('/my/instances/folder/' + folderId + '/rename', { name: name })
+                    .then(function (res) {
+                        if (res.error) {
+                            CloudOdoo.showToast(res.error, 'error');
+                        } else {
+                            window.location.reload();
+                        }
+                    })
+                    .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
+            });
+        });
+    });
+
+    // Delete folder
+    document.querySelectorAll('.folder-delete-btn').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            var folderId = parseInt(this.dataset.folderId);
+            var folderName = this.dataset.folderName;
+            _coSetupModal(
+                'Delete folder "' + folderName + '"? Instances will be moved to Unfiled.',
+                'danger', 'Delete', 'Cancel',
+                function () {
+                    CloudOdoo.jsonRpc('/my/instances/folder/' + folderId + '/delete', {})
+                        .then(function (res) {
+                            if (res.error) {
+                                CloudOdoo.showToast(res.error, 'error');
+                            } else {
+                                // If currently viewing the deleted folder, go to all
+                                var params = new URLSearchParams(window.location.search);
+                                if (params.get('folder') === String(folderId)) {
+                                    window.location.href = '/my/instances';
+                                } else {
+                                    window.location.reload();
+                                }
+                            }
+                        })
+                        .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
+                }
+            );
+        });
+    });
+
+    // Checkbox selection & bulk actions
+    var selectAll = document.getElementById('select-all-instances');
+    var bulkBar = document.getElementById('bulk-actions');
+    var countEl = document.getElementById('selected-count');
+    var checkboxes = document.querySelectorAll('.instance-checkbox');
+
+    function updateBulkBar() {
+        var checked = document.querySelectorAll('.instance-checkbox:checked');
+        if (countEl) countEl.textContent = checked.length;
+        if (bulkBar) {
+            bulkBar.classList.toggle('d-none', checked.length === 0);
+            bulkBar.classList.toggle('d-flex', checked.length > 0);
+        }
+    }
+
+    if (selectAll) {
+        selectAll.addEventListener('change', function () {
+            checkboxes.forEach(function (cb) { cb.checked = selectAll.checked; });
+            updateBulkBar();
+        });
+    }
+    checkboxes.forEach(function (cb) {
+        cb.addEventListener('change', updateBulkBar);
+    });
+
+    // Move to folder
+    document.querySelectorAll('.move-to-folder').forEach(function (item) {
+        item.addEventListener('click', function (e) {
+            e.preventDefault();
+            var folderId = parseInt(this.dataset.folderId) || false;
+            var checked = document.querySelectorAll('.instance-checkbox:checked');
+            var ids = [];
+            checked.forEach(function (cb) { ids.push(parseInt(cb.value)); });
+            if (!ids.length) return;
+            CloudOdoo.jsonRpc('/my/instances/move', {
+                instance_ids: ids,
+                folder_id: folderId,
+            })
+                .then(function (res) {
+                    if (res.error) {
+                        CloudOdoo.showToast(res.error, 'error');
+                    } else {
+                        CloudOdoo.showToast('Moved ' + ids.length + ' instance(s)', 'success');
+                        setTimeout(function () { window.location.reload(); }, 500);
+                    }
+                })
+                .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
+        });
+    });
+}
+
+// ============================================
 // Page Initialization
 // ============================================
 
@@ -574,6 +788,7 @@ function initAll() {
     initInstanceSort();
     initLoginForm();
     initConfirmModals();
+    initInstanceFolders();
 
     // Update nav active state
     const path = window.location.pathname;
