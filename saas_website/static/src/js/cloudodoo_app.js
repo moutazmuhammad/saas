@@ -1047,3 +1047,27 @@ function initConfirmModals() {
     `;
     document.head.appendChild(style);
 })();
+
+// ============================================
+// Navbar: Collapsible folder toggles
+// ============================================
+
+(function () {
+    'use strict';
+    document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll('.folder-toggle').forEach(function (toggle) {
+            toggle.addEventListener('click', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var targetId = toggle.getAttribute('data-target');
+                var submenu = document.getElementById(targetId);
+                if (!submenu) return;
+                var isOpen = submenu.classList.contains('show');
+                submenu.classList.toggle('show', !isOpen);
+                toggle.classList.toggle('open', !isOpen);
+            });
+        });
+
+    });
+})();
+

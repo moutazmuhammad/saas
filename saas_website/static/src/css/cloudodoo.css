@@ -1642,6 +1642,270 @@ h1, h2, h3, h4, h5, h6 {
     margin-bottom: 1.5rem;
 }
 
+/* ============================================
+   Sidebar Folders
+   ============================================ */
+
+.sidebar-folders {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.sidebar-folders-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0.5rem 0.5rem;
+}
+
+.sidebar-folder-add {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0.2rem 0.4rem;
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-fast);
+}
+
+.sidebar-folder-add:hover {
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+}
+
+.sidebar-folder-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.sidebar-folder-entry {
+    position: relative;
+}
+
+.sidebar-folder-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.85rem;
+    transition: all var(--transition-fast);
+}
+
+.sidebar-folder-item:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.sidebar-folder-item.active {
+    background: var(--primary-light);
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.sidebar-folder-icon {
+    font-size: 0.8rem;
+    width: 1rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.sidebar-folder-name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-folder-count {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    background: var(--bg-elevated);
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    flex-shrink: 0;
+}
+
+.sidebar-folder-item.active .sidebar-folder-count {
+    background: var(--primary);
+    color: #fff;
+}
+
+/* Rename / Delete actions - visible on hover */
+.sidebar-folder-actions {
+    position: absolute;
+    right: 0.4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    gap: 0.15rem;
+}
+
+.sidebar-folder-entry:hover .sidebar-folder-actions {
+    display: flex;
+}
+
+.sidebar-folder-entry:hover .sidebar-folder-count {
+    display: none;
+}
+
+.sidebar-folder-action {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    padding: 0.25rem;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+    transition: all var(--transition-fast);
+}
+
+.sidebar-folder-action:hover {
+    color: var(--text-primary);
+    background: var(--bg-card-hover);
+    text-decoration: none;
+}
+
+.sidebar-folder-action.text-danger:hover {
+    color: var(--danger) !important;
+}
+
+/* ============================================
+   Navbar Instance Dropdown
+   ============================================ */
+
+.instance-dropdown-menu {
+    min-width: 300px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.instance-dropdown-menu .dropdown-header {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    padding: 0.5rem 1rem 0.25rem;
+}
+
+.instance-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    text-decoration: none;
+    color: var(--text-primary);
+    transition: background var(--transition-fast);
+}
+
+.instance-dropdown-item:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.instance-dropdown-item .inst-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.inst-status-dot.dot-running { background: var(--success); }
+.inst-status-dot.dot-stopped { background: var(--text-muted); }
+.inst-status-dot.dot-provisioning,
+.inst-status-dot.dot-pending_provision { background: var(--info); }
+.inst-status-dot.dot-suspended { background: var(--warning); }
+.inst-status-dot.dot-failed { background: var(--danger); }
+.inst-status-dot.dot-cancelled,
+.inst-status-dot.dot-cancelled_by_client { background: #52525B; }
+
+.instance-dropdown-item .inst-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.instance-dropdown-item .inst-name {
+    font-weight: 500;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.instance-dropdown-item .inst-meta {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+/* Folder collapsible toggle */
+.folder-toggle {
+    display: flex;
+    align-items: center;
+    padding: 0.55rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-decoration: none;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.folder-toggle:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.folder-count {
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--text-muted);
+    background: var(--bg-elevated);
+    padding: 0.1rem 0.4rem;
+    border-radius: 999px;
+    margin-left: 0.4rem;
+}
+
+.folder-arrow {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    transition: transform var(--transition-fast);
+}
+
+.folder-toggle.open .folder-arrow {
+    transform: rotate(90deg);
+}
+
+/* Folder submenu (hidden by default) */
+.folder-submenu {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: none;
+    border-left: 2px solid var(--border-color);
+    margin-left: 1.25rem;
+}
+
+.folder-submenu.show {
+    display: block;
+}
+
+.folder-submenu .instance-dropdown-item {
+    padding-left: 0.75rem;
+}
+
+.instance-dropdown-footer {
+    border-top: 1px solid var(--border-color);
+    padding: 0.5rem 1rem;
+    text-align: center;
+}
+
 /* Breadcrumbs */
 .breadcrumb {
     background: transparent;

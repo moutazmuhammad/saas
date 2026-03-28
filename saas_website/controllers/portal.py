@@ -109,6 +109,12 @@ class SaasPortal(CustomerPortal):
         # Unfiled count
         unfiled_count = Instance.search_count(all_domain + [('folder_id', '=', False)])
 
+        # Active folder name for rename/delete buttons
+        active_folder_name = ''
+        if active_folder_id:
+            active_folder_rec = folders.filtered(lambda f: f.id == active_folder_id)
+            active_folder_name = active_folder_rec.name if active_folder_rec else ''
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instances': instances,
@@ -120,6 +126,7 @@ class SaasPortal(CustomerPortal):
             'folders': folders,
             'active_folder': folder or 'all',
             'active_folder_id': active_folder_id,
+            'active_folder_name': active_folder_name,
             'all_count': all_count,
             'unfiled_count': unfiled_count,
         })
