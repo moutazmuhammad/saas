@@ -1,6 +1,12 @@
+import hashlib
+import hmac
+import json
 import logging
+import secrets
 import shlex
 from urllib.parse import urlparse, urlunparse
+
+import requests as http_requests
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
@@ -68,6 +74,34 @@ class SaasInstanceRepo(models.Model):
     last_pull = fields.Datetime(string='Last Pull', readonly=True)
     error_message = fields.Text(string='Error', readonly=True)
 
+    # Webhook auto-deploy
+    webhook_enabled = fields.Boolean(
+        string='Auto-Deploy',
+        default=False,
+        help='Automatically pull and restart when code is pushed to the tracked branch.',
+    )
+    webhook_secret = fields.Char(
+        string='Webhook Secret',
+        copy=False,
+        readonly=True,
+        help='Secret token used to validate incoming webhook requests.',
+    )
+    webhook_url = fields.Char(
+        string='Webhook URL',
+        compute='_compute_webhook_url',
+        help='Webhook endpoint registered on the Git provider.',
+    )
+    webhook_provider_id = fields.Char(
+        string='Provider Webhook ID',
+        readonly=True,
+        copy=False,
+        help='ID of the webhook on the Git provider (for cleanup on disable).',
+    )
+    webhook_last_event = fields.Datetime(
+        string='Last Webhook Event',
+        readonly=True,
+    )
+
     @api.depends('repo_url')
     def _compute_name(self):
         for rec in self:
@@ -113,6 +147,444 @@ class SaasInstanceRepo(models.Model):
     def _onchange_repo_url(self):
         if self.repo_url:
             self.repo_url = self._strip_userinfo(self.repo_url.strip())
+
+    @api.depends('webhook_secret')
+    def _compute_webhook_url(self):
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', '')
+        for rec in self:
+            if rec.webhook_secret and rec.id:
+                rec.webhook_url = '%s/saas/webhook/%s' % (base_url, rec.webhook_secret)
+            else:
+                rec.webhook_url = False
+
+    def action_enable_webhook(self):
+        """Enable auto-deploy: generate secret and register webhook on Git provider."""
+        for rec in self:
+            if not rec.webhook_secret:
+                rec.webhook_secret = secrets.token_hex(20)
+            rec.webhook_enabled = True
+            try:
+                rec._register_webhook_on_provider()
+            except Exception as e:
+                _logger.warning("Auto-register webhook failed for %s: %s", rec.name, e)
+
+    def action_disable_webhook(self):
+        """Disable auto-deploy and remove webhook from Git provider."""
+        for rec in self:
+            try:
+                rec._unregister_webhook_from_provider()
+            except Exception as e:
+                _logger.warning("Auto-unregister webhook failed for %s: %s", rec.name, e)
+            rec.webhook_enabled = False
+            rec.webhook_provider_id = False
+
+    def action_regenerate_webhook_secret(self):
+        """Regenerate the webhook secret and re-register on provider."""
+        for rec in self:
+            # Remove old webhook
+            try:
+                rec._unregister_webhook_from_provider()
+            except Exception:
+                pass
+            rec.webhook_secret = secrets.token_hex(20)
+            if rec.webhook_enabled:
+                try:
+                    rec._register_webhook_on_provider()
+                except Exception as e:
+                    _logger.warning("Re-register webhook failed for %s: %s", rec.name, e)
+
+    # ------------------------------------------------------------------
+    # Git provider detection & API
+    # ------------------------------------------------------------------
+
+    def _detect_provider(self):
+        """Detect the Git provider from the repo URL.
+        Returns: 'github', 'gitlab', 'bitbucket', 'gitea', or False.
+        """
+        self.ensure_one()
+        if not self.repo_url:
+            return False
+        url = self.repo_url.lower()
+        if 'github.com' in url:
+            return 'github'
+        if 'gitlab.com' in url or 'gitlab' in url:
+            return 'gitlab'
+        if 'bitbucket.org' in url:
+            return 'bitbucket'
+        # Gitea / self-hosted: try Gitea API if token is present
+        if self.sudo().github_token:
+            return 'gitea'
+        return False
+
+    def _parse_owner_repo(self):
+        """Extract owner/repo from the URL. Returns (owner, repo) or (False, False)."""
+        self.ensure_one()
+        url = self.repo_url.strip().rstrip('/')
+        if url.endswith('.git'):
+            url = url[:-4]
+        # Handle git@host:owner/repo
+        if url.startswith('git@'):
+            _, path = url.split(':', 1)
+            parts = path.strip('/').split('/')
+        else:
+            parsed = urlparse(url)
+            parts = parsed.path.strip('/').split('/')
+        if len(parts) >= 2:
+            return parts[-2], parts[-1]
+        return False, False
+
+    def _get_provider_base_url(self):
+        """Get the API base URL for the provider."""
+        self.ensure_one()
+        url = self.repo_url.lower()
+        if 'github.com' in url:
+            return 'https://api.github.com'
+        if 'gitlab.com' in url:
+            return 'https://gitlab.com/api/v4'
+        if 'bitbucket.org' in url:
+            return 'https://api.bitbucket.org/2.0'
+        # Self-hosted: extract base from repo URL
+        parsed = urlparse(self.repo_url)
+        return '%s://%s' % (parsed.scheme or 'https', parsed.hostname)
+
+    def _register_webhook_on_provider(self):
+        """Automatically register the webhook on the Git provider via API."""
+        self.ensure_one()
+        token = self.sudo().github_token
+        if not token:
+            _logger.info("No token for %s, skipping auto-register", self.name)
+            return
+        provider = self._detect_provider()
+        if not provider:
+            _logger.info("Unknown provider for %s, skipping auto-register", self.name)
+            return
+
+        webhook_url = self.webhook_url
+        if not webhook_url:
+            return
+
+        owner, repo = self._parse_owner_repo()
+        if not owner or not repo:
+            return
+
+        base = self._get_provider_base_url()
+        headers = {}
+        hook_id = False
+
+        try:
+            if provider == 'github':
+                headers = {
+                    'Authorization': 'token %s' % token,
+                    'Accept': 'application/vnd.github+json',
+                }
+                resp = http_requests.post(
+                    '%s/repos/%s/%s/hooks' % (base, owner, repo),
+                    headers=headers,
+                    json={
+                        'name': 'web',
+                        'active': True,
+                        'events': ['push'],
+                        'config': {
+                            'url': webhook_url,
+                            'content_type': 'json',
+                            'secret': self.webhook_secret,
+                            'insecure_ssl': '0',
+                        },
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hook_id = str(resp.json().get('id', ''))
+
+            elif provider == 'gitlab':
+                headers = {'PRIVATE-TOKEN': token}
+                project_path = '%s/%s' % (owner, repo)
+                from urllib.parse import quote as url_quote
+                resp = http_requests.post(
+                    '%s/projects/%s/hooks' % (base, url_quote(project_path, safe='')),
+                    headers=headers,
+                    json={
+                        'url': webhook_url,
+                        'push_events': True,
+                        'token': self.webhook_secret,
+                        'enable_ssl_verification': True,
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hook_id = str(resp.json().get('id', ''))
+
+            elif provider == 'bitbucket':
+                resp = http_requests.post(
+                    '%s/repositories/%s/%s/hooks' % (base, owner, repo),
+                    auth=(owner, token),
+                    json={
+                        'description': 'SaaS Auto-Deploy',
+                        'url': webhook_url,
+                        'active': True,
+                        'events': ['repo:push'],
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hook_id = str(resp.json().get('uuid', ''))
+
+            elif provider == 'gitea':
+                # Gitea API is GitHub-compatible
+                parsed = urlparse(self.repo_url)
+                gitea_base = '%s://%s/api/v1' % (
+                    parsed.scheme or 'https', parsed.hostname,
+                )
+                headers = {'Authorization': 'token %s' % token}
+                resp = http_requests.post(
+                    '%s/repos/%s/%s/hooks' % (gitea_base, owner, repo),
+                    headers=headers,
+                    json={
+                        'type': 'gitea',
+                        'active': True,
+                        'events': ['push'],
+                        'config': {
+                            'url': webhook_url,
+                            'content_type': 'json',
+                            'secret': self.webhook_secret,
+                        },
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hook_id = str(resp.json().get('id', ''))
+
+            if hook_id:
+                self.webhook_provider_id = hook_id
+                _logger.info(
+                    "Webhook auto-registered on %s for %s/%s (hook_id=%s)",
+                    provider, owner, repo, hook_id,
+                )
+
+        except http_requests.RequestException as e:
+            _logger.warning(
+                "Failed to auto-register webhook on %s for %s/%s: %s",
+                provider, owner, repo, e,
+            )
+            raise UserError(
+                _("Could not register webhook on %s: %s\n"
+                  "You can manually add this URL in your repo settings:\n%s")
+                % (provider, e, webhook_url)
+            )
+
+    def _unregister_webhook_from_provider(self):
+        """Remove the webhook from the Git provider via API."""
+        self.ensure_one()
+        token = self.sudo().github_token
+        if not token or not self.webhook_provider_id:
+            return
+
+        provider = self._detect_provider()
+        owner, repo = self._parse_owner_repo()
+        if not provider or not owner or not repo:
+            return
+
+        base = self._get_provider_base_url()
+        hook_id = self.webhook_provider_id
+
+        try:
+            if provider == 'github':
+                http_requests.delete(
+                    '%s/repos/%s/%s/hooks/%s' % (base, owner, repo, hook_id),
+                    headers={
+                        'Authorization': 'token %s' % token,
+                        'Accept': 'application/vnd.github+json',
+                    },
+                    timeout=15,
+                )
+
+            elif provider == 'gitlab':
+                from urllib.parse import quote as url_quote
+                project_path = '%s/%s' % (owner, repo)
+                http_requests.delete(
+                    '%s/projects/%s/hooks/%s' % (
+                        base, url_quote(project_path, safe=''), hook_id,
+                    ),
+                    headers={'PRIVATE-TOKEN': token},
+                    timeout=15,
+                )
+
+            elif provider == 'bitbucket':
+                http_requests.delete(
+                    '%s/repositories/%s/%s/hooks/%s' % (base, owner, repo, hook_id),
+                    auth=(owner, token),
+                    timeout=15,
+                )
+
+            elif provider == 'gitea':
+                parsed = urlparse(self.repo_url)
+                gitea_base = '%s://%s/api/v1' % (
+                    parsed.scheme or 'https', parsed.hostname,
+                )
+                http_requests.delete(
+                    '%s/repos/%s/%s/hooks/%s' % (gitea_base, owner, repo, hook_id),
+                    headers={'Authorization': 'token %s' % token},
+                    timeout=15,
+                )
+
+            _logger.info(
+                "Webhook removed from %s for %s/%s (hook_id=%s)",
+                provider, owner, repo, hook_id,
+            )
+        except http_requests.RequestException as e:
+            _logger.warning(
+                "Failed to remove webhook from %s for %s/%s: %s",
+                provider, owner, repo, e,
+            )
+
+    def action_check_webhook(self):
+        """Check if the webhook is correctly registered on the Git provider."""
+        self.ensure_one()
+        token = self.sudo().github_token
+        if not token:
+            raise UserError(_("No token configured. Cannot check webhook status."))
+
+        provider = self._detect_provider()
+        owner, repo_name = self._parse_owner_repo()
+        if not provider or not owner or not repo_name:
+            raise UserError(_("Could not detect provider or parse owner/repo from URL."))
+
+        base = self._get_provider_base_url()
+        hooks = []
+
+        try:
+            if provider == 'github':
+                resp = http_requests.get(
+                    '%s/repos/%s/%s/hooks' % (base, owner, repo_name),
+                    headers={
+                        'Authorization': 'token %s' % token,
+                        'Accept': 'application/vnd.github+json',
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hooks = resp.json()
+
+            elif provider == 'gitlab':
+                from urllib.parse import quote as url_quote
+                project_path = '%s/%s' % (owner, repo_name)
+                resp = http_requests.get(
+                    '%s/projects/%s/hooks' % (base, url_quote(project_path, safe='')),
+                    headers={'PRIVATE-TOKEN': token},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hooks = resp.json()
+
+            elif provider == 'gitea':
+                parsed = urlparse(self.repo_url)
+                gitea_base = '%s://%s/api/v1' % (parsed.scheme or 'https', parsed.hostname)
+                resp = http_requests.get(
+                    '%s/repos/%s/%s/hooks' % (gitea_base, owner, repo_name),
+                    headers={'Authorization': 'token %s' % token},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hooks = resp.json()
+
+        except http_requests.RequestException as e:
+            raise UserError(_("Failed to fetch webhooks from %s: %s") % (provider, e))
+
+        # Check if our webhook URL is in the list
+        webhook_url = self.webhook_url
+        found = False
+        details = []
+        for h in hooks:
+            # GitHub/Gitea: config.url, GitLab: url
+            hook_url = ''
+            if isinstance(h, dict):
+                hook_url = h.get('config', {}).get('url', '') or h.get('url', '')
+            details.append("  ID=%s  URL=%s  Active=%s" % (
+                h.get('id', '?'), hook_url, h.get('active', h.get('push_events', '?')),
+            ))
+            if webhook_url and webhook_url in hook_url:
+                found = True
+
+        msg = "Provider: %s\nRepo: %s/%s\nOur webhook URL: %s\n\n" % (
+            provider, owner, repo_name, webhook_url,
+        )
+        if found:
+            msg += "FOUND - Webhook is registered on %s" % provider
+        else:
+            msg += "NOT FOUND - Webhook is NOT registered on %s\n\n" % provider
+            msg += "Registered webhooks (%d):\n%s" % (len(hooks), '\n'.join(details) if details else '  (none)')
+            msg += "\n\nTIP: Click 'Enable Webhook' to register it, or add the URL manually in your repo settings."
+
+        raise UserError(msg)
+
+    @staticmethod
+    def _normalize_repo_url(url):
+        """Normalize a repo URL for comparison (strip protocol, auth, .git suffix)."""
+        if not url:
+            return ''
+        url = url.strip().rstrip('/')
+        # Remove .git suffix
+        if url.endswith('.git'):
+            url = url[:-4]
+        # Remove protocol
+        for prefix in ('https://', 'http://', 'git@', 'ssh://'):
+            if url.startswith(prefix):
+                url = url[len(prefix):]
+                break
+        # git@github.com:user/repo -> github.com/user/repo
+        url = url.replace(':', '/', 1) if ':' in url and '/' not in url.split(':')[0] else url
+        # Remove any auth info
+        if '@' in url:
+            url = url.split('@', 1)[1]
+        return url.lower()
+
+    def _match_webhook_repo_url(self, incoming_url):
+        """Check if an incoming webhook repo URL matches this repo."""
+        return self._normalize_repo_url(self.repo_url) == self._normalize_repo_url(incoming_url)
+
+    def _match_webhook_branch(self, ref):
+        """Check if a webhook ref (e.g. refs/heads/main) matches this repo's branch."""
+        if not ref:
+            return False
+        branch = ref
+        if branch.startswith('refs/heads/'):
+            branch = branch[len('refs/heads/'):]
+        return branch == self.branch
+
+    @staticmethod
+    def verify_signature(payload_body, secret, signature_header):
+        """Verify webhook signature (supports GitHub, GitLab, Gitea HMAC-SHA256)."""
+        if not signature_header or not secret:
+            return False
+        # GitHub: sha256=..., Gitea: sha256=...
+        if signature_header.startswith('sha256='):
+            expected = 'sha256=' + hmac.new(
+                secret.encode(), payload_body, hashlib.sha256,
+            ).hexdigest()
+            return hmac.compare_digest(expected, signature_header)
+        # GitHub legacy: sha1=...
+        if signature_header.startswith('sha1='):
+            expected = 'sha1=' + hmac.new(
+                secret.encode(), payload_body, hashlib.sha1,
+            ).hexdigest()
+            return hmac.compare_digest(expected, signature_header)
+        # GitLab sends the token directly in X-Gitlab-Token header
+        return hmac.compare_digest(secret, signature_header)
+
+    def _do_webhook_pull_and_restart(self):
+        """Pull repo and restart instance (runs in background thread from webhook)."""
+        self.ensure_one()
+        _logger.info(
+            "Webhook auto-deploy: pulling %s for instance %s",
+            self.name, self.instance_id.name,
+        )
+        self._do_pull_repo()
+        self.instance_id._update_repo_config_and_restart()
+        self.webhook_last_event = fields.Datetime.now()
+        _logger.info(
+            "Webhook auto-deploy: completed for %s / %s",
+            self.name, self.instance_id.name,
+        )
 
     def _get_remote_repo_path(self):
         """Return the full remote path inside the instance's addons directory."""
@@ -177,6 +649,19 @@ class SaasInstanceRepo(models.Model):
                     rec.state = 'cloned'
                     rec.last_pull = fields.Datetime.now()
                     rec.error_message = False
+
+                    # Auto-enable webhook if token is available
+                    if rec.sudo().github_token and not rec.webhook_enabled:
+                        try:
+                            rec.action_enable_webhook()
+                            instance._append_log(
+                                "Auto-deploy webhook registered for %s" % rec.name
+                            )
+                        except Exception as e:
+                            _logger.warning(
+                                "Auto-enable webhook failed for %s: %s",
+                                rec.name, e,
+                            )
 
             except UserError:
                 raise
@@ -266,7 +751,13 @@ class SaasInstanceRepo(models.Model):
         return True
 
     def unlink(self):
-        """Delete repo files from server, remove records, and update running instances."""
+        """Delete repo files from server, remove webhook, remove records, and update running instances."""
+        for rec in self:
+            if rec.webhook_enabled and rec.webhook_provider_id:
+                try:
+                    rec._unregister_webhook_from_provider()
+                except Exception:
+                    pass
         instances_to_restart = self.env['saas.instance']
         for rec in self:
             instance = rec.instance_id

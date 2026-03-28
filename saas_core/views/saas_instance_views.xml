@@ -241,6 +241,7 @@
                                            decoration-danger="state == 'error'"
                                            decoration-info="state == 'pending'"/>
                                     <field name="last_pull"/>
+                                    <field name="webhook_enabled" string="Auto-Deploy"/>
                                     <button name="action_clone_repo" type="object"
                                             string="Clone" icon="fa-clone"
                                             invisible="state == 'cloned'"/>
@@ -250,9 +251,23 @@
                                     <button name="action_clone_repo" type="object"
                                             string="Re-clone" icon="fa-refresh"
                                             invisible="state != 'error'"/>
+                                    <button name="action_enable_webhook" type="object"
+                                            string="Enable Webhook" icon="fa-link"
+                                            invisible="webhook_enabled"/>
+                                    <button name="action_disable_webhook" type="object"
+                                            string="Disable Webhook" icon="fa-unlink"
+                                            invisible="not webhook_enabled"/>
+                                    <button name="action_check_webhook" type="object"
+                                            string="Check" icon="fa-stethoscope"
+                                            invisible="not webhook_enabled"/>
                                     <button name="action_remove_repo" type="object"
                                             string="Remove" icon="fa-trash"
                                             confirm="Remove this repo from the server?"/>
+                                    <field name="webhook_url" widget="CopyClipboardChar"
+                                           string="Webhook URL" optional="show"
+                                           invisible="not webhook_enabled"/>
+                                    <field name="webhook_secret" optional="hide"/>
+                                    <field name="webhook_last_event" optional="hide"/>
                                     <field name="error_message" optional="hide"/>
                                 </list>
                             </field>
