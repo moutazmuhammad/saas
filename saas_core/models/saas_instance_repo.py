@@ -77,7 +77,7 @@ class SaasInstanceRepo(models.Model):
     # Webhook auto-deploy
     webhook_enabled = fields.Boolean(
         string='Auto-Deploy',
-        default=False,
+        default=True,
         help='Automatically pull and restart when code is pushed to the tracked branch.',
     )
     webhook_secret = fields.Char(
@@ -101,6 +101,15 @@ class SaasInstanceRepo(models.Model):
         string='Last Webhook Event',
         readonly=True,
     )
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        for vals in vals_list:
+            if not vals.get('webhook_secret'):
+                vals['webhook_secret'] = secrets.token_hex(20)
+            if 'webhook_enabled' not in vals:
+                vals['webhook_enabled'] = True
+        return super().create(vals_list)
 
     @api.depends('repo_url')
     def _compute_name(self):
@@ -157,16 +166,167 @@ class SaasInstanceRepo(models.Model):
             else:
                 rec.webhook_url = False
 
+    def _get_public_base_url(self):
+        """Return web.base.url only if it's a valid public URL, else False."""
+        base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', '')
+        if not base_url:
+            return False
+        lower = base_url.lower()
+        if 'localhost' in lower or '127.0.0.1' in lower or '0.0.0.0' in lower:
+            return False
+        if not lower.startswith('https://'):
+            return False
+        return base_url.rstrip('/')
+
+    def _register_webhook_with_retry(self, max_retries=3):
+        """Register webhook on Git provider with retries, then verify it's there."""
+        self.ensure_one()
+        import time
+
+        base_url = self._get_public_base_url()
+        if not base_url:
+            _logger.warning(
+                "Webhook: web.base.url is not a public HTTPS URL. "
+                "Cannot register webhook for %s. "
+                "Set web.base.url to your public domain.", self.name,
+            )
+            self.instance_id._append_log(
+                "Auto-deploy webhook NOT registered: web.base.url is not a public HTTPS URL."
+            )
+            return False
+
+        # If already registered, verify it still exists; skip if valid
+        if self.webhook_provider_id:
+            try:
+                if self._verify_webhook_on_provider():
+                    _logger.info("Webhook already registered and valid for %s", self.name)
+                    return True
+            except Exception:
+                pass
+            # Old hook is gone, clear and re-register
+            self.webhook_provider_id = False
+
+        # Retry registration
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                self._register_webhook_on_provider()
+                break
+            except Exception as e:
+                last_error = e
+                _logger.warning(
+                    "Webhook register attempt %d/%d failed for %s: %s",
+                    attempt, max_retries, self.name, e,
+                )
+                if attempt < max_retries:
+                    time.sleep(2 * attempt)
+        else:
+            self.instance_id._append_log(
+                "Auto-deploy webhook registration failed after %d attempts: %s"
+                % (max_retries, last_error)
+            )
+            return False
+
+        # Verify it's actually registered
+        try:
+            registered = self._verify_webhook_on_provider()
+            if registered:
+                self.instance_id._append_log(
+                    "Auto-deploy webhook registered and verified for %s" % self.name
+                )
+                return True
+            else:
+                self.instance_id._append_log(
+                    "Webhook sent to %s but could not be verified. "
+                    "Check the repo webhook settings manually." % self._detect_provider()
+                )
+                return False
+        except Exception as e:
+            _logger.warning("Webhook verification failed for %s: %s", self.name, e)
+            self.instance_id._append_log(
+                "Auto-deploy webhook registered for %s (verification skipped: %s)"
+                % (self.name, e)
+            )
+            return True
+
+    def _verify_webhook_on_provider(self):
+        """Check if our webhook URL exists on the Git provider. Returns True/False."""
+        self.ensure_one()
+        token = self.sudo().github_token
+        if not token or not self.webhook_provider_id:
+            return False
+
+        provider = self._detect_provider()
+        owner, repo_name = self._parse_owner_repo()
+        if not provider or not owner or not repo_name:
+            return False
+
+        base = self._get_provider_base_url()
+        hook_id = self.webhook_provider_id
+
+        try:
+            if provider == 'github':
+                resp = http_requests.get(
+                    '%s/repos/%s/%s/hooks/%s' % (base, owner, repo_name, hook_id),
+                    headers={
+                        'Authorization': 'token %s' % token,
+                        'Accept': 'application/vnd.github+json',
+                    },
+                    timeout=15,
+                )
+                return resp.status_code == 200
+
+            elif provider == 'gitlab':
+                from urllib.parse import quote as url_quote
+                project_path = '%s/%s' % (owner, repo_name)
+                resp = http_requests.get(
+                    '%s/projects/%s/hooks/%s' % (
+                        base, url_quote(project_path, safe=''), hook_id,
+                    ),
+                    headers={'PRIVATE-TOKEN': token},
+                    timeout=15,
+                )
+                return resp.status_code == 200
+
+            elif provider == 'gitea':
+                parsed = urlparse(self.repo_url)
+                gitea_base = '%s://%s/api/v1' % (parsed.scheme or 'https', parsed.hostname)
+                resp = http_requests.get(
+                    '%s/repos/%s/%s/hooks/%s' % (gitea_base, owner, repo_name, hook_id),
+                    headers={'Authorization': 'token %s' % token},
+                    timeout=15,
+                )
+                return resp.status_code == 200
+
+            elif provider == 'bitbucket':
+                resp = http_requests.get(
+                    '%s/repositories/%s/%s/hooks/%s' % (base, owner, repo_name, hook_id),
+                    auth=(owner, token),
+                    timeout=15,
+                )
+                return resp.status_code == 200
+
+        except http_requests.RequestException:
+            return False
+
+        return False
+
     def action_enable_webhook(self):
         """Enable auto-deploy: generate secret and register webhook on Git provider."""
         for rec in self:
+            base_url = rec._get_public_base_url()
+            if not base_url:
+                raise UserError(_(
+                    "Cannot register webhook: web.base.url is '%s'.\n\n"
+                    "Set it to your public HTTPS domain in:\n"
+                    "Settings → Technical → System Parameters → web.base.url\n\n"
+                    "Example: https://main.saas.odex.sa"
+                ) % rec.env['ir.config_parameter'].sudo().get_param('web.base.url', ''))
+
             if not rec.webhook_secret:
                 rec.webhook_secret = secrets.token_hex(20)
             rec.webhook_enabled = True
-            try:
-                rec._register_webhook_on_provider()
-            except Exception as e:
-                _logger.warning("Auto-register webhook failed for %s: %s", rec.name, e)
+            rec._register_webhook_on_provider()
 
     def action_disable_webhook(self):
         """Disable auto-deploy and remove webhook from Git provider."""
@@ -571,20 +731,52 @@ class SaasInstanceRepo(models.Model):
         # GitLab sends the token directly in X-Gitlab-Token header
         return hmac.compare_digest(secret, signature_header)
 
+    # Lock to prevent concurrent deploys on the same instance
+    _deploy_locks = {}
+
     def _do_webhook_pull_and_restart(self):
-        """Pull repo and restart instance (runs in background thread from webhook)."""
+        """Pull repo and restart instance (runs in background thread from webhook).
+        Includes debounce (skip if last event < 30s ago) and locking
+        (prevent concurrent deploys on the same instance).
+        """
         self.ensure_one()
-        _logger.info(
-            "Webhook auto-deploy: pulling %s for instance %s",
-            self.name, self.instance_id.name,
-        )
-        self._do_pull_repo()
-        self.instance_id._update_repo_config_and_restart()
-        self.webhook_last_event = fields.Datetime.now()
-        _logger.info(
-            "Webhook auto-deploy: completed for %s / %s",
-            self.name, self.instance_id.name,
-        )
+        import time
+
+        # Debounce: skip if last webhook event was less than 30 seconds ago
+        if self.webhook_last_event:
+            elapsed = (fields.Datetime.now() - self.webhook_last_event).total_seconds()
+            if elapsed < 30:
+                _logger.info(
+                    "Webhook auto-deploy: skipping %s (last event %ds ago, debounce 30s)",
+                    self.name, elapsed,
+                )
+                return
+
+        # Lock: only one deploy per instance at a time
+        import threading
+        instance_id = self.instance_id.id
+        lock = self._deploy_locks.setdefault(instance_id, threading.Lock())
+        if not lock.acquire(blocking=False):
+            _logger.info(
+                "Webhook auto-deploy: skipping %s, another deploy is running for instance %s",
+                self.name, self.instance_id.name,
+            )
+            return
+
+        try:
+            _logger.info(
+                "Webhook auto-deploy: pulling %s for instance %s",
+                self.name, self.instance_id.name,
+            )
+            self._do_pull_repo()
+            self.instance_id._update_repo_config_and_restart()
+            self.webhook_last_event = fields.Datetime.now()
+            _logger.info(
+                "Webhook auto-deploy: completed for %s / %s",
+                self.name, self.instance_id.name,
+            )
+        finally:
+            lock.release()
 
     def _get_remote_repo_path(self):
         """Return the full remote path inside the instance's addons directory."""
@@ -650,18 +842,9 @@ class SaasInstanceRepo(models.Model):
                     rec.last_pull = fields.Datetime.now()
                     rec.error_message = False
 
-                    # Auto-enable webhook if token is available
-                    if rec.sudo().github_token and not rec.webhook_enabled:
-                        try:
-                            rec.action_enable_webhook()
-                            instance._append_log(
-                                "Auto-deploy webhook registered for %s" % rec.name
-                            )
-                        except Exception as e:
-                            _logger.warning(
-                                "Auto-enable webhook failed for %s: %s",
-                                rec.name, e,
-                            )
+                    # Auto-register webhook on Git provider
+                    if rec.sudo().github_token and rec.webhook_enabled:
+                        rec._register_webhook_with_retry()
 
             except UserError:
                 raise
