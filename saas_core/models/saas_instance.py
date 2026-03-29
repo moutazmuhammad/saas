@@ -1793,7 +1793,7 @@ class SaasInstance(models.Model):
             # Create folder structure
             self._append_log("Creating directory structure at %s" % instance_path)
             mkdir_cmd = (
-                'mkdir -p %(path)s/addons '
+                'sudo mkdir -p %(path)s/addons '
                 '%(path)s/config '
                 '%(path)s/data/odoo'
             ) % {'path': instance_path}
