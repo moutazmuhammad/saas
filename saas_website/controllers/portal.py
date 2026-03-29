@@ -811,10 +811,15 @@ class SaasPortal(CustomerPortal):
 
     @http.route(
         '/my/instances/<int:instance_id>/logs/stream',
-        type='http', auth='user',
+        type='http', auth='user', csrf=False,
     )
     def portal_instance_log_stream(self, instance_id, tail='100', access_token=None, **kw):
-        """Portal-safe SSE proxy for live container logs."""
+        """Portal-safe SSE proxy for live container logs.
+
+        Validates ownership, then extracts SSH connection details
+        BEFORE the streaming generator starts, so the ORM cursor
+        is not held open during the long-lived SSE connection.
+        """
         try:
             instance_sudo = self._document_check_access(
                 'saas.instance', instance_id, access_token=access_token,
@@ -827,12 +832,76 @@ class SaasPortal(CustomerPortal):
             from werkzeug.exceptions import NotFound
             raise NotFound()
 
-        # Delegate to the core log streaming logic using sudo server
-        from odoo.addons.saas_core.controllers.container_logs import ContainerLogsController
-        ctrl = ContainerLogsController()
+        # Extract everything we need BEFORE the generator runs
+        # (the generator runs after the ORM transaction closes)
         server = instance_sudo.docker_server_id.sudo()
         container_name = 'odoo_%s' % instance_sudo.subdomain
-        return ctrl._stream(server, container_name, tail)
+
+        # Get SSH connection details while cursor is still open
+        ssh_conn = server._get_ssh_connection()
+
+        import json as _json
+        import select as _select
+        import shlex as _shlex
+
+        try:
+            tail_int = int(tail)
+        except (ValueError, TypeError):
+            tail_int = 100
+
+        safe_name = _shlex.quote(container_name)
+
+        def generate():
+            try:
+                ssh_conn._connect()
+                transport = ssh_conn._client.get_transport()
+                channel = transport.open_session()
+                channel.exec_command(
+                    'docker logs -f --tail %d %s 2>&1' % (tail_int, safe_name)
+                )
+                channel.settimeout(300)
+
+                yield b'retry: 1000\n\n'
+
+                buf = b''
+                while not channel.exit_status_ready():
+                    ready, _, _ = _select.select([channel], [], [], 1.0)
+                    if ready:
+                        chunk = channel.recv(4096)
+                        if not chunk:
+                            break
+                        buf += chunk
+                        while b'\n' in buf:
+                            line, buf = buf.split(b'\n', 1)
+                            text = line.decode('utf-8', errors='replace')
+                            yield ('data: %s\n\n' % _json.dumps(text)).encode('utf-8')
+
+                while channel.recv_ready():
+                    chunk = channel.recv(4096)
+                    buf += chunk
+                if buf:
+                    text = buf.decode('utf-8', errors='replace')
+                    yield ('data: %s\n\n' % _json.dumps(text)).encode('utf-8')
+
+                yield b'event: done\ndata: stream ended\n\n'
+
+            except Exception as e:
+                _logger.exception("Log streaming error for %s", container_name)
+                yield ('event: error\ndata: %s\n\n' % _json.dumps(str(e))).encode('utf-8')
+            finally:
+                ssh_conn._disconnect()
+
+        from odoo.http import Response
+        return Response(
+            generate(),
+            content_type='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive',
+            },
+            direct_passthrough=True,
+        )
 
     # ==================== Update Repository (Hosting) ====================
 
