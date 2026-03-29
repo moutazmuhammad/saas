@@ -1612,7 +1612,7 @@ class SaasInstance(models.Model):
             'if [ -d %(src)s ]; then '
             '  cp -a %(src)s/. %(dst)s/; '
             'fi && '
-            'chmod -R 777 %(data)s'
+            'chmod -R 775 %(data)s'
         ) % {
             'dst': shlex.quote(filestore_dst),
             'src': shlex.quote(filestore_src),
@@ -1807,7 +1807,7 @@ class SaasInstance(models.Model):
             # Fallback: chmod 777 so any UID can access the files.
             self._append_log("Setting permissions...")
             perms_cmd = (
-                'chmod -R 777 %(path)s/data %(path)s/config %(path)s/addons'
+                'chmod -R 775 %(path)s/data %(path)s/config %(path)s/addons'
             ) % {'path': instance_path}
             exit_code, stdout, stderr = ssh.execute(perms_cmd)
             if exit_code != 0:
@@ -2573,7 +2573,7 @@ class SaasInstance(models.Model):
                 'if [ -d %(src)s ]; then '
                 '  cp -a %(src)s/. %(dst)s/; '
                 'fi && '
-                'chmod -R 777 %(data)s'
+                'chmod -R 775 %(data)s'
             ) % {
                 'dst': shlex.quote(filestore_dst),
                 'src': shlex.quote(filestore_src),
