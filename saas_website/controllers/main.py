@@ -704,7 +704,7 @@ class SaasWebsite(http.Controller):
         })
 
     @http.route('/hosting/configure', type='http', auth='public', website=True)
-    def hosting_configure(self, workers=4, storage=20, billing='monthly',
+    def hosting_configure(self, workers=0, storage=0, billing='monthly',
                           odoo_version_id='0', error=None, **kw):
         """Configure hosting instance: subdomain, repo, version."""
         if request.env.user._is_public():
