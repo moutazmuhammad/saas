@@ -1608,15 +1608,12 @@ class SaasInstance(models.Model):
         self._append_log("Placing filestore...")
         odoo_image = self.odoo_version_id._get_docker_image()
         fs_cmd = (
-            'ODOO_UID=$(docker run --rm --entrypoint id %(image)s -u odoo 2>/dev/null || echo 101) && '
             'mkdir -p %(dst)s && '
             'if [ -d %(src)s ]; then '
             '  cp -a %(src)s/. %(dst)s/; '
             'fi && '
-            'sudo chown -R $ODOO_UID:$ODOO_UID %(data)s && '
-            'sudo chmod -R 755 %(data)s'
+            'chmod -R 777 %(data)s'
         ) % {
-            'image': shlex.quote(odoo_image),
             'dst': shlex.quote(filestore_dst),
             'src': shlex.quote(filestore_src),
             'data': shlex.quote(data_dir),
@@ -1809,12 +1806,9 @@ class SaasInstance(models.Model):
             # the image (the "odoo" user is UID 101 in the official image).
             # Fallback: chmod 777 so any UID can access the files.
             self._append_log("Setting permissions...")
-            odoo_image = self.odoo_version_id._get_docker_image()
             perms_cmd = (
-                'ODOO_UID=$(docker run --rm --entrypoint id %(image)s -u odoo 2>/dev/null || echo 101) && '
-                'sudo chown -R $ODOO_UID:$ODOO_UID %(path)s/data %(path)s/config %(path)s/addons && '
-                'sudo chmod -R 755 %(path)s/data %(path)s/config %(path)s/addons'
-            ) % {'path': instance_path, 'image': shlex.quote(odoo_image)}
+                'chmod -R 777 %(path)s/data %(path)s/config %(path)s/addons'
+            ) % {'path': instance_path}
             exit_code, stdout, stderr = ssh.execute(perms_cmd)
             if exit_code != 0:
                 raise UserError(
@@ -2303,7 +2297,7 @@ class SaasInstance(models.Model):
                 )
 
             exit_code, stdout, stderr = ssh.execute(
-                'rm -rf %s' % shlex.quote(instance_path),
+                'sudo rm -rf %s' % shlex.quote(instance_path),
             )
             if exit_code != 0:
                 raise UserError(
@@ -2575,15 +2569,12 @@ class SaasInstance(models.Model):
             data_dir = '%s/data' % instance_path
             odoo_image = self.odoo_version_id._get_docker_image()
             fs_cmd = (
-                'ODOO_UID=$(docker run --rm --entrypoint id %(image)s -u odoo 2>/dev/null || echo 101) && '
                 'rm -rf %(dst)s && mkdir -p %(dst)s && '
                 'if [ -d %(src)s ]; then '
                 '  cp -a %(src)s/. %(dst)s/; '
                 'fi && '
-                'sudo chown -R $ODOO_UID:$ODOO_UID %(data)s && '
-                'sudo chmod -R 755 %(data)s'
+                'chmod -R 777 %(data)s'
             ) % {
-                'image': shlex.quote(odoo_image),
                 'dst': shlex.quote(filestore_dst),
                 'src': shlex.quote(filestore_src),
                 'data': shlex.quote(data_dir),
