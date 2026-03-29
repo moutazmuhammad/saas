@@ -42,6 +42,12 @@ class SaasProduct(models.Model):
         default=True,
         help='Only published services are visible on the website.',
     )
+    is_hosting = fields.Boolean(
+        string='Self-Managed Hosting',
+        default=False,
+        help='If checked, this product represents a self-managed hosting service. '
+             'Customers provide their own Git repository and Odoo version.',
+    )
     odoo_version_id = fields.Many2one(
         'saas.odoo.version',
         string='Odoo Version',

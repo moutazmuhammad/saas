@@ -3,14 +3,29 @@ services:
   odoo:
     image: {{ odoo_image | default("odoo") }}:{{ odoo_version }}
     container_name: odoo_{{ subdomain }}
-    restart: always
+    restart: unless-stopped
+    stop_grace_period: 30s
     ports:
       - "{{ host_ip | default('127.0.0.1') }}:{{ xmlrpc_port }}:8069"
       - "{{ host_ip | default('127.0.0.1') }}:{{ longpolling_port }}:8072"
     volumes:
+      - /opt/odoo-source/{{ odoo_version }}:/opt/odoo:ro
       - ./data/odoo:/var/lib/odoo
       - ./config:/etc/odoo
       - ./addons:/mnt/extra-addons
+      - ./requirements.txt:/etc/odoo/requirements.txt:ro
+{%- if pip_packages %}
+      - ./pip_install.sh:/etc/odoo/pip_install.sh:ro
+    entrypoint: ["bash", "/etc/odoo/pip_install.sh"]
+    environment:
+      - PYTHONPATH=/var/lib/odoo/pip_packages
+{%- endif %}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8069/web/login || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
     networks:
       - {{ network_name | default("net") }}
 {%- if docker_cpu %}
@@ -22,6 +37,11 @@ services:
 {%- if docker_swap %}
     memswap_limit: {{ docker_swap }}
 {%- endif %}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 
 networks:

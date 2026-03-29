@@ -1,0 +1,27 @@
+# Lightweight Odoo image — source code removed, mounted at runtime
+# Usage: docker build --build-arg ODOO_VERSION=18.0 -t odoo-light:18.0 .
+#
+# Supports Odoo 11.0 through 19.0
+# Source code is mounted as a read-only volume at /opt/odoo
+
+ARG ODOO_VERSION=18.0
+FROM odoo:${ODOO_VERSION}
+
+USER root
+
+# Remove the bundled Odoo source code
+# Location varies by version:
+#   11-15: /usr/lib/python3/dist-packages/odoo
+#   16-19: /usr/lib/python3/dist-packages/odoo
+RUN rm -rf /usr/lib/python3/dist-packages/odoo \
+           /usr/lib/python3/dist-packages/odoo-*.egg-info \
+           /opt/odoo \
+    && mkdir -p /opt/odoo
+
+# Custom entrypoint that runs from mounted source
+COPY entrypoint-light.sh /entrypoint-light.sh
+RUN chmod +x /entrypoint-light.sh
+
+USER odoo
+ENTRYPOINT ["/entrypoint-light.sh"]
+CMD ["odoo"]

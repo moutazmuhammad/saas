@@ -48,7 +48,7 @@ class SaasPortal(CustomerPortal):
         ['/my/instances', '/my/instances/page/<int:page>'],
         type='http', auth='user', website=True,
     )
-    def portal_my_instances(self, page=1, sortby=None, folder=None, **kw):
+    def portal_my_instances(self, page=1, sortby=None, folder=None, itype=None, **kw):
         partner = request.env.user.partner_id
         Instance = request.env['saas.instance'].sudo()
         Folder = request.env['saas.instance.folder'].sudo()
@@ -57,6 +57,13 @@ class SaasPortal(CustomerPortal):
             ('partner_id', '=', partner.id),
             ('state', 'in', self._PORTAL_VISIBLE_STATES),
         ]
+
+        # Type filtering (services vs hosting)
+        active_type = itype or 'all'
+        if active_type == 'services':
+            domain.append(('is_hosting', '=', False))
+        elif active_type == 'hosting':
+            domain.append(('is_hosting', '=', True))
 
         # Folder filtering
         active_folder_id = False
@@ -77,6 +84,8 @@ class SaasPortal(CustomerPortal):
         sortby = sortby if sortby in sortings else 'date'
 
         url_args = {'sortby': sortby}
+        if active_type and active_type != 'all':
+            url_args['itype'] = active_type
         if folder:
             url_args['folder'] = folder
 
@@ -109,6 +118,10 @@ class SaasPortal(CustomerPortal):
         # Unfiled count
         unfiled_count = Instance.search_count(all_domain + [('folder_id', '=', False)])
 
+        # Type counts
+        services_count = Instance.search_count(all_domain + [('is_hosting', '=', False)])
+        hosting_count = Instance.search_count(all_domain + [('is_hosting', '=', True)])
+
         # Active folder name for rename/delete buttons
         active_folder_name = ''
         if active_folder_id:
@@ -129,6 +142,9 @@ class SaasPortal(CustomerPortal):
             'active_folder_name': active_folder_name,
             'all_count': all_count,
             'unfiled_count': unfiled_count,
+            'services_count': services_count,
+            'hosting_count': hosting_count,
+            'active_type': active_type,
         })
         return request.render('saas_website.portal_my_instances', values)
 
@@ -163,6 +179,9 @@ class SaasPortal(CustomerPortal):
             'saas_master.support_email', ''
         )
 
+        # Cutoff for showing the "Upgrade Credit Applied" banner (7 days)
+        credit_notice_cutoff = fields.Datetime.now() - datetime.timedelta(days=7)
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance_sudo,
@@ -170,6 +189,9 @@ class SaasPortal(CustomerPortal):
             'invoices': invoices,
             'support_email': support_email,
             'page_name': 'saas_instance_detail',
+            'credit_notice_cutoff': credit_notice_cutoff,
+            'is_hosting': instance_sudo.is_hosting,
+            'repos': instance_sudo.repo_ids if instance_sudo.is_hosting else [],
         })
         return request.render('saas_website.portal_instance_detail', values)
 
@@ -252,7 +274,7 @@ class SaasPortal(CustomerPortal):
         type='http', auth='user', website=True,
     )
     def portal_instance_upgrade(self, instance_id, access_token=None, **kw):
-        """Show available paid plans for upgrading a trial instance."""
+        """Show custom plan builder for upgrading a trial instance."""
         try:
             instance_sudo = self._document_check_access(
                 'saas.instance', instance_id, access_token=access_token,
@@ -263,18 +285,19 @@ class SaasPortal(CustomerPortal):
         if not instance_sudo.is_trial:
             return request.redirect('/my/instances/%s' % instance_id)
 
-        # Fetch paid plans for the same service
-        domain = [('is_trial_plan', '=', False)]
-        if instance_sudo.saas_product_id:
-            domain.append(('saas_product_ids', 'in', instance_sudo.saas_product_id.id))
-        plans = request.env['saas.plan'].sudo().search(domain, order='sequence, price')
+        from odoo.addons.saas_website.controllers.main import SaasWebsite
+        if instance_sudo.is_hosting:
+            custom_config = SaasWebsite._get_hosting_plan_config(self)
+        else:
+            custom_config = SaasWebsite._get_custom_plan_config(self)
 
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance_sudo,
-            'plans': plans,
+            'custom_config': custom_config,
             'page_name': 'saas_instance_upgrade',
             'error': kw.get('error'),
+            'product_id': instance_sudo.saas_product_id.id if instance_sudo.saas_product_id else 0,
         })
         return request.render('saas_website.portal_instance_upgrade', values)
 
@@ -283,7 +306,7 @@ class SaasPortal(CustomerPortal):
         type='http', auth='user', website=True, methods=['POST'],
     )
     def portal_instance_subscribe(self, instance_id, access_token=None, **kw):
-        """Process plan subscription from trial."""
+        """Process custom plan subscription from trial."""
         try:
             instance_sudo = self._document_check_access(
                 'saas.instance', instance_id, access_token=access_token,
@@ -291,16 +314,39 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        plan_id = kw.get('plan_id')
+        workers = int(kw.get('workers', 0))
+        storage = int(kw.get('storage', 0))
         billing_period = kw.get('billing_period', 'monthly')
-        if not plan_id:
+        if billing_period not in ('monthly', 'yearly'):
+            billing_period = 'monthly'
+
+        if not workers or not storage:
             return request.redirect(
-                '/my/instances/%s/upgrade?error=%s' % (instance_id, url_quote('Please select a plan.'))
+                '/my/instances/%s/upgrade?error=%s' % (
+                    instance_id, url_quote('Please configure your plan.'))
+            )
+
+        # Create the custom plan (use hosting config for hosting instances)
+        from odoo.addons.saas_website.controllers.main import SaasWebsite
+        if instance_sudo.is_hosting:
+            config = SaasWebsite._get_hosting_plan_config(self)
+        else:
+            config = SaasWebsite._get_custom_plan_config(self)
+        workers = max(config['min_workers'], min(workers, config['max_workers']))
+        storage = max(config['min_storage'], min(storage, config['max_storage']))
+
+        if instance_sudo.is_hosting:
+            plan = SaasWebsite._get_or_create_hosting_plan(
+                self, instance_sudo.saas_product_id, workers, storage, config,
+            )
+        else:
+            plan = SaasWebsite._get_or_create_custom_plan(
+                self, instance_sudo.saas_product_id, workers, storage, config,
             )
 
         try:
             result = instance_sudo.action_subscribe_from_trial(
-                int(plan_id), billing_period=billing_period,
+                plan.id, billing_period=billing_period,
             )
         except UserError as e:
             return request.redirect(
@@ -433,7 +479,7 @@ class SaasPortal(CustomerPortal):
         type='http', auth='user', website=True,
     )
     def portal_instance_change_plan(self, instance_id, access_token=None, **kw):
-        """Show available plans for changing a paid instance's plan."""
+        """Show custom plan builder for changing a paid instance's plan."""
         try:
             instance_sudo = self._document_check_access(
                 'saas.instance', instance_id, access_token=access_token,
@@ -444,24 +490,20 @@ class SaasPortal(CustomerPortal):
         if instance_sudo.is_trial or instance_sudo.state not in ('running', 'stopped', 'suspended'):
             return request.redirect('/my/instances/%s' % instance_id)
 
-        # Fetch all paid plans for the same service (including current plan
-        # so users can switch billing period, e.g. monthly → yearly)
-        domain = [
-            ('is_trial_plan', '=', False),
-        ]
-        if instance_sudo.saas_product_id:
-            domain.append(('saas_product_ids', 'in', instance_sudo.saas_product_id.id))
-        plans = request.env['saas.plan'].sudo().search(domain, order='sequence, price')
+        from odoo.addons.saas_website.controllers.main import SaasWebsite
+        if instance_sudo.is_hosting:
+            custom_config = SaasWebsite._get_hosting_plan_config(self)
+        else:
+            custom_config = SaasWebsite._get_custom_plan_config(self)
 
-        # Compute proration info for each upgrade plan (both monthly and yearly).
-        # Upgrade vs downgrade is determined by comparing effective monthly
-        # costs so that cross-period changes are classified correctly
-        # (e.g. $10/month vs $100/year = $8.33/month is a downgrade).
+        current_plan = instance_sudo.plan_id
+        current_workers = current_plan.workers if current_plan else 2
+        current_storage = int(current_plan.storage_limit) if current_plan else 5
+
+        # Proration info for display
         today = fields.Date.today()
         old_period = instance_sudo.billing_period or 'monthly'
-        old_price = instance_sudo.plan_id._get_price_for_period(old_period) if instance_sudo.plan_id else 0
-        old_monthly = instance_sudo._to_monthly_equivalent(old_price, old_period)
-        # Deduct 2 days (today + processing day) from remaining days
+        old_price = current_plan._get_price_for_period(old_period) if current_plan else 0
         remaining_value = 0.0
         remaining_days = 0
         if instance_sudo.next_invoice_date and instance_sudo.last_invoice_date:
@@ -470,39 +512,17 @@ class SaasPortal(CustomerPortal):
             if total_days > 0 and remaining_days > 0:
                 remaining_value = (old_price / total_days) * remaining_days
 
-        # Build dict: plan_id -> {'monthly': {...}, 'yearly': {...}}
-        # Each period entry is either an upgrade (with proration details)
-        # or a downgrade (scheduled, no charge).
-        proration_info = {}
-        for plan in plans:
-            plan_proration = {}
-            for period in ('monthly', 'yearly'):
-                new_price = plan._get_price_for_period(period)
-                new_monthly = instance_sudo._to_monthly_equivalent(new_price, period)
-                if new_monthly > old_monthly:
-                    # Upgrade — show proration charge
-                    final_charge = max(new_price - remaining_value, 0) if remaining_value > 0 else new_price
-                    plan_proration[period] = {
-                        'is_upgrade': True,
-                        'credit': remaining_value,
-                        'remaining_days': remaining_days,
-                        'new_price': new_price,
-                        'final_charge': final_charge,
-                    }
-                else:
-                    # Downgrade — scheduled, no charge
-                    plan_proration[period] = {
-                        'is_upgrade': False,
-                        'new_price': new_price,
-                    }
-            proration_info[plan.id] = plan_proration
-
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance_sudo,
-            'plans': plans,
-            'current_plan': instance_sudo.plan_id,
-            'proration_info': proration_info,
+            'current_plan': current_plan,
+            'current_workers': current_workers,
+            'current_storage': current_storage,
+            'custom_config': custom_config,
+            'remaining_value': remaining_value,
+            'remaining_days': remaining_days,
+            'old_price': old_price,
+            'old_period': old_period,
             'page_name': 'saas_instance_change_plan',
             'error': kw.get('error'),
         })
@@ -513,7 +533,13 @@ class SaasPortal(CustomerPortal):
         type='http', auth='user', website=True, methods=['POST'],
     )
     def portal_instance_do_change_plan(self, instance_id, access_token=None, **kw):
-        """Create a proration invoice for the plan change, require payment first."""
+        """Process a custom plan change.
+
+        Rules:
+        - Storage cannot be reduced (hard block).
+        - Worker reduction is scheduled for next billing cycle (downgrade).
+        - Worker increase / storage increase is an immediate upgrade.
+        """
         try:
             instance_sudo = self._document_check_access(
                 'saas.instance', instance_id, access_token=access_token,
@@ -521,25 +547,72 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        plan_id = kw.get('plan_id')
+        new_workers = int(kw.get('workers', 0))
+        new_storage = int(kw.get('storage', 0))
         billing_period = kw.get('billing_period', instance_sudo.billing_period or 'monthly')
-        if not plan_id:
-            return request.redirect(
-                '/my/instances/%s/change-plan?error=%s' % (instance_id, url_quote('Please select a plan.'))
+        if billing_period not in ('monthly', 'yearly'):
+            billing_period = 'monthly'
+
+        current_plan = instance_sudo.plan_id
+        current_workers = current_plan.workers if current_plan else 0
+        current_storage = int(current_plan.storage_limit) if current_plan else 0
+
+        err_redirect = '/my/instances/%s/change-plan?error=%s'
+
+        # Block storage reduction
+        if new_storage < current_storage:
+            return request.redirect(err_redirect % (
+                instance_id,
+                url_quote(_("Storage cannot be reduced. Current storage: %d GB.") % current_storage),
+            ))
+
+        if not new_workers or not new_storage:
+            return request.redirect(err_redirect % (
+                instance_id, url_quote(_("Please configure your plan.")),
+            ))
+
+        # Clamp to config limits
+        from odoo.addons.saas_website.controllers.main import SaasWebsite
+        if instance_sudo.is_hosting:
+            config = SaasWebsite._get_hosting_plan_config(self)
+        else:
+            config = SaasWebsite._get_custom_plan_config(self)
+        new_workers = max(config['min_workers'], min(new_workers, config['max_workers']))
+        new_storage = max(current_storage, min(new_storage, config['max_storage']))
+
+        if (new_workers == current_workers
+                and new_storage == current_storage
+                and billing_period == (instance_sudo.billing_period or 'monthly')):
+            return request.redirect(err_redirect % (
+                instance_id, url_quote(_("No changes selected.")),
+            ))
+
+        # Find or create the new plan
+        if instance_sudo.is_hosting:
+            new_plan = SaasWebsite._get_or_create_hosting_plan(
+                self, instance_sudo.saas_product_id,
+                new_workers, new_storage, config,
+            )
+        else:
+            new_plan = SaasWebsite._get_or_create_custom_plan(
+                self, instance_sudo.saas_product_id,
+                new_workers, new_storage, config,
             )
 
         try:
-            new_plan = request.env['saas.plan'].sudo().browse(int(plan_id))
-            if not new_plan.exists() or new_plan.is_trial_plan:
-                raise UserError(_("Invalid plan."))
-
-            result = instance_sudo.action_request_plan_change(
-                new_plan.id, billing_period=billing_period,
-            )
+            if new_workers < current_workers:
+                # Worker reduction: always schedule for next billing cycle
+                result = instance_sudo._request_downgrade(new_plan, billing_period)
+            else:
+                # Workers same or increased (storage can only increase):
+                # use normal plan change flow
+                result = instance_sudo.action_request_plan_change(
+                    new_plan.id, billing_period=billing_period,
+                )
         except UserError as e:
-            return request.redirect(
-                '/my/instances/%s/change-plan?error=%s' % (instance_id, url_quote(str(e)))
-            )
+            return request.redirect(err_redirect % (
+                instance_id, url_quote(str(e)),
+            ))
 
         # Upgrade: redirect to checkout
         if hasattr(result, 'get_portal_url') and result.amount_total > 0:
@@ -734,6 +807,224 @@ class SaasPortal(CustomerPortal):
 
         return request.redirect('/my/instances/%s' % instance_id)
 
+    # ==================== Log Stream Proxy (Hosting) ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/logs/stream',
+        type='http', auth='user',
+    )
+    def portal_instance_log_stream(self, instance_id, tail='100', access_token=None, **kw):
+        """Portal-safe SSE proxy for live container logs."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            from werkzeug.exceptions import Forbidden
+            raise Forbidden()
+
+        if instance_sudo.state != 'running' or not instance_sudo.docker_server_id:
+            from werkzeug.exceptions import NotFound
+            raise NotFound()
+
+        # Delegate to the core log streaming logic using sudo server
+        from odoo.addons.saas_core.controllers.container_logs import ContainerLogsController
+        ctrl = ContainerLogsController()
+        server = instance_sudo.docker_server_id.sudo()
+        container_name = 'odoo_%s' % instance_sudo.subdomain
+        return ctrl._stream(server, container_name, tail)
+
+    # ==================== Update Repository (Hosting) ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/update-repo',
+        type='http', auth='user', website=True, methods=['POST'],
+    )
+    def portal_update_repo(self, instance_id, access_token=None, **kw):
+        """Update or create repository for a hosting instance and redeploy."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        if not instance_sudo.is_hosting or instance_sudo.state != 'running':
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        repo_url = (kw.get('repo_url') or '').strip()
+        repo_branch = (kw.get('repo_branch') or 'main').strip()
+        git_token = (kw.get('git_token') or '').strip()
+
+        Repo = request.env['saas.instance.repo'].sudo()
+        existing_repo = instance_sudo.repo_ids[:1]
+
+        if repo_url:
+            if existing_repo:
+                # Update existing repo
+                vals = {
+                    'repo_url': repo_url,
+                    'branch': repo_branch,
+                }
+                if git_token:
+                    vals['github_token'] = git_token
+                    vals['webhook_enabled'] = True
+                existing_repo.write(vals)
+            else:
+                # Create new repo
+                Repo.create({
+                    'instance_id': instance_sudo.id,
+                    'repo_url': repo_url,
+                    'branch': repo_branch,
+                    'github_token': git_token or False,
+                    'webhook_enabled': bool(git_token),
+                })
+            # Redeploy to clone/pull the repo
+            try:
+                instance_sudo.action_redeploy()
+                instance_sudo._append_log("Repository updated by client: %s (%s)" % (repo_url, repo_branch))
+            except Exception:
+                _logger.exception("Failed to redeploy instance %s after repo update", instance_sudo.name)
+        elif existing_repo:
+            # Repo URL cleared — remove the repo
+            existing_repo.unlink()
+            try:
+                instance_sudo.action_restart()
+                instance_sudo._append_log("Repository removed by client.")
+            except Exception:
+                _logger.exception("Failed to restart instance %s after repo removal", instance_sudo.name)
+
+        return request.redirect('/my/instances/%s' % instance_id)
+
+    # ==================== List Installed Packages (Hosting) ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/installed-packages',
+        type='json', auth='user',
+    )
+    def portal_installed_packages(self, instance_id, access_token=None, **kw):
+        """Fetch list of installed pip packages from the running container."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return {'error': 'Access denied'}
+
+        if not instance_sudo.is_hosting or instance_sudo.state != 'running':
+            return {'error': 'Instance not running'}
+
+        try:
+            server = instance_sudo.docker_server_id.sudo()
+            container = 'odoo_%s' % instance_sudo.subdomain
+            with server._get_ssh_connection() as ssh:
+                # List from both default site-packages and custom target path
+                exit_code, stdout, stderr = ssh.execute(
+                    'docker exec %s bash -c "'
+                    'pip3 list --path=/var/lib/odoo/pip_packages --format=columns 2>/dev/null; '
+                    'pip3 list --format=columns 2>/dev/null'
+                    '" 2>/dev/null' % container
+                )
+                result = stdout
+            # Parse pip list output into structured data (deduplicated)
+            packages = []
+            seen = set()
+            if result:
+                for line in result.strip().splitlines():
+                    line = line.strip()
+                    if not line or line.startswith('Package') or line.startswith('-'):
+                        continue
+                    parts = line.split()
+                    if not parts:
+                        continue
+                    name = parts[0]
+                    if name.lower() in seen:
+                        continue
+                    seen.add(name.lower())
+                    version = parts[1] if len(parts) >= 2 else ''
+                    packages.append({'name': name, 'version': version})
+            packages.sort(key=lambda p: p['name'].lower())
+            return {'packages': packages, 'count': len(packages)}
+        except Exception as e:
+            _logger.exception("Failed to list packages for instance %s", instance_sudo.name)
+            return {'error': str(e)}
+
+    # ==================== Update Packages (Hosting) ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/update-packages',
+        type='http', auth='user', website=True, methods=['POST'],
+    )
+    def portal_update_packages(self, instance_id, access_token=None, **kw):
+        """Update pip packages for a hosting instance and restart to apply."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        if not instance_sudo.is_hosting or instance_sudo.state != 'running':
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        raw_packages = (kw.get('pip_packages') or '').strip()
+        # Deduplicate packages
+        seen = set()
+        unique_pkgs = []
+        for p in raw_packages.splitlines():
+            p = p.strip()
+            if not p or p.startswith('#'):
+                continue
+            key = p.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip()
+            if key not in seen:
+                seen.add(key)
+                unique_pkgs.append(p)
+        new_packages = '\n'.join(unique_pkgs) if unique_pkgs else ''
+        old_packages = (instance_sudo.pip_packages or '').strip()
+
+        if new_packages != old_packages:
+            instance_sudo.pip_packages = new_packages or False
+            install_result = 'success'
+            install_output = ''
+            try:
+                with instance_sudo.docker_server_id.sudo()._get_ssh_connection() as ssh:
+                    # Update requirements.txt and docker-compose on disk (for persistence)
+                    instance_sudo._render_and_write_configs(ssh)
+
+                    # Install packages live into the running container
+                    # Use /var/lib/odoo/pip_packages — already persisted via ./data/odoo volume
+                    container = 'odoo_%s' % instance_sudo.subdomain
+                    if unique_pkgs:
+                        install_cmd = (
+                            'docker exec %s bash -c "'
+                            'mkdir -p /var/lib/odoo/pip_packages && '
+                            'pip3 install --target=/var/lib/odoo/pip_packages '
+                            '--upgrade --no-warn-script-location %s'
+                            '" 2>&1'
+                        ) % (container, ' '.join(unique_pkgs))
+                        exit_code, stdout, stderr = ssh.execute(install_cmd)
+                        install_output = stdout or stderr or ''
+                        instance_sudo._append_log(
+                            "Packages installed live (exit=%s): %s\n%s"
+                            % (exit_code, ' '.join(unique_pkgs), install_output)
+                        )
+                        if exit_code != 0:
+                            install_result = 'partial'
+
+                    # Restart Odoo to pick up new packages (graceful)
+                    instance_sudo.action_restart()
+                    instance_sudo._append_log("Packages updated by client: %s" % (new_packages or '(cleared)'))
+            except Exception as e:
+                _logger.exception("Failed to update packages for instance %s", instance_sudo.name)
+                install_result = 'error'
+                install_output = str(e)
+
+            return request.redirect(
+                '/my/instances/%s?pkg_result=%s' % (instance_id, install_result)
+            )
+
+        return request.redirect('/my/instances/%s' % instance_id)
+
     # ==================== Refresh Usage ====================
 
     @http.route(
@@ -766,6 +1057,32 @@ class SaasPortal(CustomerPortal):
             'storage_pct': instance_sudo.storage_usage_pct or 0,
             'storage_limit': int(instance_sudo.plan_id.storage_limit) if instance_sudo.plan_id else 0,
         }
+
+    # ==================== Live Logs (Hosting) ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/logs',
+        type='http', auth='user', website=True,
+    )
+    def portal_instance_logs(self, instance_id, access_token=None, **kw):
+        """Show live container logs for a hosting instance."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        if instance_sudo.state != 'running':
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        values = self._prepare_portal_layout_values()
+        values.update({
+            'instance': instance_sudo,
+            'page_name': 'saas_instance_logs',
+            'stream_url': '/my/instances/%d/logs/stream' % instance_sudo.id,
+        })
+        return request.render('saas_website.portal_instance_logs', values)
 
     # ==================== Create Backup ====================
 

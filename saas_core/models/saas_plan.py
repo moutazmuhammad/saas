@@ -1,4 +1,5 @@
-from odoo import api, fields, models
+from odoo import api, fields, models, _
+from odoo.exceptions import UserError
 
 
 class SaasPlan(models.Model):
@@ -22,6 +23,12 @@ class SaasPlan(models.Model):
         default=False,
         help='If checked, this plan is available for free trials only '
              'and will not generate invoices.',
+    )
+    is_custom = fields.Boolean(
+        string='Custom Plan',
+        default=False,
+        help='Auto-generated plans from the custom plan builder. '
+             'These are hidden from the public pricing page.',
     )
 
     # ========== Pricing ==========
@@ -161,4 +168,23 @@ class SaasPlan(models.Model):
         counts = {plan.id: count for plan, count in data}
         for rec in self:
             rec.instance_count = counts.get(rec.id, 0)
+
+    def unlink(self):
+        # Block deletion if any active instances use this plan
+        active_states = (
+            'draft', 'pending_payment', 'paid', 'pending_provision',
+            'provisioning', 'running', 'stopped', 'suspended',
+        )
+        for rec in self:
+            count = self.env['saas.instance'].search_count([
+                ('plan_id', '=', rec.id),
+                ('state', 'in', active_states),
+            ])
+            if count:
+                raise UserError(
+                    _("Cannot delete plan '%s': %d active instance(s) are "
+                      "still using it. Cancel or reassign them first.")
+                    % (rec.name, count)
+                )
+        return super().unlink()
 

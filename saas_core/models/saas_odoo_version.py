@@ -20,6 +20,12 @@ class SaasOdooVersion(models.Model):
         help='Docker image tag (e.g. "18.0", "17.0-latest"). '
              'Combined with the image name to form the full image reference.',
     )
+    is_hosting_version = fields.Boolean(
+        string='Hosting Version',
+        default=False,
+        help='If checked, this version is available for self-managed hosting. '
+             'Hosting versions use dedicated Docker images separate from service versions.',
+    )
     nginx_template = fields.Selection(
         selection=[
             ('new', 'New (16+) — /websocket'),

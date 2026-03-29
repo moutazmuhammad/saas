@@ -44,6 +44,9 @@
                                 <li class="nav-item">
                                     <a class="nav-link" href="/services">Services</a>
                                 </li>
+                                <li class="nav-item">
+                                    <a class="nav-link" href="/hosting">Hosting</a>
+                                </li>
 
                                 <!-- Logged-in user nav -->
                                 <t t-if="not request.env.user._is_public()">
@@ -120,6 +123,7 @@
                             <h6 class="fw-bold mb-3">Product</h6>
                             <ul class="list-unstyled">
                                 <li><a href="/services" class="co-footer-link">Services</a></li>
+                                <li><a href="/hosting" class="co-footer-link">Hosting</a></li>
                                 <li><a href="#" class="co-footer-link">Pricing</a></li>
                                 <li><a href="#" class="co-footer-link">Features</a></li>
                             </ul>
@@ -313,44 +317,54 @@
 
     <template id="cloudodoo_home" name="CloudOdoo Home">
         <t t-call="saas_website.cloudodoo_layout">
-            <!-- Hero Section -->
+
+            <!-- ===== HERO ===== -->
             <section class="hero-section">
                 <div class="hero-bg"></div>
                 <div class="container position-relative">
                     <div class="row align-items-center min-vh-100 pt-5">
-                        <div class="col-lg-6">
+                        <div class="col-lg-7">
+                            <div class="mb-3">
+                                <span class="badge px-3 py-2" style="background:var(--primary-light);color:var(--primary);font-size:0.8rem;font-weight:600;border-radius:20px;">
+                                    <i class="fas fa-star me-1"></i>Trusted Cloud Platform
+                                </span>
+                            </div>
                             <h1 class="display-3 fw-bold mb-4">
-                                Deploy Your Business<br/>
-                                <span class="text-gradient">In Minutes</span>
+                                Your Business,<br/>
+                                <span class="text-gradient">Our Cloud.</span>
                             </h1>
-                            <p class="lead mb-4" style="color:var(--co-text-muted, #A1A1AA);">
-                                Launch fully managed Odoo instances with enterprise-grade infrastructure.
-                                ERP, CRM, Accounting, and more — the logic of stability.
+                            <p class="lead mb-4" style="color:var(--co-text-muted, #A1A1AA);max-width:540px;">
+                                Choose from ready-made business solutions or host your own Odoo project.
+                                Managed infrastructure, automatic backups, and instant scaling.
                             </p>
-                            <div class="d-flex flex-wrap gap-3">
+                            <div class="d-flex flex-wrap gap-3 mb-4">
                                 <a href="/services" class="btn btn-primary btn-lg px-4">
-                                    <i class="fas fa-rocket me-2"></i>Browse Services
+                                    <i class="fas fa-cubes me-2"></i>Ready-Made Services
                                 </a>
-                                <a href="#features" class="btn btn-outline-secondary btn-lg px-4">
-                                    Learn More
+                                <a href="/hosting" class="btn btn-outline-secondary btn-lg px-4">
+                                    <i class="fas fa-server me-2"></i>Host Your Project
                                 </a>
                             </div>
-                            <div class="mt-5 d-flex align-items-center gap-4">
+                            <div class="d-flex align-items-center gap-4 flex-wrap">
+                                <t t-if="trial_days">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-check-circle text-success me-2"></i>
+                                        <span class="small" style="color:var(--co-text-muted);">
+                                            <t t-esc="trial_days"/>-Day Free Trial
+                                        </span>
+                                    </div>
+                                </t>
                                 <div class="d-flex align-items-center">
                                     <i class="fas fa-check-circle text-success me-2"></i>
-                                    <span class="small" style="color:var(--co-text-muted, #A1A1AA);">Free Trial</span>
+                                    <span class="small" style="color:var(--co-text-muted);">No Credit Card</span>
                                 </div>
                                 <div class="d-flex align-items-center">
                                     <i class="fas fa-check-circle text-success me-2"></i>
-                                    <span class="small" style="color:var(--co-text-muted, #A1A1AA);">No Credit Card</span>
-                                </div>
-                                <div class="d-flex align-items-center">
-                                    <i class="fas fa-check-circle text-success me-2"></i>
-                                    <span class="small" style="color:var(--co-text-muted, #A1A1AA);">Instant Setup</span>
+                                    <span class="small" style="color:var(--co-text-muted);">Cancel Anytime</span>
                                 </div>
                             </div>
                         </div>
-                        <div class="col-lg-6 d-none d-lg-block">
+                        <div class="col-lg-5 d-none d-lg-block">
                             <div class="hero-visual">
                                 <div class="dashboard-preview">
                                     <div class="preview-header">
@@ -376,7 +390,7 @@
                                                 <span class="stat-label">Customers</span>
                                             </div>
                                             <div class="stat-card">
-                                                <span class="stat-value">98%</span>
+                                                <span class="stat-value">99.9%</span>
                                                 <span class="stat-label">Uptime</span>
                                             </div>
                                         </div>
@@ -388,66 +402,206 @@
                 </div>
             </section>
 
-            <!-- Features Section -->
-            <section id="features" class="py-6">
+            <!-- ===== TWO OFFERINGS ===== -->
+            <section class="py-6" id="offerings">
                 <div class="container">
                     <div class="text-center mb-5">
-                        <h2 class="display-5 fw-bold">Everything You Need</h2>
-                        <p class="lead" style="color:var(--co-text-muted, #A1A1AA);">Enterprise-grade infrastructure without the complexity</p>
+                        <h2 class="display-5 fw-bold">Two Ways to Get Started</h2>
+                        <p class="lead" style="color:var(--co-text-muted);">Choose the option that fits your needs</p>
                     </div>
                     <div class="row g-4">
-                        <div class="col-md-6 col-lg-3">
-                            <div class="feature-card">
-                                <div class="feature-icon"><i class="fas fa-server"></i></div>
-                                <h5>Isolated Containers</h5>
-                                <p class="small mb-0" style="color:var(--co-text-muted, #A1A1AA);">Each instance runs in its own Docker container with dedicated resources.</p>
+                        <!-- Ready-Made Services -->
+                        <div class="col-lg-6">
+                            <div class="info-card h-100" style="border-left:3px solid var(--primary);padding:2rem;">
+                                <div class="d-flex align-items-center gap-3 mb-3">
+                                    <div style="width:56px;height:56px;background:var(--primary-light);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:var(--primary);flex-shrink:0;">
+                                        <i class="fas fa-cubes"></i>
+                                    </div>
+                                    <div>
+                                        <h4 class="mb-0">Ready-Made Services</h4>
+                                        <span class="small" style="color:var(--co-text-muted);">Pre-configured business solutions</span>
+                                    </div>
+                                </div>
+                                <p style="color:var(--co-text-secondary,#A1A1AA);">
+                                    Get started instantly with our pre-built Odoo applications.
+                                    Fully configured and ready to use — just sign up and start working.
+                                </p>
+                                <ul class="list-unstyled mb-4" style="color:var(--co-text-secondary);">
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:var(--success);"></i>Pre-configured and ready to use</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:var(--success);"></i>No technical knowledge required</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:var(--success);"></i>Automatic updates and maintenance</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:var(--success);"></i>Free trial available</li>
+                                </ul>
+                                <a href="/services" class="btn btn-primary">
+                                    <i class="fas fa-arrow-right me-2"></i>Browse Services
+                                </a>
                             </div>
                         </div>
-                        <div class="col-md-6 col-lg-3">
-                            <div class="feature-card">
-                                <div class="feature-icon"><i class="fas fa-shield-alt"></i></div>
-                                <h5>Automatic Backups</h5>
-                                <p class="small mb-0" style="color:var(--co-text-muted, #A1A1AA);">Daily automated backups with one-click restore capability.</p>
-                            </div>
-                        </div>
-                        <div class="col-md-6 col-lg-3">
-                            <div class="feature-card">
-                                <div class="feature-icon"><i class="fas fa-bolt"></i></div>
-                                <h5>Instant Scaling</h5>
-                                <p class="small mb-0" style="color:var(--co-text-muted, #A1A1AA);">Upgrade your plan anytime with zero downtime migrations.</p>
-                            </div>
-                        </div>
-                        <div class="col-md-6 col-lg-3">
-                            <div class="feature-card">
-                                <div class="feature-icon"><i class="fas fa-headset"></i></div>
-                                <h5>24/7 Support</h5>
-                                <p class="small mb-0" style="color:var(--co-text-muted, #A1A1AA);">Expert support team ready to help you succeed.</p>
+
+                        <!-- Cloud Hosting -->
+                        <div class="col-lg-6">
+                            <div class="info-card h-100" style="border-left:3px solid #10B981;padding:2rem;">
+                                <div class="d-flex align-items-center gap-3 mb-3">
+                                    <div style="width:56px;height:56px;background:rgba(16,185,129,0.1);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:#10B981;flex-shrink:0;">
+                                        <i class="fas fa-server"></i>
+                                    </div>
+                                    <div>
+                                        <h4 class="mb-0">Cloud Hosting</h4>
+                                        <span class="small" style="color:var(--co-text-muted);">Host your own Odoo project</span>
+                                    </div>
+                                </div>
+                                <p style="color:var(--co-text-secondary,#A1A1AA);">
+                                    Run your own Odoo project on our managed cloud.
+                                    Connect your repository, choose your resources, and we handle the rest.
+                                </p>
+                                <ul class="list-unstyled mb-4" style="color:var(--co-text-secondary);">
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:#10B981;"></i>Connect your own Git repository</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:#10B981;"></i>Auto-deploy when you push code</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:#10B981;"></i>Live monitoring and logs</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:#10B981;"></i>
+                                        Odoo <t t-if="hosting_versions">
+                                            <t t-esc="hosting_versions[-1:].name"/> — <t t-esc="hosting_versions[:1].name"/>
+                                        </t> supported
+                                    </li>
+                                </ul>
+                                <a href="/hosting" class="btn btn-success">
+                                    <i class="fas fa-arrow-right me-2"></i>Configure Hosting
+                                </a>
                             </div>
                         </div>
                     </div>
                 </div>
             </section>
 
-            <!-- Stats Section -->
+            <!-- ===== SERVICES SHOWCASE ===== -->
+            <t t-if="services">
+                <section class="py-6" style="background:var(--bg-elevated);">
+                    <div class="container">
+                        <div class="text-center mb-5">
+                            <h2 class="display-5 fw-bold">Our Services</h2>
+                            <p class="lead" style="color:var(--co-text-muted);">Ready-made solutions for every business need</p>
+                        </div>
+                        <div class="row g-4">
+                            <t t-foreach="services" t-as="product">
+                                <div class="col-md-6 col-lg-4">
+                                    <div class="service-card">
+                                        <div class="service-icon">
+                                            <t t-if="product.icon"><i t-att-class="product.icon"/></t>
+                                            <t t-else=""><i class="fas fa-cubes"/></t>
+                                        </div>
+                                        <h4 t-esc="product.name"/>
+                                        <p class="service-subtitle" t-if="product.subtitle" t-esc="product.subtitle"/>
+                                        <a t-attf-href="/services/#{product.id}" class="btn btn-primary w-100">
+                                            Get Started
+                                        </a>
+                                    </div>
+                                </div>
+                            </t>
+                        </div>
+                        <div class="text-center mt-4">
+                            <a href="/services" class="btn btn-outline-secondary">
+                                View All Services <i class="fas fa-arrow-right ms-2"></i>
+                            </a>
+                        </div>
+                    </div>
+                </section>
+            </t>
+
+            <!-- ===== FEATURES ===== -->
+            <section id="features" class="py-6">
+                <div class="container">
+                    <div class="text-center mb-5">
+                        <h2 class="display-5 fw-bold">Why Choose Us</h2>
+                        <p class="lead" style="color:var(--co-text-muted);">Everything you need to run your business in the cloud</p>
+                    </div>
+                    <div class="row g-4">
+                        <div class="col-md-6 col-lg-4">
+                            <div class="feature-card">
+                                <div class="feature-icon"><i class="fas fa-shield-alt"></i></div>
+                                <h5>Automatic Backups</h5>
+                                <p class="small mb-0" style="color:var(--co-text-muted);">Daily automated backups with one-click restore. Your data is always safe.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-lg-4">
+                            <div class="feature-card">
+                                <div class="feature-icon"><i class="fas fa-bolt"></i></div>
+                                <h5>Instant Scaling</h5>
+                                <p class="small mb-0" style="color:var(--co-text-muted);">Upgrade workers and storage anytime with zero downtime.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-lg-4">
+                            <div class="feature-card">
+                                <div class="feature-icon"><i class="fas fa-lock"></i></div>
+                                <h5>SSL Included</h5>
+                                <p class="small mb-0" style="color:var(--co-text-muted);">Free SSL certificates for all instances. Your data is encrypted in transit.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-lg-4">
+                            <div class="feature-card">
+                                <div class="feature-icon"><i class="fas fa-chart-line"></i></div>
+                                <h5>Real-Time Monitoring</h5>
+                                <p class="small mb-0" style="color:var(--co-text-muted);">Track CPU, RAM, and storage usage. Live logs for hosting instances.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-lg-4">
+                            <div class="feature-card">
+                                <div class="feature-icon"><i class="fas fa-sliders-h"></i></div>
+                                <h5>Custom Plans</h5>
+                                <p class="small mb-0" style="color:var(--co-text-muted);">Choose exactly the resources you need. Pay only for what you use.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-lg-4">
+                            <div class="feature-card">
+                                <div class="feature-icon"><i class="fas fa-headset"></i></div>
+                                <h5>Expert Support</h5>
+                                <p class="small mb-0" style="color:var(--co-text-muted);">Our team is here to help you succeed, every step of the way.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== HOW IT WORKS ===== -->
+            <section class="py-6" style="background:var(--bg-elevated);">
+                <div class="container">
+                    <div class="text-center mb-5">
+                        <h2 class="display-5 fw-bold">How It Works</h2>
+                        <p class="lead" style="color:var(--co-text-muted);">Get up and running in 3 simple steps</p>
+                    </div>
+                    <div class="row g-4">
+                        <div class="col-md-4">
+                            <div class="text-center">
+                                <div class="mb-3" style="width:64px;height:64px;background:var(--primary-light);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto;font-size:1.5rem;font-weight:700;color:var(--primary);">1</div>
+                                <h5>Choose Your Plan</h5>
+                                <p class="small" style="color:var(--co-text-muted);">Select a service or configure hosting. Pick workers, storage, and billing period.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-center">
+                                <div class="mb-3" style="width:64px;height:64px;background:var(--primary-light);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto;font-size:1.5rem;font-weight:700;color:var(--primary);">2</div>
+                                <h5>Complete Payment</h5>
+                                <p class="small" style="color:var(--co-text-muted);">Secure checkout with instant confirmation. Or start with a free trial.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-center">
+                                <div class="mb-3" style="width:64px;height:64px;background:var(--primary-light);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto;font-size:1.5rem;font-weight:700;color:var(--primary);">3</div>
+                                <h5>Start Working</h5>
+                                <p class="small" style="color:var(--co-text-muted);">Your instance is deployed automatically. Access it from your custom subdomain.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ===== STATS ===== -->
             <section class="py-6 bg-dark-gradient">
                 <div class="container">
                     <div class="row text-center g-4">
                         <div class="col-6 col-lg-3">
                             <div class="stat-block">
-                                <span class="stat-number">10K+</span>
-                                <span class="stat-text">Active Instances</span>
-                            </div>
-                        </div>
-                        <div class="col-6 col-lg-3">
-                            <div class="stat-block">
                                 <span class="stat-number">99.9%</span>
-                                <span class="stat-text">Uptime SLA</span>
-                            </div>
-                        </div>
-                        <div class="col-6 col-lg-3">
-                            <div class="stat-block">
-                                <span class="stat-number">50+</span>
-                                <span class="stat-text">Countries</span>
+                                <span class="stat-text">Uptime</span>
                             </div>
                         </div>
                         <div class="col-6 col-lg-3">
@@ -456,22 +610,47 @@
                                 <span class="stat-text">Support</span>
                             </div>
                         </div>
+                        <div class="col-6 col-lg-3">
+                            <div class="stat-block">
+                                <span class="stat-number">SSL</span>
+                                <span class="stat-text">Free Certificates</span>
+                            </div>
+                        </div>
+                        <div class="col-6 col-lg-3">
+                            <div class="stat-block">
+                                <span class="stat-number">Daily</span>
+                                <span class="stat-text">Automatic Backups</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
 
-            <!-- CTA Section -->
+            <!-- ===== CTA ===== -->
             <section class="py-6">
                 <div class="container">
                     <div class="cta-card text-center">
                         <h2 class="display-6 fw-bold mb-3">Ready to Get Started?</h2>
-                        <p class="mb-4" style="color:var(--co-text-muted, #A1A1AA);">Start your free trial today. No credit card required.</p>
-                        <a href="/services" class="btn btn-primary btn-lg px-5">
-                            <i class="fas fa-rocket me-2"></i>Start Free Trial
-                        </a>
+                        <p class="mb-4" style="color:var(--co-text-muted);max-width:500px;margin:0 auto;">
+                            <t t-if="trial_days">
+                                Start with a <strong><t t-esc="trial_days"/>-day free trial</strong>. No credit card required.
+                            </t>
+                            <t t-else="">
+                                Choose a service or set up your hosting in minutes.
+                            </t>
+                        </p>
+                        <div class="d-flex flex-wrap gap-3 justify-content-center">
+                            <a href="/services" class="btn btn-primary btn-lg px-4">
+                                <i class="fas fa-cubes me-2"></i>Browse Services
+                            </a>
+                            <a href="/hosting" class="btn btn-outline-secondary btn-lg px-4">
+                                <i class="fas fa-server me-2"></i>Host Your Project
+                            </a>
+                        </div>
                     </div>
                 </div>
             </section>
+
         </t>
     </template>
 

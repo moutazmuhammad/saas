@@ -12,6 +12,7 @@
                 <field name="subtitle"/>
                 <field name="icon"/>
                 <field name="is_published"/>
+                <field name="is_hosting"/>
                 <field name="plan_count" string="Plans"/>
                 <field name="instance_count" string="Instances"/>
             </list>
@@ -48,7 +49,8 @@
                             <field name="icon"/>
                             <field name="sequence"/>
                             <field name="is_published"/>
-                            <field name="odoo_version_id"/>
+                            <field name="is_hosting"/>
+                            <field name="odoo_version_id" invisible="is_hosting"/>
                         </group>
                     </group>
                     <notebook>

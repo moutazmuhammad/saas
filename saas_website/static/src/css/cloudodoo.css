@@ -331,6 +331,442 @@ footer a[href*="odoo.com"],
 }
 
 /* ============================================
+   Portal Invoice / Bill Pages — Full Restyle
+   ============================================ */
+
+/* Main container background */
+#wrapwrap .o_portal_sidebar,
+#wrapwrap .o_portal {
+    background: var(--bg-dark) !important;
+    color: var(--text-primary) !important;
+}
+
+/* Cards and panels */
+#wrapwrap .o_portal_sidebar .card,
+#wrapwrap .o_portal .card {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: var(--radius-lg) !important;
+    color: var(--text-primary) !important;
+    box-shadow: none !important;
+}
+#wrapwrap .o_portal_sidebar .card-header,
+#wrapwrap .o_portal .card-header {
+    background: var(--bg-elevated) !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_sidebar .card-body,
+#wrapwrap .o_portal .card-body {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_sidebar .card-footer,
+#wrapwrap .o_portal .card-footer {
+    background: var(--bg-elevated) !important;
+    border-top: 1px solid var(--border-color) !important;
+}
+
+/* Page title and breadcrumbs */
+#wrapwrap .o_portal_sidebar h1,
+#wrapwrap .o_portal_sidebar h2,
+#wrapwrap .o_portal_sidebar h3,
+#wrapwrap .o_portal_sidebar h4,
+#wrapwrap .o_portal_sidebar h5 {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .breadcrumb {
+    background: transparent !important;
+}
+#wrapwrap .breadcrumb-item a {
+    color: var(--primary) !important;
+}
+#wrapwrap .breadcrumb-item.active {
+    color: var(--text-muted) !important;
+}
+
+/* Tables inside invoice */
+#wrapwrap .o_portal_sidebar table,
+#wrapwrap .o_portal table {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_sidebar table th,
+#wrapwrap .o_portal table th {
+    background: var(--bg-elevated) !important;
+    color: var(--text-secondary) !important;
+    border-color: var(--border-color) !important;
+}
+#wrapwrap .o_portal_sidebar table td,
+#wrapwrap .o_portal table td {
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_sidebar table tr:hover td {
+    background: var(--bg-card-hover) !important;
+}
+#wrapwrap .o_portal_sidebar .table-light,
+#wrapwrap .o_portal_sidebar .table-light th,
+#wrapwrap .o_portal_sidebar .table-light td {
+    background: var(--bg-elevated) !important;
+    color: var(--text-primary) !important;
+}
+
+/* Invoice amount summary */
+#wrapwrap .o_portal_sidebar .text-end strong,
+#wrapwrap .o_portal .text-end strong {
+    color: var(--text-primary) !important;
+}
+
+/* Sidebar info sections */
+#wrapwrap .o_portal_sidebar .o_portal_record_sidebar_content,
+#wrapwrap .o_portal_sidebar .sidebar_content {
+    background: var(--bg-card) !important;
+    color: var(--text-secondary) !important;
+}
+#wrapwrap .o_portal_sidebar .o_portal_record_sidebar_content label,
+#wrapwrap .o_portal_sidebar .o_portal_record_sidebar_content small {
+    color: var(--text-muted) !important;
+}
+
+/* Buttons */
+#wrapwrap .o_portal_sidebar .btn-primary,
+#wrapwrap .o_portal .btn-primary {
+    background: var(--primary) !important;
+    border-color: var(--primary) !important;
+}
+
+/* Links */
+#wrapwrap .o_portal_sidebar a:not(.btn),
+#wrapwrap .o_portal a:not(.btn) {
+    color: var(--primary);
+}
+
+/* Invoice list table */
+#wrapwrap .o_portal .table thead th {
+    background: var(--bg-elevated) !important;
+    color: var(--text-muted) !important;
+    border-color: var(--border-color) !important;
+}
+#wrapwrap .o_portal .table tbody td {
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal .table tbody tr:hover {
+    background: var(--bg-card-hover) !important;
+}
+
+/* Status badges */
+#wrapwrap .badge.text-bg-success {
+    background: var(--success-light) !important;
+    color: var(--success) !important;
+}
+#wrapwrap .badge.text-bg-warning {
+    background: var(--warning-light) !important;
+    color: var(--warning) !important;
+}
+#wrapwrap .badge.text-bg-info {
+    background: rgba(59, 130, 246, 0.1) !important;
+    color: var(--info) !important;
+}
+
+/* Pager */
+#wrapwrap .o_portal_pager .page-link {
+    background: var(--bg-card) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_pager .page-item.active .page-link {
+    background: var(--primary) !important;
+    border-color: var(--primary) !important;
+    color: #fff !important;
+}
+
+/* Message thread / chatter */
+#wrapwrap .o_portal_chatter,
+#wrapwrap .o_portal_chatter_messages {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_chatter_message {
+    border-color: var(--border-color) !important;
+}
+
+/* Text colors */
+#wrapwrap .o_portal_sidebar .text-muted {
+    color: var(--text-muted) !important;
+}
+#wrapwrap .o_portal_sidebar .border-bottom {
+    border-color: var(--border-color) !important;
+}
+
+/* Background overrides for white sections */
+#wrapwrap .o_portal_sidebar .bg-white,
+#wrapwrap .o_portal_sidebar .bg-light,
+#wrapwrap .o_portal .bg-white,
+#wrapwrap .o_portal .bg-light,
+#wrapwrap .bg-white,
+#wrapwrap .bg-light {
+    background: var(--bg-card) !important;
+}
+
+/* Portal page overall background */
+#wrapwrap,
+#wrapwrap > main,
+#wrapwrap #wrap {
+    background: var(--bg-dark) !important;
+}
+
+/* All portal text */
+#wrapwrap .o_portal_sidebar *,
+#wrapwrap .o_portal * {
+    border-color: var(--border-color) !important;
+}
+
+/* Sidebar amount display */
+#wrapwrap .o_portal_sidebar h2,
+#wrapwrap .o_portal_sidebar h4 {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_sidebar .small,
+#wrapwrap .o_portal_sidebar small {
+    color: var(--text-muted) !important;
+}
+
+/* Alert boxes in sidebar */
+#wrapwrap .o_portal_sidebar .alert-success {
+    background: var(--success-light) !important;
+    border-color: rgba(16, 185, 129, 0.3) !important;
+    color: var(--success) !important;
+}
+#wrapwrap .o_portal_sidebar .alert-warning {
+    background: var(--warning-light) !important;
+    border-color: rgba(245, 158, 11, 0.3) !important;
+    color: var(--warning) !important;
+}
+#wrapwrap .o_portal_sidebar .alert-danger,
+#wrapwrap .o_portal_sidebar .alert-info {
+    background: rgba(59, 130, 246, 0.1) !important;
+    border-color: rgba(59, 130, 246, 0.3) !important;
+    color: var(--info) !important;
+}
+
+/* Download / action buttons in sidebar */
+#wrapwrap .o_portal_sidebar .btn-light,
+#wrapwrap .o_portal .btn-light {
+    background: var(--bg-elevated) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_sidebar .btn-light:hover,
+#wrapwrap .o_portal .btn-light:hover {
+    background: var(--bg-card-hover) !important;
+}
+
+/* Sidebar list group / info rows */
+#wrapwrap .o_portal_sidebar .list-group-item,
+#wrapwrap .o_portal .list-group-item {
+    background: var(--bg-card) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+
+/* Portal chatter / message thread */
+#wrapwrap .o_portal_chatter_composer,
+#wrapwrap .o_portal_chatter_composer textarea {
+    background: var(--bg-input) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+#wrapwrap .o_portal_chatter_message_title {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_chatter .o_portal_chatter_message {
+    background: var(--bg-card) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* Any remaining white/light text or bg */
+#wrapwrap .text-900,
+#wrapwrap .text-dark {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .border-bottom,
+#wrapwrap .border-top {
+    border-color: var(--border-color) !important;
+}
+
+/* Form controls in portal */
+#wrapwrap .o_portal .form-control,
+#wrapwrap .o_portal_sidebar .form-control,
+#wrapwrap .o_portal .form-select,
+#wrapwrap .o_portal_sidebar .form-select {
+    background: var(--bg-input) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+
+/* Payment provider cards */
+#wrapwrap .o_payment_form .card,
+#wrapwrap .o_payment_option_card {
+    background: var(--bg-card) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+
+/* ============================================
+   Force Dark Mode on ALL Portal / Odoo Pages
+   ============================================ */
+
+/* Bootstrap bg utilities */
+#wrapwrap .bg-100,
+#wrapwrap .bg-200,
+#wrapwrap .bg-300 {
+    background-color: var(--bg-elevated) !important;
+}
+
+/* Bootstrap text utilities */
+#wrapwrap .text-600,
+#wrapwrap .text-700,
+#wrapwrap .text-800,
+#wrapwrap .text-900,
+#wrapwrap .text-dark,
+#wrapwrap .text-body {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .text-muted,
+#wrapwrap .text-500,
+#wrapwrap .text-400,
+#wrapwrap .text-secondary {
+    color: var(--text-muted) !important;
+}
+
+/* Dividers */
+#wrapwrap .vr {
+    background-color: var(--border-color) !important;
+    opacity: 1 !important;
+}
+#wrapwrap hr {
+    border-color: var(--border-color) !important;
+    opacity: 0.5;
+}
+
+/* All anchors in portal */
+#wrapwrap a:not(.btn):not(.nav-link):not(.dropdown-item) {
+    color: var(--primary);
+}
+
+/* Powered by Odoo in sidebar — hide */
+#wrapwrap .o_portal_sidebar_content > .d-none.d-lg-block.small.text-center {
+    display: none !important;
+}
+
+/* Specific invoice page overrides */
+#wrapwrap #invoice_content .card {
+    background: var(--bg-card) !important;
+    border-color: var(--border-color) !important;
+}
+#wrapwrap #invoice_content .card-body {
+    color: var(--text-primary) !important;
+}
+#wrapwrap #invoice_content table {
+    --bs-table-bg: transparent !important;
+    --bs-table-striped-bg: transparent !important;
+    --bs-table-hover-bg: var(--bg-card-hover) !important;
+    color: var(--text-primary) !important;
+}
+#wrapwrap #invoice_content table th {
+    background: var(--bg-elevated) !important;
+    color: var(--text-muted) !important;
+}
+#wrapwrap #invoice_content table td {
+    color: var(--text-primary) !important;
+}
+#wrapwrap #invoice_content .table > :not(caption) > * > * {
+    background-color: transparent !important;
+    box-shadow: none !important;
+}
+
+/* Portal layout wrapper — ensure all sections dark */
+#wrapwrap .o_portal,
+#wrapwrap .o_portal_sidebar,
+#wrapwrap .container.o_portal_sidebar {
+    background: transparent !important;
+    color: var(--text-primary) !important;
+}
+
+/* Override Bootstrap .card default white */
+#wrapwrap .card {
+    --bs-card-bg: var(--bg-card) !important;
+    --bs-card-border-color: var(--border-color) !important;
+    --bs-card-color: var(--text-primary) !important;
+    --bs-card-cap-bg: var(--bg-elevated) !important;
+    background-color: var(--bg-card) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+
+/* Override Bootstrap .table defaults */
+#wrapwrap .table {
+    --bs-table-bg: transparent !important;
+    --bs-table-color: var(--text-primary) !important;
+    --bs-table-border-color: var(--border-color) !important;
+}
+#wrapwrap .table > :not(caption) > * > * {
+    border-bottom-color: var(--border-color) !important;
+    background-color: transparent !important;
+    color: inherit !important;
+}
+
+/* Nuclear override: force dark on ALL elements in portal pages */
+#wrapwrap .o_portal_sidebar .card-body,
+#wrapwrap .o_portal_sidebar .card-body *,
+#wrapwrap #invoice_content,
+#wrapwrap #invoice_content *,
+#wrapwrap #invoice_communication,
+#wrapwrap #invoice_communication * {
+    color: var(--text-primary);
+    background-color: transparent;
+}
+#wrapwrap #invoice_content .card,
+#wrapwrap #invoice_communication .card {
+    background-color: var(--bg-card) !important;
+}
+#wrapwrap #invoice_content thead tr,
+#wrapwrap #invoice_content thead th {
+    background-color: var(--bg-elevated) !important;
+    color: var(--text-muted) !important;
+}
+#wrapwrap #invoice_content .badge {
+    color: inherit !important;
+}
+
+/* Sidebar panel itself */
+#wrapwrap .o_portal_sidebar_content {
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_portal_sidebar_content * {
+    color: inherit;
+}
+#wrapwrap .o_portal_sidebar_content .btn {
+    color: var(--text-primary) !important;
+}
+
+/* Ensure the sidebar amount is visible */
+#wrapwrap .o_portal_sidebar_content h2 span,
+#wrapwrap .o_portal_sidebar_content h4 span,
+#wrapwrap .o_portal_sidebar_content .oe_currency_value {
+    color: var(--text-primary) !important;
+}
+
+/* Download button */
+#wrapwrap .o_download_btn {
+    background: var(--bg-elevated) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+}
+#wrapwrap .o_download_btn:hover {
+    background: var(--bg-card-hover) !important;
+}
+
+/* ============================================
    CloudOdoo Login Page — Full Redesign
    ============================================ */
 
@@ -358,6 +794,79 @@ footer a[href*="odoo.com"],
 .co-login-page .card-body > .text-center.pb-3.border-bottom,
 .co-login-page .card-body > .text-center.small.mt-4 {
     display: none !important;
+}
+
+/* Style database selector dropdown */
+.co-login-page select,
+.co-login-page .form-select {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 10px !important;
+    color: var(--text-primary) !important;
+    padding: 0.7rem 1rem !important;
+    font-size: 0.95rem !important;
+    appearance: auto;
+}
+.co-login-page select:focus,
+.co-login-page .form-select:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px var(--primary-light) !important;
+    outline: none !important;
+}
+.co-login-page select option {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+
+/* Hide Odoo branding in password manager / autofill suggestions */
+.co-login-page .o_login_auth,
+.co-login-page .o_login_auth a[href*="odoo"],
+.co-login-page .oe_login_form a[href*="odoo.com"] {
+    display: none !important;
+}
+
+/* "Choose a user" switcher component */
+.co-login-page .o_user_switch {
+    color: var(--text-primary) !important;
+}
+.co-login-page .o_user_switch p {
+    color: var(--text-secondary) !important;
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+.co-login-page .o_user_switch .list-group-item {
+    background: var(--bg-input) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-primary) !important;
+    transition: all 0.15s ease;
+}
+.co-login-page .o_user_switch .list-group-item:hover {
+    background: var(--bg-elevated) !important;
+    border-color: var(--primary) !important;
+}
+.co-login-page .o_user_switch .list-group-item .fa-times {
+    color: var(--text-muted) !important;
+    opacity: 0.5;
+}
+.co-login-page .o_user_switch .list-group-item .fa-times:hover {
+    color: var(--danger) !important;
+    opacity: 1;
+}
+.co-login-page .o_user_switch .btn-link,
+.co-login-page .o_user_switch_btn {
+    color: var(--primary) !important;
+    text-decoration: none;
+}
+.co-login-page .o_user_switch .btn-link:hover,
+.co-login-page .o_user_switch_btn:hover {
+    color: var(--primary-hover) !important;
+}
+
+/* User avatar in switcher */
+.co-login-page .o_user_switch .o_avatar {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--border-color);
 }
 
 /* ---- Left Brand Panel ---- */
@@ -1228,6 +1737,444 @@ h1, h2, h3, h4, h5, h6 {
     color: var(--info);
 }
 
+/* Trial Countdown Badge */
+.trial-countdown-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.6rem;
+    border-radius: 20px;
+    vertical-align: middle;
+}
+.trial-countdown-badge.normal {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--info);
+}
+.trial-countdown-badge.warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+}
+.trial-countdown-badge.urgent {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger);
+    animation: pulse 2s infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* ============================================================
+   Custom Plan Builder
+   ============================================================ */
+
+.custom-builder-section {
+    margin-top: 4rem;
+    padding-top: 3rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.custom-builder-section h2 {
+    color: var(--text-primary);
+}
+
+.custom-builder-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    transition: all var(--transition-base);
+}
+
+.custom-builder-card:hover {
+    border-color: var(--border-light);
+}
+
+/* Highlight animation when scrolled to */
+.builder-highlight .custom-builder-card {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-glow);
+    transition: all 0.3s ease;
+}
+
+/* Slider Group */
+.slider-group {
+    position: relative;
+}
+
+.slider-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.slider-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.slider-tooltip-trigger {
+    color: var(--text-muted);
+    cursor: help;
+    font-size: 0.8rem;
+    transition: color 0.2s;
+}
+
+.slider-tooltip-trigger:hover {
+    color: var(--primary);
+}
+
+.slider-value {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--primary);
+    background: rgba(32, 60, 134, 0.1);
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(32, 60, 134, 0.2);
+}
+
+.slider-value .value-number {
+    font-size: 1.25rem;
+}
+
+.slider-value .slider-input {
+    width: 2.5rem;
+    text-align: center;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 1.25rem;
+    padding: 0;
+    -moz-appearance: textfield;
+}
+.slider-value .slider-input::-webkit-outer-spin-button,
+.slider-value .slider-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.slider-value .slider-input:focus {
+    background: rgba(32, 60, 134, 0.15);
+    border-radius: 4px;
+}
+
+/* Custom Range Slider */
+.slider-container {
+    position: relative;
+    padding: 0.5rem 0 2rem 0;
+}
+
+.custom-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(
+        to right,
+        var(--primary) 0%,
+        var(--primary) var(--slider-pct, 50%),
+        var(--bg-elevated, #1a1a1d) var(--slider-pct, 50%),
+        var(--bg-elevated, #1a1a1d) 100%
+    );
+    outline: none;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.custom-slider:hover {
+    opacity: 0.9;
+}
+
+/* Slider Thumb - WebKit */
+.custom-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 3px solid var(--bg-card, #111113);
+    box-shadow: 0 0 0 2px var(--primary), 0 2px 8px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.custom-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 3px var(--primary), 0 2px 12px rgba(32, 60, 134, 0.4);
+}
+
+.custom-slider::-webkit-slider-thumb:active {
+    transform: scale(1.05);
+}
+
+/* Slider Thumb - Firefox */
+.custom-slider::-moz-range-thumb {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 3px solid var(--bg-card, #111113);
+    box-shadow: 0 0 0 2px var(--primary), 0 2px 8px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.custom-slider::-moz-range-thumb:hover {
+    transform: scale(1.15);
+}
+
+.custom-slider::-moz-range-track {
+    height: 6px;
+    border-radius: 3px;
+    background: transparent;
+}
+
+/* Slider Ticks */
+.slider-ticks {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 1.5rem;
+}
+
+.slider-tick {
+    position: absolute;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.tick-mark {
+    display: block;
+    width: 1px;
+    height: 6px;
+    background: var(--border-light, #3f3f46);
+}
+
+.tick-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+}
+
+.tick-recommended .tick-label {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.tick-recommended .tick-mark {
+    background: var(--primary);
+}
+
+/* Slider Recommendation */
+.slider-recommendation {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    padding: 0.5rem 0.75rem;
+    background: rgba(32, 60, 134, 0.06);
+    border: 1px solid rgba(32, 60, 134, 0.12);
+    border-radius: var(--radius-md);
+    margin-top: 0.5rem;
+    transition: all 0.3s ease;
+}
+
+.slider-recommendation.rec-optimal {
+    background: rgba(16, 185, 129, 0.08);
+    border-color: rgba(16, 185, 129, 0.2);
+    color: var(--success);
+}
+
+.slider-highlight-bar {
+    margin-top: 0.5rem;
+}
+
+.highlight-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Info Box */
+.info-box {
+    background: var(--bg-elevated, #18181b);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.info-box-header {
+    padding: 0.75rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--warning, #F59E0B);
+    background: rgba(245, 158, 11, 0.06);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.info-box-body {
+    padding: 1rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.usage-type {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.usage-badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 20px;
+    width: fit-content;
+}
+
+.usage-badge.usage-light {
+    background: rgba(16, 185, 129, 0.12);
+    color: var(--success);
+}
+
+.usage-badge.usage-heavy {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--danger);
+}
+
+.usage-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+/* Custom Price Card */
+.custom-price-card {
+    background: var(--bg-elevated, #18181b);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+}
+
+.custom-price-card h5 {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Price Breakdown */
+.price-breakdown {
+    margin-top: 1rem;
+}
+
+.breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    font-size: 0.9rem;
+}
+
+.breakdown-label {
+    color: var(--text-secondary);
+}
+
+.breakdown-value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.breakdown-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 0.5rem 0;
+}
+
+.breakdown-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 0 0.25rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.total-amount {
+    font-size: 1.5rem;
+    color: var(--primary);
+}
+
+.breakdown-yearly {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.25rem 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+/* User Estimate */
+.user-estimate {
+    font-size: 0.85rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(32, 60, 134, 0.06);
+    border: 1px solid rgba(32, 60, 134, 0.12);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+}
+
+/* Responsive: Custom Builder */
+@media (max-width: 991.98px) {
+    .custom-builder-card {
+        padding: 1.25rem;
+    }
+
+    .info-box-body .d-flex {
+        flex-direction: column;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .custom-builder-section {
+        margin-top: 2.5rem;
+        padding-top: 2rem;
+    }
+
+    .slider-value {
+        font-size: 0.9rem;
+    }
+
+    .slider-value .value-number {
+        font-size: 1.1rem;
+    }
+
+    .custom-slider::-webkit-slider-thumb {
+        width: 28px;
+        height: 28px;
+    }
+
+    .custom-slider::-moz-range-thumb {
+        width: 28px;
+        height: 28px;
+    }
+
+    .total-amount {
+        font-size: 1.25rem;
+    }
+}
+
 /* Form Styles */
 .form-control,
 .form-select {
@@ -1416,7 +2363,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .progress-bar {
-    transition: width var(--transition-base);
+    transition: width 0.8s ease;
 }
 
 .progress-bar.bg-success { background: var(--success) !important; }
@@ -1749,6 +2696,16 @@ h1, h2, h3, h4, h5, h6 {
 
 .sidebar-folder-entry:hover .sidebar-folder-actions {
     display: flex;
+}
+
+/* Touch devices: always show folder actions since hover is not available */
+@media (hover: none) {
+    .sidebar-folder-actions {
+        display: flex;
+    }
+    .sidebar-folder-entry .sidebar-folder-count {
+        display: none;
+    }
 }
 
 .sidebar-folder-entry:hover .sidebar-folder-count {
@@ -2174,4 +3131,29 @@ h1, h2, h3, h4, h5, h6 {
 
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
+}
+
+/* ============================================
+   Log Viewer
+   ============================================ */
+.log-viewer {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    padding: 1rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
+    height: 500px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    word-wrap: break-word;
+}
+.log-line {
+    padding: 1px 0;
+    white-space: pre-wrap;
+}
+.log-line:hover {
+    background: rgba(255, 255, 255, 0.04);
 }

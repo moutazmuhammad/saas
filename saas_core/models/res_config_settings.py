@@ -32,6 +32,151 @@ class ResConfigSettings(models.TransientModel):
              'After expiry the instance is suspended until the client pays.',
     )
 
+    # ========== Custom Plan Pricing ==========
+    saas_worker_price = fields.Float(
+        string='Price per Worker',
+        config_parameter='saas_master.worker_price',
+        default=0.0,
+        help='Monthly price per Odoo worker for custom plan configurations. '
+             'Used in the custom plan builder on the pricing page.',
+    )
+    saas_storage_price_per_gb = fields.Float(
+        string='Price per GB (Custom Plan)',
+        config_parameter='saas_master.storage_price_per_gb',
+        default=0.0,
+        help='Monthly price per GB of storage for custom plan configurations. '
+             'Used in the custom plan builder on the pricing page.',
+    )
+    saas_custom_plan_min_workers = fields.Integer(
+        string='Min Workers (Custom)',
+        config_parameter='saas_master.custom_plan_min_workers',
+        default=2,
+        help='Minimum number of workers selectable in the custom plan builder.',
+    )
+    saas_custom_plan_max_workers = fields.Integer(
+        string='Max Workers (Custom)',
+        config_parameter='saas_master.custom_plan_max_workers',
+        default=8,
+        help='Maximum number of workers selectable in the custom plan builder.',
+    )
+    saas_custom_plan_min_storage = fields.Integer(
+        string='Min Storage GB (Custom)',
+        config_parameter='saas_master.custom_plan_min_storage',
+        default=5,
+        help='Minimum storage (GB) selectable in the custom plan builder.',
+    )
+    saas_custom_plan_max_storage = fields.Integer(
+        string='Max Storage GB (Custom)',
+        config_parameter='saas_master.custom_plan_max_storage',
+        default=200,
+        help='Maximum storage (GB) selectable in the custom plan builder.',
+    )
+
+    # --- Resource allocation per worker ---
+    saas_custom_plan_cpu_per_worker = fields.Float(
+        string='CPU per Worker',
+        config_parameter='saas_master.custom_plan_cpu_per_worker',
+        default=0.5,
+        help='vCPU allocated per worker in custom plans (e.g. 0.5 = half a core per worker).',
+    )
+    saas_custom_plan_ram_per_worker = fields.Integer(
+        string='RAM per Worker (MB)',
+        config_parameter='saas_master.custom_plan_ram_per_worker',
+        default=512,
+        help='RAM in MB allocated per worker in custom plans (e.g. 512 = 512MB per worker).',
+    )
+    saas_custom_plan_min_backups = fields.Integer(
+        string='Min Backups (smallest plan)',
+        config_parameter='saas_master.custom_plan_min_backups',
+        default=3,
+        help='Backups for the smallest custom plan (fewest workers + lowest storage).',
+    )
+    saas_custom_plan_max_backups = fields.Integer(
+        string='Max Backups (largest plan)',
+        config_parameter='saas_master.custom_plan_max_backups',
+        default=14,
+        help='Backups for the largest custom plan (most workers + highest storage).',
+    )
+    saas_custom_plan_users_per_worker_min = fields.Integer(
+        string='Min Users per Worker',
+        config_parameter='saas_master.custom_plan_users_per_worker_min',
+        default=6,
+        help='Minimum concurrent users each worker can handle (light usage). '
+             'Used in the recommendation display.',
+    )
+    saas_custom_plan_users_per_worker_max = fields.Integer(
+        string='Max Users per Worker',
+        config_parameter='saas_master.custom_plan_users_per_worker_max',
+        default=10,
+        help='Maximum concurrent users each worker can handle (heavy usage). '
+             'Used in the recommendation display.',
+    )
+    saas_custom_plan_yearly_discount_pct = fields.Integer(
+        string='Yearly Discount %',
+        config_parameter='saas_master.custom_plan_yearly_discount_pct',
+        default=20,
+        help='Percentage discount applied when yearly billing is selected for custom plans.',
+    )
+
+    # ========== Hosting Plan Builder ==========
+    saas_hosting_worker_price = fields.Float(
+        string='Hosting: Price per Worker',
+        config_parameter='saas_master.hosting_worker_price',
+        default=10.0,
+        help='Monthly price per worker for self-managed hosting plans.',
+    )
+    saas_hosting_storage_price_per_gb = fields.Float(
+        string='Hosting: Price per GB',
+        config_parameter='saas_master.hosting_storage_price_per_gb',
+        default=0.3,
+        help='Monthly price per GB of storage for self-managed hosting plans.',
+    )
+    saas_hosting_min_workers = fields.Integer(
+        string='Hosting: Min Workers',
+        config_parameter='saas_master.hosting_min_workers',
+        default=2,
+    )
+    saas_hosting_max_workers = fields.Integer(
+        string='Hosting: Max Workers',
+        config_parameter='saas_master.hosting_max_workers',
+        default=8,
+    )
+    saas_hosting_min_storage = fields.Integer(
+        string='Hosting: Min Storage GB',
+        config_parameter='saas_master.hosting_min_storage',
+        default=5,
+    )
+    saas_hosting_max_storage = fields.Integer(
+        string='Hosting: Max Storage GB',
+        config_parameter='saas_master.hosting_max_storage',
+        default=200,
+    )
+    saas_hosting_cpu_per_worker = fields.Float(
+        string='Hosting: CPU per Worker',
+        config_parameter='saas_master.hosting_cpu_per_worker',
+        default=0.5,
+    )
+    saas_hosting_ram_per_worker = fields.Integer(
+        string='Hosting: RAM per Worker (MB)',
+        config_parameter='saas_master.hosting_ram_per_worker',
+        default=512,
+    )
+    saas_hosting_yearly_discount_pct = fields.Integer(
+        string='Hosting: Yearly Discount %',
+        config_parameter='saas_master.hosting_yearly_discount_pct',
+        default=20,
+    )
+    saas_hosting_min_backups = fields.Integer(
+        string='Hosting: Min Backups',
+        config_parameter='saas_master.hosting_min_backups',
+        default=3,
+    )
+    saas_hosting_max_backups = fields.Integer(
+        string='Hosting: Max Backups',
+        config_parameter='saas_master.hosting_max_backups',
+        default=14,
+    )
+
     # ========== Extra Storage Pricing ==========
     saas_extra_storage_price_per_gb = fields.Float(
         string='Extra Storage Price per GB',

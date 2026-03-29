@@ -1,6 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
+    <!-- Search view with filters -->
+    <record id="saas_plan_view_search" model="ir.ui.view">
+        <field name="name">saas.plan.search</field>
+        <field name="model">saas.plan</field>
+        <field name="arch" type="xml">
+            <search string="Search Plans">
+                <field name="name"/>
+                <field name="saas_product_ids"/>
+                <separator/>
+                <filter name="filter_main" string="Main Plans"
+                        domain="[('is_custom', '=', False)]"/>
+                <filter name="filter_custom" string="Custom Plans"
+                        domain="[('is_custom', '=', True)]"/>
+                <separator/>
+                <filter name="filter_trial" string="Trial Plans"
+                        domain="[('is_trial_plan', '=', True)]"/>
+                <filter name="filter_paid" string="Paid Plans"
+                        domain="[('is_trial_plan', '=', False)]"/>
+            </search>
+        </field>
+    </record>
+
     <record id="saas_plan_view_list" model="ir.ui.view">
         <field name="name">saas.plan.list</field>
         <field name="model">saas.plan</field>
@@ -10,6 +32,7 @@
                 <field name="name"/>
                 <field name="saas_product_ids" string="Services" widget="many2many_tags"/>
                 <field name="is_trial_plan"/>
+                <field name="is_custom"/>
                 <field name="price" widget="monetary"/>
                 <field name="currency_id" column_invisible="1"/>
                 <field name="cpu_limit" optional="show"/>
@@ -38,6 +61,7 @@
                             <field name="saas_product_ids" string="Services" widget="many2many_tags"/>
                             <field name="sequence"/>
                             <field name="is_trial_plan"/>
+                            <field name="is_custom" readonly="1"/>
                             <field name="instance_count"/>
                         </group>
                         <group string="Pricing" invisible="is_trial_plan">
@@ -67,6 +91,8 @@
         <field name="name">Plans</field>
         <field name="res_model">saas.plan</field>
         <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="saas_plan_view_search"/>
+        <field name="context">{'search_default_filter_main': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 Create your first SaaS plan

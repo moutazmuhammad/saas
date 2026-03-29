@@ -414,43 +414,96 @@ function initUsageRefresh() {
     const btn = document.getElementById('refresh-usage');
     if (!btn) return;
 
-    btn.addEventListener('click', () => {
-        const instanceId = btn.dataset.instanceId;
+    const instanceId = btn.dataset.instanceId;
+    const INTERVAL = 60; // seconds between auto-refreshes
+    var countdownEl = document.getElementById('usage-countdown');
+    var secondsLeft = INTERVAL;
+    var autoTimer = null;
+    var countdownTimer = null;
+    var refreshing = false;
+
+    function updateUI(result) {
+        if (!result || result.error) return;
+        // Update CPU as percentage
+        const cpuEl = document.getElementById('cpu-usage');
+        if (cpuEl && result.cpu_pct !== undefined) {
+            cpuEl.textContent = Math.round(result.cpu_pct) + '%';
+            const cpuBar = document.getElementById('cpu-bar');
+            if (cpuBar) cpuBar.style.width = Math.round(result.cpu_pct) + '%';
+        }
+        // Update RAM as percentage
+        const ramEl = document.getElementById('ram-usage');
+        if (ramEl && result.ram_pct !== undefined) {
+            ramEl.textContent = Math.round(result.ram_pct) + '%';
+            const ramBar = document.getElementById('ram-bar');
+            if (ramBar) ramBar.style.width = Math.round(result.ram_pct) + '%';
+        }
+        // Update Storage with "X GB / Y GB (Z%)" format
+        const storageEl = document.getElementById('storage-usage');
+        if (storageEl && result.total_storage !== undefined) {
+            var storageTxt = result.total_storage;
+            if (result.storage_limit) {
+                storageTxt += ' / ' + result.storage_limit + ' GB (' + Math.round(result.storage_pct) + '%)';
+            }
+            storageEl.textContent = storageTxt;
+            const storageBar = document.getElementById('storage-bar');
+            if (storageBar) storageBar.style.width = Math.round(result.storage_pct) + '%';
+        }
+    }
+
+    function doRefresh(showToast) {
+        if (refreshing) return;
+        refreshing = true;
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
 
         CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/refresh-usage', {})
-            .then(result => {
-                if (result && result.cpu_usage !== undefined) {
-                    // Update the displayed values
-                    const cpuEl = document.getElementById('cpu-usage');
-                    const ramEl = document.getElementById('ram-usage');
-                    const storageEl = document.getElementById('storage-usage');
-                    if (cpuEl) {
-                        cpuEl.textContent = result.cpu_usage + '%';
-                        const bar = document.getElementById('cpu-bar');
-                        if (bar) bar.style.width = result.cpu_usage + '%';
-                    }
-                    if (ramEl && result.ram_usage !== undefined) {
-                        ramEl.textContent = result.ram_usage_display;
-                        const bar = document.getElementById('ram-bar');
-                        if (bar) bar.style.width = result.ram_pct + '%';
-                    }
-                    if (storageEl && result.storage_usage !== undefined) {
-                        storageEl.textContent = result.storage_usage_display;
-                        const bar = document.getElementById('storage-bar');
-                        if (bar) bar.style.width = result.storage_pct + '%';
-                    }
-                    CloudOdoo.showToast('Usage data refreshed', 'success');
-                }
+            .then(function(result) {
+                updateUI(result);
+                if (showToast) CloudOdoo.showToast('Usage data refreshed', 'success');
             })
-            .catch(() => {
-                CloudOdoo.showToast('Failed to refresh usage data', 'error');
+            .catch(function() {
+                if (showToast) CloudOdoo.showToast('Failed to refresh usage data', 'error');
             })
-            .finally(() => {
+            .finally(function() {
+                refreshing = false;
                 btn.disabled = false;
                 btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+                // Reset countdown
+                secondsLeft = INTERVAL;
             });
+    }
+
+    // Manual refresh button
+    btn.addEventListener('click', function() {
+        doRefresh(true);
+    });
+
+    // Countdown display
+    function tickCountdown() {
+        secondsLeft--;
+        if (countdownEl) {
+            countdownEl.textContent = secondsLeft + 's';
+        }
+        if (secondsLeft <= 0) {
+            doRefresh(false);
+        }
+    }
+
+    // Start auto-refresh cycle
+    countdownTimer = setInterval(tickCountdown, 1000);
+
+    // Stop auto-refresh when page is hidden (save resources)
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            clearInterval(countdownTimer);
+            countdownTimer = null;
+        } else {
+            if (!countdownTimer) {
+                secondsLeft = 1; // refresh immediately when coming back
+                countdownTimer = setInterval(tickCountdown, 1000);
+            }
+        }
     });
 }
 
@@ -459,39 +512,68 @@ function initUsageRefresh() {
 // ============================================
 
 function initStatusPolling() {
-    const el = document.getElementById('provisioning-poll');
+    // Poll for provisioning states (provisioning, pending_provision, paid)
+    var provEl = document.getElementById('provisioning-poll');
+    // Poll for pending_payment state (in case payment is being processed async)
+    var payEl = document.getElementById('payment-poll');
+    // Poll for pending upgrade (awaiting payment then auto-applied)
+    var upgradeEl = document.getElementById('upgrade-poll');
+
+    var el = provEl || payEl || upgradeEl;
     if (!el) return;
 
-    const instanceId = el.dataset.instanceId;
-    let attempts = 0;
-    const maxAttempts = 60; // 60 * 10s = 10 minutes
+    var instanceId = el.dataset.instanceId;
+    var attempts = 0;
+    var maxAttempts = 60; // 60 * 5s = 5 minutes
 
     function checkStatus() {
         attempts++;
         if (attempts > maxAttempts) {
             clearInterval(poll);
-            el.querySelector('div > p').textContent =
-                'Provisioning is taking longer than expected. Please refresh the page manually.';
+            var msgEl = el.querySelector('p');
+            if (msgEl) {
+                msgEl.innerHTML = '<strong style="color:var(--co-warning, #F59E0B);">Taking longer than expected.</strong> ' +
+                    'Please refresh the page to check the status, or contact support if the issue persists.';
+            }
             return;
         }
 
         CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/status', {})
-            .then(result => {
-                if (result && result.state &&
-                    result.state !== 'provisioning' &&
-                    result.state !== 'pending_provision') {
+            .then(function(result) {
+                if (!result) return;
+                var shouldReload = false;
+
+                if (provEl) {
+                    // Polling for provisioning/paid — reload when state changes to running/failed/etc.
+                    var waitingStates = ['provisioning', 'pending_provision', 'paid'];
+                    if (result.state && waitingStates.indexOf(result.state) === -1) {
+                        shouldReload = true;
+                    }
+                } else if (payEl) {
+                    // Polling for pending_payment — reload when payment is confirmed
+                    if (result.state && result.state !== 'pending_payment') {
+                        shouldReload = true;
+                    }
+                } else if (upgradeEl) {
+                    // Polling for pending upgrade — reload when pending_plan_id is cleared
+                    if (!result.pending_plan_id) {
+                        shouldReload = true;
+                    }
+                }
+
+                if (shouldReload) {
                     clearInterval(poll);
                     window.location.reload();
                 }
             })
-            .catch(() => {
+            .catch(function() {
                 // Silently retry on network errors
             });
     }
 
-    // First check after 5 seconds, then every 10 seconds
-    setTimeout(checkStatus, 5000);
-    const poll = setInterval(checkStatus, 10000);
+    // First check after 3 seconds, then every 5 seconds
+    setTimeout(checkStatus, 3000);
+    var poll = setInterval(checkStatus, 5000);
 }
 
 // ============================================
@@ -552,6 +634,71 @@ function initLoginForm() {
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Signing in...';
             btn.disabled = true;
         }
+    });
+}
+
+// ============================================
+// Trial Countdown
+// ============================================
+
+function initTrialCountdown() {
+    var alert = document.getElementById('trial-alert');
+    if (!alert) return;
+    var endStr = alert.dataset.trialEnd;
+    if (!endStr) return;
+
+    var end = new Date(endStr + 'T23:59:59');
+    var now = new Date();
+    var diffMs = end - now;
+    var days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (days < 0) days = 0;
+
+    var badge = document.getElementById('trial-countdown');
+    var icon = document.getElementById('trial-alert-icon');
+    if (!badge) return;
+
+    badge.style.display = '';
+    if (days === 0) {
+        badge.textContent = 'Expires today!';
+    } else if (days === 1) {
+        badge.textContent = '1 day left';
+    } else {
+        badge.textContent = days + ' days left';
+    }
+
+    if (days <= 2) {
+        badge.className = 'trial-countdown-badge urgent ms-2';
+        alert.className = alert.className.replace('alert-info', 'alert-danger');
+        if (icon) icon.className = 'fas fa-exclamation-triangle';
+    } else if (days <= 7) {
+        badge.className = 'trial-countdown-badge warning ms-2';
+        alert.className = alert.className.replace('alert-info', 'alert-warning');
+        if (icon) icon.className = 'fas fa-exclamation-circle';
+    } else {
+        badge.className = 'trial-countdown-badge normal ms-2';
+    }
+}
+
+// ============================================
+// Global Form Loading States
+// ============================================
+
+function initFormLoadingStates() {
+    document.addEventListener('submit', function(e) {
+        var form = e.target;
+        // Skip forms handled by other systems
+        if (form.id === 'login-form') return;
+        if (form.closest('.o_payment_form')) return;
+        if (form.closest('#payment_method')) return;
+
+        var btn = form.querySelector('button[type="submit"]:not([disabled])');
+        if (!btn) btn = form.querySelector('button[name]:not([disabled])');
+        if (!btn) return;
+
+        btn.dataset.originalHtml = btn.innerHTML;
+        btn.disabled = true;
+        var loadingText = btn.dataset.loadingText || 'Processing...';
+        btn.innerHTML = '<span class="spinner-sm me-2" style="display:inline-block;vertical-align:middle;"></span>' + loadingText;
     });
 }
 
@@ -647,6 +794,70 @@ function _coShowInputModal(title, placeholder, value, confirmText, onConfirm) {
         document.getElementById('co-input-field').select();
     });
 }
+
+// ============================================
+// Installed Packages List
+// ============================================
+
+function initPackageList() {
+    var btn = document.getElementById('btn-list-packages');
+    if (!btn) return;
+
+    var instanceId = btn.dataset.instanceId;
+    var listDiv = document.getElementById('installed-packages-list');
+    var loadingDiv = document.getElementById('packages-loading');
+    var contentDiv = document.getElementById('packages-content');
+    var errorDiv = document.getElementById('packages-error');
+    var tbody = document.getElementById('packages-tbody');
+    var countDiv = document.getElementById('packages-count');
+    var loaded = false;
+
+    btn.addEventListener('click', function() {
+        if (listDiv.style.display === 'none') {
+            listDiv.style.display = '';
+            btn.innerHTML = '<i class="fas fa-times me-1"></i>Hide';
+
+            if (!loaded) {
+                loadingDiv.style.display = '';
+                contentDiv.style.display = 'none';
+                errorDiv.style.display = 'none';
+
+                CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/installed-packages', {})
+                    .then(function(result) {
+                        loadingDiv.style.display = 'none';
+                        if (result.error) {
+                            errorDiv.style.display = '';
+                            errorDiv.textContent = result.error;
+                            return;
+                        }
+                        contentDiv.style.display = '';
+                        tbody.innerHTML = '';
+                        (result.packages || []).forEach(function(pkg) {
+                            var tr = document.createElement('tr');
+                            tr.innerHTML = '<td style="padding:0.4rem 0.5rem;">' +
+                                pkg.name + '</td><td style="padding:0.4rem 0.5rem;color:var(--co-text-muted,#71717A);">' +
+                                pkg.version + '</td>';
+                            tbody.appendChild(tr);
+                        });
+                        countDiv.textContent = result.count + ' packages installed';
+                        loaded = true;
+                    })
+                    .catch(function() {
+                        loadingDiv.style.display = 'none';
+                        errorDiv.style.display = '';
+                        errorDiv.textContent = 'Failed to load packages';
+                    });
+            }
+        } else {
+            listDiv.style.display = 'none';
+            btn.innerHTML = '<i class="fas fa-list me-1"></i>View All';
+        }
+    });
+}
+
+// ============================================
+// Instance Folders
+// ============================================
 
 function initInstanceFolders() {
     var createBtn = document.getElementById('btn-create-folder');
@@ -770,6 +981,630 @@ function initInstanceFolders() {
 }
 
 // ============================================
+// Shared Slider Helpers
+// ============================================
+
+function generateTicks(containerId, min, max, step) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    for (var i = min; i <= max; i += step) {
+        var tick = document.createElement('div');
+        tick.className = 'slider-tick';
+        var pct = max > min ? ((i - min) / (max - min)) * 100 : 0;
+        tick.style.left = pct + '%';
+        tick.innerHTML = '<span class="tick-mark"></span><span class="tick-label">' + i + '</span>';
+        if ((containerId === 'workers-ticks' || containerId === 'upgrade-workers-ticks') && i >= 4 && i <= 6) {
+            tick.classList.add('tick-recommended');
+        }
+        container.appendChild(tick);
+    }
+}
+
+function generateStorageTicks(containerId, min, max) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    // Build tick list: always include min and max, plus well-spaced milestones
+    var candidates = [min, 25, 50, 100, 150, 200, max];
+    var ticks = [];
+    var range = max - min;
+    // Minimum distance between ticks: 10% of range to avoid label overlap
+    var minGap = range * 0.1;
+
+    for (var i = 0; i < candidates.length; i++) {
+        var val = candidates[i];
+        if (val < min || val > max) continue;
+        // Check distance from last tick
+        if (ticks.length > 0 && (val - ticks[ticks.length - 1]) < minGap) continue;
+        ticks.push(val);
+    }
+    // Always ensure max is included
+    if (ticks[ticks.length - 1] !== max) {
+        // Remove last tick if too close to max
+        if (ticks.length > 1 && (max - ticks[ticks.length - 1]) < minGap) {
+            ticks.pop();
+        }
+        ticks.push(max);
+    }
+
+    ticks.forEach(function(val) {
+        var tick = document.createElement('div');
+        tick.className = 'slider-tick';
+        var pct = range > 0 ? ((val - min) / range) * 100 : 0;
+        tick.style.left = pct + '%';
+        tick.innerHTML = '<span class="tick-mark"></span><span class="tick-label">' + val + 'GB</span>';
+        container.appendChild(tick);
+    });
+}
+
+// ============================================
+// Custom Plan Builder (Pricing Page)
+// ============================================
+
+function initCustomPlanBuilder() {
+    var configEl = document.getElementById('custom-plan-config');
+    if (!configEl) return;
+
+    var config = {
+        workerPrice: parseFloat(configEl.dataset.workerPrice) || 15,
+        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.5,
+        minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
+        maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
+        minStorage: parseInt(configEl.dataset.minStorage) || 5,
+        maxStorage: parseInt(configEl.dataset.maxStorage) || 200,
+        usersPerWorkerMin: parseInt(configEl.dataset.usersPerWorkerMin) || 6,
+        usersPerWorkerMax: parseInt(configEl.dataset.usersPerWorkerMax) || 10,
+        yearlyDiscountPct: parseInt(configEl.dataset.yearlyDiscountPct) || 20,
+        currency: configEl.dataset.currency || 'USD',
+        productId: configEl.dataset.productId || '',
+        minBackups: parseInt(configEl.dataset.minBackups) || 3,
+        maxBackups: parseInt(configEl.dataset.maxBackups) || 14,
+    };
+
+    var workersSlider = document.getElementById('workers-slider');
+    var storageSlider = document.getElementById('storage-slider');
+    if (!workersSlider || !storageSlider) return;
+
+    // Billing state
+    var currentBilling = 'monthly';
+    var YEARLY_DISCOUNT = config.yearlyDiscountPct / 100;
+
+    // Generate tick marks
+    generateTicks('workers-ticks', config.minWorkers, config.maxWorkers, 1);
+    generateStorageTicks('storage-ticks', config.minStorage, config.maxStorage);
+
+    // Update slider track fill
+    function updateSliderTrack(slider) {
+        var min = parseFloat(slider.min);
+        var max = parseFloat(slider.max);
+        var val = parseFloat(slider.value);
+        var pct = ((val - min) / (max - min)) * 100;
+        slider.style.setProperty('--slider-pct', pct + '%');
+    }
+
+    function calculateAndUpdate() {
+        var workers = parseInt(workersSlider.value);
+        var storage = parseInt(storageSlider.value);
+
+        var workersCost = workers * config.workerPrice;
+        var storageCost = storage * config.storagePrice;
+        var monthlyTotal = workersCost + storageCost;
+        var yearlyFullPrice = monthlyTotal * 12;
+        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
+        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
+        var effectiveMonthly = yearlyDiscounted / 12;
+        var minUsers = workers * config.usersPerWorkerMin;
+        var maxUsers = workers * config.usersPerWorkerMax;
+
+        // Sync number inputs with slider values
+        var wInput = document.getElementById('workers-input');
+        var sInput = document.getElementById('storage-input');
+        if (wInput && wInput !== document.activeElement) wInput.value = workers;
+        if (sInput && sInput !== document.activeElement) sInput.value = storage;
+
+        // Update recommendation
+        var recEl = document.querySelector('#workers-recommendation .rec-users');
+        if (recEl) recEl.textContent = '~' + minUsers + '–' + maxUsers;
+
+        // Update price breakdown (always shows monthly unit prices)
+        setText('summary-workers', workers);
+        setText('summary-storage', storage);
+        setText('summary-workers-cost', CloudOdoo.formatCurrency(workersCost, config.currency) + '/mo');
+        setText('summary-storage-cost', CloudOdoo.formatCurrency(storageCost, config.currency) + '/mo');
+
+        // Toggle monthly/yearly display
+        var monthlyDisplay = document.getElementById('summary-monthly-display');
+        var yearlyDisplay = document.getElementById('summary-yearly-display');
+
+        if (currentBilling === 'yearly') {
+            if (monthlyDisplay) monthlyDisplay.style.display = 'none';
+            if (yearlyDisplay) yearlyDisplay.style.display = '';
+            setText('summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
+            setText('summary-effective-monthly', CloudOdoo.formatCurrency(effectiveMonthly, config.currency) + '/mo');
+            setText('summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
+            setText('summary-yearly-original', CloudOdoo.formatCurrency(yearlyFullPrice, config.currency));
+            setText('summary-yearly-discounted', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
+        } else {
+            if (monthlyDisplay) monthlyDisplay.style.display = '';
+            if (yearlyDisplay) yearlyDisplay.style.display = 'none';
+            setText('summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
+            setText('summary-yearly-equiv', CloudOdoo.formatCurrency(yearlyFullPrice, config.currency) + '/yr');
+        }
+
+        setText('summary-min-users', minUsers);
+        setText('summary-max-users', maxUsers);
+
+        // Calculate backup count (same formula as backend)
+        var wRange = Math.max(1, config.maxWorkers - config.minWorkers);
+        var sRange = Math.max(1, config.maxStorage - config.minStorage);
+        var wPct = (workers - config.minWorkers) / wRange;
+        var sPct = (storage - config.minStorage) / sRange;
+        var planSize = (wPct + sPct) / 2.0;
+        var backupCount = Math.max(config.minBackups, Math.min(config.maxBackups,
+            config.minBackups + Math.round(planSize * (config.maxBackups - config.minBackups))
+        ));
+        setText('summary-backups', backupCount);
+
+        // Update CTA link
+        var ctaEl = document.getElementById('custom-plan-cta');
+        if (ctaEl) {
+            ctaEl.href = '/services/' + config.productId + '/custom/configure?workers=' + workers + '&storage=' + storage + '&billing=' + currentBilling;
+        }
+
+        // Update slider tracks
+        updateSliderTrack(workersSlider);
+        updateSliderTrack(storageSlider);
+
+        // Highlight recommended workers range (4-6)
+        updateWorkersHighlight(workers);
+    }
+
+    function setText(id, value) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = value;
+    }
+
+    function updateWorkersHighlight(currentWorkers) {
+        var rec = document.getElementById('workers-recommendation');
+        if (!rec) return;
+        // Change recommendation style based on range
+        if (currentWorkers >= 4 && currentWorkers <= 6) {
+            rec.classList.add('rec-optimal');
+            rec.classList.remove('rec-normal');
+        } else {
+            rec.classList.remove('rec-optimal');
+            rec.classList.add('rec-normal');
+        }
+    }
+
+    // Event listeners — sliders
+    workersSlider.addEventListener('input', calculateAndUpdate);
+    storageSlider.addEventListener('input', calculateAndUpdate);
+
+    // Event listeners — number inputs sync to sliders
+    var workersInput = document.getElementById('workers-input');
+    var storageInput = document.getElementById('storage-input');
+    if (workersInput) {
+        workersInput.addEventListener('input', function() {
+            var v = Math.max(config.minWorkers, Math.min(config.maxWorkers, parseInt(this.value) || config.minWorkers));
+            workersSlider.value = v;
+            calculateAndUpdate();
+        });
+    }
+    if (storageInput) {
+        storageInput.addEventListener('input', function() {
+            var v = Math.max(config.minStorage, Math.min(config.maxStorage, parseInt(this.value) || config.minStorage));
+            storageSlider.value = v;
+            calculateAndUpdate();
+        });
+    }
+
+    // Custom builder billing toggle
+    var customBillingToggle = document.getElementById('custom-billing-toggle');
+    if (customBillingToggle) {
+        customBillingToggle.querySelectorAll('.toggle-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                customBillingToggle.querySelectorAll('.toggle-btn').forEach(function(b) {
+                    b.classList.remove('active');
+                });
+                btn.classList.add('active');
+                currentBilling = btn.dataset.billing;
+                calculateAndUpdate();
+            });
+        });
+    }
+
+    // "Customize this plan" buttons
+    document.querySelectorAll('.btn-customize-plan').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            var planWorkers = parseInt(btn.dataset.workers) || 4;
+            var planStorage = parseInt(btn.dataset.storage) || 20;
+
+            // Clamp to allowed range
+            planWorkers = Math.max(config.minWorkers, Math.min(planWorkers, config.maxWorkers));
+            planStorage = Math.max(config.minStorage, Math.min(planStorage, config.maxStorage));
+
+            // Set slider values
+            workersSlider.value = planWorkers;
+            storageSlider.value = planStorage;
+
+            // Recalculate
+            calculateAndUpdate();
+
+            // Scroll to builder
+            var builder = document.getElementById('custom-builder');
+            if (builder) {
+                builder.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                // Add a brief highlight animation
+                builder.classList.add('builder-highlight');
+                setTimeout(function() {
+                    builder.classList.remove('builder-highlight');
+                }, 1500);
+            }
+        });
+    });
+
+    // Initial calculation
+    calculateAndUpdate();
+}
+
+// ============================================
+// Upgrade / Change Plan Builder
+// ============================================
+
+function initUpgradePlanBuilder() {
+    var configEl = document.getElementById('upgrade-plan-config');
+    if (!configEl) return;
+
+    var config = {
+        workerPrice: parseFloat(configEl.dataset.workerPrice) || 15,
+        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.5,
+        minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
+        maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
+        minStorage: parseInt(configEl.dataset.minStorage) || 5,
+        maxStorage: parseInt(configEl.dataset.maxStorage) || 200,
+        yearlyDiscountPct: parseInt(configEl.dataset.yearlyDiscountPct) || 20,
+        currency: configEl.dataset.currency || 'USD',
+        mode: configEl.dataset.mode || 'upgrade',
+        currentWorkers: parseInt(configEl.dataset.currentWorkers) || 0,
+        currentStorage: parseInt(configEl.dataset.currentStorage) || 0,
+        currentBilling: configEl.dataset.currentBilling || 'monthly',
+        minBackups: parseInt(configEl.dataset.minBackups) || 3,
+        maxBackups: parseInt(configEl.dataset.maxBackups) || 14,
+    };
+
+    var workersSlider = document.getElementById('upgrade-workers-slider');
+    var storageSlider = document.getElementById('upgrade-storage-slider');
+    if (!workersSlider || !storageSlider) return;
+
+    var currentBilling = config.mode === 'change' ? config.currentBilling : 'monthly';
+    var YEARLY_DISCOUNT = config.yearlyDiscountPct / 100;
+
+    // Generate tick marks
+    generateTicks('upgrade-workers-ticks', config.minWorkers, config.maxWorkers, 1);
+    generateStorageTicks('upgrade-storage-ticks', config.minStorage, config.maxStorage);
+
+    function updateSliderTrack(slider) {
+        var min = parseFloat(slider.min);
+        var max = parseFloat(slider.max);
+        var val = parseFloat(slider.value);
+        var pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
+        slider.style.setProperty('--slider-pct', pct + '%');
+    }
+
+    function setText(id, value) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = value;
+    }
+
+    function calculateAndUpdate() {
+        var workers = parseInt(workersSlider.value);
+        var storage = parseInt(storageSlider.value);
+
+        var workersCost = workers * config.workerPrice;
+        var storageCost = storage * config.storagePrice;
+        var monthlyTotal = workersCost + storageCost;
+        var yearlyFullPrice = monthlyTotal * 12;
+        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
+        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
+
+        // Sync number inputs with slider values
+        var wInput = document.getElementById('upgrade-workers-input');
+        var sInput = document.getElementById('upgrade-storage-input');
+        if (wInput && wInput !== document.activeElement) wInput.value = workers;
+        if (sInput && sInput !== document.activeElement) sInput.value = storage;
+
+        // Update price breakdown
+        setText('upgrade-summary-workers', workers);
+        setText('upgrade-summary-storage', storage);
+        setText('upgrade-summary-workers-cost', CloudOdoo.formatCurrency(workersCost, config.currency) + '/mo');
+        setText('upgrade-summary-storage-cost', CloudOdoo.formatCurrency(storageCost, config.currency) + '/mo');
+
+        // Toggle monthly/yearly display
+        var monthlyDisplay = document.getElementById('upgrade-summary-monthly-display');
+        var yearlyDisplay = document.getElementById('upgrade-summary-yearly-display');
+
+        if (currentBilling === 'yearly') {
+            if (monthlyDisplay) monthlyDisplay.style.display = 'none';
+            if (yearlyDisplay) yearlyDisplay.style.display = '';
+            setText('upgrade-summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
+            setText('upgrade-summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
+        } else {
+            if (monthlyDisplay) monthlyDisplay.style.display = '';
+            if (yearlyDisplay) yearlyDisplay.style.display = 'none';
+            setText('upgrade-summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
+        }
+
+        // Calculate backup count
+        var wRange = Math.max(1, config.maxWorkers - config.minWorkers);
+        var sRange = Math.max(1, config.maxStorage - config.minStorage);
+        var wPct = (workers - config.minWorkers) / wRange;
+        var sPct = (storage - config.minStorage) / sRange;
+        var planSize = (wPct + sPct) / 2.0;
+        var backupCount = Math.max(config.minBackups, Math.min(config.maxBackups,
+            config.minBackups + Math.round(planSize * (config.maxBackups - config.minBackups))
+        ));
+        setText('upgrade-summary-backups', backupCount);
+
+        // Update hidden form fields
+        var formWorkers = document.getElementById('upgrade-form-workers');
+        var formStorage = document.getElementById('upgrade-form-storage');
+        var formBilling = document.getElementById('upgrade-form-billing');
+        if (formWorkers) formWorkers.value = workers;
+        if (formStorage) formStorage.value = storage;
+        if (formBilling) formBilling.value = currentBilling;
+
+        // Update slider tracks
+        updateSliderTrack(workersSlider);
+        updateSliderTrack(storageSlider);
+
+        // Change-plan mode: update action info and submit button
+        if (config.mode === 'change') {
+            var submitBtn = document.getElementById('upgrade-submit-btn');
+            var actionInfo = document.getElementById('upgrade-action-info');
+            var reductionNotice = document.getElementById('upgrade-worker-reduction-notice');
+            var hasChanges = (workers !== config.currentWorkers ||
+                              storage !== config.currentStorage ||
+                              currentBilling !== config.currentBilling);
+
+            if (submitBtn) submitBtn.disabled = !hasChanges;
+
+            // Show worker reduction notice
+            if (reductionNotice) {
+                reductionNotice.style.display = workers < config.currentWorkers ? '' : 'none';
+            }
+
+            // Update action info banner
+            if (actionInfo) {
+                if (!hasChanges) {
+                    actionInfo.style.display = 'none';
+                } else if (workers < config.currentWorkers) {
+                    // Downgrade (worker reduction)
+                    actionInfo.style.display = '';
+                    actionInfo.style.background = 'rgba(245,158,11,0.06)';
+                    actionInfo.style.border = '1px solid rgba(245,158,11,0.15)';
+                    actionInfo.innerHTML =
+                        '<div class="fw-semibold mb-1" style="color:#F59E0B;">' +
+                        '<i class="fas fa-calendar-alt me-1"></i>Scheduled at Next Billing</div>' +
+                        '<div style="color:var(--co-text-secondary,#A1A1AA);">' +
+                        'Worker reduction will take effect at your next billing cycle. ' +
+                        'You keep your current resources until then.</div>';
+                    if (submitBtn) {
+                        submitBtn.className = 'btn btn-warning btn-lg w-100';
+                        submitBtn.innerHTML = '<i class="fas fa-calendar-alt me-2"></i>Schedule Change';
+                    }
+                } else {
+                    // Upgrade (workers same/increased, storage increased)
+                    actionInfo.style.display = '';
+                    actionInfo.style.background = 'rgba(16,185,129,0.06)';
+                    actionInfo.style.border = '1px solid rgba(16,185,129,0.15)';
+                    actionInfo.innerHTML =
+                        '<div class="fw-semibold mb-1" style="color:#10B981;">' +
+                        '<i class="fas fa-bolt me-1"></i>Immediate Upgrade</div>' +
+                        '<div style="color:var(--co-text-secondary,#A1A1AA);">' +
+                        'Resources will be upgraded instantly with zero downtime. ' +
+                        'You\'ll be charged the prorated difference.</div>';
+                    if (submitBtn) {
+                        submitBtn.className = 'btn btn-primary btn-lg w-100';
+                        submitBtn.innerHTML = '<i class="fas fa-arrow-up me-2"></i>Upgrade Now';
+                    }
+                }
+            }
+        }
+    }
+
+    // Slider event listeners
+    workersSlider.addEventListener('input', calculateAndUpdate);
+    storageSlider.addEventListener('input', calculateAndUpdate);
+
+    // Number input listeners — sync to sliders
+    var upgradeWorkersInput = document.getElementById('upgrade-workers-input');
+    var upgradeStorageInput = document.getElementById('upgrade-storage-input');
+    if (upgradeWorkersInput) {
+        upgradeWorkersInput.addEventListener('input', function() {
+            var v = Math.max(config.minWorkers, Math.min(config.maxWorkers, parseInt(this.value) || config.minWorkers));
+            workersSlider.value = v;
+            calculateAndUpdate();
+        });
+    }
+    if (upgradeStorageInput) {
+        upgradeStorageInput.addEventListener('input', function() {
+            var v = Math.max(config.minStorage, Math.min(config.maxStorage, parseInt(this.value) || config.minStorage));
+            storageSlider.value = v;
+            calculateAndUpdate();
+        });
+    }
+
+    // Billing toggle
+    var toggleContainer = document.getElementById('upgrade-billing-toggle');
+    if (toggleContainer) {
+        toggleContainer.querySelectorAll('.toggle-btn').forEach(function(btn) {
+            if (btn.dataset.billing === currentBilling) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+            btn.addEventListener('click', function() {
+                toggleContainer.querySelectorAll('.toggle-btn').forEach(function(b) {
+                    b.classList.remove('active');
+                });
+                btn.classList.add('active');
+                currentBilling = btn.dataset.billing;
+                calculateAndUpdate();
+            });
+        });
+    }
+
+    // Initial calculation
+    calculateAndUpdate();
+}
+
+// ============================================
+// Hosting Plan Builder
+// ============================================
+
+function initHostingPlanBuilder() {
+    var configEl = document.getElementById('hosting-plan-config');
+    if (!configEl) return;
+
+    var config = {
+        workerPrice: parseFloat(configEl.dataset.workerPrice) || 10,
+        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.3,
+        minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
+        maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
+        minStorage: parseInt(configEl.dataset.minStorage) || 5,
+        maxStorage: parseInt(configEl.dataset.maxStorage) || 200,
+        yearlyDiscountPct: parseInt(configEl.dataset.yearlyDiscountPct) || 20,
+        currency: configEl.dataset.currency || 'USD',
+        minBackups: parseInt(configEl.dataset.minBackups) || 3,
+        maxBackups: parseInt(configEl.dataset.maxBackups) || 14,
+    };
+
+    var workersSlider = document.getElementById('hosting-workers-slider');
+    var storageSlider = document.getElementById('hosting-storage-slider');
+    if (!workersSlider || !storageSlider) return;
+
+    var currentBilling = 'monthly';
+    var YEARLY_DISCOUNT = config.yearlyDiscountPct / 100;
+
+    generateTicks('hosting-workers-ticks', config.minWorkers, config.maxWorkers, 1);
+    generateStorageTicks('hosting-storage-ticks', config.minStorage, config.maxStorage);
+
+    function updateSliderTrack(slider) {
+        var min = parseFloat(slider.min);
+        var max = parseFloat(slider.max);
+        var val = parseFloat(slider.value);
+        var pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
+        slider.style.setProperty('--slider-pct', pct + '%');
+    }
+
+    function setText(id, value) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = value;
+    }
+
+    function calculateAndUpdate() {
+        var workers = parseInt(workersSlider.value);
+        var storage = parseInt(storageSlider.value);
+
+        var workersCost = workers * config.workerPrice;
+        var storageCost = storage * config.storagePrice;
+        var monthlyTotal = workersCost + storageCost;
+        var yearlyFullPrice = monthlyTotal * 12;
+        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
+        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
+
+        // Sync number inputs
+        var wInput = document.getElementById('hosting-workers-input');
+        var sInput = document.getElementById('hosting-storage-input');
+        if (wInput && wInput !== document.activeElement) wInput.value = workers;
+        if (sInput && sInput !== document.activeElement) sInput.value = storage;
+
+        setText('hosting-summary-workers', workers);
+        setText('hosting-summary-storage', storage);
+        setText('hosting-summary-workers-cost', CloudOdoo.formatCurrency(workersCost, config.currency) + '/mo');
+        setText('hosting-summary-storage-cost', CloudOdoo.formatCurrency(storageCost, config.currency) + '/mo');
+
+        // Backup count
+        var wRange = Math.max(1, config.maxWorkers - config.minWorkers);
+        var sRange = Math.max(1, config.maxStorage - config.minStorage);
+        var planSize = ((workers - config.minWorkers) / wRange + (storage - config.minStorage) / sRange) / 2.0;
+        var backupCount = Math.max(config.minBackups, Math.min(config.maxBackups,
+            config.minBackups + Math.round(planSize * (config.maxBackups - config.minBackups))
+        ));
+        setText('hosting-summary-backups', backupCount);
+
+        // Toggle monthly/yearly
+        var monthlyDisplay = document.getElementById('hosting-summary-monthly-display');
+        var yearlyDisplay = document.getElementById('hosting-summary-yearly-display');
+        if (currentBilling === 'yearly') {
+            if (monthlyDisplay) monthlyDisplay.style.display = 'none';
+            if (yearlyDisplay) yearlyDisplay.style.display = '';
+            setText('hosting-summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
+            setText('hosting-summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
+        } else {
+            if (monthlyDisplay) monthlyDisplay.style.display = '';
+            if (yearlyDisplay) yearlyDisplay.style.display = 'none';
+            setText('hosting-summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
+        }
+
+        // Update CTA link
+        var ctaEl = document.getElementById('hosting-cta');
+        var versionSelect = document.getElementById('hosting-version-select');
+        var versionId = versionSelect ? versionSelect.value : '';
+        if (ctaEl) {
+            ctaEl.href = '/hosting/configure?workers=' + workers + '&storage=' + storage +
+                         '&billing=' + currentBilling + '&odoo_version_id=' + versionId;
+        }
+
+        updateSliderTrack(workersSlider);
+        updateSliderTrack(storageSlider);
+    }
+
+    workersSlider.addEventListener('input', calculateAndUpdate);
+    storageSlider.addEventListener('input', calculateAndUpdate);
+
+    // Number inputs
+    var wInput = document.getElementById('hosting-workers-input');
+    var sInput = document.getElementById('hosting-storage-input');
+    if (wInput) {
+        wInput.addEventListener('input', function() {
+            workersSlider.value = Math.max(config.minWorkers, Math.min(config.maxWorkers, parseInt(this.value) || config.minWorkers));
+            calculateAndUpdate();
+        });
+    }
+    if (sInput) {
+        sInput.addEventListener('input', function() {
+            storageSlider.value = Math.max(config.minStorage, Math.min(config.maxStorage, parseInt(this.value) || config.minStorage));
+            calculateAndUpdate();
+        });
+    }
+
+    // Version select updates CTA link
+    var versionSelect = document.getElementById('hosting-version-select');
+    if (versionSelect) {
+        versionSelect.addEventListener('change', calculateAndUpdate);
+    }
+
+    // Billing toggle
+    var toggleContainer = document.getElementById('hosting-billing-toggle');
+    if (toggleContainer) {
+        toggleContainer.querySelectorAll('.toggle-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                toggleContainer.querySelectorAll('.toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+                btn.classList.add('active');
+                currentBilling = btn.dataset.billing;
+                calculateAndUpdate();
+            });
+        });
+    }
+
+    calculateAndUpdate();
+}
+
+// ============================================
 // Page Initialization
 // ============================================
 
@@ -778,6 +1613,9 @@ function initAll() {
     initThemeToggle();
     initBillingToggle();
     initSubdomainCheck();
+    initCustomPlanBuilder();
+    initUpgradePlanBuilder();
+    initHostingPlanBuilder();
     initOTPInputs();
     initOTPTimer();
     initPasswordStrength();
@@ -787,7 +1625,10 @@ function initAll() {
     initBackupActions();
     initInstanceSort();
     initLoginForm();
+    initTrialCountdown();
     initConfirmModals();
+    initFormLoadingStates();
+    initPackageList();
     initInstanceFolders();
 
     // Update nav active state

@@ -318,12 +318,38 @@
 
     <!-- Action -->
     <record id="saas_instance_action" model="ir.actions.act_window">
-        <field name="name">SaaS Instances</field>
+        <field name="name">All Instances</field>
         <field name="res_model">saas.instance</field>
         <field name="view_mode">list,form</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 Create your first SaaS instance
+            </p>
+        </field>
+    </record>
+
+    <record id="saas_instance_action_services" model="ir.actions.act_window">
+        <field name="name">Service Instances</field>
+        <field name="res_model">saas.instance</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('is_hosting', '=', False)]</field>
+        <field name="context">{'default_is_hosting': False}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No service instances yet
+            </p>
+        </field>
+    </record>
+
+    <record id="saas_instance_action_hosting" model="ir.actions.act_window">
+        <field name="name">Hosting Instances</field>
+        <field name="res_model">saas.instance</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('is_hosting', '=', True)]</field>
+        <field name="context">{'default_is_hosting': True}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No hosting instances yet
             </p>
         </field>
     </record>

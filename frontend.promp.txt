@@ -595,3 +595,39 @@ These are not full pages but AJAX endpoints used by the frontend JavaScript:
 - Animations: Subtle transitions on hover, loading spinners for async actions.
 - Overall feel: Enterprise-grade but approachable. Similar to Vercel, Railway,
   DigitalOcean, or Render dashboards.
+
+
+
+------#
+
+
+● Here's the complete setup:
+
+  saas_core/docker/
+  ├── Dockerfile.odoo-light    # Strips source from official image
+  ├── entrypoint-light.sh      # Runs odoo from /opt/odoo mount
+  ├── build-all.sh             # Builds images for 11.0-18.0
+  └── setup-source.sh          # Clones Odoo source on servers
+
+  Steps to deploy:
+
+  1. Build the lightweight images (on your build machine):
+  cd saas_core/docker/
+  ./build-all.sh
+
+  2. Clone Odoo source on each Docker host (run once per server):
+  scp setup-source.sh user@server:/tmp/
+  ssh user@server "bash /tmp/setup-source.sh"
+
+  3. Push images to your registry (if remote servers):
+  docker tag odoo-light:18.0 your-registry/odoo-light:18.0
+  docker push your-registry/odoo-light:18.0
+
+  4. Update your Odoo version records in backend:
+  - Change Docker Image from odoo to odoo-light for each version
+
+  5. Update Odoo source (when patches come out):
+  cd /opt/odoo-source/18.0 && git pull
+  # Then restart affected containers
+
+  The docker-compose template now mounts /opt/odoo-source/<version>:/opt/odoo:ro — shared, read-only, one copy per version per server.

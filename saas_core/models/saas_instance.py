@@ -196,6 +196,24 @@ class SaasInstance(models.Model):
         compute='_compute_invoice_count',
     )
 
+    # ========== Hosting ==========
+    is_hosting = fields.Boolean(
+        string='Hosting Instance',
+        compute='_compute_is_hosting',
+        store=True,
+        help='True if this instance is a self-managed hosting instance.',
+    )
+    pip_packages = fields.Text(
+        string='PyPI Packages',
+        help='Python packages to install via pip on container startup. '
+             'One package per line (e.g. phonenumbers, openpyxl).',
+    )
+
+    @api.depends('saas_product_id.is_hosting')
+    def _compute_is_hosting(self):
+        for rec in self:
+            rec.is_hosting = rec.saas_product_id.is_hosting if rec.saas_product_id else False
+
     # ========== Free Trial ==========
     is_trial = fields.Boolean(
         string='Free Trial',
@@ -470,21 +488,29 @@ class SaasInstance(models.Model):
     def create(self, vals_list):
         for vals in vals_list:
             # Block trial if the client has already used their free trial.
-            # Use SELECT ... FOR UPDATE to prevent race conditions where
-            # two concurrent requests both pass the check.
+            # Separate trials for services vs hosting.
+            # Use SELECT ... FOR UPDATE to prevent race conditions.
             if vals.get('is_trial') and vals.get('partner_id'):
+                # Determine if this is a hosting trial
+                is_hosting_trial = False
+                if vals.get('saas_product_id'):
+                    product = self.env['saas.product'].browse(vals['saas_product_id'])
+                    is_hosting_trial = product.is_hosting
+
+                trial_field = 'saas_hosting_trial_used' if is_hosting_trial else 'saas_trial_used'
                 self.env.cr.execute(
-                    "SELECT saas_trial_used FROM res_partner "
-                    "WHERE id = %s FOR UPDATE",
+                    "SELECT %s FROM res_partner "
+                    "WHERE id = %%s FOR UPDATE" % trial_field,
                     (vals['partner_id'],),
                 )
                 row = self.env.cr.fetchone()
                 if row and row[0]:
                     partner = self.env['res.partner'].browse(vals['partner_id'])
+                    trial_type = 'hosting' if is_hosting_trial else 'service'
                     raise ValidationError(
-                        _("Client '%s' has already used their free trial. "
-                          "Only one trial is allowed per client.")
-                        % partner.name
+                        _("Client '%s' has already used their free %s trial. "
+                          "Only one trial per type is allowed.")
+                        % (partner.name, trial_type)
                     )
             subdomain = vals.get('subdomain', '')
             if subdomain and not vals.get('db_user'):
@@ -522,17 +548,24 @@ class SaasInstance(models.Model):
         return super().unlink()
 
     def _sync_partner_trial(self):
-        """Mark the partner as having used their trial (one-time)."""
+        """Mark the partner as having used their trial (one per type: service / hosting)."""
         self.ensure_one()
         partner = self.partner_id
-        if not partner.saas_trial_used:
-            trial_days = int(self.env['ir.config_parameter'].sudo().get_param(
-                'saas_master.trial_days', '14',
-            ))
-            partner.write({
-                'saas_trial_used': True,
-                'saas_trial_end_date': fields.Date.today() + datetime.timedelta(days=trial_days),
-            })
+        trial_days = int(self.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.trial_days', '14',
+        ))
+        if self.is_hosting:
+            if not partner.saas_hosting_trial_used:
+                partner.write({
+                    'saas_hosting_trial_used': True,
+                    'saas_trial_end_date': fields.Date.today() + datetime.timedelta(days=trial_days),
+                })
+        else:
+            if not partner.saas_trial_used:
+                partner.write({
+                    'saas_trial_used': True,
+                    'saas_trial_end_date': fields.Date.today() + datetime.timedelta(days=trial_days),
+                })
 
     # ========== Computed ==========
     @api.depends('subdomain', 'domain_id.name')
@@ -1406,6 +1439,22 @@ class SaasInstance(models.Model):
         docker_mem = self.override_docker_mem.strip() if self.override_docker_mem else auto_mem
         docker_swap = self.override_docker_swap.strip() if self.override_docker_swap else docker_mem
 
+        # Parse pip packages for hosting instances (deduplicated, lowercase)
+        pip_packages_str = ''
+        if self.pip_packages:
+            seen = set()
+            pkgs = []
+            for p in self.pip_packages.splitlines():
+                p = p.strip()
+                if not p or p.startswith('#'):
+                    continue
+                key = p.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip()
+                if key not in seen:
+                    seen.add(key)
+                    pkgs.append(p)
+            if pkgs:
+                pip_packages_str = ' '.join(pkgs)
+
         dc_context = {
             'odoo_image': self.odoo_version_id.docker_image,
             'odoo_version': self.odoo_version_id.docker_image_tag,
@@ -1417,10 +1466,31 @@ class SaasInstance(models.Model):
             'docker_cpu': docker_cpu,
             'docker_mem': docker_mem,
             'docker_swap': docker_swap,
+            'pip_packages': pip_packages_str,
         }
         dc_content = self._render_template('docker-compose.yml.jinja', dc_context)
         ssh.write_file('%s/docker-compose.yml' % instance_path, dc_content)
         self._append_log("docker-compose.yml written.")
+
+        # Write deduplicated requirements.txt (backup-safe copy on disk)
+        if self.pip_packages:
+            seen = set()
+            unique_pkgs = []
+            for p in self.pip_packages.splitlines():
+                p = p.strip()
+                if not p or p.startswith('#'):
+                    continue
+                key = p.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip()
+                if key not in seen:
+                    seen.add(key)
+                    unique_pkgs.append(p)
+            ssh.write_file('%s/requirements.txt' % instance_path, '\n'.join(unique_pkgs) + '\n')
+            # Write the pip install script
+            pip_script = self._render_template('pip_install.sh', {})
+            ssh.write_file('%s/pip_install.sh' % instance_path, pip_script)
+            ssh.execute('chmod +x %s/pip_install.sh' % instance_path)
+        else:
+            ssh.write_file('%s/requirements.txt' % instance_path, '')
 
         # odoo.conf
         self._append_log("Writing odoo.conf...")
@@ -1762,6 +1832,14 @@ class SaasInstance(models.Model):
 
             # Clone product repositories
             self._clone_product_repos(ssh)
+
+            # Clone customer instance repos (for hosting instances)
+            if self.is_hosting and self.repo_ids:
+                for repo in self.repo_ids.filtered(lambda r: r.state == 'pending'):
+                    self._append_log("Cloning customer repo: %s (%s)..." % (repo.repo_url, repo.branch))
+                    repo._clone_repo()
+                # Re-render configs to include the new addons paths
+                self._render_and_write_configs(ssh)
 
             # Restore pre-built database snapshot (if configured)
             snapshot_restored = self._restore_snapshot(ssh)
@@ -2641,6 +2719,53 @@ class SaasInstance(models.Model):
         }
 
     @api.model
+    def _cron_check_container_health(self):
+        """Check running instances for crashed/stopped containers and auto-restart them.
+
+        Groups by Docker server to batch SSH connections.
+        """
+        instances = self.search([
+            ('state', '=', 'running'),
+            ('docker_server_id', '!=', False),
+        ])
+        if not instances:
+            return
+
+        by_server = {}
+        for inst in instances:
+            by_server.setdefault(inst.docker_server_id.id, []).append(inst)
+
+        for server_id, inst_list in by_server.items():
+            server = self.env['saas.server'].browse(server_id)
+            try:
+                with server._get_ssh_connection() as ssh:
+                    for inst in inst_list:
+                        try:
+                            container = 'odoo_%s' % inst.subdomain
+                            exit_code, stdout, stderr = ssh.execute(
+                                'docker inspect -f "{{.State.Status}}" %s 2>/dev/null || echo "not_found"'
+                                % container
+                            )
+                            status = (stdout or '').strip().strip('"')
+                            if status in ('exited', 'dead', 'not_found'):
+                                _logger.warning(
+                                    "Container %s is %s — restarting instance %s",
+                                    container, status, inst.name,
+                                )
+                                inst._append_log(
+                                    "Container found in '%s' state — auto-restarting." % status
+                                )
+                                path = inst._get_instance_path()
+                                ssh.execute('cd %s && docker compose up -d' % path)
+                        except Exception:
+                            _logger.exception(
+                                "Health check failed for instance %s", inst.name
+                            )
+            except Exception:
+                _logger.exception(
+                    "Cannot connect to server %s for health check", server.name
+                )
+
     def _cron_check_storage_limits(self):
         """Check total storage of running instances and suspend those exceeding their plan limit.
 

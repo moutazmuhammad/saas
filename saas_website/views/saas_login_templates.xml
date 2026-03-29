@@ -17,6 +17,7 @@
             <t t-call="web.frontend_layout">
                 <t t-set="no_header" t-value="True"/>
                 <t t-set="no_footer" t-value="True"/>
+                <t t-set="x_icon" t-value="'/saas_website/static/src/img/sudud-icon.svg'"/>
 
                 <div class="co-login-page">
                     <!-- Left panel: branding -->
@@ -100,6 +101,19 @@
                 <span>Password</span>
                 <a href="/web/reset_password" class="co-forgot-link">Forgot password?</a>
             </label>
+        </xpath>
+    </template>
+
+    <!-- ============================================================
+         Override the base web layout favicon globally
+         ============================================================ -->
+
+    <template id="cloudodoo_favicon" name="CloudOdoo Favicon"
+              inherit_id="web.layout" customize_show="False">
+        <xpath expr="//link[@rel='shortcut icon']" position="attributes">
+            <attribute name="t-att-href"/>
+            <attribute name="href">/saas_website/static/src/img/sudud-icon.svg</attribute>
+            <attribute name="type">image/svg+xml</attribute>
         </xpath>
     </template>
 

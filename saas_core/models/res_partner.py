@@ -8,9 +8,14 @@ class ResPartner(models.Model):
     _inherit = 'res.partner'
 
     saas_trial_used = fields.Boolean(
-        string='Free Trial Used',
+        string='Service Trial Used',
         default=False,
-        help='Whether this client has already used their one-time free trial.',
+        help='Whether this client has already used their free service trial.',
+    )
+    saas_hosting_trial_used = fields.Boolean(
+        string='Hosting Trial Used',
+        default=False,
+        help='Whether this client has already used their free hosting trial.',
     )
     saas_trial_end_date = fields.Date(
         string='Trial Ends',

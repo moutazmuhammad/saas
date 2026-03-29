@@ -36,11 +36,11 @@
                                         <p class="text-muted small" t-esc="product.description"/>
                                     </t>
                                     <p class="plan-count">
-                                        <i class="fas fa-layer-group me-1"></i>
-                                        <t t-esc="len(product.plan_ids.filtered(lambda p: not p.is_trial_plan))"/> plans available
+                                        <i class="fas fa-sliders-h me-1"></i>
+                                        Custom plans available
                                     </p>
                                     <a t-attf-href="/services/#{product.id}" class="btn btn-primary w-100">
-                                        View Plans
+                                        Configure Plan
                                     </a>
                                 </div>
                             </div>
@@ -139,9 +139,8 @@
                                     <h5 class="mb-1"><i class="fas fa-gift me-2"></i>Start with a Free Trial</h5>
                                     <p class="mb-0 text-muted">
                                         No credit card required. <t t-esc="trial_days"/>-day free trial with
-                                        <t t-esc="trial_plan.cpu_limit"/> vCPU,
-                                        <t t-esc="trial_plan.ram_limit"/> RAM,
-                                        <t t-esc="int(trial_plan.storage_limit)"/>GB storage.
+                                        <t t-esc="trial_plan.workers"/> Workers,
+                                        <t t-esc="int(trial_plan.storage_limit)"/>GB Storage.
                                     </p>
                                 </div>
                                 <!-- Public users go to register; logged-in users go to configure -->
@@ -161,68 +160,216 @@
                         </div>
                     </t>
 
-                    <!-- Billing Toggle -->
-                    <div class="text-center mb-4" id="billing-toggle">
-                        <div class="billing-toggle">
-                            <button class="toggle-btn active" data-billing="monthly">Monthly</button>
-                            <button class="toggle-btn" data-billing="yearly">
-                                Yearly <span class="yearly-badge">Save up to 20%</span>
-                            </button>
+                    <!-- ============================================================
+                         Custom Plan Builder Section
+                         ============================================================ -->
+                    <div class="custom-builder-section" id="custom-builder">
+                        <div class="text-center mb-4">
+                            <h2 class="fw-bold">Build Your Custom Plan</h2>
+                            <p class="text-muted mx-auto" style="max-width:600px;">
+                                Need more control? Configure exactly the resources you need.
+                                Adjust workers and storage to match your workload.
+                            </p>
+                        </div>
+
+                        <div class="custom-builder-card">
+                            <!-- Billing Toggle for Custom Builder -->
+                            <div class="text-center mb-4" id="custom-billing-toggle">
+                                <div class="billing-toggle">
+                                    <button class="toggle-btn active" data-billing="monthly">Monthly</button>
+                                    <button class="toggle-btn" data-billing="yearly">
+                                        Yearly <span class="yearly-badge">Save <t t-esc="custom_config.get('yearly_discount_pct', 20)"/>%</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="row g-4">
+                                <!-- Left: Sliders -->
+                                <div class="col-lg-7">
+                                    <!-- Workers Slider -->
+                                    <div class="slider-group" id="workers-slider-group">
+                                        <div class="slider-header">
+                                            <div class="slider-label">
+                                                <i class="fas fa-cogs me-2"></i>Workers
+                                                <span class="slider-tooltip-trigger" data-bs-toggle="tooltip"
+                                                      title="Each worker can handle approximately 6–10 concurrent users depending on usage type (light browsing vs heavy operations like accounting or POS).">
+                                                    <i class="fas fa-info-circle"></i>
+                                                </span>
+                                            </div>
+                                            <div class="slider-value" id="workers-value">
+                                                <input type="number" class="slider-input" id="workers-input"
+                                                       t-att-min="custom_config.get('min_workers', 2)"
+                                                       t-att-max="custom_config.get('max_workers', 8)"
+                                                       step="1" value="4"/>
+                                                <span>Workers</span>
+                                            </div>
+                                        </div>
+                                        <div class="slider-container">
+                                            <input type="range" class="custom-slider" id="workers-slider"
+                                                   t-att-min="custom_config.get('min_workers', 2)"
+                                                   t-att-max="custom_config.get('max_workers', 8)"
+                                                   step="1" value="4"/>
+                                            <div class="slider-ticks" id="workers-ticks"></div>
+                                        </div>
+                                        <div class="slider-recommendation" id="workers-recommendation">
+                                            <i class="fas fa-users me-1"></i>
+                                            Recommended for <span class="rec-users">~24–40</span> concurrent users
+                                        </div>
+                                        <div class="slider-highlight-bar" id="workers-highlight">
+                                            <span class="highlight-label">
+                                                <i class="fas fa-star me-1"></i>Recommended range
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Storage Slider -->
+                                    <div class="slider-group mt-4" id="storage-slider-group">
+                                        <div class="slider-header">
+                                            <div class="slider-label">
+                                                <i class="fas fa-hdd me-2"></i>Storage
+                                            </div>
+                                            <div class="slider-value" id="storage-value">
+                                                <input type="number" class="slider-input" id="storage-input"
+                                                       t-att-min="custom_config.get('min_storage', 5)"
+                                                       t-att-max="custom_config.get('max_storage', 200)"
+                                                       step="1" value="20"/>
+                                                <span>GB</span>
+                                            </div>
+                                        </div>
+                                        <div class="slider-container">
+                                            <input type="range" class="custom-slider" id="storage-slider"
+                                                   t-att-min="custom_config.get('min_storage', 5)"
+                                                   t-att-max="custom_config.get('max_storage', 200)"
+                                                   step="1" value="20"/>
+                                            <div class="slider-ticks" id="storage-ticks"></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Worker Explanation Info Box -->
+                                    <div class="info-box mt-4">
+                                        <div class="info-box-header">
+                                            <i class="fas fa-lightbulb me-2"></i>How workers affect performance
+                                        </div>
+                                        <div class="info-box-body">
+                                            <p class="mb-2">Each worker can handle approximately <strong>6–10 concurrent users</strong>. The range depends on usage type:</p>
+                                            <div class="d-flex gap-3">
+                                                <div class="usage-type">
+                                                    <span class="usage-badge usage-light">Light</span>
+                                                    <span class="usage-desc">Browsing, CRM, simple tasks → more users per worker</span>
+                                                </div>
+                                                <div class="usage-type">
+                                                    <span class="usage-badge usage-heavy">Heavy</span>
+                                                    <span class="usage-desc">Accounting, POS, reports → fewer users per worker</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Right: Price Summary -->
+                                <div class="col-lg-5">
+                                    <div class="custom-price-card">
+                                        <h5 class="mb-3">Your Custom Plan</h5>
+
+                                        <div class="price-breakdown">
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label">
+                                                    <i class="fas fa-cogs me-2"></i>
+                                                    <span id="summary-workers">4</span> Workers
+                                                </span>
+                                                <span class="breakdown-value" id="summary-workers-cost">$60.00</span>
+                                            </div>
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label">
+                                                    <i class="fas fa-hdd me-2"></i>
+                                                    <span id="summary-storage">20</span> GB Storage
+                                                </span>
+                                                <span class="breakdown-value" id="summary-storage-cost">$10.00</span>
+                                            </div>
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label">
+                                                    <i class="fas fa-shield-alt me-2"></i>Backups
+                                                </span>
+                                                <span class="breakdown-value">
+                                                    <span id="summary-backups" style="font-weight:700;"><t t-esc="custom_config.get('min_backups', 3)"/></span>
+                                                </span>
+                                            </div>
+                                            <div class="breakdown-divider"></div>
+
+                                            <!-- Monthly display -->
+                                            <div id="summary-monthly-display">
+                                                <div class="breakdown-total">
+                                                    <span>Monthly Total</span>
+                                                    <span class="total-amount" id="summary-monthly-total">$70.00</span>
+                                                </div>
+                                                <div class="breakdown-yearly">
+                                                    <span>Yearly equivalent</span>
+                                                    <span id="summary-yearly-equiv">$840.00/yr</span>
+                                                </div>
+                                            </div>
+
+                                            <!-- Yearly display (hidden by default) -->
+                                            <div id="summary-yearly-display" style="display:none;">
+                                                <div class="breakdown-total">
+                                                    <span>Yearly Total</span>
+                                                    <span class="total-amount" id="summary-yearly-total">$672.00</span>
+                                                </div>
+                                                <div class="breakdown-yearly">
+                                                    <span>Effective monthly</span>
+                                                    <span id="summary-effective-monthly">$56.00/mo</span>
+                                                </div>
+                                                <!-- Yearly savings highlight -->
+                                                <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
+                                                    <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
+                                                        <i class="fas fa-piggy-bank me-1"></i>
+                                                        You save <span id="summary-yearly-savings">$168.00</span> per year (<span id="summary-discount-pct"><t t-esc="custom_config.get('yearly_discount_pct', 20)"/></span>% off)
+                                                    </div>
+                                                    <div style="font-size:0.8rem;color:var(--text-muted);margin-top:2px;">
+                                                        <span style="text-decoration:line-through;" id="summary-yearly-original">$840.00</span>
+                                                        <span class="ms-1">→</span>
+                                                        <strong id="summary-yearly-discounted" style="color:#10B981;">$672.00</strong>/yr
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="user-estimate mt-3" id="summary-user-estimate">
+                                            <i class="fas fa-users me-1"></i>
+                                            Supports <strong><span id="summary-min-users">24</span>–<span id="summary-max-users">40</span></strong> concurrent users
+                                        </div>
+
+                                        <a id="custom-plan-cta"
+                                           t-attf-href="/services/#{product.id}/custom/configure?workers=4&amp;storage=20&amp;billing=monthly"
+                                           class="btn btn-primary btn-lg w-100 mt-3">
+                                            <i class="fas fa-rocket me-2"></i>Configure Custom Plan
+                                        </a>
+
+                                        <p class="text-muted small mt-2 mb-0 text-center">
+                                            <i class="fas fa-info-circle me-1"></i>
+                                            You can upgrade or downgrade anytime
+                                        </p>
+                                    </div>
+
+                                </div>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- Plans Grid -->
-                    <div class="row g-4">
-                        <t t-foreach="plans" t-as="plan">
-                            <div class="col-md-6 col-lg-4">
-                                <div class="plan-card"
-                                     t-att-data-monthly-price="plan.price"
-                                     t-att-data-yearly-price="plan.yearly_price"
-                                     t-att-data-currency="plan.currency_id.name or 'USD'">
-                                    <h4 class="plan-name" t-esc="plan.name"/>
-
-                                    <!-- Price display -->
-                                    <div class="plan-price">
-                                        <span class="plan-original" style="display:none;text-decoration:line-through;color:var(--text-muted);font-size:1rem;margin-right:0.5rem;"></span>
-                                        <span class="plan-amount amount" t-esc="'${:,.0f}'.format(plan.price)"/>
-                                        <span class="plan-period period">/mo</span>
-                                    </div>
-
-                                    <!-- Yearly savings highlight -->
-                                    <t t-if="plan.yearly_price and plan.yearly_price > 0 and plan.yearly_discount_pct > 0">
-                                        <div class="mb-3 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
-                                            <div style="font-size:0.8rem;color:#10B981;font-weight:600;">
-                                                <i class="fas fa-tag me-1"></i>
-                                                Save <t t-esc="'%.0f' % plan.yearly_discount_pct"/>% with annual billing
-                                            </div>
-                                            <div style="font-size:0.8rem;color:var(--text-secondary,#A1A1AA);margin-top:2px;">
-                                                <t t-esc="'${:,.2f}'.format(plan.yearly_price / 12)"/>/mo billed yearly
-                                                <span style="text-decoration:line-through;color:var(--text-muted,#71717A);margin-left:4px;">
-                                                    <t t-esc="'${:,.0f}'.format(plan.price)"/>/mo
-                                                </span>
-                                                — You save <strong style="color:#10B981;"><t t-esc="'${:,.0f}'.format(plan.price * 12 - plan.yearly_price)"/>/yr</strong>
-                                            </div>
-                                        </div>
-                                    </t>
-
-                                    <ul class="plan-specs">
-                                        <li><i class="fas fa-microchip"></i><t t-esc="plan.cpu_limit"/> vCPU</li>
-                                        <li><i class="fas fa-memory"></i><t t-esc="plan.ram_limit"/> RAM</li>
-                                        <li><i class="fas fa-hdd"></i><t t-esc="int(plan.storage_limit)"/>GB Storage</li>
-                                        <li><i class="fas fa-shield-alt"></i><t t-esc="plan.max_backups"/> Backups</li>
-                                        <li t-if="plan.recommended_users">
-                                            <i class="fas fa-users"></i>Up to <t t-esc="plan.recommended_users"/> Users
-                                        </li>
-                                    </ul>
-
-                                    <a t-attf-href="/services/#{product.id}/plans/#{plan.id}/configure"
-                                       class="btn btn-primary w-100"
-                                       t-att-data-plan-link="'/services/%s/plans/%s/configure' % (product.id, plan.id)">
-                                        Get Started
-                                    </a>
-                                </div>
-                            </div>
-                        </t>
+                    <!-- Hidden config data for JavaScript -->
+                    <div id="custom-plan-config" style="display:none;"
+                         t-att-data-worker-price="custom_config.get('worker_price', 15)"
+                         t-att-data-storage-price="custom_config.get('storage_price_per_gb', 0.5)"
+                         t-att-data-min-workers="custom_config.get('min_workers', 2)"
+                         t-att-data-max-workers="custom_config.get('max_workers', 8)"
+                         t-att-data-min-storage="custom_config.get('min_storage', 5)"
+                         t-att-data-max-storage="custom_config.get('max_storage', 200)"
+                         t-att-data-users-per-worker-min="custom_config.get('users_per_worker_min', 6)"
+                         t-att-data-users-per-worker-max="custom_config.get('users_per_worker_max', 10)"
+                         t-att-data-yearly-discount-pct="custom_config.get('yearly_discount_pct', 20)"
+                         t-att-data-currency="custom_config.get('currency', 'USD')"
+                         t-att-data-product-id="product.id"
+                         t-att-data-min-backups="custom_config.get('min_backups', 5)"
+                         t-att-data-max-backups="custom_config.get('max_backups', 14)">
                     </div>
 
                     <!-- Back Link -->
@@ -272,6 +419,7 @@
                                     <input type="hidden" name="product_id" t-att-value="product.id"/>
                                     <input type="hidden" name="plan_id" t-att-value="plan.id"/>
                                     <input type="hidden" name="is_trial" t-att-value="'1' if is_trial else '0'"/>
+                                    <input type="hidden" name="billing_period" t-att-value="billing_period or 'monthly'"/>
 
                                     <h4 class="mb-4">Configure Your Instance</h4>
 
@@ -342,12 +490,8 @@
                                 </t>
 
                                 <div class="summary-item">
-                                    <span class="label"><i class="fas fa-microchip me-2"></i>CPU</span>
-                                    <span class="value"><t t-esc="plan.cpu_limit"/> vCPU</span>
-                                </div>
-                                <div class="summary-item">
-                                    <span class="label"><i class="fas fa-memory me-2"></i>RAM</span>
-                                    <span class="value"><t t-esc="plan.ram_limit"/></span>
+                                    <span class="label"><i class="fas fa-cogs me-2"></i>Workers</span>
+                                    <span class="value"><t t-esc="plan.workers"/></span>
                                 </div>
                                 <div class="summary-item">
                                     <span class="label"><i class="fas fa-hdd me-2"></i>Storage</span>
@@ -362,30 +506,212 @@
                                 </div>
 
                                 <t t-if="not is_trial">
-                                    <div class="summary-total">
-                                        <span>Total</span>
-                                        <span><t t-esc="'${:,.0f}'.format(plan.price)"/>/mo</span>
+                                    <!-- Billing period badge -->
+                                    <div class="mb-2">
+                                        <span class="badge" style="background:var(--primary);color:white;font-size:0.75rem;">
+                                            <t t-if="billing_period == 'yearly'">Yearly Billing</t>
+                                            <t t-else="">Monthly Billing</t>
+                                        </span>
                                     </div>
 
-                                    <!-- Yearly savings upsell -->
-                                    <t t-if="plan.yearly_price and plan.yearly_price > 0 and plan.yearly_discount_pct > 0">
-                                        <div class="mt-3 p-3" style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:10px;">
-                                            <div class="d-flex align-items-center mb-2">
-                                                <span style="background:#10B981;color:white;font-size:0.7rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:20px;margin-right:0.5rem;">
-                                                    SAVE <t t-esc="'%.0f' % plan.yearly_discount_pct"/>%
-                                                </span>
-                                                <span style="font-size:0.85rem;font-weight:600;color:#10B981;">Switch to yearly billing</span>
+                                    <t t-if="billing_period == 'yearly' and plan.yearly_price and plan.yearly_price > 0">
+                                        <div class="summary-total">
+                                            <span>Total</span>
+                                            <span><t t-esc="'${:,.2f}'.format(plan.yearly_price)"/>/yr</span>
+                                        </div>
+                                        <div style="font-size:0.85rem;color:var(--text-secondary);margin-top:4px;">
+                                            <t t-esc="'${:,.2f}'.format(plan.yearly_price / 12)"/>/mo billed yearly
+                                        </div>
+                                        <t t-if="plan.yearly_discount_pct > 0">
+                                            <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
+                                                <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
+                                                    <i class="fas fa-piggy-bank me-1"></i>
+                                                    You save <t t-esc="'${:,.0f}'.format(plan.price * 12 - plan.yearly_price)"/> per year
+                                                    (<t t-esc="'%.0f' % plan.yearly_discount_pct"/>% off)
+                                                </div>
                                             </div>
-                                            <div style="font-size:0.8rem;color:var(--text-secondary,#A1A1AA);">
-                                                Pay <strong><t t-esc="'${:,.2f}'.format(plan.yearly_price)"/>/yr</strong>
-                                                instead of <span style="text-decoration:line-through;"><t t-esc="'${:,.0f}'.format(plan.price * 12)"/>/yr</span>
+                                        </t>
+                                    </t>
+                                    <t t-else="">
+                                        <div class="summary-total">
+                                            <span>Total</span>
+                                            <span><t t-esc="'${:,.0f}'.format(plan.price)"/>/mo</span>
+                                        </div>
+                                        <!-- Yearly savings upsell -->
+                                        <t t-if="plan.yearly_price and plan.yearly_price > 0 and plan.yearly_discount_pct > 0">
+                                            <div class="mt-3 p-3" style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:10px;">
+                                                <div class="d-flex align-items-center mb-2">
+                                                    <span style="background:#10B981;color:white;font-size:0.7rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:20px;margin-right:0.5rem;">
+                                                        SAVE <t t-esc="'%.0f' % plan.yearly_discount_pct"/>%
+                                                    </span>
+                                                    <span style="font-size:0.85rem;font-weight:600;color:#10B981;">Switch to yearly billing</span>
+                                                </div>
+                                                <div style="font-size:0.8rem;color:var(--text-secondary,#A1A1AA);">
+                                                    Pay <strong><t t-esc="'${:,.2f}'.format(plan.yearly_price)"/>/yr</strong>
+                                                    instead of <span style="text-decoration:line-through;"><t t-esc="'${:,.0f}'.format(plan.price * 12)"/>/yr</span>
+                                                </div>
                                             </div>
-                                            <div style="font-size:0.85rem;font-weight:600;color:#10B981;margin-top:4px;">
+                                        </t>
+                                    </t>
+                                </t>
+
+                                <p class="text-muted small mt-3 mb-0">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    You can upgrade or downgrade anytime
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </t>
+    </template>
+
+    <!-- ============================================================
+         Custom Plan Configure Page  —  /services/<id>/custom/configure
+         ============================================================ -->
+
+    <template id="service_custom_configure_form" name="Configure Custom Instance">
+        <t t-call="saas_website.cloudodoo_layout">
+            <section class="py-6" style="padding-top:120px;">
+                <div class="container">
+                    <!-- Breadcrumb -->
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="/services">Services</a></li>
+                            <li class="breadcrumb-item">
+                                <a t-attf-href="/services/#{product.id}" t-esc="product.name"/>
+                            </li>
+                            <li class="breadcrumb-item active">Custom Plan</li>
+                        </ol>
+                    </nav>
+
+                    <div class="row g-4">
+                        <!-- Left Column - Configuration Form -->
+                        <div class="col-lg-7">
+                            <div class="info-card">
+                                <t t-if="error">
+                                    <div class="alert-banner alert-danger mb-4">
+                                        <i class="fas fa-exclamation-circle"></i>
+                                        <div t-esc="error"/>
+                                    </div>
+                                </t>
+
+                                <form action="/services/custom-order" method="post" id="configure-form">
+                                    <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                    <input type="hidden" name="product_id" t-att-value="product.id"/>
+                                    <input type="hidden" name="workers" t-att-value="workers"/>
+                                    <input type="hidden" name="storage" t-att-value="storage"/>
+                                    <input type="hidden" name="billing_period" t-att-value="billing_period or 'monthly'"/>
+
+                                    <h4 class="mb-4">Configure Your Custom Instance</h4>
+
+                                    <div class="mb-4">
+                                        <label class="form-label">Choose your subdomain</label>
+                                        <div class="input-icon">
+                                            <i class="fas fa-globe"></i>
+                                            <input type="text" class="form-control" id="subdomain-input"
+                                                   name="subdomain" placeholder="my-company" autocomplete="off"
+                                                   t-att-value="form_values.get('subdomain', '')"/>
+                                        </div>
+                                        <div id="subdomain-feedback" class="mt-2"></div>
+                                    </div>
+
+                                    <div class="mb-4">
+                                        <label class="form-label">Select your domain</label>
+                                        <select class="form-select" id="domain-select" name="domain_id">
+                                            <t t-foreach="domains" t-as="d">
+                                                <option t-att-value="d.id"
+                                                        t-att-selected="str(d.id) == str(form_values.get('domain_id', ''))"
+                                                        t-esc="d.name"/>
+                                            </t>
+                                        </select>
+                                    </div>
+
+                                    <div class="subdomain-preview mb-4">
+                                        <i class="fas fa-link me-2"></i>
+                                        <span id="url-preview">your-subdomain.<t t-esc="domains[0].name if domains else 'example.com'"/></span>
+                                    </div>
+
+                                    <button type="submit" id="submit-btn" disabled=""
+                                            class="btn btn-primary btn-lg w-100">
+                                        <i class="fas fa-credit-card me-2"></i>Continue to Payment
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Right Column - Order Summary -->
+                        <div class="col-lg-5">
+                            <div class="order-summary">
+                                <h5><i class="fas fa-shopping-cart me-2"></i>Order Summary</h5>
+
+                                <div class="d-flex align-items-center gap-3 mb-3 pb-3 border-bottom" style="border-color:var(--border-color)!important;">
+                                    <div class="service-icon" style="width:48px;height:48px;font-size:1.25rem;">
+                                        <t t-if="product.icon"><i t-att-class="product.icon"/></t>
+                                        <t t-else=""><i class="fas fa-cubes"/></t>
+                                    </div>
+                                    <div>
+                                        <div class="fw-semibold" t-esc="product.name"/>
+                                        <div class="text-muted small">Custom Plan</div>
+                                    </div>
+                                </div>
+
+                                <div class="summary-item">
+                                    <span class="label"><i class="fas fa-cogs me-2"></i>Workers</span>
+                                    <span class="value"><t t-esc="workers"/></span>
+                                </div>
+                                <div class="summary-item">
+                                    <span class="label"><i class="fas fa-hdd me-2"></i>Storage</span>
+                                    <span class="value"><t t-esc="storage"/>GB</span>
+                                </div>
+
+                                <!-- Billing period badge -->
+                                <div class="mb-2">
+                                    <span class="badge" style="background:var(--primary);color:white;font-size:0.75rem;">
+                                        <t t-if="billing_period == 'yearly'">Yearly Billing</t>
+                                        <t t-else="">Monthly Billing</t>
+                                    </span>
+                                </div>
+
+                                <div class="price-breakdown mt-3">
+                                    <div class="breakdown-row">
+                                        <span class="breakdown-label">Workers (<t t-esc="workers"/> × <t t-esc="'${:,.2f}'.format(config['worker_price'])"/>)</span>
+                                        <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(workers_cost)"/>/mo</span>
+                                    </div>
+                                    <div class="breakdown-row">
+                                        <span class="breakdown-label">Storage (<t t-esc="storage"/>GB × <t t-esc="'${:,.2f}'.format(config['storage_price_per_gb'])"/>)</span>
+                                        <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(storage_cost)"/>/mo</span>
+                                    </div>
+                                    <div class="breakdown-divider"></div>
+                                    <div class="breakdown-row" style="font-size:0.85rem;color:var(--text-muted);">
+                                        <span>Monthly subtotal</span>
+                                        <span><t t-esc="'${:,.2f}'.format(monthly_total)"/>/mo</span>
+                                    </div>
+                                </div>
+
+                                <t t-if="billing_period == 'yearly'">
+                                    <div class="summary-total">
+                                        <span>Total</span>
+                                        <span><t t-esc="'${:,.2f}'.format(yearly_total)"/>/yr</span>
+                                    </div>
+                                    <div style="font-size:0.85rem;color:var(--text-secondary);margin-top:4px;">
+                                        <t t-esc="'${:,.2f}'.format(yearly_total / 12)"/>/mo billed yearly
+                                    </div>
+                                    <t t-if="yearly_savings > 0">
+                                        <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
+                                            <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
                                                 <i class="fas fa-piggy-bank me-1"></i>
-                                                You save <t t-esc="'${:,.0f}'.format(plan.price * 12 - plan.yearly_price)"/> per year
+                                                You save <t t-esc="'${:,.0f}'.format(yearly_savings)"/> per year (<t t-esc="config.get('yearly_discount_pct', 20)"/>% off)
                                             </div>
                                         </div>
                                     </t>
+                                </t>
+                                <t t-else="">
+                                    <div class="summary-total">
+                                        <span>Total</span>
+                                        <span><t t-esc="'${:,.2f}'.format(monthly_total)"/>/mo</span>
+                                    </div>
                                 </t>
 
                                 <p class="text-muted small mt-3 mb-0">
