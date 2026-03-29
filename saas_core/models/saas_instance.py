@@ -1613,8 +1613,8 @@ class SaasInstance(models.Model):
             'if [ -d %(src)s ]; then '
             '  cp -a %(src)s/. %(dst)s/; '
             'fi && '
-            'chown -R $ODOO_UID:$ODOO_UID %(data)s && '
-            'chmod -R 755 %(data)s'
+            'sudo chown -R $ODOO_UID:$ODOO_UID %(data)s && '
+            'sudo chmod -R 755 %(data)s'
         ) % {
             'image': shlex.quote(odoo_image),
             'dst': shlex.quote(filestore_dst),
@@ -1812,8 +1812,8 @@ class SaasInstance(models.Model):
             odoo_image = self.odoo_version_id._get_docker_image()
             perms_cmd = (
                 'ODOO_UID=$(docker run --rm --entrypoint id %(image)s -u odoo 2>/dev/null || echo 101) && '
-                'chown -R $ODOO_UID:$ODOO_UID %(path)s/data %(path)s/config %(path)s/addons && '
-                'chmod -R 755 %(path)s/data %(path)s/config %(path)s/addons'
+                'sudo chown -R $ODOO_UID:$ODOO_UID %(path)s/data %(path)s/config %(path)s/addons && '
+                'sudo chmod -R 755 %(path)s/data %(path)s/config %(path)s/addons'
             ) % {'path': instance_path, 'image': shlex.quote(odoo_image)}
             exit_code, stdout, stderr = ssh.execute(perms_cmd)
             if exit_code != 0:
@@ -2580,8 +2580,8 @@ class SaasInstance(models.Model):
                 'if [ -d %(src)s ]; then '
                 '  cp -a %(src)s/. %(dst)s/; '
                 'fi && '
-                'chown -R $ODOO_UID:$ODOO_UID %(data)s && '
-                'chmod -R 755 %(data)s'
+                'sudo chown -R $ODOO_UID:$ODOO_UID %(data)s && '
+                'sudo chmod -R 755 %(data)s'
             ) % {
                 'image': shlex.quote(odoo_image),
                 'dst': shlex.quote(filestore_dst),
