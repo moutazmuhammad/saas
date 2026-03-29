@@ -350,39 +350,66 @@
                                         </div>
                                         <div>
                                             <div class="fw-semibold">Cloud Hosting</div>
-                                            <span class="badge bg-primary"><t t-esc="billing_period"/></span>
+                                            <t t-if="form_values.get('is_trial') == '1'">
+                                                <span class="badge bg-success">Free Trial</span>
+                                            </t>
+                                            <t t-else="">
+                                                <span class="badge bg-primary"><t t-esc="billing_period"/></span>
+                                            </t>
                                         </div>
                                     </div>
 
-                                    <div class="price-breakdown">
-                                        <div class="breakdown-row">
-                                            <span class="breakdown-label"><i class="fas fa-cogs me-2"></i><t t-esc="workers"/> Workers</span>
-                                            <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(workers_cost)"/>/mo</span>
+                                    <t t-if="form_values.get('is_trial') == '1'">
+                                        <!-- Trial: show resources only, no prices -->
+                                        <div class="mb-3">
+                                            <div class="d-flex justify-content-between mb-2" style="color:var(--co-text-secondary,#A1A1AA);font-size:0.9rem;">
+                                                <span><i class="fas fa-cogs me-2"></i>Workers</span>
+                                                <span class="fw-semibold" style="color:var(--co-text-primary,#FAFAFA);"><t t-esc="workers"/></span>
+                                            </div>
+                                            <div class="d-flex justify-content-between mb-2" style="color:var(--co-text-secondary,#A1A1AA);font-size:0.9rem;">
+                                                <span><i class="fas fa-hdd me-2"></i>Storage</span>
+                                                <span class="fw-semibold" style="color:var(--co-text-primary,#FAFAFA);"><t t-esc="storage"/>GB</span>
+                                            </div>
                                         </div>
-                                        <div class="breakdown-row">
-                                            <span class="breakdown-label"><i class="fas fa-hdd me-2"></i><t t-esc="storage"/>GB Storage</span>
-                                            <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(storage_cost)"/>/mo</span>
+                                        <div class="p-3 text-center" style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:10px;">
+                                            <div style="color:#10B981;font-weight:600;font-size:1.5rem;">FREE</div>
+                                            <div class="small" style="color:var(--co-text-muted,#71717A);">
+                                                for <t t-esc="config.get('trial_days', 14)"/> days
+                                            </div>
                                         </div>
-                                        <div class="breakdown-row">
-                                            <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Backups</span>
-                                            <span class="breakdown-value" style="font-weight:700;"><t t-esc="backup_count"/></span>
+                                    </t>
+                                    <t t-else="">
+                                        <!-- Paid: show full price breakdown -->
+                                        <div class="price-breakdown">
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label"><i class="fas fa-cogs me-2"></i><t t-esc="workers"/> Workers</span>
+                                                <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(workers_cost)"/>/mo</span>
+                                            </div>
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label"><i class="fas fa-hdd me-2"></i><t t-esc="storage"/>GB Storage</span>
+                                                <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(storage_cost)"/>/mo</span>
+                                            </div>
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Backups</span>
+                                                <span class="breakdown-value" style="font-weight:700;"><t t-esc="backup_count"/></span>
+                                            </div>
+                                            <div class="breakdown-divider"></div>
+                                            <div class="breakdown-total">
+                                                <span>
+                                                    <t t-if="billing_period == 'yearly'">Yearly Total</t>
+                                                    <t t-else="">Monthly Total</t>
+                                                </span>
+                                                <span class="total-amount">
+                                                    <t t-if="billing_period == 'yearly'">
+                                                        <t t-esc="'${:,.2f}'.format(yearly_total)"/>
+                                                    </t>
+                                                    <t t-else="">
+                                                        <t t-esc="'${:,.2f}'.format(monthly_total)"/>
+                                                    </t>
+                                                </span>
+                                            </div>
                                         </div>
-                                        <div class="breakdown-divider"></div>
-                                        <div class="breakdown-total">
-                                            <span>
-                                                <t t-if="billing_period == 'yearly'">Yearly Total</t>
-                                                <t t-else="">Monthly Total</t>
-                                            </span>
-                                            <span class="total-amount">
-                                                <t t-if="billing_period == 'yearly'">
-                                                    <t t-esc="'${:,.2f}'.format(yearly_total)"/>
-                                                </t>
-                                                <t t-else="">
-                                                    <t t-esc="'${:,.2f}'.format(monthly_total)"/>
-                                                </t>
-                                            </span>
-                                        </div>
-                                    </div>
+                                    </t>
 
                                     <t t-if="form_values.get('is_trial') == '1'">
                                         <button type="submit" id="submit-btn" class="btn btn-success btn-lg w-100 mt-3"
