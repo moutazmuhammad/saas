@@ -2633,38 +2633,41 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .action-btn.action-primary {
-    background: var(--primary);
-    border-color: var(--primary);
-    color: white;
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #DC2626;
+    font-weight: 600;
 }
 
 .action-btn.action-primary:hover {
-    background: var(--primary-hover);
+    background: rgba(239, 68, 68, 0.22);
+    border-color: #EF4444;
+    color: #B91C1C;
 }
 
 .action-btn.action-upgrade {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
-    border-color: rgba(99, 102, 241, 0.3);
-    color: #6366F1;
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.35);
+    color: #059669;
     font-weight: 600;
 }
 
 .action-btn.action-upgrade:hover {
-    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2));
-    border-color: #6366F1;
-    color: #4F46E5;
+    background: rgba(16, 185, 129, 0.22);
+    border-color: #10B981;
+    color: #047857;
 }
 
 .action-btn.action-logs {
-    background: rgba(14, 165, 233, 0.08);
-    border-color: rgba(14, 165, 233, 0.25);
-    color: #0EA5E9;
+    background: rgba(245, 158, 11, 0.1);
+    border-color: rgba(245, 158, 11, 0.3);
+    color: #D97706;
 }
 
 .action-btn.action-logs:hover {
-    background: rgba(14, 165, 233, 0.15);
-    border-color: #0EA5E9;
-    color: #0284C7;
+    background: rgba(245, 158, 11, 0.2);
+    border-color: #F59E0B;
+    color: #B45309;
 }
 
 .action-btn.action-danger {
