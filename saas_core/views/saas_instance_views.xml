@@ -27,6 +27,8 @@
                        decoration-warning="state in ('suspended', 'pending_provision')"
                        decoration-muted="state == 'stopped'"
                        decoration-info="state in ('draft', 'provisioning')"/>
+                <field name="last_error" optional="hide"/>
+                <field name="last_error_date" optional="hide"/>
             </list>
         </field>
     </record>
@@ -287,6 +289,12 @@
                         </page>
                         <page string="Provisioning Log"
                               invisible="not provisioning_log">
+                            <group invisible="not last_error"
+                                   string="Last Error">
+                                <field name="last_error_date" readonly="1"/>
+                                <field name="last_error" readonly="1"
+                                       nolabel="1"/>
+                            </group>
                             <field name="provisioning_log" readonly="1"
                                    nolabel="1"/>
                         </page>

@@ -412,6 +412,16 @@ class SaasInstance(models.Model):
         index=True,
         help='Current lifecycle state of the instance.',
     )
+    last_error = fields.Text(
+        string='Last Error',
+        readonly=True,
+        help='Reason the last background operation failed.',
+    )
+    last_error_date = fields.Datetime(
+        string='Error Date',
+        readonly=True,
+        help='When the last error occurred.',
+    )
     cancellation_reason = fields.Text(
         string='Cancellation Reason',
         readonly=True,
@@ -834,8 +844,8 @@ class SaasInstance(models.Model):
         When Docker and DB are on the same server, the container cannot
         reach the host via 127.0.0.1 or the server's own private/public
         IP (DigitalOcean and similar providers block this).  Instead we
-        use the Docker bridge gateway (172.17.0.1) which is always
-        reachable from containers.
+        use ``host.docker.internal`` which Docker resolves to the host
+        gateway regardless of which bridge network the container is on.
 
         When they are on different servers, we use the DB server's
         private IP (preferred) or public IP.
@@ -843,8 +853,22 @@ class SaasInstance(models.Model):
         self.ensure_one()
         psql_server = self.db_server_id
         if psql_server == self.docker_server_id:
-            return '172.17.0.1'
+            return 'host.docker.internal'
         return psql_server.private_ip_v4 or psql_server.ip_v4
+
+    def _get_container_uid(self, ssh):
+        """Return the UID of the default user inside the Docker image.
+
+        Runs ``id -u`` inside a disposable container.  Falls back to 101
+        (the default in the official Odoo images) if detection fails.
+        """
+        self.ensure_one()
+        odoo_image = self.odoo_version_id._get_docker_image()
+        _, uid_out, _ = ssh.execute(
+            'docker run --rm %s id -u 2>/dev/null || echo 101'
+            % shlex.quote(odoo_image)
+        )
+        return uid_out.strip() or '101'
 
     def _append_log(self, message):
         """Append a timestamped message to provisioning_log."""
@@ -1676,6 +1700,50 @@ class SaasInstance(models.Model):
 
         return True
 
+    def _validate_addons_manifests(self, ssh):
+        """Check that every ``__manifest__.py`` under the instance addons is valid.
+
+        Scans the instance's ``addons/`` directory on the host (which is
+        mounted into the container).  If any manifest cannot be parsed by
+        ``ast.literal_eval``, the deploy is aborted with a clear error
+        listing the broken modules so the client can fix them.
+        """
+        self.ensure_one()
+        instance_path = self._get_instance_path()
+        addons_dir = '%s/addons' % instance_path
+        script_path = '%s/_validate_manifests.py' % instance_path
+        ssh.write_file(script_path, (
+            "import ast, os, sys\n"
+            "errors = []\n"
+            "addons_dir = sys.argv[1]\n"
+            "for root, dirs, files in os.walk(addons_dir):\n"
+            "    if '__manifest__.py' in files:\n"
+            "        path = os.path.join(root, '__manifest__.py')\n"
+            "        try:\n"
+            "            with open(path) as f:\n"
+            "                ast.literal_eval(f.read())\n"
+            "        except Exception as e:\n"
+            "            errors.append('%s: %s' % (os.path.basename(root), e))\n"
+            "if errors:\n"
+            "    for err in errors:\n"
+            "        print(err)\n"
+            "    sys.exit(1)\n"
+        ))
+        self._append_log("Validating module manifests...")
+        exit_code, stdout, stderr = ssh.execute(
+            'python3 %s %s 2>&1' % (
+                shlex.quote(script_path), shlex.quote(addons_dir),
+            ),
+            timeout=120,
+        )
+        ssh.execute('rm -f %s' % shlex.quote(script_path))
+        if exit_code != 0 and stdout.strip():
+            raise UserError(
+                _("Custom repository contains modules with invalid manifests. "
+                  "Please fix the following modules and try again:\n%s")
+                % stdout.strip()
+            )
+
     def _clone_product_repos(self, ssh):
         """Clone the product's GitHub repositories into the instance directory."""
         self.ensure_one()
@@ -1684,6 +1752,7 @@ class SaasInstance(models.Model):
             return
 
         instance_path = self._get_instance_path()
+        container_uid = self._get_container_uid(ssh)
 
         for repo in product.repo_ids:
             repo_dir = '%s/addons/%s' % (
@@ -1714,7 +1783,11 @@ class SaasInstance(models.Model):
                     _("Failed to clone product repo '%s':\n%s\n%s")
                     % (repo.repo_url, stdout[-500:], stderr[-500:])
                 )
-            ssh.execute('chmod -R 777 %s' % shlex.quote(repo_dir))
+            ssh.execute(
+                'sudo chown -R %s:%s %s && chmod -R 775 %s'
+                % (container_uid, container_uid,
+                   shlex.quote(repo_dir), shlex.quote(repo_dir))
+            )
             self._append_log("Repository %s cloned." % repo.name)
 
     def _pull_product_repos(self, ssh):
@@ -1846,39 +1919,27 @@ class SaasInstance(models.Model):
                 )
             self._append_log("Directory structure created.")
 
-            # Set permissions so the odoo user inside the container can
-            # read/write volumes.  We first try to discover the UID used by
-            # the image (the "odoo" user is UID 101 in the official image).
-            # Fallback: chmod 777 so any UID can access the files.
+            # Set ownership so the container user can read/write volumes.
             self._append_log("Setting permissions...")
+            container_uid = self._get_container_uid(ssh)
             perms_cmd = (
+                'sudo chown -R %(uid)s:%(uid)s %(path)s/data %(path)s/config %(path)s/addons && '
                 'chmod -R 775 %(path)s/data %(path)s/config %(path)s/addons'
-            ) % {'path': instance_path}
+            ) % {'path': instance_path, 'uid': container_uid}
             exit_code, stdout, stderr = ssh.execute(perms_cmd)
             if exit_code != 0:
                 raise UserError(
                     _("Failed to set permissions:\n%s") % stderr
                 )
-            self._append_log("Permissions set.")
+            self._append_log("Permissions set (UID=%s)." % container_uid)
 
-            # Render and write config files
+            # Render and write config files (initial — without custom repos)
             self._render_and_write_configs(ssh)
 
             # Create PostgreSQL user and database
             self._append_log("Creating PostgreSQL role and database...")
             self._provision_postgresql()
             self._append_log("PostgreSQL role and database ready.")
-
-            # Clone product repositories
-            self._clone_product_repos(ssh)
-
-            # Clone customer instance repos (for hosting instances)
-            if self.is_hosting and self.repo_ids:
-                for repo in self.repo_ids.filtered(lambda r: r.state == 'pending'):
-                    self._append_log("Cloning customer repo: %s (%s)..." % (repo.repo_url, repo.branch))
-                    repo._clone_repo()
-                # Re-render configs to include the new addons paths
-                self._render_and_write_configs(ssh)
 
             # Restore pre-built database snapshot (if configured)
             snapshot_restored = self._restore_snapshot(ssh)
@@ -1951,6 +2012,44 @@ class SaasInstance(models.Model):
                 )
             self._append_log("Container is running.")
 
+            # Clone repos AFTER container is running — ensures the instance
+            # is functional before adding custom code and webhooks.
+            has_new_repos = False
+
+            # Clone product repositories
+            self._clone_product_repos(ssh)
+            if self.saas_product_id and self.saas_product_id.repo_ids:
+                has_new_repos = True
+
+            # Clone customer instance repos (for hosting instances)
+            if self.is_hosting and self.repo_ids:
+                for repo in self.repo_ids.filtered(lambda r: r.state == 'pending'):
+                    self._append_log("Cloning customer repo: %s (%s)..." % (repo.repo_url, repo.branch))
+                    repo._clone_repo()
+                    has_new_repos = True
+
+            if has_new_repos:
+                # Validate module manifests to catch broken modules early.
+                self._validate_addons_manifests(ssh)
+                # Re-render configs to include the new addons paths and
+                # restart to pick them up.
+                self._render_and_write_configs(ssh)
+                self._append_log("Restarting container to load new addons...")
+                ssh.execute(
+                    'cd %s && docker compose down 2>&1'
+                    % shlex.quote(instance_path)
+                )
+                exit_code, stdout, stderr = ssh.execute(
+                    'cd %s && docker compose up -d 2>&1'
+                    % shlex.quote(instance_path)
+                )
+                if exit_code != 0:
+                    raise UserError(
+                        _("docker compose restart failed:\n%s\n%s")
+                        % (stdout, stderr)
+                    )
+                self._append_log("Container restarted with custom addons.")
+
             # Configure Nginx reverse proxy with SSL
             self._append_log("Configuring Nginx reverse proxy with SSL...")
             proxy_server = self.domain_id.proxy_server_id
@@ -1968,6 +2067,8 @@ class SaasInstance(models.Model):
 
         self.state = 'running'
         self.deploy_retry_count = 0
+        self.last_error = False
+        self.last_error_date = False
         self._append_log("Deployment completed successfully. State: running.")
         self._safe_refresh_usage()
         self._send_notification('saas_core.mail_template_saas_deployed')
@@ -2182,11 +2283,15 @@ class SaasInstance(models.Model):
         self._append_log("Instance suspended successfully.")
 
     def action_cancel(self):
-        """Cancel the instance, cleaning up infrastructure if it was deployed."""
+        """Cancel the instance, cleaning up any infrastructure that was created.
+
+        Handles both fully deployed instances and partially provisioned
+        ones (e.g. directories created, database provisioned, but
+        container never started).
+        """
         for rec in self:
-            deployed_states = ('running', 'stopped', 'suspended', 'failed')
-            if rec.state in deployed_states and rec.docker_server_id:
-                # Infrastructure exists — do a full async deletion
+            if rec.docker_server_id:
+                # Infrastructure may exist (fully or partially) — clean up
                 rec._ensure_can_ssh()
                 prev_state = rec.state
                 rec.pre_provisioning_state = prev_state
@@ -2199,7 +2304,7 @@ class SaasInstance(models.Model):
                     thread_name='saas_cancel_%s' % rec.subdomain,
                 )
             else:
-                # Not yet deployed — just mark as cancelled
+                # No server assigned — nothing to clean up
                 rec.state = 'cancelled'
 
     def action_draft(self):
@@ -2292,79 +2397,102 @@ class SaasInstance(models.Model):
         Backup = self.env['saas.instance.backup']
 
         # 1. Create a final backup BEFORE tearing down infrastructure.
-        #    Upload directly to cancelled_backups/ so there is no need
-        #    to move it later — simpler and avoids copy+delete issues.
+        #    Only attempt if the instance was actually running (has a
+        #    container and database).  Skip for partially provisioned
+        #    instances that never reached a functional state.
         retained_path = False
-        try:
-            self._append_log("Creating final backup before deletion...")
-            now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-            partner = self.partner_id
-            partner_folder = '%s_%s' % (
-                partner.id, Backup._sanitize_name(partner.name),
-            ) if partner else 'no_partner'
-            backup_name = 'final_backup_%s' % now_str
-            # Upload directly into cancelled_backups/ folder
-            object_key = 'cancelled_backups/%s/%s/%s.zip' % (
-                partner_folder, self.subdomain, backup_name,
-            )
-            final_backup = Backup.create({
-                'instance_id': self.id,
-                'name': backup_name,
-                'bucket_path': object_key,
-                'state': 'running',
-            })
-            size_bytes = final_backup._create_and_upload_backup(
-                self, object_key,
-            )
-            final_backup.write({
-                'state': 'done',
-                'size_mb': round(size_bytes / (1024 * 1024), 2),
-            })
-            retained_path = object_key
+        was_deployed = self.state in ('running', 'stopped', 'suspended', 'failed')
+        if was_deployed:
+            try:
+                self._append_log("Creating final backup before deletion...")
+                now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+                partner = self.partner_id
+                partner_folder = '%s_%s' % (
+                    partner.id, Backup._sanitize_name(partner.name),
+                ) if partner else 'no_partner'
+                backup_name = 'final_backup_%s' % now_str
+                # Upload directly into cancelled_backups/ folder
+                object_key = 'cancelled_backups/%s/%s/%s.zip' % (
+                    partner_folder, self.subdomain, backup_name,
+                )
+                final_backup = Backup.create({
+                    'instance_id': self.id,
+                    'name': backup_name,
+                    'bucket_path': object_key,
+                    'state': 'running',
+                })
+                size_bytes = final_backup._create_and_upload_backup(
+                    self, object_key,
+                )
+                final_backup.write({
+                    'state': 'done',
+                    'size_mb': round(size_bytes / (1024 * 1024), 2),
+                })
+                retained_path = object_key
+                self._append_log(
+                    "Final backup uploaded to cancelled folder: %s" % object_key
+                )
+            except Exception:
+                _logger.exception(
+                    "Failed to create final backup for %s before deletion",
+                    self.subdomain,
+                )
+                self._append_log(
+                    "WARNING: Final backup creation failed. "
+                    "Proceeding with deletion without a retained backup."
+                )
+        else:
             self._append_log(
-                "Final backup uploaded to cancelled folder: %s" % object_key
-            )
-        except Exception:
-            _logger.exception(
-                "Failed to create final backup for %s before deletion",
-                self.subdomain,
-            )
-            self._append_log(
-                "WARNING: Final backup creation failed. "
-                "Proceeding with deletion without a retained backup."
+                "Skipping backup — instance was not fully deployed."
             )
 
-        # 2. Tear down infrastructure
+        # 2. Tear down infrastructure (tolerant of partial state)
         with server._get_ssh_connection() as ssh:
+            # Stop container if it exists
             down_cmd = (
                 'cd %s && docker compose down -v --remove-orphans 2>&1'
                 % shlex.quote(instance_path)
             )
             exit_code, stdout, stderr = ssh.execute(down_cmd)
             if exit_code != 0:
-                _logger.warning(
-                    "docker compose down failed for %s: %s",
-                    self.subdomain, stderr,
+                self._append_log(
+                    "docker compose down: %s (may not exist yet)"
+                    % (stderr.strip() or stdout.strip())
                 )
 
+            # Remove instance directory if it exists
             exit_code, stdout, stderr = ssh.execute(
                 'sudo rm -rf %s' % shlex.quote(instance_path),
             )
             if exit_code != 0:
-                raise UserError(
-                    _("Failed to remove instance directory '%s':\n%s")
-                    % (instance_path, stderr)
+                self._append_log(
+                    "WARNING: Failed to remove directory: %s" % stderr
+                )
+                _logger.warning(
+                    "Failed to remove instance dir %s: %s",
+                    instance_path, stderr,
                 )
 
-            # Remove Nginx config and SSL certificate
-            proxy_server = self.domain_id.proxy_server_id
-            if proxy_server and proxy_server != self.docker_server_id:
-                with proxy_server._get_ssh_connection() as proxy_ssh:
-                    self._remove_nginx(proxy_ssh)
-            else:
-                self._remove_nginx(ssh)
+            # Remove Nginx config and SSL certificate (if configured)
+            try:
+                proxy_server = self.domain_id.proxy_server_id
+                if proxy_server and proxy_server != self.docker_server_id:
+                    with proxy_server._get_ssh_connection() as proxy_ssh:
+                        self._remove_nginx(proxy_ssh)
+                else:
+                    self._remove_nginx(ssh)
+            except Exception:
+                self._append_log(
+                    "WARNING: Nginx cleanup failed (may not have been configured)."
+                )
 
-        self._drop_postgresql()
+        # Drop database and role (safe if they don't exist)
+        try:
+            self._drop_postgresql()
+        except Exception:
+            self._append_log(
+                "WARNING: PostgreSQL cleanup failed (may not have been provisioned)."
+            )
 
         # 3. Delete ALL client backups from cloud storage (regular folder).
         #    The final backup is already in cancelled_backups/ so it
@@ -2438,7 +2566,10 @@ class SaasInstance(models.Model):
 
         For non-deploy failures: revert to the previous state.
         """
-        self._append_log("OPERATION FAILED: %s" % str(exception))
+        error_msg = str(exception)
+        self._append_log("OPERATION FAILED: %s" % error_msg)
+        self.last_error = error_msg
+        self.last_error_date = fields.Datetime.now()
         self.pre_provisioning_state = False
 
         if prev_state == 'failed':

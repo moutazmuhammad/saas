@@ -156,11 +156,8 @@ sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" /etc/pos
 # Allow Docker network ranges to connect with password authentication
 sudo tee -a /etc/postgresql/16/main/pg_hba.conf << 'EOF'
 
-# Docker container networks
-host    all    all    172.17.0.0/16    md5
-host    all    all    172.18.0.0/16    md5
-host    all    all    172.19.0.0/16    md5
-host    all    all    172.20.0.0/16    md5
+# Docker container networks (172.16.0.0/12 covers all Docker bridge subnets)
+host    all    all    172.16.0.0/12    md5
 EOF
 ```
 

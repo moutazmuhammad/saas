@@ -26,6 +26,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 120s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - {{ network_name | default("net") }}
 {%- if docker_cpu %}

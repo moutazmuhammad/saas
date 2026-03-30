@@ -832,9 +832,12 @@ class SaasInstanceRepo(models.Model):
                             % (stdout[-500:], stderr[-500:])
                         )
 
-                    # Set permissions
+                    # Set permissions for container's odoo user
+                    container_uid = instance._get_container_uid(ssh)
                     ssh.execute(
-                        'chmod -R 755 %s' % shlex.quote(repo_path)
+                        'sudo chown -R %s:%s %s && chmod -R 775 %s'
+                        % (container_uid, container_uid,
+                           shlex.quote(repo_path), shlex.quote(repo_path))
                     )
 
                     instance._append_log("Repository cloned successfully.")
