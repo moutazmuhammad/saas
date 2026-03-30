@@ -383,9 +383,19 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        # Find the latest unpaid invoice with amount > 0
+        # Find the unpaid invoice — check restoration invoice first,
+        # then the regular sale order invoices.
         invoice = None
-        if instance_sudo.sale_order_id and instance_sudo.sale_order_id.invoice_ids:
+
+        # Restoration invoice takes priority
+        if (instance_sudo.restoration_invoice_id
+                and instance_sudo.restoration_invoice_id.state == 'posted'
+                and instance_sudo.restoration_invoice_id.payment_state not in ('paid', 'in_payment')
+                and instance_sudo.restoration_invoice_id.amount_residual > 0):
+            invoice = instance_sudo.restoration_invoice_id
+
+        # Regular sale order invoices
+        if not invoice and instance_sudo.sale_order_id and instance_sudo.sale_order_id.invoice_ids:
             for inv in instance_sudo.sale_order_id.invoice_ids.sorted('create_date', reverse=True):
                 if (inv.state == 'posted'
                         and inv.payment_state not in ('paid', 'in_payment')

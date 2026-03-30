@@ -1113,7 +1113,7 @@
                                         <t t-esc="instance.restoration_invoice_id.amount_total"
                                            t-options="{'widget': 'monetary', 'display_currency': instance.restoration_invoice_id.currency_id}"/>
                                     </p>
-                                    <a t-attf-href="/my/invoices/#{instance.restoration_invoice_id.id}?access_token=#{instance.restoration_invoice_id.sudo()._portal_ensure_token()}"
+                                    <a t-attf-href="/my/instances/#{instance.id}/checkout"
                                        class="btn btn-sm btn-primary">
                                         <i class="fas fa-credit-card me-1"></i>Pay Now
                                     </a>
