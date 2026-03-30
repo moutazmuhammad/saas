@@ -827,7 +827,7 @@
                                                                     <t t-esc="inv_line_name.split('(credit')[0].strip() if has_credit else inv_line_name"/>
                                                                 </div>
                                                                 <t t-if="has_credit">
-                                                                    <div class="small mt-1" style="color:#10B981;">
+                                                                    <div class="small mt-1" style="color:var(--success);">
                                                                         <i class="fas fa-receipt me-1"></i>
                                                                         Includes credit for unused days on previous plan
                                                                     </div>
@@ -1081,7 +1081,7 @@
                                             </span>
                                         </div>
                                         <t t-if="repo.sudo().github_token">
-                                            <div class="small mb-3" style="color:#10B981;">
+                                            <div class="small mb-3" style="color:var(--success);">
                                                 <i class="fas fa-check me-1"></i>Auto-update enabled
                                             </div>
                                         </t>
@@ -1388,7 +1388,7 @@
                                                     <span class="total-amount" id="upgrade-summary-yearly-total">$0.00</span>
                                                 </div>
                                                 <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
-                                                    <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
+                                                    <div style="font-size:0.85rem;font-weight:600;color:var(--success);">
                                                         <i class="fas fa-piggy-bank me-1"></i>
                                                         You save <span id="upgrade-summary-yearly-savings">$0</span> per year
                                                     </div>
@@ -1480,14 +1480,14 @@
                                             <span style="background:#10B981;color:white;font-size:0.7rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:20px;margin-right:0.5rem;">
                                                 <i class="fas fa-tag me-1"></i>SAVE <t t-esc="'%.0f' % target_plan.yearly_discount_pct"/>%
                                             </span>
-                                            <span style="font-size:0.9rem;font-weight:600;color:#10B981;">Annual billing discount applied!</span>
+                                            <span style="font-size:0.9rem;font-weight:600;color:var(--success);">Annual billing discount applied!</span>
                                         </div>
                                         <div style="font-size:0.85rem;color:var(--text-secondary,#A1A1AA);">
                                             Regular price: <span style="text-decoration:line-through;"><t t-esc="'${:,.0f}'.format(target_plan.price * 12)"/>/yr</span>
                                             <i class="fas fa-arrow-right mx-2" style="font-size:0.7rem;"></i>
                                             Your price: <strong><t t-esc="'${:,.2f}'.format(target_plan.yearly_price)"/>/yr</strong>
                                         </div>
-                                        <div style="font-size:0.9rem;font-weight:600;color:#10B981;margin-top:6px;">
+                                        <div style="font-size:0.9rem;font-weight:600;color:var(--success);margin-top:6px;">
                                             <i class="fas fa-piggy-bank me-1"></i>
                                             You're saving <t t-esc="'${:,.0f}'.format(target_plan.price * 12 - target_plan.yearly_price)"/> per year
                                         </div>
@@ -1512,7 +1512,7 @@
                                                 <t t-if="checkout_is_yearly">
                                                     Yearly
                                                     <t t-if="target_plan.yearly_discount_pct > 0">
-                                                        <span style="background:rgba(16,185,129,0.15);color:#10B981;font-size:0.7rem;font-weight:600;padding:0.1rem 0.4rem;border-radius:12px;margin-left:4px;">
+                                                        <span style="background:rgba(16,185,129,0.15);color:var(--success);font-size:0.7rem;font-weight:600;padding:0.1rem 0.4rem;border-radius:12px;margin-left:4px;">
                                                             -<t t-esc="'%.0f' % target_plan.yearly_discount_pct"/>%
                                                         </span>
                                                     </t>
@@ -1538,7 +1538,7 @@
                                                     <t t-esc="'${:,.2f}'.format(target_plan.price * 12)"/>
                                                 </td>
                                             </tr>
-                                            <tr style="color:#10B981;">
+                                            <tr style="color:var(--success);">
                                                 <td><i class="fas fa-tag me-1"></i>Annual discount (<t t-esc="'%.0f' % target_plan.yearly_discount_pct"/>%)</td>
                                                 <td class="text-end">
                                                     -<t t-esc="'${:,.2f}'.format(target_plan.price * 12 - target_plan.yearly_price)"/>
@@ -1556,7 +1556,7 @@
                                                     <t t-esc="'${:,.2f}'.format(target_full_price)"/>
                                                 </td>
                                             </tr>
-                                            <tr style="color:#10B981;">
+                                            <tr style="color:var(--success);">
                                                 <td>
                                                     <i class="fas fa-receipt me-1"></i>
                                                     Credit for <t t-esc="proration_remaining_days"/> unused days
@@ -1727,7 +1727,7 @@
                                             <div class="slider-ticks" id="upgrade-workers-ticks"></div>
                                         </div>
                                         <!-- Worker reduction notice -->
-                                        <div class="mt-2 p-2" id="upgrade-worker-reduction-notice" style="display:none;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:8px;font-size:0.85rem;color:#F59E0B;">
+                                        <div class="mt-2 p-2" id="upgrade-worker-reduction-notice" style="display:none;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);border-radius:8px;font-size:0.85rem;color:var(--warning);">
                                             <i class="fas fa-clock me-1"></i>
                                             Worker reduction will take effect at your next billing cycle
                                             <t t-if="instance.next_invoice_date">
@@ -1804,7 +1804,7 @@
                                                     <span class="total-amount" id="upgrade-summary-yearly-total">$0.00</span>
                                                 </div>
                                                 <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
-                                                    <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
+                                                    <div style="font-size:0.85rem;font-weight:600;color:var(--success);">
                                                         <i class="fas fa-piggy-bank me-1"></i>
                                                         You save <span id="upgrade-summary-yearly-savings">$0</span> per year
                                                     </div>

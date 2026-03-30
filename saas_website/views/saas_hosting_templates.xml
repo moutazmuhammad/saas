@@ -31,21 +31,21 @@
                         </div>
                         <div class="col-md-3 col-6">
                             <div class="info-card text-center p-4">
-                                <i class="fas fa-sync-alt mb-3" style="font-size:2rem;color:#10B981;"></i>
+                                <i class="fas fa-sync-alt mb-3" style="font-size:2rem;color:var(--success);"></i>
                                 <h6>Auto-Deploy</h6>
                                 <p class="small text-muted mb-0">Push your code, we update instantly</p>
                             </div>
                         </div>
                         <div class="col-md-3 col-6">
                             <div class="info-card text-center p-4">
-                                <i class="fas fa-chart-line mb-3" style="font-size:2rem;color:#F59E0B;"></i>
+                                <i class="fas fa-chart-line mb-3" style="font-size:2rem;color:var(--warning);"></i>
                                 <h6>Monitoring</h6>
                                 <p class="small text-muted mb-0">Live logs and resource usage</p>
                             </div>
                         </div>
                         <div class="col-md-3 col-6">
                             <div class="info-card text-center p-4">
-                                <i class="fas fa-shield-alt mb-3" style="font-size:2rem;color:#3B82F6;"></i>
+                                <i class="fas fa-shield-alt mb-3" style="font-size:2rem;color:var(--info);"></i>
                                 <h6>Backups</h6>
                                 <p class="small text-muted mb-0">Automatic daily backups</p>
                             </div>
@@ -186,7 +186,7 @@
                                                     <span class="total-amount" id="hosting-summary-yearly-total">$0.00</span>
                                                 </div>
                                                 <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
-                                                    <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
+                                                    <div style="font-size:0.85rem;font-weight:600;color:var(--success);">
                                                         <i class="fas fa-piggy-bank me-1"></i>
                                                         You save <span id="hosting-summary-yearly-savings">$0</span> per year
                                                     </div>
@@ -372,7 +372,7 @@
                                             </div>
                                         </div>
                                         <div class="p-3 text-center" style="background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.15);border-radius:10px;">
-                                            <div style="color:#10B981;font-weight:600;font-size:1.5rem;">FREE</div>
+                                            <div style="color:var(--success);font-weight:600;font-size:1.5rem;">FREE</div>
                                             <div class="small" style="color:var(--co-text-muted,#71717A);">
                                                 for <t t-esc="config.get('trial_days', 14)"/> days
                                             </div>

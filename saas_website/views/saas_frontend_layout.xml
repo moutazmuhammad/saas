@@ -17,6 +17,8 @@
             </script>
             <link rel="icon" type="image/svg+xml" href="/saas_website/static/src/img/sudud-icon.svg"/>
             <link rel="shortcut icon" href="/saas_website/static/src/img/sudud-icon.svg"/>
+            <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" as="style"/>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"/>
         </xpath>
     </template>
 
@@ -341,26 +343,22 @@
                                 <a href="/services" class="btn btn-primary btn-lg px-4">
                                     <i class="fas fa-cubes me-2"></i>Ready-Made Services
                                 </a>
-                                <a href="/hosting" class="btn btn-outline-secondary btn-lg px-4">
+                                <a href="/hosting" class="btn btn-success btn-lg px-4">
                                     <i class="fas fa-server me-2"></i>Host Your Project
                                 </a>
                             </div>
                             <div class="d-flex align-items-center gap-4 flex-wrap">
-                                <t t-if="trial_days">
-                                    <div class="d-flex align-items-center">
-                                        <i class="fas fa-check-circle text-success me-2"></i>
-                                        <span class="small" style="color:var(--co-text-muted);">
-                                            <t t-esc="trial_days"/>-Day Free Trial
-                                        </span>
-                                    </div>
-                                </t>
                                 <div class="d-flex align-items-center">
                                     <i class="fas fa-check-circle text-success me-2"></i>
-                                    <span class="small" style="color:var(--co-text-muted);">No Credit Card</span>
+                                    <span class="small" style="color:var(--co-text-muted);">Deploy in Minutes</span>
                                 </div>
                                 <div class="d-flex align-items-center">
                                     <i class="fas fa-check-circle text-success me-2"></i>
-                                    <span class="small" style="color:var(--co-text-muted);">Cancel Anytime</span>
+                                    <span class="small" style="color:var(--co-text-muted);">99.9% Uptime</span>
+                                </div>
+                                <div class="d-flex align-items-center">
+                                    <i class="fas fa-check-circle text-success me-2"></i>
+                                    <span class="small" style="color:var(--co-text-muted);">Scale Anytime</span>
                                 </div>
                             </div>
                         </div>
@@ -406,8 +404,8 @@
             <section class="py-6" id="offerings">
                 <div class="container">
                     <div class="text-center mb-5">
-                        <h2 class="display-5 fw-bold">Two Ways to Get Started</h2>
-                        <p class="lead" style="color:var(--co-text-muted);">Choose the option that fits your needs</p>
+                        <h2 class="display-5 fw-bold">Launch Your Business Today</h2>
+                        <p class="lead" style="color:var(--co-text-muted);">Choose a ready-made solution or deploy your own project</p>
                     </div>
                     <div class="row g-4">
                         <!-- Ready-Made Services -->
@@ -442,7 +440,7 @@
                         <div class="col-lg-6">
                             <div class="info-card h-100" style="border-left:3px solid #10B981;padding:2rem;">
                                 <div class="d-flex align-items-center gap-3 mb-3">
-                                    <div style="width:56px;height:56px;background:rgba(16,185,129,0.1);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:#10B981;flex-shrink:0;">
+                                    <div style="width:56px;height:56px;background:rgba(16,185,129,0.1);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:var(--success);flex-shrink:0;">
                                         <i class="fas fa-server"></i>
                                     </div>
                                     <div>
@@ -455,10 +453,10 @@
                                     Connect your repository, choose your resources, and we handle the rest.
                                 </p>
                                 <ul class="list-unstyled mb-4" style="color:var(--co-text-secondary);">
-                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:#10B981;"></i>Connect your own Git repository</li>
-                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:#10B981;"></i>Auto-deploy when you push code</li>
-                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:#10B981;"></i>Live monitoring and logs</li>
-                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:#10B981;"></i>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:var(--success);"></i>Connect your own Git repository</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:var(--success);"></i>Auto-deploy when you push code</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:var(--success);"></i>Live monitoring and logs</li>
+                                    <li class="mb-2"><i class="fas fa-check me-2" style="color:var(--success);"></i>
                                         Odoo <t t-if="hosting_versions">
                                             <t t-esc="hosting_versions[-1:].name"/> — <t t-esc="hosting_versions[:1].name"/>
                                         </t> supported
@@ -632,21 +630,31 @@
                     <div class="cta-card text-center">
                         <h2 class="display-6 fw-bold mb-3">Ready to Get Started?</h2>
                         <p class="mb-4" style="color:var(--co-text-muted);max-width:500px;margin:0 auto;">
-                            <t t-if="trial_days">
-                                Start with a <strong><t t-esc="trial_days"/>-day free trial</strong>. No credit card required.
-                            </t>
-                            <t t-else="">
-                                Choose a service or set up your hosting in minutes.
-                            </t>
+                            Join businesses already running on our cloud. Get started in minutes.
                         </p>
-                        <div class="d-flex flex-wrap gap-3 justify-content-center">
+                        <div class="d-flex flex-wrap gap-3 justify-content-center mb-3">
                             <a href="/services" class="btn btn-primary btn-lg px-4">
-                                <i class="fas fa-cubes me-2"></i>Browse Services
+                                <i class="fas fa-cubes me-2"></i>Explore Services
                             </a>
-                            <a href="/hosting" class="btn btn-outline-secondary btn-lg px-4">
-                                <i class="fas fa-server me-2"></i>Host Your Project
+                            <a href="/hosting" class="btn btn-success btn-lg px-4">
+                                <i class="fas fa-server me-2"></i>Setup Hosting
                             </a>
                         </div>
+                        <t t-if="trial_days">
+                            <div class="mt-4 d-inline-block px-4 py-3" style="background:var(--success-light);border:1px solid rgba(16,185,129,0.3);border-radius:var(--radius-lg);">
+                                <div class="d-flex align-items-center gap-3">
+                                    <i class="fas fa-gift" style="font-size:1.5rem;color:var(--success);"></i>
+                                    <div>
+                                        <div class="fw-bold" style="color:var(--success);font-size:1.1rem;">
+                                            <t t-esc="trial_days"/>-Day Free Trial
+                                        </div>
+                                        <div class="small" style="color:var(--co-text-secondary,#A1A1AA);">
+                                            No credit card required. Cancel anytime.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </t>
                     </div>
                 </div>
             </section>

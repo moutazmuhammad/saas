@@ -320,14 +320,14 @@
                                                 </div>
                                                 <!-- Yearly savings highlight -->
                                                 <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
-                                                    <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
+                                                    <div style="font-size:0.85rem;font-weight:600;color:var(--success);">
                                                         <i class="fas fa-piggy-bank me-1"></i>
                                                         You save <span id="summary-yearly-savings">$168.00</span> per year (<span id="summary-discount-pct"><t t-esc="custom_config.get('yearly_discount_pct', 20)"/></span>% off)
                                                     </div>
                                                     <div style="font-size:0.8rem;color:var(--text-muted);margin-top:2px;">
                                                         <span style="text-decoration:line-through;" id="summary-yearly-original">$840.00</span>
                                                         <span class="ms-1">→</span>
-                                                        <strong id="summary-yearly-discounted" style="color:#10B981;">$672.00</strong>/yr
+                                                        <strong id="summary-yearly-discounted" style="color:var(--success);">$672.00</strong>/yr
                                                     </div>
                                                 </div>
                                             </div>
@@ -524,7 +524,7 @@
                                         </div>
                                         <t t-if="plan.yearly_discount_pct > 0">
                                             <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
-                                                <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
+                                                <div style="font-size:0.85rem;font-weight:600;color:var(--success);">
                                                     <i class="fas fa-piggy-bank me-1"></i>
                                                     You save <t t-esc="'${:,.0f}'.format(plan.price * 12 - plan.yearly_price)"/> per year
                                                     (<t t-esc="'%.0f' % plan.yearly_discount_pct"/>% off)
@@ -544,7 +544,7 @@
                                                     <span style="background:#10B981;color:white;font-size:0.7rem;font-weight:700;padding:0.2rem 0.6rem;border-radius:20px;margin-right:0.5rem;">
                                                         SAVE <t t-esc="'%.0f' % plan.yearly_discount_pct"/>%
                                                     </span>
-                                                    <span style="font-size:0.85rem;font-weight:600;color:#10B981;">Switch to yearly billing</span>
+                                                    <span style="font-size:0.85rem;font-weight:600;color:var(--success);">Switch to yearly billing</span>
                                                 </div>
                                                 <div style="font-size:0.8rem;color:var(--text-secondary,#A1A1AA);">
                                                     Pay <strong><t t-esc="'${:,.2f}'.format(plan.yearly_price)"/>/yr</strong>
@@ -700,7 +700,7 @@
                                     </div>
                                     <t t-if="yearly_savings > 0">
                                         <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
-                                            <div style="font-size:0.85rem;font-weight:600;color:#10B981;">
+                                            <div style="font-size:0.85rem;font-weight:600;color:var(--success);">
                                                 <i class="fas fa-piggy-bank me-1"></i>
                                                 You save <t t-esc="'${:,.0f}'.format(yearly_savings)"/> per year (<t t-esc="config.get('yearly_discount_pct', 20)"/>% off)
                                             </div>
