@@ -4220,6 +4220,7 @@ class SaasInstance(models.Model):
             'provisioning_log': self.provisioning_log or '',
             'pending_plan_id': self.pending_plan_id.id if self.pending_plan_id else False,
             'backup_running': bool(self.backup_ids.filtered(lambda b: b.state == 'running')),
+            'restoration_pending': bool(self.restoration_invoice_id),
         }
 
     # ========== Portal Self-Service Actions ==========

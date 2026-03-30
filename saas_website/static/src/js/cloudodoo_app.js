@@ -520,8 +520,10 @@ function initStatusPolling() {
     var upgradeEl = document.getElementById('upgrade-poll');
     // Poll for backup completion
     var backupEl = document.getElementById('backup-poll');
+    // Poll for restore completion
+    var restoreEl = document.getElementById('restore-progress-poll');
 
-    var el = provEl || payEl || upgradeEl || backupEl;
+    var el = provEl || payEl || upgradeEl || backupEl || restoreEl;
     if (!el) return;
 
     var instanceId = el.dataset.instanceId;
@@ -564,6 +566,11 @@ function initStatusPolling() {
                 } else if (backupEl) {
                     // Polling for backup completion — reload when no backup is running
                     if (!result.backup_running) {
+                        shouldReload = true;
+                    }
+                } else if (restoreEl) {
+                    // Polling for restore completion — reload when restoration_invoice_id is cleared
+                    if (!result.restoration_pending) {
                         shouldReload = true;
                     }
                 }

@@ -1100,7 +1100,8 @@
 
                             <!-- Restoration in progress (paid, restore running) -->
                             <t t-if="instance.restoration_invoice_id and instance.restoration_invoice_id.payment_state in ('paid', 'in_payment')">
-                                <div class="alert-banner alert-success" id="provisioning-poll"
+                                <div class="alert-banner alert-success"
+                                     id="restore-progress-poll"
                                      t-att-data-instance-id="instance.id">
                                     <i class="fas fa-spinner fa-spin"></i>
                                     <div>
