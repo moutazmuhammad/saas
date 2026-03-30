@@ -585,8 +585,22 @@
                                 </div>
                             </t>
 
-                            <!-- Pending Upgrade (awaiting payment) — polls for payment completion -->
+                            <!-- Pending Upgrade — show processing if just paid, otherwise show pay/cancel options -->
                             <t t-if="instance.pending_plan_id">
+                                <t t-if="request.params.get('payment') == 'success'">
+                                    <div class="alert-banner alert-success" id="upgrade-poll"
+                                         t-att-data-instance-id="instance.id">
+                                        <i class="fas fa-spinner fa-spin"></i>
+                                        <div>
+                                            <strong>Payment Submitted — Applying Upgrade</strong>
+                                            <p class="mb-0">
+                                                Your upgrade to <strong t-esc="instance.pending_plan_id.name"/> is being applied.
+                                                This page will refresh automatically.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </t>
+                                <t t-else="">
                                 <div class="alert-banner alert-info" id="upgrade-poll"
                                      t-att-data-instance-id="instance.id">
                                     <i class="fas fa-arrow-up"></i>
@@ -629,6 +643,7 @@
                                         </div>
                                     </div>
                                 </div>
+                                </t>
                             </t>
 
                             <!-- Scheduled Change (downgrade or billing period switch) -->
@@ -1646,29 +1661,48 @@
 
                 <!-- Override payment redirect: go to instance page instead of /payment/status -->
                 <script>
-                    document.addEventListener('DOMContentLoaded', function () {
+                    (function () {
                         var instanceUrl = '/my/instances/<t t-esc="instance.id"/>?payment=success';
-                        // Intercept navigation to /payment/status and redirect to instance page
-                        var origPushState = history.pushState;
+
+                        // Monitor all navigation attempts and redirect /payment/status to instance page
+                        var observer = new MutationObserver(function () {
+                            if (window.location.pathname === '/payment/status') {
+                                window.location.replace(instanceUrl);
+                            }
+                        });
+                        observer.observe(document, { childList: true, subtree: true });
+
+                        // Intercept pushState
+                        var origPush = history.pushState;
                         history.pushState = function () {
-                            if (arguments[2] &amp;&amp; arguments[2].indexOf('/payment/status') !== -1) {
-                                window.location.href = instanceUrl;
+                            if (arguments[2] &amp;&amp; String(arguments[2]).indexOf('/payment/status') !== -1) {
+                                window.location.replace(instanceUrl);
                                 return;
                             }
-                            return origPushState.apply(this, arguments);
+                            return origPush.apply(this, arguments);
                         };
-                        // Also intercept direct location changes
-                        var origAssign = window.location.assign;
-                        if (origAssign) {
-                            window.location.assign = function (url) {
-                                if (url &amp;&amp; url.indexOf('/payment/status') !== -1) {
-                                    origAssign.call(window.location, instanceUrl);
-                                    return;
-                                }
-                                origAssign.call(window.location, url);
-                            };
-                        }
-                    });
+
+                        // Intercept replaceState
+                        var origReplace = history.replaceState;
+                        history.replaceState = function () {
+                            if (arguments[2] &amp;&amp; String(arguments[2]).indexOf('/payment/status') !== -1) {
+                                window.location.replace(instanceUrl);
+                                return;
+                            }
+                            return origReplace.apply(this, arguments);
+                        };
+
+                        // Periodic check as fallback
+                        var checkInterval = setInterval(function () {
+                            if (window.location.pathname === '/payment/status') {
+                                clearInterval(checkInterval);
+                                window.location.replace(instanceUrl);
+                            }
+                        }, 500);
+
+                        // Stop checking after 60 seconds
+                        setTimeout(function () { clearInterval(checkInterval); }, 60000);
+                    })();
                 </script>
             </section>
         </t>
