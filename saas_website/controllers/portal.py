@@ -973,6 +973,42 @@ class SaasPortal(CustomerPortal):
 
         return request.redirect('/my/instances/%s' % instance_id)
 
+    @http.route(
+        '/my/instances/<int:instance_id>/remove-repo',
+        type='http', auth='user', website=True, methods=['POST'],
+    )
+    def portal_remove_repo(self, instance_id, access_token=None, **kw):
+        """Remove the custom repository and restart the instance."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        if not instance_sudo.is_hosting or instance_sudo.state != 'running':
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        existing_repo = instance_sudo.repo_ids[:1]
+        if existing_repo:
+            # Unregister webhook before removing
+            if existing_repo.webhook_provider_id:
+                try:
+                    existing_repo._unregister_webhook_from_provider()
+                except Exception:
+                    pass
+            existing_repo.unlink()
+            try:
+                instance_sudo.action_redeploy()
+                instance_sudo._append_log("Repository removed by client.")
+            except Exception:
+                _logger.exception(
+                    "Failed to redeploy instance %s after repo removal",
+                    instance_sudo.name,
+                )
+
+        return request.redirect('/my/instances/%s' % instance_id)
+
     # ==================== List Installed Packages (Hosting) ====================
 
     @http.route(

@@ -895,21 +895,27 @@ class SaasInstance(models.Model):
         return 'odoo_%s' % self.subdomain
 
     def _get_db_host(self):
-        """Return the hostname/IP the Odoo container should use to reach PostgreSQL.
+        """Return the hostname/IP for odoo.conf (used inside the container).
 
-        When Docker and DB are on the same server, the container cannot
-        reach the host via 127.0.0.1 or the server's own private/public
-        IP (DigitalOcean and similar providers block this).  Instead we
-        use ``host.docker.internal`` which Docker resolves to the host
-        gateway regardless of which bridge network the container is on.
-
-        When they are on different servers, we use the DB server's
-        private IP (preferred) or public IP.
+        Same-server: ``host.docker.internal`` (resolved by Docker).
+        Different server: DB server's private or public IP.
         """
         self.ensure_one()
         psql_server = self.db_server_id
         if psql_server == self.docker_server_id:
             return 'host.docker.internal'
+        return psql_server.private_ip_v4 or psql_server.ip_v4
+
+    def _get_db_host_for_ssh(self):
+        """Return the DB hostname/IP for commands run on the host via SSH.
+
+        Same-server: ``localhost`` (psql runs on the same machine).
+        Different server: DB server's private or public IP.
+        """
+        self.ensure_one()
+        psql_server = self.db_server_id
+        if psql_server == self.docker_server_id:
+            return 'localhost'
         return psql_server.private_ip_v4 or psql_server.ip_v4
 
     def _get_container_uid(self, ssh):
@@ -1788,7 +1794,7 @@ class SaasInstance(models.Model):
         # 2. Extract the zip
         self._append_log("Extracting snapshot...")
         ssh.execute('mkdir -p %s' % shlex.quote(extract_dir))
-        extract_cmd = 'unzip -o %s -d %s 2>&1' % (
+        extract_cmd = 'python3 -m zipfile -e %s %s 2>&1' % (
             shlex.quote(tmp_zip), shlex.quote(extract_dir),
         )
         exit_code, stdout, stderr = ssh.execute(extract_cmd, timeout=300)
@@ -1803,7 +1809,7 @@ class SaasInstance(models.Model):
         self._append_log("Restoring database from dump.sql into %s..." % db_name)
 
         psql_server = self.db_server_id
-        db_host = self._get_db_host()
+        db_host = self._get_db_host_for_ssh()
         db_port = psql_server.psql_port or 5432
 
         # Use psql on the Docker server to restore — connect to the DB server
@@ -2866,7 +2872,7 @@ class SaasInstance(models.Model):
         instance_path = self._get_instance_path()
         db_name = self.subdomain
         psql_server = self.db_server_id
-        db_host = self._get_db_host()
+        db_host = self._get_db_host_for_ssh()
         db_port = psql_server.psql_port or 5432
 
         with server._get_ssh_connection() as ssh:
@@ -2895,7 +2901,7 @@ class SaasInstance(models.Model):
                 shlex.quote(extract_dir), shlex.quote(extract_dir),
             ))
             exit_code, stdout, stderr = ssh.execute(
-                'unzip -o %s -d %s 2>&1' % (
+                'python3 -m zipfile -e %s %s 2>&1' % (
                     shlex.quote(tmp_zip), shlex.quote(extract_dir),
                 ),
                 timeout=300,

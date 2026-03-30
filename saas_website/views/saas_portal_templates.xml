@@ -1160,6 +1160,19 @@
                                             </button>
                                         </t>
                                     </form>
+                                    <t t-if="repo and instance.state == 'running'">
+                                        <form t-attf-action="/my/instances/#{instance.id}/remove-repo"
+                                              method="post" class="mt-2">
+                                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                            <button type="submit" class="btn btn-sm btn-outline-danger w-100"
+                                                    data-confirm="Remove the repository from your instance? The instance will restart without custom modules."
+                                                    data-confirm-variant="danger"
+                                                    data-confirm-yes="Yes, remove"
+                                                    data-confirm-no="Cancel">
+                                                <i class="fas fa-trash me-1"></i>Remove Repository
+                                            </button>
+                                        </form>
+                                    </t>
                                 </div>
                             </t>
 
