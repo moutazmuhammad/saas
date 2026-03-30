@@ -2632,43 +2632,46 @@ h1, h2, h3, h4, h5, h6 {
     color: var(--text-primary);
 }
 
+/* Open Instance — accent/blue tint */
 .action-btn.action-primary {
-    background: #DC2626;
-    border-color: #DC2626;
-    color: #fff;
+    background: rgba(13, 179, 208, 0.12);
+    border-color: rgba(13, 179, 208, 0.3);
+    color: var(--accent);
     font-weight: 600;
 }
 
 .action-btn.action-primary:hover {
-    background: #B91C1C;
-    border-color: #B91C1C;
-    color: #fff;
+    background: rgba(13, 179, 208, 0.22);
+    border-color: var(--accent);
+    color: #5CE0F5;
 }
 
+/* Upgrade / Change Plan — primary/indigo tint */
 .action-btn.action-upgrade {
-    background: #059669;
-    border-color: #059669;
-    color: #fff;
+    background: rgba(32, 60, 134, 0.15);
+    border-color: rgba(32, 60, 134, 0.35);
+    color: #6B8ADB;
     font-weight: 600;
 }
 
 .action-btn.action-upgrade:hover {
-    background: #047857;
-    border-color: #047857;
-    color: #fff;
+    background: rgba(32, 60, 134, 0.28);
+    border-color: #6B8ADB;
+    color: #8DA8EF;
 }
 
+/* View Logs — muted/neutral tint */
 .action-btn.action-logs {
-    background: #D97706;
-    border-color: #D97706;
-    color: #fff;
-    font-weight: 600;
+    background: rgba(161, 161, 170, 0.08);
+    border-color: rgba(161, 161, 170, 0.2);
+    color: var(--text-secondary);
+    font-weight: 500;
 }
 
 .action-btn.action-logs:hover {
-    background: #B45309;
-    border-color: #B45309;
-    color: #fff;
+    background: rgba(161, 161, 170, 0.15);
+    border-color: rgba(161, 161, 170, 0.4);
+    color: var(--text-primary);
 }
 
 .action-btn.action-danger {
@@ -2767,8 +2770,10 @@ h1, h2, h3, h4, h5, h6 {
     align-items: center;
     gap: 0.6rem;
     padding: 0.5rem 0.75rem;
+    padding-right: 4.5rem;
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
+    position: relative;
     text-decoration: none;
     font-size: 0.85rem;
     transition: all var(--transition-fast);
@@ -2818,13 +2823,19 @@ h1, h2, h3, h4, h5, h6 {
 .sidebar-folder-actions {
     position: absolute;
     right: 0.4rem;
-    top: 50%;
-    transform: translateY(-50%);
+    top: 0;
+    height: auto;
     display: none;
+    align-items: center;
     gap: 0.15rem;
+    /* Match the height of .sidebar-folder-item (padding + line-height) */
+    line-height: 1;
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
+    z-index: 1;
 }
 
-.sidebar-folder-entry:hover .sidebar-folder-actions {
+.sidebar-folder-entry:hover > .sidebar-folder-actions {
     display: flex;
 }
 
@@ -2838,7 +2849,7 @@ h1, h2, h3, h4, h5, h6 {
     }
 }
 
-.sidebar-folder-entry:hover .sidebar-folder-count {
+.sidebar-folder-entry:hover > .sidebar-folder-item .sidebar-folder-count {
     display: none;
 }
 

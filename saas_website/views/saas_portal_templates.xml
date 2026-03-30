@@ -184,7 +184,8 @@
                        t-att-data-folder-name="f.name">
                         <i class="fas fa-pen"></i>
                     </a>
-                    <a href="#" class="sidebar-folder-action text-danger folder-delete-btn"
+                    <a t-if="not f.child_ids" href="#"
+                       class="sidebar-folder-action text-danger folder-delete-btn"
                        title="Delete"
                        t-att-data-folder-id="f.id"
                        t-att-data-folder-name="f.name">

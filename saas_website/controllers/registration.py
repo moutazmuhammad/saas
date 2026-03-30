@@ -120,6 +120,19 @@ class SaasRegistration(http.Controller):
 
     def _build_redirect_url(self, post):
         """Build the configure page URL to redirect to after registration."""
+        # Hosting flow
+        if post.get('hosting') == '1':
+            params = []
+            for key in ('workers', 'storage', 'billing', 'odoo_version_id'):
+                val = post.get(key)
+                if val:
+                    params.append('%s=%s' % (key, val))
+            url = '/hosting/configure'
+            if params:
+                url += '?' + '&'.join(params)
+            return url
+
+        # Service flow
         product_id = int(post.get('product_id') or 0)
         plan_id = int(post.get('plan_id') or 0)
         is_trial = post.get('is_trial') == '1'

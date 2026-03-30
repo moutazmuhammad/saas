@@ -75,6 +75,11 @@
                                             <input type="hidden" name="product_id" t-att-value="form_values.get('product_id', '')"/>
                                             <input type="hidden" name="plan_id" t-att-value="form_values.get('plan_id', '')"/>
                                             <input type="hidden" name="is_trial" t-att-value="form_values.get('is_trial', '')"/>
+                                            <input type="hidden" name="hosting" t-att-value="form_values.get('hosting', '')"/>
+                                            <input type="hidden" name="workers" t-att-value="form_values.get('workers', '')"/>
+                                            <input type="hidden" name="storage" t-att-value="form_values.get('storage', '')"/>
+                                            <input type="hidden" name="billing" t-att-value="form_values.get('billing', '')"/>
+                                            <input type="hidden" name="odoo_version_id" t-att-value="form_values.get('odoo_version_id', '')"/>
                                             <!-- Hidden field for combined OTP -->
                                             <input type="hidden" name="phone_otp" id="phone_otp_hidden" value=""/>
 
@@ -113,6 +118,11 @@
                                             <input type="hidden" name="product_id" t-att-value="form_values.get('product_id', '')"/>
                                             <input type="hidden" name="plan_id" t-att-value="form_values.get('plan_id', '')"/>
                                             <input type="hidden" name="is_trial" t-att-value="form_values.get('is_trial', '')"/>
+                                            <input type="hidden" name="hosting" t-att-value="form_values.get('hosting', '')"/>
+                                            <input type="hidden" name="workers" t-att-value="form_values.get('workers', '')"/>
+                                            <input type="hidden" name="storage" t-att-value="form_values.get('storage', '')"/>
+                                            <input type="hidden" name="billing" t-att-value="form_values.get('billing', '')"/>
+                                            <input type="hidden" name="odoo_version_id" t-att-value="form_values.get('odoo_version_id', '')"/>
                                             <button type="submit" class="btn btn-outline-secondary w-100">
                                                 <i class="fas fa-redo me-2"></i>Resend Code
                                             </button>
@@ -150,6 +160,11 @@
                                         <input type="hidden" name="product_id" t-att-value="form_values.get('product_id', '')"/>
                                         <input type="hidden" name="plan_id" t-att-value="form_values.get('plan_id', '')"/>
                                         <input type="hidden" name="is_trial" t-att-value="form_values.get('is_trial', '')"/>
+                                        <input type="hidden" name="hosting" t-att-value="form_values.get('hosting', '')"/>
+                                        <input type="hidden" name="workers" t-att-value="form_values.get('workers', '')"/>
+                                        <input type="hidden" name="storage" t-att-value="form_values.get('storage', '')"/>
+                                        <input type="hidden" name="billing" t-att-value="form_values.get('billing', '')"/>
+                                        <input type="hidden" name="odoo_version_id" t-att-value="form_values.get('odoo_version_id', '')"/>
 
                                         <div class="row g-3">
                                             <div class="col-12">

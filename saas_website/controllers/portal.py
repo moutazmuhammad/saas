@@ -1381,13 +1381,11 @@ class SaasPortal(CustomerPortal):
         ], limit=1)
         if not folder:
             return {'error': _('Folder not found.')}
-        # Move all instances from this folder and its descendants to unfiled
-        all_ids = folder._get_all_descendant_ids()
-        all_folders = request.env['saas.instance.folder'].sudo().browse(all_ids)
-        request.env['saas.instance'].sudo().search([
-            ('folder_id', 'in', all_ids),
-        ]).write({'folder_id': False})
-        all_folders.unlink()
+        if folder.child_ids:
+            return {'error': _('Cannot delete a folder that has subfolders. Delete or move the subfolders first.')}
+        # Move instances in this folder to unfiled
+        folder.instance_ids.write({'folder_id': False})
+        folder.unlink()
         return {'success': True}
 
     @http.route(
