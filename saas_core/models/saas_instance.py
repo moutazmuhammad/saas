@@ -3063,8 +3063,31 @@ class SaasInstance(models.Model):
         except Exception:
             pass
 
-        # Clear the restoration invoice reference
-        self.restoration_invoice_id = False
+        # Delete the retained backup from cloud storage
+        try:
+            retained_path = self.retained_backup_path
+            if retained_path:
+                Backup = self.env['saas.instance.backup']
+                temp = Backup.new({
+                    'instance_id': self.id,
+                    'bucket_path': retained_path,
+                })
+                temp._delete_from_bucket()
+                self._append_log(
+                    "Retained backup deleted from cloud: %s" % retained_path
+                )
+        except Exception:
+            _logger.exception(
+                "Failed to delete retained backup from cloud for %s",
+                self.subdomain,
+            )
+
+        # Clear restoration references and dismiss banner
+        self.write({
+            'restoration_invoice_id': False,
+            'retained_backup_path': False,
+            'restore_banner_dismissed': True,
+        })
         self._append_log("Data restoration completed successfully.")
 
 

@@ -1106,6 +1106,32 @@ class SaasPortal(CustomerPortal):
         instance_sudo.restore_banner_dismissed = True
         return {'success': True}
 
+    @http.route(
+        '/my/instances/<int:instance_id>/decline-restore',
+        type='json', auth='user', website=True,
+    )
+    def portal_decline_restore(self, instance_id, **kw):
+        """Client declines data restoration — cancel the invoice and clear."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id,
+            )
+        except (AccessError, MissingError):
+            return {'error': _('Access denied.')}
+
+        invoice = instance_sudo.restoration_invoice_id
+        if invoice and invoice.state == 'posted' and invoice.payment_state not in ('paid', 'in_payment'):
+            # Cancel the invoice
+            invoice.button_cancel()
+
+        instance_sudo.write({
+            'restoration_invoice_id': False,
+            'restore_banner_dismissed': True,
+            'retained_backup_path': False,
+        })
+        instance_sudo._append_log("Client declined data restoration.")
+        return {'success': True, 'message': _('Data restoration declined.')}
+
     # ==================== List Installed Packages (Hosting) ====================
 
     @http.route(

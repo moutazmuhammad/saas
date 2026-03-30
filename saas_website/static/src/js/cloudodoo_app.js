@@ -917,6 +917,35 @@ function initRestoreBanner() {
                 .catch(function () {});
         });
     }
+
+    // Decline restore (cancel invoice, keep fresh data)
+    var declineBtn = document.getElementById('btn-decline-restore');
+    if (declineBtn) {
+        declineBtn.addEventListener('click', function () {
+            var declineInstanceId = declineBtn.dataset.instanceId;
+            _coSetupModal(
+                'Decline data restoration? The restoration invoice will be cancelled and your old backup will be removed. You will keep the fresh instance data.',
+                'warning', 'Yes, decline restore', 'No, keep option',
+                function () {
+                    declineBtn.disabled = true;
+                    CloudOdoo.jsonRpc('/my/instances/' + declineInstanceId + '/decline-restore', {})
+                        .then(function (res) {
+                            if (res.error) {
+                                CloudOdoo.showToast(res.error, 'error');
+                                declineBtn.disabled = false;
+                            } else {
+                                CloudOdoo.showToast(res.message, 'success');
+                                window.location.reload();
+                            }
+                        })
+                        .catch(function (e) {
+                            CloudOdoo.showToast(e.message || 'Failed', 'error');
+                            declineBtn.disabled = false;
+                        });
+                }
+            );
+        });
+    }
 }
 
 function initBackupButton() {

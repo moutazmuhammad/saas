@@ -10,6 +10,12 @@ _logger = logging.getLogger(__name__)
 class AccountMove(models.Model):
     _inherit = 'account.move'
 
+    def write(self, vals):
+        result = super().write(vals)
+        if 'payment_state' in vals and vals['payment_state'] in ('paid', 'in_payment'):
+            self._saas_check_instance_payment()
+        return result
+
     def _compute_payment_state(self):
         # Capture state before recomputation
         old_states = {inv.id: inv.payment_state for inv in self}
@@ -39,13 +45,23 @@ class AccountMove(models.Model):
             return
 
         # --- Handle restoration fee payments ---
+        _logger.info(
+            "Checking restoration invoices among paid: %s",
+            paid_invoices.mapped('name'),
+        )
         restoration_instances = self.env['saas.instance'].search([
             ('restoration_invoice_id', 'in', paid_invoices.ids),
         ])
+        _logger.info(
+            "Found %d instance(s) with restoration invoice: %s",
+            len(restoration_instances),
+            restoration_instances.mapped('subdomain'),
+        )
         for instance in restoration_instances:
             _logger.info(
-                "SaaS instance %s: restoration fee paid, triggering restore.",
+                "SaaS instance %s: restoration fee paid (invoice %s), triggering restore.",
                 instance.subdomain,
+                instance.restoration_invoice_id.name,
             )
             instance._append_log("Restoration fee paid. Starting data restore...")
             instance.message_post(body=_(
