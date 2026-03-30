@@ -148,7 +148,7 @@ class SaasInstance(models.Model):
         help='Maximum automatic deploy retries before marking as permanently failed. '
              '0 = no auto-retry.',
     )
-    _pre_provisioning_state = fields.Char(
+    pre_provisioning_state = fields.Char(
         string='Pre-Provisioning State',
         readonly=True,
         help='State before entering provisioning. Used to recover instances '
@@ -1263,7 +1263,7 @@ class SaasInstance(models.Model):
         )
         for instance in stuck:
             try:
-                prev_state = instance._pre_provisioning_state or 'failed'
+                prev_state = instance.pre_provisioning_state or 'failed'
                 instance._append_log(
                     "Recovered from stuck provisioning state "
                     "(likely caused by a server restart)."
@@ -1809,7 +1809,7 @@ class SaasInstance(models.Model):
             rec._auto_assign_ports()
             if not rec.deploy_retry_count:
                 rec.provisioning_log = ''
-            rec._pre_provisioning_state = 'failed'
+            rec.pre_provisioning_state = 'failed'
             rec.state = 'provisioning'
             rec._append_log(
                 "Deployment queued (attempt %d). Running in background..."
@@ -1990,7 +1990,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
-            rec._pre_provisioning_state = prev_state
+            rec.pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Stop queued. Running in background...")
             run_in_background(
@@ -2027,7 +2027,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
-            rec._pre_provisioning_state = prev_state
+            rec.pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Restart queued. Running in background...")
             run_in_background(
@@ -2066,7 +2066,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
-            rec._pre_provisioning_state = prev_state
+            rec.pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Redeployment queued. Running in background...")
             run_in_background(
@@ -2154,7 +2154,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
-            rec._pre_provisioning_state = prev_state
+            rec.pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Suspend queued. Running in background...")
             run_in_background(
@@ -2189,7 +2189,7 @@ class SaasInstance(models.Model):
                 # Infrastructure exists — do a full async deletion
                 rec._ensure_can_ssh()
                 prev_state = rec.state
-                rec._pre_provisioning_state = prev_state
+                rec.pre_provisioning_state = prev_state
                 rec.state = 'provisioning'
                 rec._append_log("Cancellation queued. Cleaning up infrastructure...")
                 run_in_background(
@@ -2265,7 +2265,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
-            rec._pre_provisioning_state = prev_state
+            rec.pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Deletion queued. Running in background...")
             run_in_background(
@@ -2439,7 +2439,7 @@ class SaasInstance(models.Model):
         For non-deploy failures: revert to the previous state.
         """
         self._append_log("OPERATION FAILED: %s" % str(exception))
-        self._pre_provisioning_state = False
+        self.pre_provisioning_state = False
 
         if prev_state == 'failed':
             # This was a deploy attempt (error_args=('failed',))
@@ -2518,7 +2518,7 @@ class SaasInstance(models.Model):
 
         self._ensure_can_ssh()
         prev_state = self.state
-        self._pre_provisioning_state = prev_state
+        self.pre_provisioning_state = prev_state
         self.state = 'provisioning'
         self._append_log("Restore from backup '%s' queued..." % backup.name)
         run_in_background(
