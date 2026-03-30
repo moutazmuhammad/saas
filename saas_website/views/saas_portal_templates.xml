@@ -1098,6 +1098,36 @@
                                 </t>
                             </div>
 
+                            <!-- Data Restore Banner (shown after reactivation if backup exists) -->
+                            <t t-if="instance.retained_backup_path and not instance.restore_banner_dismissed
+                                      and instance.state in ('running', 'stopped')
+                                      and not instance.restoration_invoice_id">
+                                <div class="info-card mt-4" id="restore-banner"
+                                     style="border-left:3px solid var(--warning);">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <h6 class="mb-2" style="color:var(--warning);">
+                                                <i class="fas fa-database me-2"></i>Data Recovery Available
+                                            </h6>
+                                            <p class="mb-2" style="font-size:0.85rem;color:var(--text-secondary);">
+                                                A backup of your previous data is available. If you'd like to restore it,
+                                                send a request to our support team. A restoration fee may apply.
+                                            </p>
+                                            <div class="d-flex gap-2 flex-wrap">
+                                                <button class="btn btn-sm btn-warning" id="btn-request-restore"
+                                                        t-att-data-instance-id="instance.id">
+                                                    <i class="fas fa-paper-plane me-1"></i>Request Data Restore
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-secondary" id="btn-dismiss-restore"
+                                                        t-att-data-instance-id="instance.id">
+                                                    <i class="fas fa-times me-1"></i>Dismiss
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </t>
+
                             <!-- Current Plan -->
                             <div class="info-card mt-4" t-if="instance.plan_id">
                                 <h6 class="text-muted text-uppercase small mb-3">Current Plan</h6>

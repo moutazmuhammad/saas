@@ -21,10 +21,14 @@
                     <field name="delete_retained_after"/>
                 </group>
                 <footer>
-                    <button string="Restore &amp; Invoice"
-                            name="action_restore_and_invoice"
-                            type="object" class="btn-primary"/>
-                    <button string="Cancel" class="btn-secondary"
+                    <button string="Send Invoice (restore after payment)"
+                            name="action_send_invoice_and_schedule"
+                            type="object" class="btn-primary"
+                            invisible="restoration_fee &lt;= 0"/>
+                    <button string="Restore Now (Free)"
+                            name="action_restore_now_free"
+                            type="object" class="btn-secondary"/>
+                    <button string="Cancel" class="btn-default"
                             special="cancel"/>
                 </footer>
             </form>

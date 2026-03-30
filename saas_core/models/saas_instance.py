@@ -193,6 +193,17 @@ class SaasInstance(models.Model):
         tracking=True,
         help='Sale order linked to this instance.',
     )
+    restoration_invoice_id = fields.Many2one(
+        'account.move',
+        string='Restoration Invoice',
+        readonly=True,
+        help='Unpaid restoration fee invoice. Instance is suspended until paid.',
+    )
+    restore_banner_dismissed = fields.Boolean(
+        string='Restore Banner Dismissed',
+        default=False,
+        help='Client dismissed the data restore suggestion banner.',
+    )
     sale_order_count = fields.Integer(
         string='Sale Orders',
         compute='_compute_sale_order_count',
@@ -2999,6 +3010,62 @@ class SaasInstance(models.Model):
         self.state = 'running'
         self._append_log("Backup '%s' restored successfully." % backup.name)
         self._safe_refresh_usage()
+
+    def _do_paid_restore(self):
+        """Restore retained backup after the restoration invoice is paid.
+
+        Called automatically by the payment handler when the client pays
+        the restoration fee invoice.
+        """
+        self.ensure_one()
+        if not self.retained_backup_path:
+            self._append_log("ERROR: No retained backup path — cannot restore.")
+            self.restoration_invoice_id = False
+            return
+
+        Backup = self.env['saas.instance.backup']
+        backup = Backup.create({
+            'instance_id': self.id,
+            'name': 'restored_paid_%s' % fields.Datetime.now().strftime('%Y%m%d_%H%M%S'),
+            'bucket_path': self.retained_backup_path,
+            'state': 'done',
+        })
+
+        self._append_log("Restoring data from retained backup (paid)...")
+
+        # Re-setup repos and packages before restore
+        for repo in self.repo_ids:
+            if repo.sudo().github_token and not repo.webhook_enabled:
+                repo.webhook_enabled = True
+        pending_repos = self.repo_ids.filtered(lambda r: r.state == 'pending')
+        for repo in pending_repos:
+            try:
+                repo._clone_repo()
+            except Exception as e:
+                self._append_log("WARNING: Failed to clone %s: %s" % (repo.name, e))
+
+        if self.saas_product_id and self.saas_product_id.repo_ids:
+            self._ensure_can_ssh()
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                self._clone_product_repos(ssh)
+
+        self._ensure_can_ssh()
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            self._render_and_write_configs(ssh)
+
+        # Restore the backup
+        self._do_restore_backup(backup.id)
+        backup.unlink()
+
+        # Re-register webhooks
+        try:
+            self._ensure_webhooks_registered()
+        except Exception:
+            pass
+
+        # Clear the restoration invoice reference
+        self.restoration_invoice_id = False
+        self._append_log("Data restoration completed successfully.")
 
 
 

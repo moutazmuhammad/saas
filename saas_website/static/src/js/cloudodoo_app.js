@@ -866,6 +866,59 @@ function initPackageList() {
 // Instance Folders
 // ============================================
 
+function initRestoreBanner() {
+    var requestBtn = document.getElementById('btn-request-restore');
+    var dismissBtn = document.getElementById('btn-dismiss-restore');
+    if (!requestBtn) return;
+
+    var instanceId = requestBtn.dataset.instanceId;
+
+    requestBtn.addEventListener('click', function () {
+        _coShowInputModal(
+            'Request Data Restore',
+            'Add a note for support (optional)',
+            '',
+            'Send Request',
+            function (note) {
+                requestBtn.disabled = true;
+                requestBtn.innerHTML = '<span class="spinner-sm"></span> Sending...';
+                CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/request-restore', { note: note })
+                    .then(function (res) {
+                        if (res.error) {
+                            CloudOdoo.showToast(res.error, 'error');
+                            requestBtn.disabled = false;
+                            requestBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i>Request Data Restore';
+                        } else {
+                            CloudOdoo.showToast(res.message, 'success');
+                            var banner = document.getElementById('restore-banner');
+                            if (banner) {
+                                banner.innerHTML = '<div class="text-center p-3" style="color:var(--success);">' +
+                                    '<i class="fas fa-check-circle me-2"></i>' +
+                                    '<strong>Request sent!</strong> Our support team will contact you shortly.</div>';
+                            }
+                        }
+                    })
+                    .catch(function (e) {
+                        CloudOdoo.showToast(e.message || 'Failed to send request', 'error');
+                        requestBtn.disabled = false;
+                        requestBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i>Request Data Restore';
+                    });
+            }
+        );
+    });
+
+    if (dismissBtn) {
+        dismissBtn.addEventListener('click', function () {
+            CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/dismiss-restore-banner', {})
+                .then(function () {
+                    var banner = document.getElementById('restore-banner');
+                    if (banner) banner.remove();
+                })
+                .catch(function () {});
+        });
+    }
+}
+
 function initBackupButton() {
     var btn = document.getElementById('btn-create-backup');
     if (!btn) return;
@@ -1691,6 +1744,7 @@ function initAll() {
     initPackageList();
     initInstanceFolders();
     initBackupButton();
+    initRestoreBanner();
 
     // Update nav active state
     const path = window.location.pathname;

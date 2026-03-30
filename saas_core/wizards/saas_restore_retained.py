@@ -42,7 +42,8 @@ class SaasRestoreRetainedWizard(models.TransientModel):
     restoration_fee = fields.Float(
         string='Restoration Fee',
         help='Fee to charge the customer. An invoice will be created '
-             'and posted automatically. Set to 0 for no charge.',
+             'and sent. The restore happens automatically when the '
+             'invoice is paid. Set to 0 for free restore.',
     )
     delete_retained_after = fields.Boolean(
         string='Delete backup from cloud after restore',
@@ -67,8 +68,8 @@ class SaasRestoreRetainedWizard(models.TransientModel):
         res['restoration_fee'] = fee
         return res
 
-    def action_restore_and_invoice(self):
-        """Restore the retained backup to the target instance and create an invoice."""
+    def _validate(self):
+        """Common validation for both actions."""
         self.ensure_one()
         source = self.source_instance_id
         target = self.target_instance_id
@@ -88,14 +89,85 @@ class SaasRestoreRetainedWizard(models.TransientModel):
                 "Target instance must belong to the same customer."
             ))
 
-        # --- Restore the backup ---
+    def action_send_invoice_and_schedule(self):
+        """Create and send the restoration invoice. The restore will
+        happen automatically when the client pays.
+        """
+        self._validate()
+        source = self.source_instance_id
+        target = self.target_instance_id
+
+        if not self.restoration_fee or self.restoration_fee <= 0:
+            raise UserError(_(
+                "Please set a restoration fee, or use 'Restore Now (Free)' instead."
+            ))
+
+        # Create the invoice
+        invoice = self._create_restoration_invoice(source, target)
+
+        # Store the pending restoration on the target instance
+        target.write({
+            'restoration_invoice_id': invoice.id,
+            'retained_backup_path': source.retained_backup_path,
+        })
+
+        target._append_log(
+            "Restoration invoice %s created (%.2f). "
+            "Data will be restored automatically when the client pays."
+            % (invoice.name, self.restoration_fee)
+        )
+        target.message_post(body=_(
+            "Restoration invoice <b>%s</b> sent to client. "
+            "Data from <b>%s</b> will be restored automatically after payment."
+        ) % (invoice.name, source.subdomain or source.name))
+
         _logger.info(
-            "Admin restoring retained backup from %s to %s (path: %s)",
+            "Restoration invoice %s created for %s → %s (%.2f)",
+            invoice.name, source.subdomain, target.subdomain,
+            self.restoration_fee,
+        )
+
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'saas.instance',
+            'res_id': target.id,
+            'view_mode': 'form',
+            'target': 'current',
+        }
+
+    def action_restore_now_free(self):
+        """Restore the backup immediately without charging."""
+        self._validate()
+        source = self.source_instance_id
+        target = self.target_instance_id
+
+        self._do_restore(source, target)
+
+        target._append_log(
+            "Retained backup restored by admin %s (free)." % self.env.user.name
+        )
+        target.message_post(body=_(
+            "Retained backup restored by %s (no charge)."
+        ) % self.env.user.name)
+
+        if self.delete_retained_after:
+            self._delete_retained_from_cloud(source)
+
+        return {
+            'type': 'ir.actions.act_window',
+            'res_model': 'saas.instance',
+            'res_id': target.id,
+            'view_mode': 'form',
+            'target': 'current',
+        }
+
+    def _do_restore(self, source, target):
+        """Execute the actual restore: setup repos, restore backup, webhooks."""
+        _logger.info(
+            "Restoring retained backup from %s to %s (path: %s)",
             source.name, target.name, source.retained_backup_path,
         )
 
-        # Create a temporary backup record so _do_restore_backup can
-        # use _generate_presigned_url() to download from cloud.
         Backup = self.env['saas.instance.backup']
         backup = Backup.create({
             'instance_id': target.id,
@@ -104,27 +176,18 @@ class SaasRestoreRetainedWizard(models.TransientModel):
             'state': 'done',
         })
 
-        # Run restore SYNCHRONOUSLY so the admin sees the result
-        # immediately (errors shown, not swallowed in a background thread).
         target._ensure_can_ssh()
         prev_state = target.state
         target.state = 'provisioning'
-        target._append_log(
-            "Restoring retained backup '%s'..." % backup.name
-        )
-        # Commit NOW so the client immediately sees 'provisioning' state
-        # and the portal shows the spinner instead of the live instance.
-        # Also ensures the backup record is visible to subsequent reads.
+        target._append_log("Restoring retained backup '%s'..." % backup.name)
         self.env.cr.commit()
 
-        # Re-setup custom repos and pip packages BEFORE restore so
-        # the restored database finds its modules on the addons path.
+        # Re-setup custom repos and pip packages BEFORE restore
         self._pre_restore_setup(target)
 
         try:
             target._do_restore_backup(backup.id)
         except Exception as e:
-            # Restore failed — revert state and restart container
             target.state = prev_state
             if prev_state == 'running':
                 try:
@@ -140,10 +203,8 @@ class SaasRestoreRetainedWizard(models.TransientModel):
                 "Backup restoration failed:\n%s"
             ) % str(e))
 
-        # Clean up the temp backup record
         backup.unlink()
 
-        # Re-register webhooks for repos that have auto-deploy enabled
         try:
             target._ensure_webhooks_registered()
         except Exception as e:
@@ -151,97 +212,41 @@ class SaasRestoreRetainedWizard(models.TransientModel):
                 "Post-restore webhook setup failed for %s: %s",
                 target.subdomain, e,
             )
-            target._append_log(
-                "WARNING: Webhook registration failed: %s" % e
-            )
-
-        # --- Create invoice if fee > 0 ---
-        invoice = None
-        if self.restoration_fee > 0:
-            invoice = self._create_restoration_invoice(source, target)
-
-        # --- Log and clean up ---
-        invoice_note = _(" Invoice: %s") % invoice.name if invoice else ''
-        if source == target:
-            # Reactivated instance — source and target are the same record
-            target._append_log(
-                "Retained backup restored by admin %s.%s"
-                % (self.env.user.name, invoice_note)
-            )
-            target.message_post(body=_(
-                "Retained backup restored by %s.%s"
-            ) % (self.env.user.name, invoice_note))
-        else:
-            source._append_log(
-                "Retained backup restored to instance %s by admin %s.%s"
-                % (target.name, self.env.user.name, invoice_note)
-            )
-            source.message_post(body=_(
-                "Retained backup restored to <b>%s</b> by %s.%s"
-            ) % (target.name, self.env.user.name, invoice_note))
-            target._append_log(
-                "Data restored from retained backup of %s.%s"
-                % (source.name, invoice_note)
-            )
-
-        if self.delete_retained_after:
-            self._delete_retained_from_cloud(source)
-
-        # Return the target instance form
-        return {
-            'type': 'ir.actions.act_window',
-            'res_model': 'saas.instance',
-            'res_id': target.id,
-            'view_mode': 'form',
-            'target': 'current',
-        }
 
     def _pre_restore_setup(self, target):
-        """Re-clone custom repos and install pip packages before restoring.
-
-        The restored database may reference modules from the customer's
-        custom repo.  These must be on the addons path before Odoo starts
-        with the restored DB, otherwise the instance will crash on startup.
-        """
+        """Re-clone custom repos and install pip packages before restoring."""
         target._append_log("Setting up custom repos and packages before restore...")
 
-        # Re-enable webhook intent for repos that have a token.
-        # Cancellation resets webhook_enabled to False, but the client
-        # originally wanted auto-deploy — restore that intent.
+        # Re-enable webhook intent for repos that have a token
         for repo in target.repo_ids:
             if repo.sudo().github_token and not repo.webhook_enabled:
                 repo.webhook_enabled = True
 
-        # 1. Re-clone customer repos that were cleared on cancellation
+        # Re-clone customer repos
         pending_repos = target.repo_ids.filtered(lambda r: r.state == 'pending')
-        if pending_repos:
-            for repo in pending_repos:
+        for repo in pending_repos:
+            target._append_log(
+                "Re-cloning repo %s (%s)..." % (repo.repo_url, repo.branch)
+            )
+            try:
+                repo._clone_repo()
+            except Exception as e:
                 target._append_log(
-                    "Re-cloning repo %s (%s)..." % (repo.repo_url, repo.branch)
+                    "WARNING: Failed to clone %s: %s" % (repo.name, e)
                 )
-                try:
-                    repo._clone_repo()
-                except Exception as e:
-                    target._append_log(
-                        "WARNING: Failed to clone %s: %s" % (repo.name, e)
-                    )
-                    _logger.warning(
-                        "Pre-restore: failed to clone %s for %s: %s",
-                        repo.name, target.subdomain, e,
-                    )
 
-        # 2. Re-clone product repos
+        # Re-clone product repos
         if target.saas_product_id and target.saas_product_id.repo_ids:
             target._ensure_can_ssh()
             with target.docker_server_id._get_ssh_connection() as ssh:
                 target._clone_product_repos(ssh)
 
-        # 3. Re-render configs with repo addons paths
+        # Re-render configs
         target._ensure_can_ssh()
         with target.docker_server_id._get_ssh_connection() as ssh:
             target._render_and_write_configs(ssh)
 
-        # 4. Install pip packages into the running container
+        # Install pip packages
         if target.pip_packages:
             target._append_log("Installing pip packages...")
             try:
@@ -259,22 +264,12 @@ class SaasRestoreRetainedWizard(models.TransientModel):
                             '--upgrade --no-warn-script-location %s'
                             '" 2>&1'
                         ) % (container, ' '.join(pkgs))
-                        exit_code, stdout, stderr = ssh.execute(
-                            install_cmd, timeout=300,
+                        ssh.execute(install_cmd, timeout=300)
+                        target._append_log(
+                            "Pip packages installed: %s" % ', '.join(pkgs)
                         )
-                        if exit_code != 0:
-                            target._append_log(
-                                "WARNING: pip install partial failure:\n%s"
-                                % (stdout or stderr)[:500]
-                            )
-                        else:
-                            target._append_log(
-                                "Pip packages installed: %s" % ', '.join(pkgs)
-                            )
             except Exception as e:
-                target._append_log(
-                    "WARNING: pip install failed: %s" % e
-                )
+                target._append_log("WARNING: pip install failed: %s" % e)
 
         target._append_log("Pre-restore setup complete.")
 
@@ -315,7 +310,6 @@ class SaasRestoreRetainedWizard(models.TransientModel):
         """Delete the retained backup file from cloud storage."""
         try:
             Backup = self.env['saas.instance.backup']
-            # Create a temp record just to use the cloud delete helpers
             temp = Backup.new({
                 'instance_id': source.id,
                 'bucket_path': source.retained_backup_path,

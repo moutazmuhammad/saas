@@ -1009,6 +1009,93 @@ class SaasPortal(CustomerPortal):
 
         return request.redirect('/my/instances/%s' % instance_id)
 
+    # ==================== Data Restore Request ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/request-restore',
+        type='json', auth='user', website=True,
+    )
+    def portal_request_restore(self, instance_id, note='', **kw):
+        """Client requests data restoration — sends email to support."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id,
+            )
+        except (AccessError, MissingError):
+            return {'error': _('Access denied.')}
+
+        if not instance_sudo.retained_backup_path:
+            return {'error': _('No backup available for restore.')}
+
+        partner = request.env.user.partner_id
+        support_email = request.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.support_email', ''
+        )
+        if not support_email:
+            return {'error': _('Support email is not configured. Please contact us directly.')}
+
+        # Send email to support
+        subject = _('Data Restore Request — %s') % instance_sudo.subdomain
+        body = _(
+            "Data restore request from client:\n\n"
+            "Client: %s (%s)\n"
+            "Instance: %s\n"
+            "Subdomain: %s.%s\n"
+            "Plan: %s (%s)\n"
+            "Retained Backup: %s\n"
+            "Client Note: %s\n\n"
+            "Action: Open the instance in the backend and use "
+            "'Restore to Instance & Invoice' to create the restoration "
+            "invoice and schedule the restore."
+        ) % (
+            partner.name,
+            partner.email or 'no email',
+            instance_sudo.name or instance_sudo.subdomain,
+            instance_sudo.subdomain,
+            instance_sudo.domain_id.name if instance_sudo.domain_id else '',
+            instance_sudo.plan_id.name if instance_sudo.plan_id else 'N/A',
+            instance_sudo.billing_period or 'N/A',
+            instance_sudo.retained_backup_path,
+            note or '(none)',
+        )
+
+        try:
+            mail = request.env['mail.mail'].sudo().create({
+                'subject': subject,
+                'body_html': '<pre>%s</pre>' % body.replace('\n', '<br/>'),
+                'email_from': partner.email or support_email,
+                'email_to': support_email,
+                'auto_delete': True,
+            })
+            mail.send()
+        except Exception as e:
+            _logger.exception("Failed to send restore request email")
+            return {'error': _('Failed to send request. Please contact support directly.')}
+
+        instance_sudo._append_log(
+            "Client requested data restore via portal. Note: %s" % (note or '(none)')
+        )
+        instance_sudo.message_post(body=_(
+            "Client requested data restore. Note: %s"
+        ) % (note or '(none)'))
+
+        return {'success': True, 'message': _('Your request has been sent to support.')}
+
+    @http.route(
+        '/my/instances/<int:instance_id>/dismiss-restore-banner',
+        type='json', auth='user', website=True,
+    )
+    def portal_dismiss_restore_banner(self, instance_id, **kw):
+        """Dismiss the data restore suggestion banner."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id,
+            )
+        except (AccessError, MissingError):
+            return {'error': _('Access denied.')}
+        instance_sudo.restore_banner_dismissed = True
+        return {'success': True}
+
     # ==================== List Installed Packages (Hosting) ====================
 
     @http.route(

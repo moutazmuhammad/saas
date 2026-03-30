@@ -31,17 +31,32 @@ class AccountMove(models.Model):
             newly_reversed._saas_check_payment_reversal()
 
     def _saas_check_instance_payment(self):
-        """Transition linked SaaS instances from pending_payment -> paid.
-
-        Deployment is decoupled into a post-commit background job so that
-        the accounting transaction completes cleanly regardless of whether
-        deployment succeeds or fails.
-        """
+        """Handle SaaS instance payments: deploy, upgrade, or restore."""
         paid_invoices = self.filtered(
             lambda m: m.payment_state in ('paid', 'in_payment')
         )
         if not paid_invoices:
             return
+
+        # --- Handle restoration fee payments ---
+        restoration_instances = self.env['saas.instance'].search([
+            ('restoration_invoice_id', 'in', paid_invoices.ids),
+        ])
+        for instance in restoration_instances:
+            _logger.info(
+                "SaaS instance %s: restoration fee paid, triggering restore.",
+                instance.subdomain,
+            )
+            instance._append_log("Restoration fee paid. Starting data restore...")
+            instance.message_post(body=_(
+                "Restoration fee paid. Data restore triggered automatically."
+            ))
+            run_in_background(
+                instance, '_do_paid_restore',
+                error_method='_on_background_error',
+                error_args=('running',),
+                thread_name='saas_restore_%s' % instance.subdomain,
+            )
 
         sale_orders = self.env['sale.order'].search([
             ('invoice_ids', 'in', paid_invoices.ids),
