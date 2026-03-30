@@ -502,6 +502,12 @@
                                             <t t-if="instance.is_trial">
                                                 <span class="badge bg-info">Trial</span>
                                             </t>
+                                            <t t-elif="instance.billing_period">
+                                                <span class="badge" style="background:var(--bg-elevated);color:var(--text-secondary);font-size:0.7rem;">
+                                                    <t t-if="instance.billing_period == 'yearly'">Yearly</t>
+                                                    <t t-else="">Monthly</t>
+                                                </span>
+                                            </t>
                                         </div>
                                     </div>
                                     <div class="col-md-6">
