@@ -278,6 +278,14 @@
                                 </list>
                             </field>
                         </page>
+                        <page string="Python Packages">
+                            <field name="package_ids" nolabel="1">
+                                <list editable="bottom">
+                                    <field name="name"
+                                           placeholder="e.g. phonenumbers or openpyxl==3.1.0"/>
+                                </list>
+                            </field>
+                        </page>
                         <page string="Extra Configuration">
                             <group string="Docker Overrides (leave empty = auto from plan)">
                                 <field name="override_docker_cpu"

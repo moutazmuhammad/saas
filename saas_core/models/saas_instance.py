@@ -214,6 +214,12 @@ class SaasInstance(models.Model):
         help='Python packages to install via pip on container startup. '
              'One package per line (e.g. phonenumbers, openpyxl).',
     )
+    package_ids = fields.One2many(
+        'saas.instance.package',
+        'instance_id',
+        string='Python Packages',
+        help='Python packages to install via pip on container startup.',
+    )
 
     @api.depends('saas_product_id.is_hosting')
     def _compute_is_hosting(self):
@@ -540,10 +546,60 @@ class SaasInstance(models.Model):
         for rec in records:
             if rec.docker_server_id and (not rec.xmlrpc_port or not rec.longpolling_port):
                 rec._auto_assign_ports()
+            if rec.pip_packages:
+                rec._sync_packages_from_text()
         return records
 
     def write(self, vals):
-        return super().write(vals)
+        result = super().write(vals)
+        if 'pip_packages' in vals and not self.env.context.get('_skip_pip_sync'):
+            self._sync_packages_from_text()
+        return result
+
+    def _sync_packages_from_text(self):
+        """Sync ``pip_packages`` text field to ``package_ids`` One2many.
+
+        Parses the text field, deduplicates by package name, and
+        creates/updates/removes ``package_ids`` records to match.
+        """
+        Package = self.env['saas.instance.package']
+        for rec in self:
+            existing = {}
+            for p in rec.package_ids:
+                key = p.name.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip()
+                existing[key] = p
+
+            new_names = []
+            if rec.pip_packages:
+                for line in rec.pip_packages.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        new_names.append(line)
+
+            new_keys = set()
+            to_create = []
+            for name in new_names:
+                key = name.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip()
+                if key in new_keys:
+                    continue
+                new_keys.add(key)
+                if key not in existing:
+                    to_create.append({'instance_id': rec.id, 'name': name})
+                elif existing[key].name != name:
+                    existing[key].name = name
+
+            to_remove = rec.package_ids.filtered(
+                lambda p: p.name.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip() not in new_keys
+            )
+            to_remove.unlink()
+            if to_create:
+                Package.create(to_create)
+
+    def _sync_text_from_packages(self):
+        """Sync ``package_ids`` One2many back to ``pip_packages`` text field."""
+        for rec in self:
+            names = rec.package_ids.mapped('name')
+            rec.with_context(_skip_pip_sync=True).pip_packages = '\n'.join(names) if names else False
 
     def unlink(self):
         """Block deletion of instances that have live infrastructure.
@@ -2546,7 +2602,20 @@ class SaasInstance(models.Model):
                 "Skipping backup — instance was not fully deployed."
             )
 
-        # 2. Tear down infrastructure (tolerant of partial state)
+        # 2. Unregister webhooks from Git providers
+        for repo in self.repo_ids.filtered(lambda r: r.webhook_provider_id):
+            try:
+                self._append_log("Removing webhook for %s..." % repo.name)
+                repo._unregister_webhook_from_provider()
+                repo.webhook_provider_id = False
+                self._append_log("Webhook removed for %s." % repo.name)
+            except Exception as e:
+                self._append_log(
+                    "WARNING: Failed to remove webhook for %s: %s"
+                    % (repo.name, e)
+                )
+
+        # 3. Tear down infrastructure (tolerant of partial state)
         with server._get_ssh_connection() as ssh:
             # Stop container if it exists
             down_cmd = (
@@ -2605,6 +2674,16 @@ class SaasInstance(models.Model):
         # 4. Clean up and finalize
         all_backups.unlink()
         self.retained_backup_path = retained_path
+
+        # Reset repo statuses — infrastructure no longer exists
+        for repo in self.repo_ids:
+            repo.write({
+                'state': 'pending',
+                'webhook_enabled': False,
+                'webhook_provider_id': False,
+                'last_pull': False,
+                'error_message': False,
+            })
 
         self.state = 'cancelled'
         self._append_log("Instance deleted successfully.")

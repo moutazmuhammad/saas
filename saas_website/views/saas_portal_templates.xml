@@ -160,6 +160,49 @@
          My Instances List  —  /my/instances
          ============================================================ -->
 
+    <!-- Recursive folder tree for sidebar -->
+    <template id="portal_folder_tree_items" name="Folder Tree Items">
+        <t t-foreach="folder_list" t-as="f">
+            <li class="sidebar-folder-entry">
+                <a t-attf-href="/my/instances?sortby=#{sortby}&amp;folder=#{f.id}"
+                   t-attf-class="sidebar-folder-item #{str(active_folder_id) == str(f.id) and 'active' or ''}"
+                   t-attf-style="padding-left: #{12 + indent * 16}px;">
+                    <i t-attf-class="fas #{f.child_ids and 'fa-folder-open' or 'fa-folder'} sidebar-folder-icon"></i>
+                    <span class="sidebar-folder-name" t-esc="f.name"/>
+                    <span class="sidebar-folder-count" t-esc="f.total_instance_count"/>
+                </a>
+                <div class="sidebar-folder-actions">
+                    <a href="#" class="sidebar-folder-action folder-add-sub-btn"
+                       title="Add subfolder"
+                       t-att-data-folder-id="f.id"
+                       t-att-data-folder-name="f.name">
+                        <i class="fas fa-plus"></i>
+                    </a>
+                    <a href="#" class="sidebar-folder-action folder-rename-btn"
+                       title="Rename"
+                       t-att-data-folder-id="f.id"
+                       t-att-data-folder-name="f.name">
+                        <i class="fas fa-pen"></i>
+                    </a>
+                    <a href="#" class="sidebar-folder-action text-danger folder-delete-btn"
+                       title="Delete"
+                       t-att-data-folder-id="f.id"
+                       t-att-data-folder-name="f.name">
+                        <i class="fas fa-trash"></i>
+                    </a>
+                </div>
+                <t t-if="f.child_ids">
+                    <ul class="sidebar-folder-list sidebar-folder-children">
+                        <t t-call="saas_website.portal_folder_tree_items">
+                            <t t-set="folder_list" t-value="f.child_ids"/>
+                            <t t-set="indent" t-value="indent + 1"/>
+                        </t>
+                    </ul>
+                </t>
+            </li>
+        </t>
+    </template>
+
     <template id="portal_my_instances" name="My Instances">
         <t t-call="saas_website.cloudodoo_layout">
             <section class="py-6" style="padding-top:120px;">
@@ -191,29 +234,10 @@
                                                 <span class="sidebar-folder-count" t-esc="all_count"/>
                                             </a>
                                         </li>
-                                        <t t-foreach="folders" t-as="f">
-                                            <li class="sidebar-folder-entry">
-                                                <a t-attf-href="/my/instances?sortby=#{sortby}&amp;folder=#{f.id}"
-                                                   t-attf-class="sidebar-folder-item #{str(active_folder_id) == str(f.id) and 'active' or ''}">
-                                                    <i class="fas fa-folder sidebar-folder-icon"></i>
-                                                    <span class="sidebar-folder-name" t-esc="f.name"/>
-                                                    <span class="sidebar-folder-count" t-esc="f.instance_count"/>
-                                                </a>
-                                                <div class="sidebar-folder-actions">
-                                                    <a href="#" class="sidebar-folder-action folder-rename-btn"
-                                                       title="Rename"
-                                                       t-att-data-folder-id="f.id"
-                                                       t-att-data-folder-name="f.name">
-                                                        <i class="fas fa-pen"></i>
-                                                    </a>
-                                                    <a href="#" class="sidebar-folder-action text-danger folder-delete-btn"
-                                                       title="Delete"
-                                                       t-att-data-folder-id="f.id"
-                                                       t-att-data-folder-name="f.name">
-                                                        <i class="fas fa-trash"></i>
-                                                    </a>
-                                                </div>
-                                            </li>
+                                        <t t-set="root_folders" t-value="[f for f in folders if not f.parent_id]"/>
+                                        <t t-call="saas_website.portal_folder_tree_items">
+                                            <t t-set="folder_list" t-value="root_folders"/>
+                                            <t t-set="indent" t-value="0"/>
                                         </t>
                                     </ul>
                                 </div>
@@ -292,11 +316,19 @@
                                         <i class="fas fa-folder me-1"></i>Move to folder
                                     </button>
                                     <ul class="dropdown-menu" id="move-folder-menu">
+                                        <li>
+                                            <a class="dropdown-item move-to-folder" href="#"
+                                               data-folder-id="false">
+                                                <i class="fas fa-inbox me-2"></i>Unfiled
+                                            </a>
+                                        </li>
+                                        <li><hr class="dropdown-divider"/></li>
                                         <t t-foreach="folders" t-as="f">
                                             <li>
                                                 <a class="dropdown-item move-to-folder" href="#"
-                                                   t-att-data-folder-id="f.id">
-                                                    <i class="fas fa-folder me-2"></i>
+                                                   t-att-data-folder-id="f.id"
+                                                   t-attf-style="padding-left: #{12 + f.depth * 16}px;">
+                                                    <i t-attf-class="fas #{f.child_ids and 'fa-folder-open' or 'fa-folder'} me-2"></i>
                                                     <t t-esc="f.name"/>
                                                 </a>
                                             </li>

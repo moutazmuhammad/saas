@@ -929,6 +929,26 @@ function initInstanceFolders() {
         });
     });
 
+    // Add subfolder
+    document.querySelectorAll('.folder-add-sub-btn').forEach(function (btn) {
+        btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            var parentId = parseInt(this.dataset.folderId);
+            var parentName = this.dataset.folderName;
+            _coShowInputModal('New Subfolder in "' + parentName + '"', 'Subfolder name', '', 'Create', function (name) {
+                CloudOdoo.jsonRpc('/my/instances/folder/create', { name: name, parent_id: parentId })
+                    .then(function (res) {
+                        if (res.error) {
+                            CloudOdoo.showToast(res.error, 'error');
+                        } else {
+                            window.location.reload();
+                        }
+                    })
+                    .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
+            });
+        });
+    });
+
     // Checkbox selection & bulk actions
     var selectAll = document.getElementById('select-all-instances');
     var bulkBar = document.getElementById('bulk-actions');

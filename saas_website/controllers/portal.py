@@ -65,14 +65,22 @@ class SaasPortal(CustomerPortal):
         elif active_type == 'hosting':
             domain.append(('is_hosting', '=', True))
 
-        # Folder filtering
+        # Folder filtering (includes subfolders)
         active_folder_id = False
         if folder == 'unfiled':
             domain.append(('folder_id', '=', False))
         elif folder:
             try:
                 active_folder_id = int(folder)
-                domain.append(('folder_id', '=', active_folder_id))
+                folder_rec = Folder.search([
+                    ('id', '=', active_folder_id),
+                    ('partner_id', '=', partner.id),
+                ], limit=1)
+                if folder_rec:
+                    all_ids = folder_rec._get_all_descendant_ids()
+                    domain.append(('folder_id', 'in', all_ids))
+                else:
+                    domain.append(('folder_id', '=', active_folder_id))
             except (ValueError, TypeError):
                 pass
 
@@ -1321,16 +1329,24 @@ class SaasPortal(CustomerPortal):
         '/my/instances/folder/create',
         type='json', auth='user', website=True,
     )
-    def portal_folder_create(self, name, **kw):
-        """Create a new instance folder."""
+    def portal_folder_create(self, name, parent_id=False, **kw):
+        """Create a new instance folder, optionally nested under parent_id."""
         name = (name or '').strip()
         if not name:
             return {'error': _('Folder name is required.')}
         partner = request.env.user.partner_id
-        folder = request.env['saas.instance.folder'].sudo().create({
+        vals = {
             'name': name,
             'partner_id': partner.id,
-        })
+        }
+        if parent_id:
+            parent = request.env['saas.instance.folder'].sudo().search([
+                ('id', '=', int(parent_id)),
+                ('partner_id', '=', partner.id),
+            ], limit=1)
+            if parent:
+                vals['parent_id'] = parent.id
+        folder = request.env['saas.instance.folder'].sudo().create(vals)
         return {'success': True, 'folder_id': folder.id, 'name': folder.name}
 
     @http.route(
@@ -1357,7 +1373,7 @@ class SaasPortal(CustomerPortal):
         type='json', auth='user', website=True,
     )
     def portal_folder_delete(self, folder_id, **kw):
-        """Delete an instance folder. Instances are moved to unfiled."""
+        """Delete a folder and all subfolders. Instances are moved to unfiled."""
         partner = request.env.user.partner_id
         folder = request.env['saas.instance.folder'].sudo().search([
             ('id', '=', folder_id),
@@ -1365,8 +1381,13 @@ class SaasPortal(CustomerPortal):
         ], limit=1)
         if not folder:
             return {'error': _('Folder not found.')}
-        folder.instance_ids.write({'folder_id': False})
-        folder.unlink()
+        # Move all instances from this folder and its descendants to unfiled
+        all_ids = folder._get_all_descendant_ids()
+        all_folders = request.env['saas.instance.folder'].sudo().browse(all_ids)
+        request.env['saas.instance'].sudo().search([
+            ('folder_id', 'in', all_ids),
+        ]).write({'folder_id': False})
+        all_folders.unlink()
         return {'success': True}
 
     @http.route(
