@@ -145,6 +145,17 @@
                             <field name="invoice_count" widget="statinfo"
                                    string="Invoices"/>
                         </button>
+                        <button name="%(saas_core.action_restore_retained_wizard)d"
+                                type="action"
+                                class="oe_stat_button"
+                                icon="fa-database"
+                                invisible="not retained_backup_path"
+                                groups="saas_core.group_saas_manager">
+                            <div class="o_field_widget o_stat_info">
+                                <span class="o_stat_value text-warning">Backup</span>
+                                <span class="o_stat_text">Restore</span>
+                            </div>
+                        </button>
                     </div>
                     <group>
                         <!-- Left Column -->
@@ -317,21 +328,33 @@
                                    nolabel="1"/>
                         </page>
                         <page string="Cancellation &amp; Recovery"
-                              invisible="not cancellation_reason and not retained_backup_path">
+                              invisible="state not in ('cancelled', 'cancelled_by_client') and not retained_backup_path">
+                            <div class="alert alert-info mb-3"
+                                 invisible="not retained_backup_path or state not in ('cancelled', 'cancelled_by_client')">
+                                <strong>Data Recovery Workflow:</strong>
+                                <ol class="mb-0 mt-2">
+                                    <li>Client reactivates the instance from the portal (creates a fresh instance with a new plan)</li>
+                                    <li>Once the instance is running, click <b>Restore to Instance &amp; Invoice</b> below to restore the old data and charge the client</li>
+                                </ol>
+                            </div>
                             <group invisible="not cancellation_reason"
                                    string="Cancellation Details">
                                 <field name="cancellation_reason" readonly="1"
                                        nolabel="1"/>
                             </group>
-                            <group invisible="not retained_backup_path"
-                                   string="Retained Backup">
+                            <group string="Retained Backup">
                                 <field name="retained_backup_path" readonly="1"/>
                                 <button name="%(saas_core.action_restore_retained_wizard)d"
                                         string="Restore to Instance &amp; Invoice"
                                         type="action"
                                         class="btn-primary"
                                         icon="fa-upload"
-                                        groups="saas_core.group_saas_manager"/>
+                                        groups="saas_core.group_saas_manager"
+                                        invisible="not retained_backup_path"/>
+                                <div invisible="retained_backup_path"
+                                     class="text-muted">
+                                    No retained backup available. The backup may have failed during deletion.
+                                </div>
                             </group>
                         </page>
                     </notebook>

@@ -2568,11 +2568,13 @@ class SaasInstance(models.Model):
         Backup = self.env['saas.instance.backup']
 
         # 1. Create a final backup BEFORE tearing down infrastructure.
-        #    Only attempt if the instance was actually running (has a
-        #    container and database).  Skip for partially provisioned
-        #    instances that never reached a functional state.
+        #    Only attempt if the instance was actually deployed (had a
+        #    running container and database at some point).
+        #    Note: state is 'provisioning' here (set by action_cancel),
+        #    so check pre_provisioning_state for the real previous state.
         retained_path = False
-        was_deployed = self.state in ('running', 'stopped', 'suspended', 'failed')
+        prev = self.pre_provisioning_state or self.state
+        was_deployed = prev in ('running', 'stopped', 'suspended', 'failed')
         if was_deployed:
             try:
                 self._append_log("Creating final backup before deletion...")
