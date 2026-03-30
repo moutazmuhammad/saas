@@ -3011,6 +3011,78 @@ class SaasInstance(models.Model):
         self._append_log("Backup '%s' restored successfully." % backup.name)
         self._safe_refresh_usage()
 
+    def _pre_restore_setup(self):
+        """Set up repos, configs, and pip packages before a DB restore.
+
+        Ensures the restored database will find all custom modules and
+        Python packages it depends on.  Called by both the paid-restore
+        flow and the admin wizard.
+        """
+        self.ensure_one()
+        self._append_log("Pre-restore: setting up repos and packages...")
+
+        # Re-enable webhooks for repos that have a token
+        for repo in self.repo_ids:
+            if repo.sudo().github_token and not repo.webhook_enabled:
+                repo.webhook_enabled = True
+
+        # Clone pending customer repos
+        for repo in self.repo_ids.filtered(lambda r: r.state == 'pending'):
+            self._append_log("Cloning repo %s (%s)..." % (repo.repo_url, repo.branch))
+            try:
+                repo._clone_repo()
+            except Exception as e:
+                self._append_log("WARNING: Failed to clone %s: %s" % (repo.name, e))
+
+        # Clone product repos
+        if self.saas_product_id and self.saas_product_id.repo_ids:
+            self._ensure_can_ssh()
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                self._clone_product_repos(ssh)
+
+        # Re-render configs with all addons paths
+        self._ensure_can_ssh()
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            self._render_and_write_configs(ssh)
+
+        # Install pip packages
+        if self.pip_packages:
+            self._append_log("Installing pip packages...")
+            try:
+                container = 'odoo_%s' % self.subdomain
+                pkgs = [
+                    p.strip() for p in self.pip_packages.splitlines()
+                    if p.strip() and not p.strip().startswith('#')
+                ]
+                if pkgs:
+                    self._ensure_can_ssh()
+                    with self.docker_server_id._get_ssh_connection() as ssh:
+                        install_cmd = (
+                            'docker exec %s bash -c "'
+                            'mkdir -p /var/lib/odoo/pip_packages && '
+                            'pip3 install --target=/var/lib/odoo/pip_packages '
+                            '--upgrade --no-warn-script-location %s'
+                            '" 2>&1'
+                        ) % (shlex.quote(container), ' '.join(
+                            shlex.quote(p) for p in pkgs
+                        ))
+                        exit_code, stdout, stderr = ssh.execute(
+                            install_cmd, timeout=300,
+                        )
+                        if exit_code == 0:
+                            self._append_log(
+                                "Pip packages installed: %s" % ', '.join(pkgs)
+                            )
+                        else:
+                            self._append_log(
+                                "WARNING: pip install issues:\n%s"
+                                % (stdout or stderr)[:500]
+                            )
+            except Exception as e:
+                self._append_log("WARNING: pip install failed: %s" % e)
+
+        self._append_log("Pre-restore setup complete.")
+
     def _do_paid_restore(self):
         """Restore retained backup after the restoration invoice is paid.
 
@@ -3033,25 +3105,8 @@ class SaasInstance(models.Model):
 
         self._append_log("Restoring data from retained backup (paid)...")
 
-        # Re-setup repos and packages before restore
-        for repo in self.repo_ids:
-            if repo.sudo().github_token and not repo.webhook_enabled:
-                repo.webhook_enabled = True
-        pending_repos = self.repo_ids.filtered(lambda r: r.state == 'pending')
-        for repo in pending_repos:
-            try:
-                repo._clone_repo()
-            except Exception as e:
-                self._append_log("WARNING: Failed to clone %s: %s" % (repo.name, e))
-
-        if self.saas_product_id and self.saas_product_id.repo_ids:
-            self._ensure_can_ssh()
-            with self.docker_server_id._get_ssh_connection() as ssh:
-                self._clone_product_repos(ssh)
-
-        self._ensure_can_ssh()
-        with self.docker_server_id._get_ssh_connection() as ssh:
-            self._render_and_write_configs(ssh)
+        # Set up all repos, configs, and pip packages BEFORE restore
+        self._pre_restore_setup()
 
         # Restore the backup
         self._do_restore_backup(backup.id)
@@ -4318,6 +4373,9 @@ class SaasInstance(models.Model):
             'scheduled_billing_period': False,
             'suspension_warning_sent': False,
             # retained_backup_path is intentionally NOT cleared
+            # Reset restore banner so client sees the option again
+            'restore_banner_dismissed': False,
+            'restoration_invoice_id': False,
         })
 
         self._append_log(

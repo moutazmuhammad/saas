@@ -182,8 +182,8 @@ class SaasRestoreRetainedWizard(models.TransientModel):
         target._append_log("Restoring retained backup '%s'..." % backup.name)
         self.env.cr.commit()
 
-        # Re-setup custom repos and pip packages BEFORE restore
-        self._pre_restore_setup(target)
+        # Re-setup custom repos, configs, and pip packages BEFORE restore
+        target._pre_restore_setup()
 
         try:
             target._do_restore_backup(backup.id)
@@ -213,65 +213,8 @@ class SaasRestoreRetainedWizard(models.TransientModel):
                 target.subdomain, e,
             )
 
-    def _pre_restore_setup(self, target):
-        """Re-clone custom repos and install pip packages before restoring."""
-        target._append_log("Setting up custom repos and packages before restore...")
-
-        # Re-enable webhook intent for repos that have a token
-        for repo in target.repo_ids:
-            if repo.sudo().github_token and not repo.webhook_enabled:
-                repo.webhook_enabled = True
-
-        # Re-clone customer repos
-        pending_repos = target.repo_ids.filtered(lambda r: r.state == 'pending')
-        for repo in pending_repos:
-            target._append_log(
-                "Re-cloning repo %s (%s)..." % (repo.repo_url, repo.branch)
-            )
-            try:
-                repo._clone_repo()
-            except Exception as e:
-                target._append_log(
-                    "WARNING: Failed to clone %s: %s" % (repo.name, e)
-                )
-
-        # Re-clone product repos
-        if target.saas_product_id and target.saas_product_id.repo_ids:
-            target._ensure_can_ssh()
-            with target.docker_server_id._get_ssh_connection() as ssh:
-                target._clone_product_repos(ssh)
-
-        # Re-render configs
-        target._ensure_can_ssh()
-        with target.docker_server_id._get_ssh_connection() as ssh:
-            target._render_and_write_configs(ssh)
-
-        # Install pip packages
-        if target.pip_packages:
-            target._append_log("Installing pip packages...")
-            try:
-                container = 'odoo_%s' % target.subdomain
-                pkgs = [
-                    p.strip() for p in target.pip_packages.splitlines()
-                    if p.strip() and not p.strip().startswith('#')
-                ]
-                if pkgs:
-                    with target.docker_server_id._get_ssh_connection() as ssh:
-                        install_cmd = (
-                            'docker exec %s bash -c "'
-                            'mkdir -p /var/lib/odoo/pip_packages && '
-                            'pip3 install --target=/var/lib/odoo/pip_packages '
-                            '--upgrade --no-warn-script-location %s'
-                            '" 2>&1'
-                        ) % (container, ' '.join(pkgs))
-                        ssh.execute(install_cmd, timeout=300)
-                        target._append_log(
-                            "Pip packages installed: %s" % ', '.join(pkgs)
-                        )
-            except Exception as e:
-                target._append_log("WARNING: pip install failed: %s" % e)
-
-        target._append_log("Pre-restore setup complete.")
+    # _pre_restore_setup is now on saas.instance model — called as
+    # target._pre_restore_setup() from both the wizard and the auto flow.
 
     def _create_restoration_invoice(self, source, target):
         """Create and post an invoice for the data restoration service."""
