@@ -1098,7 +1098,7 @@
                                 </t>
                             </div>
 
-                            <!-- Restoration in progress (paid, restore running) -->
+                            <!-- Restoration in progress (paid, restore running in background) -->
                             <t t-if="instance.restoration_invoice_id and instance.restoration_invoice_id.payment_state in ('paid', 'in_payment')">
                                 <div class="alert-banner alert-success"
                                      id="restore-progress-poll"
@@ -1109,6 +1109,12 @@
                                         <p class="mb-0">Payment received. Your data is being restored now. This page will refresh automatically.</p>
                                     </div>
                                 </div>
+                                <!-- Hide the provisioning poll when restore is in progress
+                                     to prevent conflicting refreshes -->
+                                <script>
+                                    var pp = document.getElementById('provisioning-poll');
+                                    if (pp) pp.remove();
+                                </script>
                             </t>
 
                             <!-- Restoration invoice pending payment -->

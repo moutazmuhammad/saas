@@ -3109,14 +3109,18 @@ class SaasInstance(models.Model):
     def _do_paid_restore(self):
         """Restore retained backup after the restoration invoice is paid.
 
-        Called automatically by the payment handler when the client pays
-        the restoration fee invoice.
+        Called in a background thread by the payment handler.
         """
         self.ensure_one()
         if not self.retained_backup_path:
             self._append_log("ERROR: No retained backup path — cannot restore.")
             self.restoration_invoice_id = False
             return
+
+        # Set state so client sees "provisioning" instead of "running"
+        self.state = 'provisioning'
+        self._append_log("Restoring data from retained backup (paid)...")
+        self.env.cr.commit()
 
         Backup = self.env['saas.instance.backup']
         backup = Backup.create({
@@ -3126,12 +3130,10 @@ class SaasInstance(models.Model):
             'state': 'done',
         })
 
-        self._append_log("Restoring data from retained backup (paid)...")
-
         # Set up all repos, configs, and pip packages BEFORE restore
         self._pre_restore_setup()
 
-        # Restore the backup
+        # Restore the backup (sets state back to 'running' on success)
         self._do_restore_backup(backup.id)
         backup.unlink()
 
@@ -3142,10 +3144,9 @@ class SaasInstance(models.Model):
             pass
 
         # Delete the retained backup from cloud storage
-        try:
-            retained_path = self.retained_backup_path
-            if retained_path:
-                Backup = self.env['saas.instance.backup']
+        retained_path = self.retained_backup_path
+        if retained_path:
+            try:
                 temp = Backup.new({
                     'instance_id': self.id,
                     'bucket_path': retained_path,
@@ -3154,11 +3155,11 @@ class SaasInstance(models.Model):
                 self._append_log(
                     "Retained backup deleted from cloud: %s" % retained_path
                 )
-        except Exception:
-            _logger.exception(
-                "Failed to delete retained backup from cloud for %s",
-                self.subdomain,
-            )
+            except Exception:
+                _logger.exception(
+                    "Failed to delete retained backup from cloud for %s",
+                    self.subdomain,
+                )
 
         # Clear restoration references and dismiss banner
         self.write({
