@@ -244,6 +244,10 @@
                                            decoration-info="state == 'pending'"/>
                                     <field name="last_pull"/>
                                     <field name="webhook_enabled" string="Auto-Deploy"/>
+                                    <field name="webhook_registered" string="Webhook Active"
+                                           widget="boolean"
+                                           decoration-success="webhook_registered"
+                                           decoration-danger="not webhook_registered and webhook_enabled"/>
                                     <button name="action_clone_repo" type="object"
                                             string="Clone" icon="fa-clone"
                                             invisible="state == 'cloned'"/>

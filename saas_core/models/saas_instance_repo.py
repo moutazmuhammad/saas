@@ -80,6 +80,11 @@ class SaasInstanceRepo(models.Model):
         default=True,
         help='Automatically pull and restart when code is pushed to the tracked branch.',
     )
+    webhook_registered = fields.Boolean(
+        string='Webhook Active',
+        compute='_compute_webhook_registered',
+        help='Whether the webhook is actually registered on the Git provider.',
+    )
     webhook_secret = fields.Char(
         string='Webhook Secret',
         copy=False,
@@ -156,6 +161,13 @@ class SaasInstanceRepo(models.Model):
     def _onchange_repo_url(self):
         if self.repo_url:
             self.repo_url = self._strip_userinfo(self.repo_url.strip())
+
+    @api.depends('webhook_enabled', 'webhook_provider_id')
+    def _compute_webhook_registered(self):
+        for rec in self:
+            rec.webhook_registered = bool(
+                rec.webhook_enabled and rec.webhook_provider_id
+            )
 
     @api.depends('webhook_secret')
     def _compute_webhook_url(self):
@@ -846,8 +858,16 @@ class SaasInstanceRepo(models.Model):
                     rec.error_message = False
 
                     # Auto-register webhook on Git provider
-                    if rec.sudo().github_token and rec.webhook_enabled:
-                        rec._register_webhook_with_retry()
+                    if rec.webhook_enabled:
+                        if rec.sudo().github_token:
+                            rec._register_webhook_with_retry()
+                        else:
+                            instance._append_log(
+                                "Auto-deploy webhook NOT registered for %s: "
+                                "no access token provided. Add a token to "
+                                "enable automatic webhook registration."
+                                % rec.name
+                            )
 
             except UserError:
                 raise
