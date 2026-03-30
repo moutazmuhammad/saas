@@ -2632,46 +2632,46 @@ h1, h2, h3, h4, h5, h6 {
     color: var(--text-primary);
 }
 
-/* Open Instance — accent/blue tint */
+/* Open Instance */
 .action-btn.action-primary {
-    background: rgba(13, 179, 208, 0.12);
-    border-color: rgba(13, 179, 208, 0.3);
-    color: var(--accent);
-    font-weight: 600;
+    background: #0db3d0;
+    border-color: #0db3d0;
+    color: #000;
+    font-weight: 700;
 }
 
 .action-btn.action-primary:hover {
-    background: rgba(13, 179, 208, 0.22);
-    border-color: var(--accent);
-    color: #5CE0F5;
+    background: #0a95ad;
+    border-color: #0a95ad;
+    color: #000;
 }
 
-/* Upgrade / Change Plan — primary/indigo tint */
+/* Upgrade / Change Plan */
 .action-btn.action-upgrade {
-    background: rgba(32, 60, 134, 0.15);
-    border-color: rgba(32, 60, 134, 0.35);
-    color: #6B8ADB;
-    font-weight: 600;
+    background: #10B981;
+    border-color: #10B981;
+    color: #000;
+    font-weight: 700;
 }
 
 .action-btn.action-upgrade:hover {
-    background: rgba(32, 60, 134, 0.28);
-    border-color: #6B8ADB;
-    color: #8DA8EF;
+    background: #059669;
+    border-color: #059669;
+    color: #000;
 }
 
-/* View Logs — muted/neutral tint */
+/* View Logs */
 .action-btn.action-logs {
-    background: rgba(161, 161, 170, 0.08);
-    border-color: rgba(161, 161, 170, 0.2);
-    color: var(--text-secondary);
-    font-weight: 500;
+    background: #F59E0B;
+    border-color: #F59E0B;
+    color: #000;
+    font-weight: 700;
 }
 
 .action-btn.action-logs:hover {
-    background: rgba(161, 161, 170, 0.15);
-    border-color: rgba(161, 161, 170, 0.4);
-    color: var(--text-primary);
+    background: #D97706;
+    border-color: #D97706;
+    color: #000;
 }
 
 .action-btn.action-danger {

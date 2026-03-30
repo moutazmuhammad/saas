@@ -351,7 +351,6 @@
                                                     <th>Service</th>
                                                     <th>Plan</th>
                                                     <th>Status</th>
-                                                    <th class="d-none d-md-table-cell">URL</th>
                                                     <th class="d-none d-md-table-cell">Created</th>
                                                 </tr>
                                             </thead>
@@ -385,17 +384,6 @@
                                                                 </t>
                                                                 <t t-esc="dict(inst._fields['state'].selection).get(inst.state, inst.state)"/>
                                                             </span>
-                                                        </td>
-                                                        <td class="d-none d-md-table-cell">
-                                                            <t t-if="inst.state == 'running' and inst.url">
-                                                                <a t-att-href="inst.url" target="_blank" class="text-muted small">
-                                                                    <t t-esc="inst.subdomain"/>.<t t-esc="inst.domain_id.name"/>
-                                                                    <i class="fas fa-external-link-alt ms-1"></i>
-                                                                </a>
-                                                            </t>
-                                                            <t t-else="">
-                                                                <span class="text-muted">—</span>
-                                                            </t>
                                                         </td>
                                                         <td class="text-muted d-none d-md-table-cell">
                                                             <t t-esc="inst.create_date" t-options="{'widget': 'date'}"/>
@@ -503,15 +491,6 @@
                                     </div>
                                 </div>
                                 <div class="row g-3">
-                                    <div class="col-md-6">
-                                        <div class="text-muted small">URL</div>
-                                        <t t-if="instance.state == 'running' and instance.url">
-                                            <a t-att-href="instance.url" target="_blank">
-                                                <t t-esc="instance.url"/> <i class="fas fa-external-link-alt ms-1"></i>
-                                            </a>
-                                        </t>
-                                        <t t-else=""><span class="text-muted">Not available</span></t>
-                                    </div>
                                     <div class="col-md-6">
                                         <div class="text-muted small">Service</div>
                                         <div t-esc="instance.saas_product_id.name"/>
