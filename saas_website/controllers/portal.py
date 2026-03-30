@@ -403,7 +403,7 @@ class SaasPortal(CustomerPortal):
         # Prepare payment form values (same approach as account_payment)
         partner_sudo = request.env.user.partner_id
         invoice_company = invoice.company_id or request.env.company
-        landing_route = '/my/instances/%s' % instance_id
+        landing_route = '/my/instances/%s?payment=success' % instance_id
 
         availability_report = {}
         providers_sudo = request.env['payment.provider'].sudo()._get_compatible_providers(

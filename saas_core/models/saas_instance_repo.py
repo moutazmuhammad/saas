@@ -1077,7 +1077,7 @@ class SaasInstanceRepo(models.Model):
                     # Set permissions for container's odoo user
                     container_uid = instance._get_container_uid(ssh)
                     ssh.execute(
-                        'sudo chown -R %s:%s %s && chmod -R 775 %s'
+                        'sudo chown -R %s:%s %s && chmod -R 777 %s'
                         % (container_uid, container_uid,
                            shlex.quote(repo_path), shlex.quote(repo_path))
                     )
