@@ -1020,20 +1020,20 @@
                                 <!-- View Logs (hosting instances) -->
                                 <t t-if="is_hosting and instance.state == 'running'">
                                     <a t-attf-href="/my/instances/#{instance.id}/logs"
-                                       class="action-btn">
+                                       class="action-btn action-logs">
                                         <i class="fas fa-terminal"></i>View Logs
                                     </a>
                                 </t>
 
-                                <t t-if="instance.is_trial">
+                                <t t-if="instance.is_trial and instance.state in ('running', 'stopped')">
                                     <a t-attf-href="/my/instances/#{instance.id}/upgrade"
-                                       class="action-btn">
+                                       class="action-btn action-upgrade">
                                         <i class="fas fa-arrow-up"></i>Upgrade Plan
                                     </a>
                                 </t>
                                 <t t-if="not instance.is_trial and instance.state in ('running', 'stopped')">
                                     <a t-attf-href="/my/instances/#{instance.id}/change-plan"
-                                       class="action-btn">
+                                       class="action-btn action-upgrade">
                                         <i class="fas fa-exchange-alt"></i>Change Plan
                                     </a>
                                 </t>

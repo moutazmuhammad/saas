@@ -875,6 +875,58 @@ class SaasInstance(models.Model):
             return '101'
         return uid
 
+    def _ensure_webhooks_registered(self):
+        """Verify and register webhooks for all repos that need them.
+
+        Called at the end of deploy/redeploy to guarantee that every repo
+        with ``webhook_enabled=True`` and a token actually has a working
+        webhook on the Git provider.  Logs the outcome per repo so the
+        operator can see exactly what happened.
+        """
+        self.ensure_one()
+        repos = self.repo_ids.filtered(
+            lambda r: r.state == 'cloned' and r.webhook_enabled
+        )
+        if not repos:
+            return
+
+        for repo in repos:
+            token = repo.sudo().github_token
+            if not token:
+                self._append_log(
+                    "Webhook skipped for %s: no access token. "
+                    "Client must provide a token for auto-deploy."
+                    % repo.name
+                )
+                continue
+
+            # Already registered and valid?
+            if repo.webhook_provider_id:
+                try:
+                    if repo._verify_webhook_on_provider():
+                        self._append_log(
+                            "Webhook verified for %s (provider ID: %s)."
+                            % (repo.name, repo.webhook_provider_id)
+                        )
+                        continue
+                except Exception:
+                    pass
+                # Stale provider ID — clear and re-register
+                repo.webhook_provider_id = False
+
+            # Register (or re-register)
+            self._append_log(
+                "Registering webhook for %s..." % repo.name
+            )
+            success = repo._register_webhook_with_retry()
+            if not success:
+                self._append_log(
+                    "WARNING: Webhook registration failed for %s. "
+                    "Auto-deploy will NOT work until this is fixed. "
+                    "Check the access token and web.base.url setting."
+                    % repo.name
+                )
+
     def _append_log(self, message):
         """Append a timestamped message to provisioning_log."""
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1306,6 +1358,41 @@ class SaasInstance(models.Model):
                 self.env.cr.rollback()
                 _logger.exception(
                     "Cron: recovery failed for stuck instance %s",
+                    instance.subdomain,
+                )
+
+    def _cron_verify_webhooks(self):
+        """Cron: verify and re-register webhooks for all running instances.
+
+        Runs every 6 hours.  For each running instance with repos that
+        have ``webhook_enabled=True``, verifies the webhook is still
+        active on the Git provider and re-registers if needed.
+        """
+        instances = self.search([
+            ('state', '=', 'running'),
+        ])
+        if not instances:
+            return
+        for instance in instances:
+            repos_needing_webhook = instance.repo_ids.filtered(
+                lambda r: r.state == 'cloned'
+                and r.webhook_enabled
+                and r.sudo().github_token
+                and not r.webhook_provider_id
+            )
+            if not repos_needing_webhook:
+                continue
+            try:
+                _logger.info(
+                    "Cron: re-registering %d webhook(s) for %s",
+                    len(repos_needing_webhook), instance.subdomain,
+                )
+                instance._ensure_webhooks_registered()
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Cron: webhook verification failed for %s",
                     instance.subdomain,
                 )
 
@@ -2019,27 +2106,26 @@ class SaasInstance(models.Model):
 
             # Clone repos AFTER container is running — ensures the instance
             # is functional before adding custom code and webhooks.
-            has_new_repos = False
 
             # Clone product repositories
             self._clone_product_repos(ssh)
-            if self.saas_product_id and self.saas_product_id.repo_ids:
-                has_new_repos = True
 
             # Clone customer instance repos (for hosting instances)
             if self.is_hosting and self.repo_ids:
                 for repo in self.repo_ids.filtered(lambda r: r.state == 'pending'):
                     self._append_log("Cloning customer repo: %s (%s)..." % (repo.repo_url, repo.branch))
                     repo._clone_repo()
-                    has_new_repos = True
 
-            if has_new_repos:
+            # Check if any repos (product or instance) need to be in the
+            # addons_path.  If so, re-render config and restart.
+            all_addons = self._get_all_addons_paths()
+            if all_addons:
                 # Validate module manifests to catch broken modules early.
                 self._validate_addons_manifests(ssh)
-                # Re-render configs to include the new addons paths and
+                # Re-render configs to include the addons paths and
                 # restart to pick them up.
                 self._render_and_write_configs(ssh)
-                self._append_log("Restarting container to load new addons...")
+                self._append_log("Restarting container to load custom addons...")
                 ssh.execute(
                     'cd %s && docker compose down 2>&1'
                     % shlex.quote(instance_path)
@@ -2054,6 +2140,12 @@ class SaasInstance(models.Model):
                         % (stdout, stderr)
                     )
                 self._append_log("Container restarted with custom addons.")
+
+            # Ensure webhooks are registered for all repos that need them.
+            # _clone_repo attempts registration but may fail silently
+            # (e.g. race condition, transient API error).  This final
+            # pass catches anything that slipped through.
+            self._ensure_webhooks_registered()
 
             # Configure Nginx reverse proxy with SSL
             self._append_log("Configuring Nginx reverse proxy with SSL...")
@@ -2246,6 +2338,9 @@ class SaasInstance(models.Model):
                     _("docker compose up -d failed:\n%s\n%s") % (stdout, stderr)
                 )
             self._append_log("Container restarted successfully.")
+
+        # Ensure webhooks are registered for any new or updated repos
+        self._ensure_webhooks_registered()
 
         self.state = 'running'
         self._safe_refresh_usage()

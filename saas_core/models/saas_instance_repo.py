@@ -797,6 +797,43 @@ class SaasInstanceRepo(models.Model):
         instance_path = instance._get_instance_path()
         return '%s/addons/%s' % (instance_path, self._get_repo_dir_name())
 
+    def _detect_addons_subdir(self, ssh, repo_path):
+        """Detect the addons subdirectory by scanning for __manifest__.py.
+
+        If modules sit directly in the repo root (e.g. repo/module_a/),
+        returns ``False`` (no subdir needed).  If they're nested one level
+        deep (e.g. repo/addons/module_a/), returns that subdirectory
+        name (e.g. ``'addons'``).
+        """
+        self.ensure_one()
+        # Find all __manifest__.py relative to repo root
+        exit_code, stdout, _ = ssh.execute(
+            'find %s -name __manifest__.py -maxdepth 3 '
+            '-not -path "*/.git/*" 2>/dev/null'
+            % shlex.quote(repo_path)
+        )
+        if exit_code != 0 or not stdout.strip():
+            return False
+
+        import os
+        # Collect parent directories (the module dirs) relative to repo root
+        subdirs = set()
+        for line in stdout.strip().splitlines():
+            # line: /path/to/repo/[subdir/]module/__manifest__.py
+            rel = line.replace(repo_path + '/', '', 1)
+            parts = rel.split('/')
+            if len(parts) == 2:
+                # module/__manifest__.py — modules at repo root, no subdir
+                return False
+            elif len(parts) == 3:
+                # subdir/module/__manifest__.py — modules in a subfolder
+                subdirs.add(parts[0])
+
+        if len(subdirs) == 1:
+            return subdirs.pop()
+        # Multiple subdirs or no clear pattern — don't guess
+        return False
+
     def _get_container_addons_path(self):
         """Return the addons path inside the container for this repo."""
         self.ensure_one()
@@ -851,6 +888,17 @@ class SaasInstanceRepo(models.Model):
                         % (container_uid, container_uid,
                            shlex.quote(repo_path), shlex.quote(repo_path))
                     )
+
+                    # Auto-detect addons subdirectory if not set.
+                    # Looks for __manifest__.py files and determines the
+                    # common parent directory of all modules.
+                    if not rec.addons_subdir:
+                        detected = rec._detect_addons_subdir(ssh, repo_path)
+                        if detected:
+                            rec.addons_subdir = detected
+                            instance._append_log(
+                                "Auto-detected addons subdirectory: %s" % detected
+                            )
 
                     instance._append_log("Repository cloned successfully.")
                     rec.state = 'cloned'

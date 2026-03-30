@@ -282,7 +282,7 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        if not instance_sudo.is_trial:
+        if not instance_sudo.is_trial or instance_sudo.state not in ('running', 'stopped'):
             return request.redirect('/my/instances/%s' % instance_id)
 
         from odoo.addons.saas_website.controllers.main import SaasWebsite
