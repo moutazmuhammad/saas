@@ -2705,15 +2705,38 @@ class SaasInstance(models.Model):
                 "WARNING: PostgreSQL cleanup failed (may not have been provisioned)."
             )
 
-        # 3. Delete ALL client backups from cloud storage (regular folder).
-        #    The final backup is already in cancelled_backups/ so it
-        #    won't be touched.  Re-fetch from DB to avoid stale cache.
+        # 4. Delete ALL client backups from cloud storage — both regular
+        #    backups and old cancelled_backups/ from prior cancellations.
+        #    Only keep the new final backup we just created.
         all_backups = Backup.search([('instance_id', '=', self.id)])
         for backup in all_backups:
-            if backup.bucket_path and not backup.bucket_path.startswith('cancelled_backups/'):
-                backup._delete_from_bucket()
+            if backup.bucket_path and backup.bucket_path != retained_path:
+                try:
+                    backup._delete_from_bucket()
+                except Exception:
+                    _logger.warning(
+                        "Failed to delete old backup %s for %s",
+                        backup.bucket_path, self.subdomain,
+                    )
 
-        # 4. Clean up and finalize
+        # Also delete any old retained backup from a prior cancellation
+        if self.retained_backup_path and self.retained_backup_path != retained_path:
+            try:
+                old_temp = Backup.new({
+                    'instance_id': self.id,
+                    'bucket_path': self.retained_backup_path,
+                })
+                old_temp._delete_from_bucket()
+                self._append_log(
+                    "Deleted old retained backup: %s" % self.retained_backup_path
+                )
+            except Exception:
+                _logger.warning(
+                    "Failed to delete old retained backup %s for %s",
+                    self.retained_backup_path, self.subdomain,
+                )
+
+        # 5. Clean up and finalize
         all_backups.unlink()
         self.retained_backup_path = retained_path
 
