@@ -67,18 +67,19 @@ class SaasWebhookController(http.Controller):
 
         # 2. Check instance is running
         instance = repo.instance_id
-        if instance.state != 'running':
+        if instance.state not in ('running', 'stopped'):
             _logger.info(
-                "Webhook: instance %s not running (state=%s), skipping",
+                "Webhook: instance %s not ready (state=%s), skipping",
                 instance.name, instance.state,
             )
             return request.make_json_response(
                 {'status': 'ignored', 'reason': 'instance not running'},
             )
 
-        # 3. Repo must be cloned
-        if repo.state != 'cloned':
-            _logger.info("Webhook: repo %s not cloned yet, skipping", repo.name)
+        # 3. Repo must have been cloned (accept 'cloned' or 'error' since
+        #    error may be from a transient pull failure, not a clone failure)
+        if repo.state not in ('cloned', 'error'):
+            _logger.info("Webhook: repo %s not cloned yet (state=%s), skipping", repo.name, repo.state)
             return request.make_json_response(
                 {'status': 'ignored', 'reason': 'repo not cloned'},
             )

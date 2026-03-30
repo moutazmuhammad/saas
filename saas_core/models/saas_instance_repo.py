@@ -946,34 +946,19 @@ class SaasInstanceRepo(models.Model):
     _deploy_locks = {}
 
     def _do_webhook_pull_and_restart(self):
-        """Pull repo and restart instance (runs in background thread from webhook).
-        Includes debounce (skip if last event < 30s ago) and locking
-        (prevent concurrent deploys on the same instance).
+        """Pull repo and restart instance (runs in background thread).
+
+        Uses a blocking lock so no push event is lost — if another
+        deploy is running, this one waits then proceeds.
         """
         self.ensure_one()
-        import time
-
-        # Debounce: skip if last webhook event was less than 30 seconds ago
-        if self.webhook_last_event:
-            elapsed = (fields.Datetime.now() - self.webhook_last_event).total_seconds()
-            if elapsed < 30:
-                _logger.info(
-                    "Webhook auto-deploy: skipping %s (last event %ds ago, debounce 30s)",
-                    self.name, elapsed,
-                )
-                return
-
-        # Lock: only one deploy per instance at a time
         import threading
+
         instance_id = self.instance_id.id
         lock = self._deploy_locks.setdefault(instance_id, threading.Lock())
-        if not lock.acquire(blocking=False):
-            _logger.info(
-                "Webhook auto-deploy: skipping %s, another deploy is running for instance %s",
-                self.name, self.instance_id.name,
-            )
-            return
 
+        # Wait for any running deploy to finish, then proceed.
+        lock.acquire()
         try:
             _logger.info(
                 "Webhook auto-deploy: pulling %s for instance %s",
@@ -982,6 +967,10 @@ class SaasInstanceRepo(models.Model):
             self._do_pull_repo()
             self.instance_id._update_repo_config_and_restart()
             self.webhook_last_event = fields.Datetime.now()
+            # Clear error state on successful pull
+            if self.state == 'error':
+                self.state = 'cloned'
+                self.error_message = False
             _logger.info(
                 "Webhook auto-deploy: completed for %s / %s",
                 self.name, self.instance_id.name,
@@ -1158,9 +1147,18 @@ class SaasInstanceRepo(models.Model):
         self.instance_id._update_repo_config_and_restart()
 
     def _on_repo_background_error(self, exception):
-        """Handle background repo operation failure."""
-        self.state = 'error'
+        """Handle background repo operation failure.
+
+        Only sets state to 'error' if the repo was in 'pending' state
+        (clone failed).  If the repo was already 'cloned' (pull/restart
+        failed), keep it as 'cloned' so webhooks continue to work.
+        """
+        if self.state == 'pending':
+            self.state = 'error'
         self.error_message = str(exception)
+        self.instance_id._append_log(
+            "Repo operation failed for %s: %s" % (self.name, exception)
+        )
 
     def action_pull_repo(self):
         """Git pull the repo (async, no restart)."""
