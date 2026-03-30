@@ -859,16 +859,21 @@ class SaasInstance(models.Model):
     def _get_container_uid(self, ssh):
         """Return the UID of the default user inside the Docker image.
 
-        Runs ``id -u`` inside a disposable container.  Falls back to 101
-        (the default in the official Odoo images) if detection fails.
+        Uses ``--entrypoint`` to bypass the custom entrypoint (which
+        requires mounted volumes) and runs a plain ``id -u``.  Falls
+        back to 101 (the default in the official Odoo images) if
+        detection fails.
         """
         self.ensure_one()
         odoo_image = self.odoo_version_id._get_docker_image()
-        _, uid_out, _ = ssh.execute(
-            'docker run --rm %s id -u 2>/dev/null || echo 101'
+        exit_code, uid_out, _ = ssh.execute(
+            'docker run --rm --entrypoint id %s -u 2>/dev/null'
             % shlex.quote(odoo_image)
         )
-        return uid_out.strip() or '101'
+        uid = uid_out.strip()
+        if exit_code != 0 or not uid.isdigit():
+            return '101'
+        return uid
 
     def _append_log(self, message):
         """Append a timestamped message to provisioning_log."""
