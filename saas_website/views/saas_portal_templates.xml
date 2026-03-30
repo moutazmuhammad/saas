@@ -932,19 +932,11 @@
                                         </span>
                                         <t t-set="backup_running" t-value="any(b.state == 'running' for b in backups)"/>
                                         <t t-if="not instance.is_trial and instance.state == 'running' and not backup_running">
-                                            <form t-attf-action="/my/instances/#{instance.id}/create-backup"
-                                                  method="post" style="display:inline;">
-                                                <input type="hidden" name="csrf_token"
-                                                       t-att-value="request.csrf_token()"/>
-                                                <button type="submit" class="btn btn-sm btn-primary"
-                                                        data-confirm="Create a new backup of your instance?"
-                                                        data-confirm-variant="info"
-                                                        data-confirm-yes="Yes, create backup"
-                                                        data-confirm-no="Cancel"
-                                                        data-loading-text="Creating backup...">
-                                                    <i class="fas fa-plus me-1"></i>Create Backup
-                                                </button>
-                                            </form>
+                                            <button class="btn btn-sm btn-primary"
+                                                    id="btn-create-backup"
+                                                    t-att-data-instance-id="instance.id">
+                                                <i class="fas fa-plus me-1"></i>Create Backup
+                                            </button>
                                         </t>
                                         <t t-if="backup_running">
                                             <span class="badge-status badge-provisioning"
@@ -1017,18 +1009,15 @@
                                         <h5>No backups yet</h5>
                                         <p>Create your first backup to protect your data.</p>
                                         <t t-if="instance.state == 'running'">
-                                            <form t-attf-action="/my/instances/#{instance.id}/create-backup"
-                                                  method="post" style="display:inline;">
-                                                <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-                                                <button type="submit" class="btn btn-primary"
-                                                        data-confirm="Create a new backup of your instance?"
-                                                        data-confirm-variant="info"
-                                                        data-confirm-yes="Yes, create backup"
-                                                        data-confirm-no="Cancel"
-                                                        data-loading-text="Creating backup...">
-                                                    <i class="fas fa-plus me-2"></i>Create Your First Backup
-                                                </button>
-                                            </form>
+                                            <button class="btn btn-primary"
+                                                    id="btn-create-backup"
+                                                    t-att-data-instance-id="instance.id"
+                                                    data-confirm="Create a new backup of your instance?"
+                                                    data-confirm-variant="info"
+                                                    data-confirm-yes="Yes, create backup"
+                                                    data-confirm-no="Cancel">
+                                                <i class="fas fa-plus me-2"></i>Create Your First Backup
+                                            </button>
                                         </t>
                                     </div>
                                 </t>

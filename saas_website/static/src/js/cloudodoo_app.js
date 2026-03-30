@@ -866,6 +866,39 @@ function initPackageList() {
 // Instance Folders
 // ============================================
 
+function initBackupButton() {
+    var btn = document.getElementById('btn-create-backup');
+    if (!btn) return;
+
+    btn.addEventListener('click', function () {
+        var instanceId = btn.dataset.instanceId;
+        _coSetupModal(
+            'Create a new backup of your instance?',
+            'info', 'Yes, create backup', 'Cancel',
+            function () {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-sm"></span> Creating...';
+                CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/create-backup', {})
+                    .then(function (res) {
+                        if (res.error) {
+                            CloudOdoo.showToast(res.error, 'error');
+                            btn.disabled = false;
+                            btn.innerHTML = '<i class="fas fa-plus me-1"></i>Create Backup';
+                        } else {
+                            CloudOdoo.showToast('Backup started', 'success');
+                            window.location.reload();
+                        }
+                    })
+                    .catch(function (e) {
+                        CloudOdoo.showToast(e.message || 'Failed', 'error');
+                        btn.disabled = false;
+                        btn.innerHTML = '<i class="fas fa-plus me-1"></i>Create Backup';
+                    });
+            }
+        );
+    });
+}
+
 function initInstanceFolders() {
     var createBtn = document.getElementById('btn-create-folder');
     if (!createBtn) return;
@@ -1657,6 +1690,7 @@ function initAll() {
     initFormLoadingStates();
     initPackageList();
     initInstanceFolders();
+    initBackupButton();
 
     // Update nav active state
     const path = window.location.pathname;

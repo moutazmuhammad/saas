@@ -1201,39 +1201,42 @@ class SaasPortal(CustomerPortal):
 
     @http.route(
         '/my/instances/<int:instance_id>/create-backup',
-        type='http', auth='user', website=True, methods=['POST'],
+        type='json', auth='user', website=True,
     )
-    def portal_create_backup(self, instance_id, access_token=None, **kw):
-        """Create a new backup from the portal."""
+    def portal_create_backup(self, instance_id, **kw):
+        """Create a new backup from the portal (JSON, no page refresh)."""
         try:
             instance_sudo = self._document_check_access(
-                'saas.instance', instance_id, access_token=access_token,
+                'saas.instance', instance_id,
             )
         except (AccessError, MissingError):
-            return request.redirect('/my/instances')
+            return {'error': _('Access denied.')}
         if instance_sudo.state != 'running':
-            return request.redirect('/my/instances/%s' % instance_id)
-
-        # Block if a backup is already in progress
-        # Block backups for trial plans
+            return {'error': _('Instance must be running.')}
         if instance_sudo.plan_id and instance_sudo.plan_id.is_trial_plan:
-            return request.redirect('/my/instances/%s' % instance_id)
+            return {'error': _('Backups are not available on trial plans.')}
 
         running = instance_sudo.backup_ids.filtered(lambda b: b.state == 'running')
         if running:
-            return request.redirect('/my/instances/%s' % instance_id)
+            return {'error': _('A backup is already in progress.')}
 
-        # Check backup limit
+        # Auto-rotate: delete oldest if at plan limit
         plan = instance_sudo.plan_id
         if plan and plan.max_backups > 0:
-            existing = instance_sudo.backup_ids.filtered(
+            done_backups = instance_sudo.backup_ids.filtered(
                 lambda b: b.state == 'done'
-            )
-            if len(existing) >= plan.max_backups:
-                return request.redirect('/my/instances/%s' % instance_id)
+            ).sorted('create_date')
+            while len(done_backups) >= plan.max_backups:
+                oldest = done_backups[0]
+                instance_sudo._append_log(
+                    "Auto-removing oldest backup '%s' (limit: %d)."
+                    % (oldest.name, plan.max_backups)
+                )
+                oldest._delete_from_bucket()
+                oldest.unlink()
+                done_backups -= oldest
 
-        # Create the backup record NOW (state=running) so the UI sees it
-        # immediately, then run the actual backup in the background.
+        # Create the backup record NOW (state=running) so polling detects it
         Backup = request.env['saas.instance.backup'].sudo()
         now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         backup = Backup.create({
@@ -1248,7 +1251,7 @@ class SaasPortal(CustomerPortal):
             thread_name='saas_backup_%s' % instance_sudo.subdomain,
         )
 
-        return request.redirect('/my/instances/%s' % instance_id)
+        return {'success': True, 'message': _('Backup started.')}
 
     # ==================== Delete Backup ====================
 
