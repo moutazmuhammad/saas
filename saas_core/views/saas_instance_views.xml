@@ -254,6 +254,9 @@
                                     <button name="action_pull_repo" type="object"
                                             string="Pull" icon="fa-download"
                                             invisible="state != 'cloned'"/>
+                                    <button name="action_reset_to_cloned" type="object"
+                                            string="Reset Status" icon="fa-check"
+                                            invisible="state != 'error'"/>
                                     <button name="action_clone_repo" type="object"
                                             string="Re-clone" icon="fa-refresh"
                                             invisible="state != 'error'"/>

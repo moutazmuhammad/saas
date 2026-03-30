@@ -858,7 +858,7 @@ class SaasInstanceRepo(models.Model):
                 data=payload,
                 headers={
                     'Content-Type': 'application/json',
-                    'X-GitHub-Event': 'push',
+                    'X-GitHub-Event': 'ping',
                     'X-Hub-Signature-256': sig,
                 },
                 timeout=15,
@@ -1209,6 +1209,17 @@ class SaasInstanceRepo(models.Model):
             raise UserError(
                 _("Failed to pull repository: %s") % str(e)
             )
+
+    def action_reset_to_cloned(self):
+        """Reset repo state from error to cloned.
+
+        Use when the repo was cloned successfully but a subsequent
+        operation (like webhook registration) set the state to error.
+        """
+        for rec in self:
+            if rec.state == 'error':
+                rec.state = 'cloned'
+                rec.error_message = False
 
     def action_remove_repo(self):
         """Remove the repo from the server, update config, and restart."""
