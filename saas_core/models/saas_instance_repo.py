@@ -338,6 +338,10 @@ class SaasInstanceRepo(models.Model):
             if not rec.webhook_secret:
                 rec.webhook_secret = secrets.token_hex(20)
             rec.webhook_enabled = True
+            # If repo was in error state due to old webhook failure,
+            # reset to cloned since the clone itself was fine.
+            if rec.state == 'error' and not rec.error_message:
+                rec.state = 'cloned'
             rec._register_webhook_on_provider()
 
     def action_disable_webhook(self):
@@ -419,8 +423,70 @@ class SaasInstanceRepo(models.Model):
         parsed = urlparse(self.repo_url)
         return '%s://%s' % (parsed.scheme or 'https', parsed.hostname)
 
+    def _find_existing_webhook(self, provider, base, owner, repo, token):
+        """Check if our webhook URL is already registered on the provider.
+
+        Returns the hook ID if found, False otherwise.
+        """
+        webhook_url = self.webhook_url
+        try:
+            hooks = []
+            if provider == 'github':
+                resp = http_requests.get(
+                    '%s/repos/%s/%s/hooks' % (base, owner, repo),
+                    headers={
+                        'Authorization': 'token %s' % token,
+                        'Accept': 'application/vnd.github+json',
+                    },
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hooks = resp.json()
+                for h in hooks:
+                    url = h.get('config', {}).get('url', '')
+                    if webhook_url and webhook_url in url:
+                        return str(h.get('id', ''))
+
+            elif provider == 'gitlab':
+                from urllib.parse import quote as url_quote
+                project_path = '%s/%s' % (owner, repo)
+                resp = http_requests.get(
+                    '%s/projects/%s/hooks' % (base, url_quote(project_path, safe='')),
+                    headers={'PRIVATE-TOKEN': token},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hooks = resp.json()
+                for h in hooks:
+                    if webhook_url and webhook_url in h.get('url', ''):
+                        return str(h.get('id', ''))
+
+            elif provider == 'gitea':
+                parsed = urlparse(self.repo_url)
+                gitea_base = '%s://%s/api/v1' % (
+                    parsed.scheme or 'https', parsed.hostname,
+                )
+                resp = http_requests.get(
+                    '%s/repos/%s/%s/hooks' % (gitea_base, owner, repo),
+                    headers={'Authorization': 'token %s' % token},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                hooks = resp.json()
+                for h in hooks:
+                    url = h.get('config', {}).get('url', '')
+                    if webhook_url and webhook_url in url:
+                        return str(h.get('id', ''))
+        except Exception:
+            pass
+        return False
+
     def _register_webhook_on_provider(self):
-        """Automatically register the webhook on the Git provider via API."""
+        """Register the webhook on the Git provider via API.
+
+        If the webhook URL already exists on the provider (e.g. from a
+        previous registration), reuses it instead of creating a duplicate.
+        """
         self.ensure_one()
         token = self.sudo().github_token
         if not token:
@@ -440,7 +506,19 @@ class SaasInstanceRepo(models.Model):
             return
 
         base = self._get_provider_base_url()
-        headers = {}
+
+        # Check if webhook already exists on the provider
+        existing_id = self._find_existing_webhook(
+            provider, base, owner, repo, token,
+        )
+        if existing_id:
+            self.webhook_provider_id = existing_id
+            _logger.info(
+                "Webhook already exists on %s for %s/%s (hook_id=%s), reusing",
+                provider, owner, repo, existing_id,
+            )
+            return
+
         hook_id = False
 
         try:
@@ -502,7 +580,6 @@ class SaasInstanceRepo(models.Model):
                 hook_id = str(resp.json().get('uuid', ''))
 
             elif provider == 'gitea':
-                # Gitea API is GitHub-compatible
                 parsed = urlparse(self.repo_url)
                 gitea_base = '%s://%s/api/v1' % (
                     parsed.scheme or 'https', parsed.hostname,
