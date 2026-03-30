@@ -148,6 +148,12 @@ class SaasInstance(models.Model):
         help='Maximum automatic deploy retries before marking as permanently failed. '
              '0 = no auto-retry.',
     )
+    _pre_provisioning_state = fields.Char(
+        string='Pre-Provisioning State',
+        readonly=True,
+        help='State before entering provisioning. Used to recover instances '
+             'stuck in provisioning after a server restart.',
+    )
     xmlrpc_port = fields.Integer(
         string='HTTP Port',
         readonly=True,
@@ -1236,6 +1242,44 @@ class SaasInstance(models.Model):
                     instance.subdomain,
                 )
 
+    def _cron_recover_stuck_provisioning(self):
+        """Cron: recover instances stuck in ``provisioning`` after a restart.
+
+        When the Odoo service restarts while a background thread is running,
+        the thread is killed and the instance remains in ``provisioning``
+        forever.  This cron detects such instances (stuck for more than 15
+        minutes) and resets them using the same logic as
+        ``_on_background_error``.
+        """
+        threshold = fields.Datetime.now() - datetime.timedelta(minutes=15)
+        stuck = self.search([
+            ('state', '=', 'provisioning'),
+            ('write_date', '<', threshold),
+        ])
+        if not stuck:
+            return
+        _logger.info(
+            "Cron: recovering %d instance(s) stuck in provisioning.", len(stuck),
+        )
+        for instance in stuck:
+            try:
+                prev_state = instance._pre_provisioning_state or 'failed'
+                instance._append_log(
+                    "Recovered from stuck provisioning state "
+                    "(likely caused by a server restart)."
+                )
+                instance._on_background_error(
+                    Exception("Server restarted during provisioning"),
+                    prev_state,
+                )
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Cron: recovery failed for stuck instance %s",
+                    instance.subdomain,
+                )
+
     @staticmethod
     def _parse_ram_string(ram_str):
         """Parse a RAM string like '512m', '1g', '2G' into bytes."""
@@ -1765,6 +1809,7 @@ class SaasInstance(models.Model):
             rec._auto_assign_ports()
             if not rec.deploy_retry_count:
                 rec.provisioning_log = ''
+            rec._pre_provisioning_state = 'failed'
             rec.state = 'provisioning'
             rec._append_log(
                 "Deployment queued (attempt %d). Running in background..."
@@ -1945,6 +1990,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
+            rec._pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Stop queued. Running in background...")
             run_in_background(
@@ -1981,6 +2027,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
+            rec._pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Restart queued. Running in background...")
             run_in_background(
@@ -2019,6 +2066,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
+            rec._pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Redeployment queued. Running in background...")
             run_in_background(
@@ -2106,6 +2154,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
+            rec._pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Suspend queued. Running in background...")
             run_in_background(
@@ -2140,6 +2189,7 @@ class SaasInstance(models.Model):
                 # Infrastructure exists — do a full async deletion
                 rec._ensure_can_ssh()
                 prev_state = rec.state
+                rec._pre_provisioning_state = prev_state
                 rec.state = 'provisioning'
                 rec._append_log("Cancellation queued. Cleaning up infrastructure...")
                 run_in_background(
@@ -2215,6 +2265,7 @@ class SaasInstance(models.Model):
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
+            rec._pre_provisioning_state = prev_state
             rec.state = 'provisioning'
             rec._append_log("Deletion queued. Running in background...")
             run_in_background(
@@ -2388,6 +2439,7 @@ class SaasInstance(models.Model):
         For non-deploy failures: revert to the previous state.
         """
         self._append_log("OPERATION FAILED: %s" % str(exception))
+        self._pre_provisioning_state = False
 
         if prev_state == 'failed':
             # This was a deploy attempt (error_args=('failed',))
@@ -2466,6 +2518,7 @@ class SaasInstance(models.Model):
 
         self._ensure_can_ssh()
         prev_state = self.state
+        self._pre_provisioning_state = prev_state
         self.state = 'provisioning'
         self._append_log("Restore from backup '%s' queued..." % backup.name)
         run_in_background(
