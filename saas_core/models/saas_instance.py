@@ -2815,13 +2815,20 @@ class SaasInstance(models.Model):
         if running:
             raise UserError(_("A backup is already in progress. Please wait for it to finish."))
 
-        # Check plan backup limit
+        # Auto-rotate: if at plan limit, delete the oldest backup
         if self.plan_id and self.plan_id.max_backups > 0:
-            done_count = len(self.backup_ids.filtered(lambda b: b.state == 'done'))
-            if done_count >= self.plan_id.max_backups:
-                raise UserError(_(
-                    "Backup limit reached (%d). Delete an old backup first or upgrade your plan."
-                ) % self.plan_id.max_backups)
+            done_backups = self.backup_ids.filtered(
+                lambda b: b.state == 'done'
+            ).sorted('create_date')
+            while len(done_backups) >= self.plan_id.max_backups:
+                oldest = done_backups[0]
+                self._append_log(
+                    "Auto-removing oldest backup '%s' (limit: %d)."
+                    % (oldest.name, self.plan_id.max_backups)
+                )
+                oldest._delete_from_bucket()
+                oldest.unlink()
+                done_backups -= oldest
 
         # Create the record NOW so subsequent clicks see state=running
         Backup = self.env['saas.instance.backup']
@@ -4122,6 +4129,7 @@ class SaasInstance(models.Model):
             'url': self.url or '',
             'provisioning_log': self.provisioning_log or '',
             'pending_plan_id': self.pending_plan_id.id if self.pending_plan_id else False,
+            'backup_running': bool(self.backup_ids.filtered(lambda b: b.state == 'running')),
         }
 
     # ========== Portal Self-Service Actions ==========

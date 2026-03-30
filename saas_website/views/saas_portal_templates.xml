@@ -930,7 +930,8 @@
                                         <span class="text-muted small">
                                             <t t-esc="len(backups)"/> / <t t-esc="instance.plan_id.max_backups"/> used
                                         </span>
-                                        <t t-if="not instance.is_trial and instance.state == 'running'">
+                                        <t t-set="backup_running" t-value="any(b.state == 'running' for b in backups)"/>
+                                        <t t-if="not instance.is_trial and instance.state == 'running' and not backup_running">
                                             <form t-attf-action="/my/instances/#{instance.id}/create-backup"
                                                   method="post" style="display:inline;">
                                                 <input type="hidden" name="csrf_token"
@@ -944,6 +945,13 @@
                                                     <i class="fas fa-plus me-1"></i>Create Backup
                                                 </button>
                                             </form>
+                                        </t>
+                                        <t t-if="backup_running">
+                                            <span class="badge-status badge-provisioning"
+                                                  id="backup-poll"
+                                                  t-att-data-instance-id="instance.id">
+                                                <span class="spinner-sm"></span> Backup in progress...
+                                            </span>
                                         </t>
                                     </div>
                                 </div>

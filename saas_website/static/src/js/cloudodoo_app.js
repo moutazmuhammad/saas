@@ -518,8 +518,10 @@ function initStatusPolling() {
     var payEl = document.getElementById('payment-poll');
     // Poll for pending upgrade (awaiting payment then auto-applied)
     var upgradeEl = document.getElementById('upgrade-poll');
+    // Poll for backup completion
+    var backupEl = document.getElementById('backup-poll');
 
-    var el = provEl || payEl || upgradeEl;
+    var el = provEl || payEl || upgradeEl || backupEl;
     if (!el) return;
 
     var instanceId = el.dataset.instanceId;
@@ -557,6 +559,11 @@ function initStatusPolling() {
                 } else if (upgradeEl) {
                     // Polling for pending upgrade — reload when pending_plan_id is cleared
                     if (!result.pending_plan_id) {
+                        shouldReload = true;
+                    }
+                } else if (backupEl) {
+                    // Polling for backup completion — reload when no backup is running
+                    if (!result.backup_running) {
                         shouldReload = true;
                     }
                 }
