@@ -1714,7 +1714,7 @@ class SaasInstance(models.Model):
                     _("Failed to clone product repo '%s':\n%s\n%s")
                     % (repo.repo_url, stdout[-500:], stderr[-500:])
                 )
-            ssh.execute('chmod -R 755 %s' % shlex.quote(repo_dir))
+            ssh.execute('chmod -R 777 %s' % shlex.quote(repo_dir))
             self._append_log("Repository %s cloned." % repo.name)
 
     def _pull_product_repos(self, ssh):
