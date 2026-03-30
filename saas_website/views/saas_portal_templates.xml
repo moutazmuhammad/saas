@@ -1049,6 +1049,24 @@
                                         <i class="fas fa-exchange-alt"></i>Change Plan
                                     </a>
                                 </t>
+
+                                <!-- Cancelled instance actions -->
+                                <t t-if="instance.state in ('cancelled', 'cancelled_by_client')">
+                                    <a t-attf-href="/my/instances/#{instance.id}/reactivate"
+                                       class="action-btn action-upgrade">
+                                        <i class="fas fa-redo"></i>Reactivate Instance
+                                    </a>
+                                    <div class="mt-2 p-3" style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius-md);font-size:0.82rem;color:var(--text-secondary);">
+                                        <p class="mb-2">
+                                            <i class="fas fa-info-circle me-1" style="color:var(--info);"></i>
+                                            <strong>Reactivating</strong> will create a fresh instance with the same subdomain. Your previous data will not be included.
+                                        </p>
+                                        <p class="mb-0">
+                                            <i class="fas fa-database me-1" style="color:var(--warning);"></i>
+                                            <strong>Need your old data?</strong> Contact support before reactivating — we may be able to restore your data from a backup (additional charges apply).
+                                        </p>
+                                    </div>
+                                </t>
                             </div>
 
                             <!-- Current Plan -->

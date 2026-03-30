@@ -117,6 +117,10 @@ class SaasRestoreRetainedWizard(models.TransientModel):
         # Also ensures the backup record is visible to subsequent reads.
         self.env.cr.commit()
 
+        # Re-setup custom repos and pip packages BEFORE restore so
+        # the restored database finds its modules on the addons path.
+        self._pre_restore_setup(target)
+
         try:
             target._do_restore_backup(backup.id)
         except Exception as e:
@@ -138,6 +142,18 @@ class SaasRestoreRetainedWizard(models.TransientModel):
 
         # Clean up the temp backup record
         backup.unlink()
+
+        # Re-register webhooks for repos that have auto-deploy enabled
+        try:
+            target._ensure_webhooks_registered()
+        except Exception as e:
+            _logger.warning(
+                "Post-restore webhook setup failed for %s: %s",
+                target.subdomain, e,
+            )
+            target._append_log(
+                "WARNING: Webhook registration failed: %s" % e
+            )
 
         # --- Create invoice if fee > 0 ---
         invoice = None
@@ -179,6 +195,88 @@ class SaasRestoreRetainedWizard(models.TransientModel):
             'view_mode': 'form',
             'target': 'current',
         }
+
+    def _pre_restore_setup(self, target):
+        """Re-clone custom repos and install pip packages before restoring.
+
+        The restored database may reference modules from the customer's
+        custom repo.  These must be on the addons path before Odoo starts
+        with the restored DB, otherwise the instance will crash on startup.
+        """
+        target._append_log("Setting up custom repos and packages before restore...")
+
+        # Re-enable webhook intent for repos that have a token.
+        # Cancellation resets webhook_enabled to False, but the client
+        # originally wanted auto-deploy — restore that intent.
+        for repo in target.repo_ids:
+            if repo.sudo().github_token and not repo.webhook_enabled:
+                repo.webhook_enabled = True
+
+        # 1. Re-clone customer repos that were cleared on cancellation
+        pending_repos = target.repo_ids.filtered(lambda r: r.state == 'pending')
+        if pending_repos:
+            for repo in pending_repos:
+                target._append_log(
+                    "Re-cloning repo %s (%s)..." % (repo.repo_url, repo.branch)
+                )
+                try:
+                    repo._clone_repo()
+                except Exception as e:
+                    target._append_log(
+                        "WARNING: Failed to clone %s: %s" % (repo.name, e)
+                    )
+                    _logger.warning(
+                        "Pre-restore: failed to clone %s for %s: %s",
+                        repo.name, target.subdomain, e,
+                    )
+
+        # 2. Re-clone product repos
+        if target.saas_product_id and target.saas_product_id.repo_ids:
+            target._ensure_can_ssh()
+            with target.docker_server_id._get_ssh_connection() as ssh:
+                target._clone_product_repos(ssh)
+
+        # 3. Re-render configs with repo addons paths
+        target._ensure_can_ssh()
+        with target.docker_server_id._get_ssh_connection() as ssh:
+            target._render_and_write_configs(ssh)
+
+        # 4. Install pip packages into the running container
+        if target.pip_packages:
+            target._append_log("Installing pip packages...")
+            try:
+                container = 'odoo_%s' % target.subdomain
+                pkgs = [
+                    p.strip() for p in target.pip_packages.splitlines()
+                    if p.strip() and not p.strip().startswith('#')
+                ]
+                if pkgs:
+                    with target.docker_server_id._get_ssh_connection() as ssh:
+                        install_cmd = (
+                            'docker exec %s bash -c "'
+                            'mkdir -p /var/lib/odoo/pip_packages && '
+                            'pip3 install --target=/var/lib/odoo/pip_packages '
+                            '--upgrade --no-warn-script-location %s'
+                            '" 2>&1'
+                        ) % (container, ' '.join(pkgs))
+                        exit_code, stdout, stderr = ssh.execute(
+                            install_cmd, timeout=300,
+                        )
+                        if exit_code != 0:
+                            target._append_log(
+                                "WARNING: pip install partial failure:\n%s"
+                                % (stdout or stderr)[:500]
+                            )
+                        else:
+                            target._append_log(
+                                "Pip packages installed: %s" % ', '.join(pkgs)
+                            )
+            except Exception as e:
+                target._append_log(
+                    "WARNING: pip install failed: %s" % e
+                )
+
+        target._append_log("Pre-restore setup complete.")
 
     def _create_restoration_invoice(self, source, target):
         """Create and post an invoice for the data restoration service."""
