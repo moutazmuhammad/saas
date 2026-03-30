@@ -266,6 +266,9 @@
                                     <button name="action_check_webhook" type="object"
                                             string="Check" icon="fa-stethoscope"
                                             invisible="not webhook_enabled"/>
+                                    <button name="action_test_webhook" type="object"
+                                            string="Test" icon="fa-bolt"
+                                            invisible="not webhook_enabled"/>
                                     <button name="action_remove_repo" type="object"
                                             string="Remove" icon="fa-trash"
                                             confirm="Remove this repo from the server?"/>

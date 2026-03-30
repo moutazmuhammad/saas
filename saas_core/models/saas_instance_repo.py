@@ -481,6 +481,70 @@ class SaasInstanceRepo(models.Model):
             pass
         return False
 
+    def _update_existing_webhook(self, provider, base, owner, repo, token,
+                                  hook_id, webhook_url):
+        """Update an existing webhook on the provider with the current secret."""
+        try:
+            if provider == 'github':
+                http_requests.patch(
+                    '%s/repos/%s/%s/hooks/%s' % (base, owner, repo, hook_id),
+                    headers={
+                        'Authorization': 'token %s' % token,
+                        'Accept': 'application/vnd.github+json',
+                    },
+                    json={
+                        'active': True,
+                        'events': ['push'],
+                        'config': {
+                            'url': webhook_url,
+                            'content_type': 'json',
+                            'secret': self.webhook_secret,
+                            'insecure_ssl': '0',
+                        },
+                    },
+                    timeout=15,
+                ).raise_for_status()
+            elif provider == 'gitlab':
+                from urllib.parse import quote as url_quote
+                project_path = '%s/%s' % (owner, repo)
+                http_requests.put(
+                    '%s/projects/%s/hooks/%s' % (
+                        base, url_quote(project_path, safe=''), hook_id,
+                    ),
+                    headers={'PRIVATE-TOKEN': token},
+                    json={
+                        'url': webhook_url,
+                        'push_events': True,
+                        'token': self.webhook_secret,
+                        'enable_ssl_verification': True,
+                    },
+                    timeout=15,
+                ).raise_for_status()
+            elif provider == 'gitea':
+                parsed = urlparse(self.repo_url)
+                gitea_base = '%s://%s/api/v1' % (
+                    parsed.scheme or 'https', parsed.hostname,
+                )
+                http_requests.patch(
+                    '%s/repos/%s/%s/hooks/%s' % (gitea_base, owner, repo, hook_id),
+                    headers={'Authorization': 'token %s' % token},
+                    json={
+                        'active': True,
+                        'events': ['push'],
+                        'config': {
+                            'url': webhook_url,
+                            'content_type': 'json',
+                            'secret': self.webhook_secret,
+                        },
+                    },
+                    timeout=15,
+                ).raise_for_status()
+        except Exception as e:
+            _logger.warning(
+                "Failed to update existing webhook %s on %s: %s",
+                hook_id, provider, e,
+            )
+
     def _register_webhook_on_provider(self):
         """Register the webhook on the Git provider via API.
 
@@ -507,14 +571,19 @@ class SaasInstanceRepo(models.Model):
 
         base = self._get_provider_base_url()
 
-        # Check if webhook already exists on the provider
+        # Check if webhook already exists on the provider.
+        # If found, update it with the current secret to ensure
+        # signature verification works, then reuse the ID.
         existing_id = self._find_existing_webhook(
             provider, base, owner, repo, token,
         )
         if existing_id:
+            self._update_existing_webhook(
+                provider, base, owner, repo, token, existing_id, webhook_url,
+            )
             self.webhook_provider_id = existing_id
             _logger.info(
-                "Webhook already exists on %s for %s/%s (hook_id=%s), reusing",
+                "Webhook already exists on %s for %s/%s (hook_id=%s), updated secret",
                 provider, owner, repo, existing_id,
             )
             return
@@ -763,6 +832,59 @@ class SaasInstanceRepo(models.Model):
             msg += "NOT FOUND - Webhook is NOT registered on %s\n\n" % provider
             msg += "Registered webhooks (%d):\n%s" % (len(hooks), '\n'.join(details) if details else '  (none)')
             msg += "\n\nTIP: Click 'Enable Webhook' to register it, or add the URL manually in your repo settings."
+
+        raise UserError(msg)
+
+    def action_test_webhook(self):
+        """Send a test ping to our own webhook endpoint to verify it's reachable."""
+        self.ensure_one()
+        import hashlib
+        webhook_url = self.webhook_url
+        if not webhook_url:
+            raise UserError(_("No webhook URL configured."))
+
+        payload = json.dumps({
+            'ref': 'refs/heads/%s' % self.branch,
+            'commits': [{'message': 'Webhook test from SaaS platform'}],
+            'repository': {'clone_url': self.repo_url},
+        }).encode()
+        sig = 'sha256=' + hmac.new(
+            self.webhook_secret.encode(), payload, hashlib.sha256,
+        ).hexdigest()
+
+        try:
+            resp = http_requests.post(
+                webhook_url,
+                data=payload,
+                headers={
+                    'Content-Type': 'application/json',
+                    'X-GitHub-Event': 'push',
+                    'X-Hub-Signature-256': sig,
+                },
+                timeout=15,
+            )
+            body = resp.text[:500]
+            msg = (
+                "Test result:\n\n"
+                "URL: %s\n"
+                "Status: %s %s\n"
+                "Response: %s"
+            ) % (webhook_url, resp.status_code, resp.reason, body)
+
+            if resp.status_code == 200:
+                msg += "\n\nWebhook endpoint is reachable and accepted the request."
+            else:
+                msg += "\n\nWebhook endpoint returned an error. Check the URL and server logs."
+        except http_requests.RequestException as e:
+            msg = (
+                "Test FAILED:\n\n"
+                "URL: %s\n"
+                "Error: %s\n\n"
+                "The webhook endpoint is NOT reachable. Check:\n"
+                "- web.base.url is set to the public HTTPS domain\n"
+                "- Nginx proxies /saas/webhook/* to Odoo\n"
+                "- Firewall allows incoming HTTPS"
+            ) % (webhook_url, e)
 
         raise UserError(msg)
 
