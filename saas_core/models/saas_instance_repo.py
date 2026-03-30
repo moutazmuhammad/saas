@@ -1052,6 +1052,11 @@ class SaasInstanceRepo(models.Model):
 
             try:
                 with server._get_ssh_connection() as ssh:
+                    # Allow git on dirs owned by the container user
+                    ssh.execute(
+                        "git config --global --add safe.directory '*' 2>/dev/null || true"
+                    )
+
                     # Create parent directory
                     parent = '/'.join(repo_path.rsplit('/', 1)[:-1])
                     ssh.execute('mkdir -p %s' % shlex.quote(parent))
@@ -1179,6 +1184,9 @@ class SaasInstanceRepo(models.Model):
 
         try:
             with server._get_ssh_connection() as ssh:
+                ssh.execute(
+                    "git config --global --add safe.directory '*' 2>/dev/null || true"
+                )
                 ssh.execute(
                     'cd %s && git remote set-url origin %s'
                     % (shlex.quote(repo_path), shlex.quote(clone_url))

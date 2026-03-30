@@ -2090,6 +2090,12 @@ class SaasInstance(models.Model):
                 )
             self._append_log("Permissions set (UID=%s)." % container_uid)
 
+            # Allow git to operate on directories owned by the container
+            # user (UID differs from the SSH user running git commands).
+            ssh.execute(
+                "git config --global --add safe.directory '*' 2>/dev/null || true"
+            )
+
             # Render and write config files (initial — without custom repos)
             self._render_and_write_configs(ssh)
 
