@@ -1098,6 +1098,28 @@
                                 </t>
                             </div>
 
+                            <!-- Restoration invoice pending payment -->
+                            <t t-if="instance.restoration_invoice_id and instance.restoration_invoice_id.payment_state not in ('paid', 'in_payment')">
+                                <div class="info-card mt-4" style="border-left:3px solid var(--info);">
+                                    <h6 class="mb-2" style="color:var(--info);">
+                                        <i class="fas fa-file-invoice-dollar me-2"></i>Data Restoration — Payment Required
+                                    </h6>
+                                    <p class="mb-2" style="font-size:0.85rem;color:var(--text-secondary);">
+                                        Your data restore has been prepared. Pay the restoration fee to start the restore process.
+                                        Your data will be restored automatically after payment.
+                                    </p>
+                                    <p class="mb-3" style="font-size:0.85rem;">
+                                        <strong>Amount: </strong>
+                                        <t t-esc="instance.restoration_invoice_id.amount_total"
+                                           t-options="{'widget': 'monetary', 'display_currency': instance.restoration_invoice_id.currency_id}"/>
+                                    </p>
+                                    <a t-attf-href="/my/invoices/#{instance.restoration_invoice_id.id}?access_token=#{instance.restoration_invoice_id.sudo()._portal_ensure_token()}"
+                                       class="btn btn-sm btn-primary">
+                                        <i class="fas fa-credit-card me-1"></i>Pay Now
+                                    </a>
+                                </div>
+                            </t>
+
                             <!-- Data Restore Banner (shown after reactivation if backup exists) -->
                             <t t-if="instance.retained_backup_path and not instance.restore_banner_dismissed
                                       and instance.state in ('running', 'stopped')
