@@ -1241,11 +1241,9 @@ class SaasPortal(CustomerPortal):
         type='http', auth='user', website=True,
     )
     def portal_instance_reactivate(self, instance_id, access_token=None, **kw):
-        """Show plan selection to reactivate a cancelled instance.
+        """Show dynamic plan builder to reactivate a cancelled instance.
 
-        Reuses the same instance record — no new record is created.
-        The client picks a plan, pays, and the instance is redeployed.
-        Data is NOT restored; the client must contact support for that.
+        Uses the same workers/storage slider UI as the change-plan page.
         """
         try:
             instance_sudo = self._document_check_access(
@@ -1261,21 +1259,23 @@ class SaasPortal(CustomerPortal):
         if not product or not product.is_published:
             return request.redirect('/services')
 
-        # Fetch paid plans for the same service
-        domain = [('is_trial_plan', '=', False)]
-        if product:
-            domain.append(('saas_product_ids', 'in', product.id))
-        plans = request.env['saas.plan'].sudo().search(domain, order='sequence, price')
+        from odoo.addons.saas_website.controllers.main import SaasWebsite
+        if instance_sudo.is_hosting:
+            custom_config = SaasWebsite._get_hosting_plan_config(self)
+        else:
+            custom_config = SaasWebsite._get_custom_plan_config(self)
 
-        support_email = request.env['ir.config_parameter'].sudo().get_param(
-            'saas_master.support_email', ''
-        )
+        # Minimum resources = what the instance had before cancellation
+        old_plan = instance_sudo.plan_id
+        min_workers = old_plan.workers if old_plan else custom_config['min_workers']
+        min_storage = int(old_plan.storage_limit) if old_plan else custom_config['min_storage']
 
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance_sudo,
-            'plans': plans,
-            'support_email': support_email,
+            'current_workers': min_workers,
+            'current_storage': min_storage,
+            'custom_config': custom_config,
             'page_name': 'saas_instance_reactivate',
             'error': kw.get('error'),
         })
@@ -1286,8 +1286,8 @@ class SaasPortal(CustomerPortal):
         type='http', auth='user', website=True, methods=['POST'],
     )
     def portal_instance_do_reactivate(self, instance_id, access_token=None, **kw):
-        """Process reactivation: reset the cancelled instance with the
-        chosen plan and run the billing flow."""
+        """Process reactivation: build a plan from workers/storage, reset
+        the cancelled instance, and run the billing flow."""
         try:
             instance_sudo = self._document_check_access(
                 'saas.instance', instance_id, access_token=access_token,
@@ -1295,20 +1295,47 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        plan_id = kw.get('plan_id')
+        new_workers = int(kw.get('workers', 0))
+        new_storage = int(kw.get('storage', 0))
         billing_period = kw.get('billing_period', 'monthly')
-        if not plan_id:
+        if billing_period not in ('monthly', 'yearly'):
+            billing_period = 'monthly'
+
+        err_redirect = '/my/instances/%s/reactivate?error=%%s' % instance_id
+
+        if not new_workers or not new_storage:
             return request.redirect(
-                '/my/instances/%s/reactivate?error=%s'
-                % (instance_id, url_quote('Please select a plan.'))
+                err_redirect % url_quote('Please configure your plan.')
+            )
+
+        from odoo.addons.saas_website.controllers.main import SaasWebsite
+        if instance_sudo.is_hosting:
+            config = SaasWebsite._get_hosting_plan_config(self)
+        else:
+            config = SaasWebsite._get_custom_plan_config(self)
+        # Enforce minimum = previous plan resources
+        old_plan = instance_sudo.plan_id
+        min_workers = old_plan.workers if old_plan else config['min_workers']
+        min_storage = int(old_plan.storage_limit) if old_plan else config['min_storage']
+        new_workers = max(min_workers, min(new_workers, config['max_workers']))
+        new_storage = max(min_storage, min(new_storage, config['max_storage']))
+
+        # Find or create the plan
+        product = instance_sudo.saas_product_id
+        if instance_sudo.is_hosting:
+            new_plan = SaasWebsite._get_or_create_hosting_plan(
+                self, product, new_workers, new_storage, config,
+            )
+        else:
+            new_plan = SaasWebsite._get_or_create_custom_plan(
+                self, product, new_workers, new_storage, config,
             )
 
         try:
-            instance_sudo.action_reactivate(int(plan_id), billing_period)
+            instance_sudo.action_reactivate(new_plan.id, billing_period)
         except UserError as e:
             return request.redirect(
-                '/my/instances/%s/reactivate?error=%s'
-                % (instance_id, url_quote(str(e)))
+                err_redirect % url_quote(str(e))
             )
 
         # Redirect to checkout if there's an unpaid invoice, else to detail

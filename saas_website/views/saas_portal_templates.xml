@@ -1924,49 +1924,160 @@
                         <div>
                             <strong>Billing will resume</strong>
                             <p class="mb-0" style="color:var(--co-text-secondary, #A1A1AA);">
-                                Selecting a plan will create an invoice. Your instance will be reactivated after payment is completed.
+                                Configure your plan and pay the invoice to reactivate. Your instance will be redeployed with a fresh database.
                                 Previous data is not automatically restored — contact support if you need data recovery.
                             </p>
                         </div>
                     </div>
 
-                    <form t-attf-action="/my/instances/#{instance.id}/do-reactivate" method="post">
-                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
-
-                        <div class="text-center mb-4">
-                            <label class="form-label">Billing Period</label>
-                            <div>
-                                <select name="billing_period" class="form-select"
-                                        style="width:auto;display:inline-block;">
-                                    <option value="monthly">Monthly</option>
-                                    <option value="yearly">Yearly</option>
-                                </select>
+                    <!-- Dynamic Plan Builder -->
+                    <div class="custom-builder-section">
+                        <div class="custom-builder-card">
+                            <!-- Billing Toggle -->
+                            <div class="text-center mb-4" id="upgrade-billing-toggle">
+                                <div class="billing-toggle">
+                                    <button class="toggle-btn active" data-billing="monthly">Monthly</button>
+                                    <button class="toggle-btn" data-billing="yearly">
+                                        Yearly <span class="yearly-badge">Save <t t-esc="custom_config.get('yearly_discount_pct', 20)"/>%</span>
+                                    </button>
+                                </div>
                             </div>
-                        </div>
 
-                        <div class="row g-4">
-                            <t t-foreach="plans" t-as="plan">
-                                <div class="col-md-6 col-lg-4">
-                                    <div class="plan-card">
-                                        <h4 class="plan-name" t-esc="plan.name"/>
-                                        <div class="plan-price">
-                                            <span class="amount" t-esc="'${:,.0f}'.format(plan.price)"/>
-                                            <span class="period">/mo</span>
+                            <div class="row g-4">
+                                <!-- Left: Sliders -->
+                                <div class="col-lg-7">
+                                    <div class="slider-group" id="upgrade-workers-slider-group">
+                                        <div class="slider-header">
+                                            <div class="slider-label">
+                                                <i class="fas fa-cogs me-2"></i>Workers
+                                            </div>
+                                            <div class="slider-value" id="upgrade-workers-value">
+                                                <input type="number" class="slider-input" id="upgrade-workers-input"
+                                                       t-att-min="current_workers"
+                                                       t-att-max="custom_config.get('max_workers', 8)"
+                                                       step="1" t-att-value="current_workers"/>
+                                                <span>Workers</span>
+                                            </div>
                                         </div>
-                                        <ul class="plan-specs">
-                                            <li><i class="fas fa-cogs"></i><t t-esc="plan.workers"/> Workers</li>
-                                            <li><i class="fas fa-hdd"></i><t t-esc="int(plan.storage_limit)"/>GB Storage</li>
-                                            <li><i class="fas fa-shield-alt"></i><t t-esc="plan.max_backups"/> Backups</li>
-                                        </ul>
-                                        <button type="submit" name="plan_id" t-att-value="plan.id"
-                                                class="btn btn-primary w-100">
-                                            Select Plan
-                                        </button>
+                                        <div class="slider-container">
+                                            <input type="range" class="custom-slider" id="upgrade-workers-slider"
+                                                   t-att-min="current_workers"
+                                                   t-att-max="custom_config.get('max_workers', 8)"
+                                                   step="1"
+                                                   t-att-value="current_workers"/>
+                                            <div class="slider-ticks" id="upgrade-workers-ticks"></div>
+                                        </div>
+                                        <div class="mt-1" style="font-size:0.8rem;color:var(--co-text-muted,#71717A);">
+                                            <i class="fas fa-lock me-1"></i>Minimum <t t-esc="current_workers"/> workers (previous plan)
+                                        </div>
+                                    </div>
+
+                                    <div class="slider-group mt-4" id="upgrade-storage-slider-group">
+                                        <div class="slider-header">
+                                            <div class="slider-label">
+                                                <i class="fas fa-hdd me-2"></i>Storage
+                                            </div>
+                                            <div class="slider-value" id="upgrade-storage-value">
+                                                <input type="number" class="slider-input" id="upgrade-storage-input"
+                                                       t-att-min="current_storage"
+                                                       t-att-max="custom_config.get('max_storage', 200)"
+                                                       step="1" t-att-value="current_storage"/>
+                                                <span>GB</span>
+                                            </div>
+                                        </div>
+                                        <div class="slider-container">
+                                            <input type="range" class="custom-slider" id="upgrade-storage-slider"
+                                                   t-att-min="current_storage"
+                                                   t-att-max="custom_config.get('max_storage', 200)"
+                                                   step="1"
+                                                   t-att-value="current_storage"/>
+                                            <div class="slider-ticks" id="upgrade-storage-ticks"></div>
+                                        </div>
+                                        <div class="mt-1" style="font-size:0.8rem;color:var(--co-text-muted,#71717A);">
+                                            <i class="fas fa-lock me-1"></i>Minimum <t t-esc="current_storage"/>GB (previous plan)
+                                        </div>
                                     </div>
                                 </div>
-                            </t>
+
+                                <!-- Right: Price Summary -->
+                                <div class="col-lg-5">
+                                    <div class="custom-price-card">
+                                        <h5 class="mb-3">Plan Configuration</h5>
+                                        <div class="price-breakdown">
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label">
+                                                    <i class="fas fa-cogs me-2"></i>
+                                                    <span id="upgrade-summary-workers"><t t-esc="current_workers"/></span> Workers
+                                                </span>
+                                                <span class="breakdown-value" id="upgrade-summary-workers-cost">$0.00</span>
+                                            </div>
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label">
+                                                    <i class="fas fa-hdd me-2"></i>
+                                                    <span id="upgrade-summary-storage"><t t-esc="current_storage"/></span> GB Storage
+                                                </span>
+                                                <span class="breakdown-value" id="upgrade-summary-storage-cost">$0.00</span>
+                                            </div>
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label">
+                                                    <i class="fas fa-shield-alt me-2"></i>Backups
+                                                </span>
+                                                <span class="breakdown-value">
+                                                    <span id="upgrade-summary-backups" style="font-weight:700;"><t t-esc="custom_config.get('min_backups', 3)"/></span>
+                                                </span>
+                                            </div>
+                                            <div class="breakdown-divider"></div>
+                                            <div id="upgrade-summary-monthly-display">
+                                                <div class="breakdown-total">
+                                                    <span>Monthly Total</span>
+                                                    <span class="total-amount" id="upgrade-summary-monthly-total">$0.00</span>
+                                                </div>
+                                            </div>
+                                            <div id="upgrade-summary-yearly-display" style="display:none;">
+                                                <div class="breakdown-total">
+                                                    <span>Yearly Total</span>
+                                                    <span class="total-amount" id="upgrade-summary-yearly-total">$0.00</span>
+                                                </div>
+                                                <div class="mt-2 p-2" style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:8px;">
+                                                    <div style="font-size:0.85rem;font-weight:600;color:var(--success);">
+                                                        <i class="fas fa-piggy-bank me-1"></i>
+                                                        You save <span id="upgrade-summary-yearly-savings">$0</span> per year
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <form t-attf-action="/my/instances/#{instance.id}/do-reactivate" method="post" id="upgrade-form" class="mt-3">
+                                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                            <input type="hidden" name="workers" id="upgrade-form-workers" t-att-value="current_workers"/>
+                                            <input type="hidden" name="storage" id="upgrade-form-storage" t-att-value="current_storage"/>
+                                            <input type="hidden" name="billing_period" id="upgrade-form-billing" value="monthly"/>
+                                            <button type="submit" class="btn btn-primary btn-lg w-100" id="upgrade-submit-btn">
+                                                <i class="fas fa-redo me-2"></i>Reactivate Instance
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    </form>
+                    </div>
+
+                    <!-- Hidden config data for JavaScript -->
+                    <div id="upgrade-plan-config" style="display:none;"
+                         t-att-data-worker-price="custom_config.get('worker_price', 15)"
+                         t-att-data-storage-price="custom_config.get('storage_price_per_gb', 0.5)"
+                         t-att-data-min-workers="current_workers"
+                         t-att-data-max-workers="custom_config.get('max_workers', 8)"
+                         t-att-data-min-storage="current_storage"
+                         t-att-data-max-storage="custom_config.get('max_storage', 200)"
+                         t-att-data-yearly-discount-pct="custom_config.get('yearly_discount_pct', 20)"
+                         t-att-data-currency="custom_config.get('currency', 'USD')"
+                         t-att-data-min-backups="custom_config.get('min_backups', 5)"
+                         t-att-data-max-backups="custom_config.get('max_backups', 14)"
+                         data-mode="reactivate"
+                         t-att-data-current-workers="current_workers"
+                         t-att-data-current-storage="current_storage"
+                    ></div>
 
                     <div class="text-center mt-4">
                         <a t-attf-href="/my/instances/#{instance.id}" class="btn btn-outline-secondary">
