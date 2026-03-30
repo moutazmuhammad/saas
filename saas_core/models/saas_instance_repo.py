@@ -905,16 +905,28 @@ class SaasInstanceRepo(models.Model):
                     rec.last_pull = fields.Datetime.now()
                     rec.error_message = False
 
-                    # Auto-register webhook on Git provider
+                    # Auto-register webhook on Git provider.
+                    # Wrapped in try/except so a webhook failure never
+                    # marks the repo as 'error' — the clone succeeded.
                     if rec.webhook_enabled:
-                        if rec.sudo().github_token:
-                            rec._register_webhook_with_retry()
-                        else:
+                        try:
+                            if rec.sudo().github_token:
+                                rec._register_webhook_with_retry()
+                            else:
+                                instance._append_log(
+                                    "Auto-deploy webhook NOT registered for %s: "
+                                    "no access token provided. Add a token to "
+                                    "enable automatic webhook registration."
+                                    % rec.name
+                                )
+                        except Exception as e:
+                            _logger.warning(
+                                "Webhook registration failed for %s: %s",
+                                rec.name, e,
+                            )
                             instance._append_log(
-                                "Auto-deploy webhook NOT registered for %s: "
-                                "no access token provided. Add a token to "
-                                "enable automatic webhook registration."
-                                % rec.name
+                                "WARNING: Webhook registration failed for %s: %s"
+                                % (rec.name, e)
                             )
 
             except UserError:

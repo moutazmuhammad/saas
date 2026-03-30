@@ -974,13 +974,22 @@ class SaasInstance(models.Model):
             self._append_log(
                 "Registering webhook for %s..." % repo.name
             )
-            success = repo._register_webhook_with_retry()
-            if not success:
+            try:
+                success = repo._register_webhook_with_retry()
+                if not success:
+                    self._append_log(
+                        "WARNING: Webhook registration failed for %s. "
+                        "Auto-deploy will NOT work until this is fixed. "
+                        "Check the access token and web.base.url setting."
+                        % repo.name
+                    )
+            except Exception as e:
+                _logger.warning(
+                    "Webhook registration error for %s: %s", repo.name, e,
+                )
                 self._append_log(
-                    "WARNING: Webhook registration failed for %s. "
-                    "Auto-deploy will NOT work until this is fixed. "
-                    "Check the access token and web.base.url setting."
-                    % repo.name
+                    "WARNING: Webhook registration error for %s: %s"
+                    % (repo.name, e)
                 )
 
     def _append_log(self, message):
