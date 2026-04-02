@@ -1854,7 +1854,7 @@ class SaasInstance(models.Model):
             'if [ -d %(src)s ]; then '
             '  cp -a %(src)s/. %(dst)s/; '
             'fi && '
-            'chmod -R 777 %(data)s'
+            'sudo chmod -R 777 %(data)s'
         ) % {
             'dst': shlex.quote(filestore_dst),
             'src': shlex.quote(filestore_src),
@@ -1958,7 +1958,7 @@ class SaasInstance(models.Model):
                     % (repo.repo_url, stdout[-500:], stderr[-500:])
                 )
             ssh.execute(
-                'sudo chown -R %s:%s %s && chmod -R 777 %s'
+                'sudo chown -R %s:%s %s && sudo chmod -R 777 %s'
                 % (container_uid, container_uid,
                    shlex.quote(repo_dir), shlex.quote(repo_dir))
             )
@@ -2098,7 +2098,7 @@ class SaasInstance(models.Model):
             container_uid = self._get_container_uid(ssh)
             perms_cmd = (
                 'sudo chown -R %(uid)s:%(uid)s %(path)s/data %(path)s/config %(path)s/addons && '
-                'chmod -R 777 %(path)s/data %(path)s/config %(path)s/addons'
+                'sudo chmod -R 777 %(path)s/data %(path)s/config %(path)s/addons'
             ) % {'path': instance_path, 'uid': container_uid}
             exit_code, stdout, stderr = ssh.execute(perms_cmd)
             if exit_code != 0:
@@ -2153,7 +2153,7 @@ class SaasInstance(models.Model):
             # have created files as root inside the data directory.
             perms_cmd = (
                 'sudo chown -R %(uid)s:%(uid)s %(path)s/data && '
-                'chmod -R 777 %(path)s/data'
+                'sudo chmod -R 777 %(path)s/data'
             ) % {'path': instance_path, 'uid': container_uid}
             ssh.execute(perms_cmd)
 
@@ -3008,7 +3008,7 @@ class SaasInstance(models.Model):
                 'if [ -d %(src)s ]; then '
                 '  cp -a %(src)s/. %(dst)s/; '
                 'fi && '
-                'chmod -R 777 %(data)s'
+                'sudo chmod -R 777 %(data)s'
             ) % {
                 'dst': shlex.quote(filestore_dst),
                 'src': shlex.quote(filestore_src),
