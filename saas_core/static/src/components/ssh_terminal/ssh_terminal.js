@@ -187,6 +187,12 @@ class SshTerminal extends Component {
 
         const url = `/saas/terminal/output/${this.sessionId}`;
         this.eventSource = new EventSource(url);
+        this._streamErrorCount = 0;
+
+        this.eventSource.onopen = () => {
+            this._streamErrorCount = 0;
+            console.log("[terminal] SSE stream connected");
+        };
 
         this.eventSource.onmessage = (event) => {
             // Data is base64-encoded
@@ -196,16 +202,20 @@ class SshTerminal extends Component {
             this.terminal.write(text);
         };
 
-        this.eventSource.addEventListener("closed", () => {
+        this.eventSource.addEventListener("closed", (event) => {
             this.state.connected = false;
+            const reason = event.data || "session ended";
             if (this.terminal) {
-                this.terminal.write("\r\n\x1b[33mSession ended.\x1b[0m\r\n");
+                this.terminal.write(
+                    "\r\n\x1b[33mSession ended: " + reason + "\x1b[0m\r\n"
+                );
             }
             this._stopOutputStream();
         });
 
         this.eventSource.addEventListener("timeout", () => {
             // Reconnect on stream timeout (the session is still alive)
+            console.log("[terminal] SSE stream timeout, reconnecting...");
             this._stopOutputStream();
             if (this.sessionId && this.state.connected) {
                 this._startOutputStream();
@@ -213,17 +223,44 @@ class SshTerminal extends Component {
         });
 
         this.eventSource.addEventListener("error", (event) => {
+            let msg = "Unknown error";
             if (event.data) {
-                this.state.error = JSON.parse(event.data);
+                try { msg = JSON.parse(event.data); } catch { msg = event.data; }
             }
+            this.state.error = msg;
             this.state.connected = false;
+            if (this.terminal) {
+                this.terminal.write(
+                    "\r\n\x1b[31mError: " + msg + "\x1b[0m\r\n"
+                );
+            }
             this._stopOutputStream();
         });
 
         this.eventSource.onerror = () => {
-            // EventSource built-in reconnection will handle transient errors.
-            // If it fails permanently, mark disconnected.
-            if (this.eventSource && this.eventSource.readyState === EventSource.CLOSED) {
+            this._streamErrorCount++;
+            console.warn(
+                "[terminal] SSE onerror, readyState:",
+                this.eventSource ? this.eventSource.readyState : "null",
+                "errorCount:", this._streamErrorCount
+            );
+            // If the stream fails repeatedly, give up
+            if (this._streamErrorCount >= 3) {
+                this.state.connected = false;
+                this.state.error =
+                    "Connection lost. If Odoo uses multiple workers (--workers > 0), " +
+                    "terminal requires single-process mode (--workers=0).";
+                if (this.terminal) {
+                    this.terminal.write(
+                        "\r\n\x1b[31mConnection lost after multiple retries.\x1b[0m\r\n" +
+                        "\x1b[33mHint: Make sure Odoo is running with --workers=0\x1b[0m\r\n"
+                    );
+                }
+                this._stopOutputStream();
+            } else if (
+                this.eventSource &&
+                this.eventSource.readyState === EventSource.CLOSED
+            ) {
                 this.state.connected = false;
             }
         };
