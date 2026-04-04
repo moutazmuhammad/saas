@@ -1077,9 +1077,9 @@ class SaasInstance(models.Model):
             "DO $body$\n"
             "BEGIN\n"
             "  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = %(user_lit)s) THEN\n"
-            "    EXECUTE format('CREATE ROLE %%I WITH LOGIN PASSWORD %%L', %(user_lit)s, %(pass_lit)s);\n"
+            "    EXECUTE format('CREATE ROLE %%I WITH LOGIN CREATEDB PASSWORD %%L', %(user_lit)s, %(pass_lit)s);\n"
             "  ELSE\n"
-            "    EXECUTE format('ALTER ROLE %%I WITH LOGIN PASSWORD %%L', %(user_lit)s, %(pass_lit)s);\n"
+            "    EXECUTE format('ALTER ROLE %%I WITH LOGIN CREATEDB PASSWORD %%L', %(user_lit)s, %(pass_lit)s);\n"
             "  END IF;\n"
             "END $body$;\n"
         ) % {
@@ -2125,12 +2125,11 @@ class SaasInstance(models.Model):
             snapshot_restored = self._restore_snapshot(ssh)
 
             if not snapshot_restored:
-                # No snapshot — initialize a bare database with base module
-                self._append_log("Initializing database with base module...")
+                # No snapshot — initialize a bare database
+                self._append_log("Initializing database...")
                 init_cmd = (
                     'cd %s && docker compose run --rm -T odoo '
                     'odoo -d %s '
-                    '-i base '
                     '--without-demo=all '
                     '--stop-after-init '
                     '--no-http 2>&1'
