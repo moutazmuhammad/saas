@@ -19,8 +19,8 @@ def run_in_background(record, method_name, method_args=(),
     if *error_method* is given, ``record.error_method(exception, *error_args)``
     is called inside a fresh cursor that is then committed.
 
-    Uses ``postcommit`` so the current transaction is committed before the
-    thread starts, ensuring the thread sees the latest DB state.
+    Commits the current transaction first so the background thread sees the
+    latest DB state, then starts the thread immediately.
     """
     from odoo import SUPERUSER_ID
     dbname = record.env.cr.dbname
@@ -32,39 +32,49 @@ def run_in_background(record, method_name, method_args=(),
     def _target():
         import odoo
         from odoo import api as odoo_api
-        db_registry = odoo.modules.registry.Registry(dbname)
-        with db_registry.cursor() as new_cr:
-            new_env = odoo_api.Environment(new_cr, uid, context)
-            rec = new_env[model_name].browse(record_id)
-            try:
-                getattr(rec, method_name)(*method_args)
-                new_cr.commit()
-            except Exception as e:
-                new_cr.rollback()
-                if error_method:
-                    try:
-                        with db_registry.cursor() as err_cr:
-                            err_env = odoo_api.Environment(err_cr, uid, context)
-                            err_rec = err_env[model_name].browse(record_id)
-                            getattr(err_rec, error_method)(e, *error_args)
-                            err_cr.commit()
-                    except Exception:
-                        _logger.exception(
-                            "Error handler failed for %s#%s",
-                            model_name, record_id,
-                        )
-                _logger.exception(
-                    "Background %s failed for %s#%s",
-                    method_name, model_name, record_id,
-                )
+        try:
+            db_registry = odoo.modules.registry.Registry(dbname)
+            with db_registry.cursor() as new_cr:
+                new_env = odoo_api.Environment(new_cr, uid, context)
+                rec = new_env[model_name].browse(record_id)
+                try:
+                    getattr(rec, method_name)(*method_args)
+                    new_cr.commit()
+                except Exception as e:
+                    new_cr.rollback()
+                    if error_method:
+                        try:
+                            with db_registry.cursor() as err_cr:
+                                err_env = odoo_api.Environment(err_cr, uid, context)
+                                err_rec = err_env[model_name].browse(record_id)
+                                getattr(err_rec, error_method)(e, *error_args)
+                                err_cr.commit()
+                        except Exception:
+                            _logger.exception(
+                                "Error handler failed for %s#%s",
+                                model_name, record_id,
+                            )
+                    _logger.exception(
+                        "Background %s failed for %s#%s",
+                        method_name, model_name, record_id,
+                    )
+        except Exception:
+            _logger.exception(
+                "Background thread crashed before executing %s for %s#%s",
+                method_name, model_name, record_id,
+            )
 
     name = thread_name or 'saas_bg_%s_%s' % (method_name, record_id)
 
-    def _start():
-        t = threading.Thread(target=_target, name=name, daemon=True)
-        t.start()
-
-    record.env.cr.postcommit.add(_start)
+    # Commit current transaction so the thread sees the latest state,
+    # then start the thread immediately (no postcommit dependency).
+    record.env.cr.commit()
+    _logger.info(
+        "Starting background thread '%s' for %s#%s",
+        name, model_name, record_id,
+    )
+    t = threading.Thread(target=_target, name=name, daemon=True)
+    t.start()
 
 SSH_COMMAND_TIMEOUT = 120  # seconds
 SSH_CONNECT_TIMEOUT = 30  # seconds
