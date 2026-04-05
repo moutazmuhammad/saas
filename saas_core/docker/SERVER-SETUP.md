@@ -145,20 +145,30 @@ sudo apt update
 sudo apt install -y postgresql-16 postgresql-client-16
 ```
 
-### 3.2 Allow connections from Docker containers
+### 3.2 Allow connections from Docker containers and remote servers
 
-Docker containers need to connect to PostgreSQL on the host.
+Docker containers and remote Docker host servers need to connect to PostgreSQL.
 
 ```bash
-# Allow listening on all interfaces
+# Allow listening on all interfaces (required for remote connections)
 sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" /etc/postgresql/16/main/postgresql.conf
 
-# Allow Docker network ranges to connect with password authentication
+# Verify the change took effect (should NOT show 127.0.0.1 after restart):
+#   ss -tlnp | grep 5432
+# Expected: 0.0.0.0:5432 (listening on all interfaces)
+
+# Allow all hosts to connect with password authentication.
+# For PostgreSQL 16+, use scram-sha-256 (md5 may be rejected).
+# In production, restrict 0.0.0.0/0 to your private subnet (e.g. 10.135.0.0/16).
 sudo tee -a /etc/postgresql/16/main/pg_hba.conf << 'EOF'
 
 # Docker container networks (172.16.0.0/12 covers all Docker bridge subnets)
-host    all    all    172.16.0.0/12    md5
+host    all    all    172.16.0.0/12    scram-sha-256
+# Remote Docker host servers (private network)
+host    all    all    0.0.0.0/0        scram-sha-256
 EOF
+
+sudo systemctl restart postgresql
 ```
 
 ### 3.3 Performance tuning
