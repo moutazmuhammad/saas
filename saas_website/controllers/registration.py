@@ -127,6 +127,8 @@ class SaasRegistration(http.Controller):
                 val = post.get(key)
                 if val:
                     params.append('%s=%s' % (key, val))
+            if post.get('is_trial') == '1':
+                params.append('is_trial=1')
             url = '/hosting/configure'
             if params:
                 url += '?' + '&'.join(params)

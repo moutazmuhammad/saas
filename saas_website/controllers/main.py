@@ -711,6 +711,8 @@ class SaasWebsite(http.Controller):
             params = 'hosting=1&workers=%s&storage=%s&billing=%s&odoo_version_id=%s' % (
                 workers, storage, billing, odoo_version_id,
             )
+            if kw.get('is_trial') == '1':
+                params += '&is_trial=1'
             return request.redirect('/services/register?%s' % params)
 
         billing_period = billing if billing in ('monthly', 'yearly') else 'monthly'
