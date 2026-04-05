@@ -2125,11 +2125,12 @@ class SaasInstance(models.Model):
             snapshot_restored = self._restore_snapshot(ssh)
 
             if not snapshot_restored:
-                # No snapshot — initialize a bare database
+                # No snapshot — initialize database with base modules
                 self._append_log("Initializing database...")
                 init_cmd = (
                     'cd %s && docker compose run --rm -T odoo '
                     'odoo -d %s '
+                    '-i base '
                     '--without-demo=all '
                     '--stop-after-init '
                     '--no-http 2>&1'
