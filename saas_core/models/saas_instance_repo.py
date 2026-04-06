@@ -1045,6 +1045,9 @@ class SaasInstanceRepo(models.Model):
                     ssh.execute(
                         "git config --global --add safe.directory '*' 2>/dev/null || true"
                     )
+                    ssh.execute(
+                        "sudo git config --system --add safe.directory '*' 2>/dev/null || true"
+                    )
 
                     # Create parent directory
                     parent = '/'.join(repo_path.rsplit('/', 1)[:-1])
@@ -1182,8 +1185,13 @@ class SaasInstanceRepo(models.Model):
 
         try:
             with server._get_ssh_connection() as ssh:
+                # Set safe.directory for both current user and root to handle
+                # ownership mismatches (repo may be owned by root or container UID)
                 ssh.execute(
                     "git config --global --add safe.directory '*' 2>/dev/null || true"
+                )
+                ssh.execute(
+                    "sudo git config --system --add safe.directory '*' 2>/dev/null || true"
                 )
                 ssh.execute(
                     'cd %s && git remote set-url origin %s'

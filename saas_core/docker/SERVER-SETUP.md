@@ -441,6 +441,160 @@ sudo systemctl enable fail2ban
 
 ---
 
+## Step 12: Configure the SaaS Manager Server
+
+These settings apply to the **Odoo server running the SaaS Manager module** (not the Docker/DB/Nginx servers).
+
+### 12.1 Memory limits
+
+The SaaS Manager runs SSH operations and background deploy threads that consume significant memory. The default Odoo worker memory limits are too low.
+
+In your Odoo config (`/etc/odoo/odoo.conf` or CLI flags):
+
+```ini
+# Required for SaaS Manager — default (640MB) is too low
+limit_memory_soft = 2684354560
+limit_memory_hard = 3355443200
+```
+
+Without this, workers get killed mid-deployment, leaving instances stuck in "provisioning".
+
+### 12.2 Worker mode
+
+The SSH terminal feature requires `--workers=0` (threaded mode) because it stores SSH sessions in-memory. If you need multi-worker mode, the terminal will not work but all other features (provisioning, billing, webhooks) will.
+
+```ini
+workers = 0
+```
+
+### 12.3 Set web.base.url
+
+Required for **webhook auto-deploy** (automatic git pull on push). Go to:
+
+**Settings > Technical > System Parameters > web.base.url**
+
+Set it to your public HTTPS domain:
+```
+https://your-saas-manager.example.com
+```
+
+This URL is registered on GitHub/GitLab/Bitbucket as the webhook callback. Verify the endpoint is reachable:
+
+```bash
+curl https://your-saas-manager.example.com/saas/webhook-test
+# Should return: {"status": "ok", "message": "Webhook endpoint is reachable"}
+```
+
+If using Nginx in front of the SaaS Manager, ensure `/saas/webhook/` is proxied:
+
+```nginx
+location /saas/webhook/ {
+    proxy_pass http://127.0.0.1:8069;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+### 12.4 Configure backup storage
+
+Required for **backup-before-delete** (final backup on instance cancellation) and **customer backups**.
+
+**Settings > Technical > System Parameters:**
+
+| Parameter | Example Value | Description |
+|-----------|---------------|-------------|
+| `saas_backup.provider` | `s3` or `gcs` | Cloud storage provider |
+| `saas_backup.bucket_name` | `my-saas-backups` | Bucket name |
+| `saas_backup.access_key` | `AKIA...` | S3 access key (or leave empty for GCS) |
+| `saas_backup.secret_key` | `wJalr...` | S3 secret key (or leave empty for GCS) |
+| `saas_backup.region` | `us-east-1` | S3 region |
+| `saas_backup.endpoint` | `https://nyc3.digitaloceanspaces.com` | S3-compatible endpoint (DigitalOcean Spaces, MinIO, etc.) |
+| `saas_backup.service_account_key` | `{...}` | GCS service account JSON key |
+
+**S3-compatible providers** (AWS S3, DigitalOcean Spaces, MinIO, Wasabi):
+```
+saas_backup.provider = s3
+saas_backup.bucket_name = my-saas-backups
+saas_backup.access_key = YOUR_ACCESS_KEY
+saas_backup.secret_key = YOUR_SECRET_KEY
+saas_backup.region = nyc3
+saas_backup.endpoint = https://nyc3.digitaloceanspaces.com
+```
+
+**Google Cloud Storage:**
+```
+saas_backup.provider = gcs
+saas_backup.bucket_name = my-saas-backups
+saas_backup.service_account_key = {"type":"service_account","project_id":"..."}
+```
+
+Without backup storage configured, instance cancellation will **skip the final backup** silently.
+
+---
+
+## Multi-Server Topology
+
+For production, separate Docker hosts, database servers, and proxy servers:
+
+| Server | Role | Key Config |
+|--------|------|------------|
+| Docker Host | Runs containers | Docker, Odoo source at `/opt/odoo-source/` |
+| DB Server | Runs PostgreSQL | `listen_addresses = '*'`, `pg_hba.conf` allows Docker host IPs |
+| Proxy Server | Runs Nginx + SSL | Certbot, wildcard DNS |
+| SaaS Manager | Runs Odoo with SaaS module | `web.base.url`, memory limits, backup storage |
+
+**DB Server firewall:** Allow port 5432 only from Docker host private IPs:
+```bash
+sudo ufw allow from 10.135.0.0/16 to any port 5432
+```
+
+**Proxy Server:** Must be able to reach Docker host container ports (8069/8072 range).
+
+---
+
+## Troubleshooting
+
+### Instance stuck in "provisioning"
+
+1. Check the **provisioning log** on the instance record in Odoo
+2. Check Odoo server logs: `grep -i "saas_deploy\|background.*failed" /var/log/odoo/odoo-server.log`
+3. Common causes:
+   - Worker killed by memory limit (increase `limit_memory_soft`)
+   - SSH connection to Docker/DB server failed
+   - PostgreSQL not accepting connections (check `pg_hba.conf` and `listen_addresses`)
+
+### Webhooks not triggering
+
+1. Verify `web.base.url` is a public HTTPS URL
+2. Test endpoint: `curl https://your-domain.com/saas/webhook-test`
+3. Check webhook is registered: open repo record in Odoo > click "Check Webhook"
+4. Check Odoo logs: `grep -i "webhook" /var/log/odoo/odoo-server.log`
+5. Ensure the repo has a **git token** — required for webhook registration via API
+
+### Terminal always disconnects
+
+1. Requires `--workers=0` (threaded mode) — multi-worker breaks in-memory SSH sessions
+2. If behind Nginx, add to the SaaS Manager proxy config:
+   ```nginx
+   location /saas/terminal/ {
+       proxy_buffering off;
+       proxy_read_timeout 600s;
+       proxy_send_timeout 600s;
+       proxy_pass http://127.0.0.1:8069;
+   }
+   ```
+
+### Database init fails with "connection refused"
+
+1. On DB server: `ss -tlnp | grep 5432` — must show `0.0.0.0:5432`
+2. If showing `127.0.0.1:5432`, fix `listen_addresses` in `postgresql.conf`
+3. Verify `pg_hba.conf` allows connections from Docker host IP
+4. Restart PostgreSQL: `sudo systemctl restart postgresql`
+
+---
+
 ## Quick Reference
 
 | Component | Config Location | Restart Command |

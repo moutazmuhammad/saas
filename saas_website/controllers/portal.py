@@ -1019,6 +1019,46 @@ class SaasPortal(CustomerPortal):
 
         return request.redirect('/my/instances/%s' % instance_id)
 
+    # ==================== Pull Repository ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/pull-repo',
+        type='http', auth='user', website=True, methods=['POST'],
+    )
+    def portal_pull_repo(self, instance_id, access_token=None, **kw):
+        """Pull latest code from the repository and restart the instance."""
+        try:
+            instance_sudo = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        if instance_sudo.state != 'running':
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        repo = instance_sudo.repo_ids.filtered(lambda r: r.state == 'cloned')[:1]
+        if not repo:
+            return request.redirect('/my/instances/%s' % instance_id)
+
+        try:
+            from odoo.addons.saas_core.utils import run_in_background
+            instance_sudo._append_log(
+                "Pull & restart requested by client for %s..." % repo.name
+            )
+            run_in_background(
+                repo, '_do_webhook_pull_and_restart',
+                error_method='_on_repo_background_error',
+                thread_name='saas_portal_pull_%s' % repo.id,
+            )
+        except Exception:
+            _logger.exception(
+                "Failed to pull repo for instance %s",
+                instance_sudo.name,
+            )
+
+        return request.redirect('/my/instances/%s' % instance_id)
+
     # ==================== Data Restore Request ====================
 
     @http.route(

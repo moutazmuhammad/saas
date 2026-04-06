@@ -1267,6 +1267,20 @@
                                             </button>
                                         </t>
                                     </form>
+                                    <t t-if="repo and repo.state == 'cloned' and instance.state == 'running'">
+                                        <form t-attf-action="/my/instances/#{instance.id}/pull-repo"
+                                              method="post" class="mt-2">
+                                            <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                            <button type="submit" class="btn btn-sm btn-outline-success w-100"
+                                                    data-confirm="Pull latest code and restart your instance?"
+                                                    data-confirm-variant="info"
+                                                    data-confirm-yes="Yes, pull and restart"
+                                                    data-confirm-no="Cancel"
+                                                    data-loading-text="Pulling...">
+                                                <i class="fas fa-sync-alt me-1"></i>Pull &amp; Restart
+                                            </button>
+                                        </form>
+                                    </t>
                                     <t t-if="repo and instance.state == 'running'">
                                         <form t-attf-action="/my/instances/#{instance.id}/remove-repo"
                                               method="post" class="mt-2">

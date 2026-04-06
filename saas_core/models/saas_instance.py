@@ -2112,6 +2112,9 @@ class SaasInstance(models.Model):
             ssh.execute(
                 "git config --global --add safe.directory '*' 2>/dev/null || true"
             )
+            ssh.execute(
+                "sudo git config --system --add safe.directory '*' 2>/dev/null || true"
+            )
 
             # Render and write config files (initial — without custom repos)
             self._render_and_write_configs(ssh)
