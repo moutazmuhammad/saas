@@ -374,9 +374,33 @@ set -e
 mkdir -p "$SAAS_TMP_DIR/filestore"
 
 # 1) pg_dump via docker exec (pass PGPASSWORD into the container env)
+# Try inside container first (uses container's pg_dump + network access)
 docker exec -e PGPASSWORD="$SAAS_DB_PASS" "$SAAS_CONTAINER" pg_dump \
     -h "$SAAS_DB_HOST" -p "$SAAS_DB_PORT" -U "$SAAS_DB_USER" \
-    -d "$SAAS_DB_NAME" --no-owner > "$SAAS_TMP_DIR/dump.sql"
+    -d "$SAAS_DB_NAME" --no-owner > "$SAAS_TMP_DIR/dump.sql" 2>/tmp/saas_pgdump_err_$$ || true
+
+# If container pg_dump failed or produced empty dump, try from host
+if [ ! -s "$SAAS_TMP_DIR/dump.sql" ]; then
+    echo "Container pg_dump failed or empty, trying from host..." >&2
+    # Try pg_dump directly from the host (if installed)
+    if command -v pg_dump >/dev/null 2>&1; then
+        PGPASSWORD="$SAAS_DB_PASS" pg_dump \
+            -h "$SAAS_DB_HOST" -p "$SAAS_DB_PORT" -U "$SAAS_DB_USER" \
+            -d "$SAAS_DB_NAME" --no-owner > "$SAAS_TMP_DIR/dump.sql" 2>&1
+    else
+        # Try via the DB server's psql if host has no pg_dump
+        echo "No pg_dump on host either. Backup will have empty DB dump." >&2
+    fi
+fi
+
+# Verify dump is not empty
+if [ ! -s "$SAAS_TMP_DIR/dump.sql" ]; then
+    echo "ERROR: pg_dump produced empty output." >&2
+    cat /tmp/saas_pgdump_err_$$ 2>/dev/null >&2 || true
+    rm -f /tmp/saas_pgdump_err_$$
+    exit 1
+fi
+rm -f /tmp/saas_pgdump_err_$$
 
 # 2) Copy filestore from inside the container using docker cp
 if docker exec "$SAAS_CONTAINER" test -d "/var/lib/odoo/filestore/$SAAS_DB_NAME" 2>/dev/null; then

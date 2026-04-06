@@ -3391,9 +3391,11 @@ class SaasInstance(models.Model):
     def _cron_check_trial_expiry(self):
         """Suspend running trial instances whose client trial period has expired."""
         today = fields.Date.today()
-        # Find partners whose trial has expired
+        # Find partners whose trial has expired (service OR hosting)
         expired_partners = self.env['res.partner'].search([
+            '|',
             ('saas_trial_used', '=', True),
+            ('saas_hosting_trial_used', '=', True),
             ('saas_trial_end_date', '<=', today),
         ])
         if not expired_partners:

@@ -799,6 +799,8 @@ class SaasWebsite(http.Controller):
         version = request.env['saas.odoo.version'].sudo().browse(odoo_version_id)
         if not version.exists() or not version.is_hosting_version:
             return request.redirect(err_redirect % ('Please+select+an+Odoo+version'))
+        if not version.docker_image or not version.docker_image_tag:
+            return request.redirect(err_redirect % ('Selected+Odoo+version+is+not+properly+configured.+Please+contact+support.'))
 
         domain = request.env['saas.based.domain'].sudo().browse(domain_id)
         if not domain.exists():
@@ -827,6 +829,14 @@ class SaasWebsite(http.Controller):
         )
         if not docker_servers or not db_servers:
             return request.redirect(err_redirect % ('Service+temporarily+unavailable'))
+
+        # Validate repo URL format (if provided)
+        if repo_url:
+            if not (repo_url.startswith('https://') or repo_url.startswith('git@')):
+                return request.redirect(err_redirect % 'Repository+URL+must+start+with+https://+or+git@')
+            if not git_token and ('github.com' in repo_url or 'gitlab.com' in repo_url or 'bitbucket.org' in repo_url):
+                # Private repos need a token; public might work without one
+                pass  # Allow it — clone will fail with clear error if repo is private
 
         # Hosting trial: one per client
         if is_trial:
