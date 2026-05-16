@@ -195,15 +195,23 @@ class SshTerminal extends Component {
         };
 
         this.eventSource.onmessage = (event) => {
-            // Data is base64-encoded
-            const encoded = JSON.parse(event.data);
-            const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
-            const text = new TextDecoder().decode(bytes);
-            this.terminal.write(text);
+            // The terminal may have been disposed (component unmount) between
+            // when the SSE message was queued and when it's delivered. Guard
+            // against null to avoid an unhandled TypeError in the console.
+            if (!this.terminal) return;
+            try {
+                const encoded = JSON.parse(event.data);
+                const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
+                const text = new TextDecoder().decode(bytes);
+                this.terminal.write(text);
+            } catch (e) {
+                console.error("[terminal] failed to render SSE message", e);
+            }
         };
 
         this.eventSource.addEventListener("closed", (event) => {
             this.state.connected = false;
+            this.sessionId = null;
             const reason = event.data || "session ended";
             if (this.terminal) {
                 this.terminal.write(
@@ -300,7 +308,19 @@ class SshTerminal extends Component {
         }
     }
 
+    async _closeServerSession() {
+        if (!this.sessionId) return;
+        const sid = this.sessionId;
+        this.sessionId = null;
+        try {
+            await rpc("/saas/terminal/close", { session_id: sid });
+        } catch {
+            // Best effort cleanup
+        }
+    }
+
     async _destroy() {
+        // Full teardown — only on component unmount.
         this._stopOutputStream();
 
         if (this._resizeObserver) {
@@ -313,33 +333,18 @@ class SshTerminal extends Component {
             this.terminal = null;
         }
 
-        // Close server-side session
-        if (this.sessionId) {
-            try {
-                await rpc("/saas/terminal/close", {
-                    session_id: this.sessionId,
-                });
-            } catch {
-                // Best effort cleanup
-            }
-            this.sessionId = null;
-        }
+        await this._closeServerSession();
     }
 
     async onReconnect() {
         this.state.error = null;
         this.state.connecting = true;
 
-        // Close old session
-        if (this.sessionId) {
-            try {
-                await rpc("/saas/terminal/close", {
-                    session_id: this.sessionId,
-                });
-            } catch {}
-            this.sessionId = null;
-        }
+        // Close any lingering session and stream, but keep the xterm instance
+        // alive so the user keeps their scrollback and the terminal stays
+        // writable across reconnects.
         this._stopOutputStream();
+        await this._closeServerSession();
 
         if (this.terminal) {
             this.terminal.clear();
@@ -349,12 +354,19 @@ class SshTerminal extends Component {
         await this._createSession();
     }
 
-    onDisconnect() {
-        this._destroy();
+    async onDisconnect() {
+        // Tear down the SSH session and SSE stream, but do NOT dispose the
+        // xterm instance — the user must be able to read history and click
+        // Reconnect. Disposing here is what produced
+        // "Cannot read properties of null (reading 'write')" on the next
+        // SSE message after Reconnect.
+        this._stopOutputStream();
         this.state.connected = false;
+        this.state.connecting = false;
         if (this.terminal) {
             this.terminal.write("\r\n\x1b[33mDisconnected.\x1b[0m\r\n");
         }
+        await this._closeServerSession();
     }
 }
 
