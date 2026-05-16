@@ -34,16 +34,12 @@ class SaasPlan(models.Model):
     # ========== Pricing ==========
     price = fields.Float(
         string='Monthly Price',
-        compute='_compute_trial_defaults',
-        inverse='_inverse_price',
-        store=True,
+        default=0.0,
         help='Monthly recurring price for this plan.',
     )
     yearly_price = fields.Float(
         string='Yearly Price',
-        compute='_compute_trial_defaults',
-        inverse='_inverse_yearly_price',
-        store=True,
+        default=0.0,
         help='Yearly recurring price. Leave 0 to disable yearly billing. '
              'Typically set lower than 12× the monthly price to offer a discount.',
     )
@@ -86,9 +82,6 @@ class SaasPlan(models.Model):
     )
     max_backups = fields.Integer(
         string='Max Backups',
-        compute='_compute_trial_defaults',
-        inverse='_inverse_max_backups',
-        store=True,
         default=7,
         help='Maximum number of backups to keep per instance. '
              'Older backups are automatically deleted during cleanup. '
@@ -113,33 +106,25 @@ class SaasPlan(models.Model):
              'is automatically suspended for non-payment.',
     )
 
-    @api.depends('is_trial_plan')
-    def _compute_trial_defaults(self):
+    @api.onchange('is_trial_plan')
+    def _onchange_is_trial_plan(self):
+        """Reset paid-plan settings when toggling Trial Plan in the form."""
         for rec in self:
             if rec.is_trial_plan:
                 rec.price = 0.0
                 rec.yearly_price = 0.0
                 rec.max_backups = 0
-            else:
-                # Keep existing values for non-trial plans
-                rec.price = rec.price
-                rec.yearly_price = rec.yearly_price
-                rec.max_backups = rec.max_backups
 
-    def _inverse_price(self):
+    @api.constrains('is_trial_plan', 'price', 'yearly_price', 'max_backups')
+    def _check_trial_plan_zero(self):
         for rec in self:
-            if rec.is_trial_plan:
-                rec.price = 0.0
-
-    def _inverse_yearly_price(self):
-        for rec in self:
-            if rec.is_trial_plan:
-                rec.yearly_price = 0.0
-
-    def _inverse_max_backups(self):
-        for rec in self:
-            if rec.is_trial_plan:
-                rec.max_backups = 0
+            if rec.is_trial_plan and (
+                rec.price or rec.yearly_price or rec.max_backups
+            ):
+                raise UserError(_(
+                    "Trial plans must have price = 0, yearly_price = 0 and "
+                    "max_backups = 0. Plan: %s"
+                ) % rec.name)
 
     @api.depends('price', 'yearly_price')
     def _compute_yearly_discount_pct(self):

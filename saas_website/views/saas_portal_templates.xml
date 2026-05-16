@@ -1319,7 +1319,8 @@
                                             var msgs = {
                                                 success: ['alert-success', 'fa-check-circle', 'Packages installed successfully. Instance is restarting.'],
                                                 partial: ['alert-warning', 'fa-exclamation-triangle', 'Some packages may have failed to install. Check logs for details.'],
-                                                error: ['alert-danger', 'fa-times-circle', 'Package installation failed. Please check your package names and try again.']
+                                                error: ['alert-danger', 'fa-times-circle', 'Package installation failed. Please check your package names and try again.'],
+                                                invalid: ['alert-danger', 'fa-times-circle', 'One or more package specs are invalid. Use the form name[==version] (PEP 508). Options like --index-url and paths/URLs are not allowed.']
                                             };
                                             var m = msgs[result];
                                             if (!m) return;

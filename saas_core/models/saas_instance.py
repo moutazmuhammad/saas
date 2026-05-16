@@ -29,6 +29,17 @@ _JINJA_ENV = Environment(
 SUBDOMAIN_RE = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')
 DB_USER_RE = re.compile(r'^[a-z_][a-z0-9_]*$')
 
+# Untranslated technical tokens used as sale.order.origin so the dunning
+# and renewal lookups work regardless of UI language. These must never be
+# wrapped in _() — they are matched verbatim by _get_all_invoices().
+ORIGIN_INITIAL = 'SAAS:INITIAL:%s'
+ORIGIN_RENEWAL = 'SAAS:RENEWAL:%s'
+ORIGIN_SUBSCRIPTION = 'SAAS:SUBSCRIPTION:%s'
+ORIGIN_PLAN_UPGRADE = 'SAAS:UPGRADE:%s'
+ORIGIN_DATA_RESTORATION = 'SAAS:RESTORATION:%s'
+# Origins considered "optional" for dunning purposes (won't trigger suspension).
+OPTIONAL_INVOICE_ORIGIN_PREFIXES = ('SAAS:SUBSCRIPTION:', 'SAAS:UPGRADE:')
+
 
 class SaasInstance(models.Model):
     _name = 'saas.instance'
@@ -47,6 +58,9 @@ class SaasInstance(models.Model):
     domain_id = fields.Many2one(
         'saas.based.domain',
         string='Base Domain',
+        required=True,
+        ondelete='restrict',
+        index=True,
         default=lambda self: self.env['saas.based.domain'].search([], limit=1),
         help='The parent domain under which this instance is hosted '
              '(e.g. "odoo.example.com").',
@@ -61,6 +75,8 @@ class SaasInstance(models.Model):
         'res.partner',
         string='Customer',
         tracking=True,
+        ondelete='restrict',
+        index=True,
         help='The customer who owns this Odoo instance.',
     )
     url = fields.Char(
@@ -75,6 +91,8 @@ class SaasInstance(models.Model):
         'saas.product',
         string='Service',
         tracking=True,
+        ondelete='restrict',
+        index=True,
         help='The service/product this instance provides '
              '(e.g. "Pharmacy Management", "POS").',
     )
@@ -82,6 +100,8 @@ class SaasInstance(models.Model):
         'saas.plan',
         string='Plan',
         tracking=True,
+        ondelete='restrict',
+        index=True,
         help='Resource plan defining CPU, RAM, and storage limits for this instance.',
     )
 
@@ -90,6 +110,7 @@ class SaasInstance(models.Model):
         'saas.odoo.version',
         string='Odoo Version',
         tracking=True,
+        ondelete='restrict',
         help='Odoo version and Docker image used by this instance.',
     )
 
@@ -103,6 +124,8 @@ class SaasInstance(models.Model):
         'saas.server',
         string='Docker Server',
         tracking=True,
+        ondelete='restrict',
+        index=True,
         domain="[('is_docker_host', '=', True)]",
         help='Physical server where the Docker container for this instance runs. '
              'Leave empty for automatic allocation based on server capacity.',
@@ -111,6 +134,8 @@ class SaasInstance(models.Model):
         'saas.server',
         string='Database Server',
         tracking=True,
+        ondelete='restrict',
+        index=True,
         domain="[('is_db_server', '=', True)]",
         help='PostgreSQL server that hosts the database for this instance. '
              'Auto-derived from the Docker server topology when left empty.',
@@ -154,6 +179,25 @@ class SaasInstance(models.Model):
         help='State before entering provisioning. Used to recover instances '
              'stuck in provisioning after a server restart.',
     )
+    pending_operation = fields.Selection(
+        selection=[
+            ('deploy', 'Deploy'),
+            ('redeploy', 'Redeploy'),
+            ('start', 'Start'),
+            ('stop', 'Stop'),
+            ('restart', 'Restart'),
+            ('suspend', 'Suspend'),
+            ('restore', 'Restore Backup'),
+            ('cancel', 'Cancel'),
+            ('delete', 'Delete'),
+        ],
+        readonly=True,
+        help='Operation in progress while state=provisioning. Used by the '
+             'recovery cron to decide whether stuck instances can be safely '
+             'auto-recovered or whether manual intervention is required '
+             '(destructive operations like delete/cancel must NOT be '
+             'auto-reverted to a "live" state).',
+    )
     xmlrpc_port = fields.Integer(
         string='HTTP Port',
         readonly=True,
@@ -191,12 +235,15 @@ class SaasInstance(models.Model):
         'sale.order',
         string='Sale Order',
         tracking=True,
+        ondelete='set null',
+        index=True,
         help='Sale order linked to this instance.',
     )
     restoration_invoice_id = fields.Many2one(
         'account.move',
         string='Restoration Invoice',
         readonly=True,
+        ondelete='set null',
         help='Unpaid restoration fee invoice. Instance is suspended until paid.',
     )
     restore_banner_dismissed = fields.Boolean(
@@ -242,6 +289,7 @@ class SaasInstance(models.Model):
         string='Free Trial',
         default=False,
         tracking=True,
+        index=True,
         help='Whether this instance was created during the client free trial.',
     )
 
@@ -257,6 +305,7 @@ class SaasInstance(models.Model):
     pending_plan_id = fields.Many2one(
         'saas.plan',
         string='Pending Upgrade Plan',
+        ondelete='set null',
         help='Plan the client has chosen but not yet paid for. '
              'Applied automatically once payment is confirmed.',
     )
@@ -270,6 +319,7 @@ class SaasInstance(models.Model):
     scheduled_plan_id = fields.Many2one(
         'saas.plan',
         string='Scheduled Downgrade Plan',
+        ondelete='set null',
         help='Lower plan to switch to at the end of the current billing cycle.',
     )
     scheduled_billing_period = fields.Selection(
@@ -281,6 +331,7 @@ class SaasInstance(models.Model):
     next_invoice_date = fields.Date(
         string='Next Invoice Date',
         tracking=True,
+        index=True,
         help='Date on which the next recurring invoice will be generated. '
              'Set automatically after the first payment.',
     )
@@ -301,6 +352,7 @@ class SaasInstance(models.Model):
     )
     backup_count = fields.Integer(
         string='Backup Count', compute='_compute_backup_count',
+        store=True,
     )
 
     # ========== Resource Usage ==========
@@ -456,37 +508,50 @@ class SaasInstance(models.Model):
         'res.company',
         string='Company',
         default=lambda self: self.env.company,
+        ondelete='restrict',
+        index=True,
         help='Company that manages this SaaS instance.',
     )
 
     # ========== Constraints ==========
     def init(self):
-        """Create a partial unique index on subdomain+domain excluding cancelled instances.
-
-        Replaces the old absolute UNIQUE constraint that blocked reuse of
-        subdomains from cancelled instances.
-        """
-        self.env.cr.execute("""
-            ALTER TABLE saas_instance
-                DROP CONSTRAINT IF EXISTS saas_instance_unique_subdomain_per_domain;
-            DROP INDEX IF EXISTS saas_instance_unique_subdomain_per_domain;
-            CREATE UNIQUE INDEX saas_instance_unique_subdomain_per_domain
-                ON saas_instance (subdomain, domain_id)
-                WHERE state NOT IN ('cancelled', 'cancelled_by_client');
+        """Create partial unique indexes that exclude cancelled instances."""
+        cr = self.env.cr
+        cr.execute("""
+            SELECT 1 FROM pg_indexes
+            WHERE indexname = 'saas_instance_unique_subdomain_per_domain'
+              AND indexdef ILIKE '%cancelled%'
         """)
+        if not cr.fetchone():
+            cr.execute("""
+                ALTER TABLE saas_instance
+                    DROP CONSTRAINT IF EXISTS saas_instance_unique_subdomain_per_domain;
+                DROP INDEX IF EXISTS saas_instance_unique_subdomain_per_domain;
+                CREATE UNIQUE INDEX saas_instance_unique_subdomain_per_domain
+                    ON saas_instance (subdomain, domain_id)
+                    WHERE state NOT IN ('cancelled', 'cancelled_by_client');
+            """)
+        for col in ('xmlrpc_port', 'longpolling_port'):
+            idx = 'saas_instance_unique_%s_per_server' % col
+            cr.execute("""
+                SELECT 1 FROM pg_indexes
+                WHERE indexname = %s AND indexdef ILIKE '%%cancelled%%'
+            """, (idx,))
+            if cr.fetchone():
+                continue
+            cr.execute("""
+                ALTER TABLE saas_instance
+                    DROP CONSTRAINT IF EXISTS %s;
+                DROP INDEX IF EXISTS %s;
+                CREATE UNIQUE INDEX %s
+                    ON saas_instance (docker_server_id, %s)
+                    WHERE state NOT IN ('cancelled', 'cancelled_by_client')
+                      AND %s IS NOT NULL AND %s > 0;
+            """ % (idx, idx, idx, col, col, col))
 
-    _sql_constraints = [
-        (
-            'unique_xmlrpc_port_per_server',
-            'UNIQUE(docker_server_id, xmlrpc_port)',
-            'HTTP port must be unique per Docker server.',
-        ),
-        (
-            'unique_longpolling_port_per_server',
-            'UNIQUE(docker_server_id, longpolling_port)',
-            'Longpolling port must be unique per Docker server.',
-        ),
-    ]
+    # Note: SQL-level uniqueness is enforced by partial indexes in init()
+    # (cancelled instances must be allowed to retain their old ports for audit).
+    _sql_constraints = []
 
     @api.constrains('is_trial', 'partner_id')
     def _check_one_trial_per_client(self):
@@ -567,6 +632,25 @@ class SaasInstance(models.Model):
             self._sync_packages_from_text()
         return result
 
+    # Strict PEP 508 / requirement-spec regex. Refuses anything that pip
+    # would interpret as an option flag (e.g. `--index-url=...`) or a
+    # path/URL — those would let a tenant redirect pip to attacker-
+    # controlled packages whose setup.py runs arbitrary code.
+    _PIP_PACKAGE_RE = re.compile(
+        r'^[A-Za-z0-9][A-Za-z0-9._-]*'           # name
+        r'(\[[A-Za-z0-9._,-]+\])?'                # optional [extras]
+        r'(\s*(==|!=|<=|>=|<|>|~=)\s*[A-Za-z0-9._*+-]+'  # spec op + version
+        r'(\s*,\s*(==|!=|<=|>=|<|>|~=)\s*[A-Za-z0-9._*+-]+)*)?$'
+    )
+
+    def _validate_pip_line(self, line):
+        if not self._PIP_PACKAGE_RE.match(line):
+            raise UserError(_(
+                "Invalid pip package spec: %r\n\n"
+                "Use the form 'name[==version]' (PEP 508). "
+                "Options like '--index-url' or paths/URLs are not allowed."
+            ) % line)
+
     def _sync_packages_from_text(self):
         """Sync ``pip_packages`` text field to ``package_ids`` One2many.
 
@@ -585,6 +669,7 @@ class SaasInstance(models.Model):
                 for line in rec.pip_packages.splitlines():
                     line = line.strip()
                     if line and not line.startswith('#'):
+                        rec._validate_pip_line(line)
                         new_names.append(line)
 
             new_keys = set()
@@ -678,32 +763,43 @@ class SaasInstance(models.Model):
         for rec in self:
             rec.backup_count = counts.get(rec.id, 0)
 
+    @api.depends('sale_order_id')
     def _compute_sale_order_count(self):
         for rec in self:
             rec.sale_order_count = 1 if rec.sale_order_id else 0
 
+    @api.depends('sale_order_id', 'sale_order_id.invoice_ids', 'partner_id', 'name', 'subdomain')
     def _compute_invoice_count(self):
         for rec in self:
             rec.invoice_count = len(rec._get_all_invoices())
 
+    def _instance_origin_tokens(self):
+        """Return the list of untranslated origin tokens this instance uses."""
+        self.ensure_one()
+        ref = self.name or self.subdomain
+        if not ref:
+            return []
+        return [
+            ORIGIN_INITIAL % ref,
+            ORIGIN_RENEWAL % ref,
+            ORIGIN_SUBSCRIPTION % ref,
+            ORIGIN_PLAN_UPGRADE % ref,
+            ORIGIN_DATA_RESTORATION % ref,
+        ]
+
     def _get_all_invoices(self):
         """Return all invoices related to this instance across all sale orders.
 
-        Matches sale orders by exact origin patterns to avoid false
-        positives (e.g. instance "app" matching "app-pro" orders).
+        Matches sale orders by exact untranslated origin tokens. Also
+        accepts legacy translated origins ("Renewal: …", "Subscription: …"
+        in any language) for backwards compatibility with records created
+        before token-based origins were introduced.
         """
         self.ensure_one()
         instance_ref = self.name or self.subdomain
         if not instance_ref:
             return self.env['account.move']
-        # Match all known origin patterns set by this module
-        expected_origins = [
-            instance_ref,
-            _('Renewal: %s') % instance_ref,
-            _('Subscription: %s') % instance_ref,
-            _('Plan upgrade: %s') % instance_ref,
-            _('Data restoration: %s') % instance_ref,
-        ]
+        expected_origins = self._instance_origin_tokens() + [instance_ref]
         domain = [
             ('partner_id', '=', self.partner_id.id),
             '|',
@@ -711,6 +807,16 @@ class SaasInstance(models.Model):
             ('id', '=', self.sale_order_id.id if self.sale_order_id else 0),
         ]
         sale_orders = self.env['sale.order'].search(domain)
+        # Defensive: also pick up legacy SOs where origin contains the
+        # instance ref preceded by a known label in any locale.
+        if not sale_orders or self.sale_order_id not in sale_orders:
+            legacy = self.env['sale.order'].search([
+                ('partner_id', '=', self.partner_id.id),
+                ('origin', 'ilike', instance_ref),
+            ])
+            sale_orders |= legacy.filtered(
+                lambda s: s.origin and instance_ref in s.origin
+            )
         if not sale_orders:
             return self.env['account.move']
         return sale_orders.mapped('invoice_ids')
@@ -769,7 +875,7 @@ class SaasInstance(models.Model):
         # -- Create & confirm sale order --
         order_vals = {
             'partner_id': self.partner_id.id,
-            'origin': self.name or self.subdomain,
+            'origin': ORIGIN_INITIAL % (self.name or self.subdomain),
             'order_line': order_lines,
         }
         if pricelist:
@@ -821,6 +927,10 @@ class SaasInstance(models.Model):
         if self.state != 'pending_payment':
             raise UserError(_("Instance must be in 'Pending Payment' state."))
         self.state = 'paid'
+        # Initialise the recurring billing schedule. Without this the
+        # renewal cron never picks up the instance and the customer gets
+        # an indefinite free subscription.
+        self._set_next_invoice_date()
         self._append_log("Manually marked as paid. Deploying automatically.")
         self.message_post(body=_("Manually marked as paid — deploying now."))
         self.action_deploy()
@@ -829,7 +939,7 @@ class SaasInstance(models.Model):
         """Open the linked sale order."""
         self.ensure_one()
         if not self.sale_order_id:
-            return
+            return False
         return {
             'type': 'ir.actions.act_window',
             'res_model': 'sale.order',
@@ -843,7 +953,7 @@ class SaasInstance(models.Model):
         self.ensure_one()
         invoices = self._get_all_invoices()
         if not invoices:
-            return
+            return False
         if len(invoices) == 1:
             return {
                 'type': 'ir.actions.act_window',
@@ -881,24 +991,59 @@ class SaasInstance(models.Model):
             )
         return db_user
 
+    @staticmethod
+    def _sanitize_path_component(value):
+        """Strip a string to characters safe inside a remote filesystem path.
+
+        Allows lowercase ASCII alphanumerics, hyphen and underscore.
+        Returns '' if no character survives. Used as defence-in-depth
+        against path traversal via free-text fields like `partner.ref`
+        — never trust caller-controlled values inside `mkdir -p`,
+        `rm -rf`, `chown`, `chmod` etc.
+        """
+        if not value:
+            return ''
+        cleaned = ''.join(
+            c for c in value.strip().lower().replace(' ', '_')
+            if c.isascii() and (c.isalnum() or c in '_-')
+        )
+        # Refuse purely-dot or empty strings (would escape into the parent).
+        if not cleaned or cleaned.strip('._-') == '':
+            return ''
+        return cleaned[:64]
+
     def _get_partner_code(self):
-        """Return partner code for folder naming: partnercode_partnername."""
+        """Return a filesystem-safe partner identifier: code_name."""
         self.ensure_one()
-        code = self.partner_id.ref or str(self.partner_id.id)
-        name = self.partner_id.name or ''
-        safe_name = name.strip().lower().replace(' ', '_')
-        safe_name = ''.join(c for c in safe_name if c.isalnum() or c == '_')
-        return '%s_%s' % (code, safe_name)
+        code = self._sanitize_path_component(self.partner_id.ref or '')
+        if not code:
+            code = str(self.partner_id.id)
+        safe_name = self._sanitize_path_component(self.partner_id.name or '')
+        return '%s_%s' % (code, safe_name) if safe_name else code
 
     def _get_instance_path(self):
         """Return the full remote path for this instance."""
         self.ensure_one()
         server = self.docker_server_id
-        return '%s/%s/%s' % (
-            server.docker_base_path.rstrip('/'),
-            self._get_partner_code(),
-            self.subdomain,
-        )
+        base = server.docker_base_path.rstrip('/')
+        partner = self._get_partner_code()
+        # subdomain is regex-validated (SUBDOMAIN_RE) so it can't contain '/'
+        # or '..' but re-check defensively before composing the path.
+        sub = self.subdomain or ''
+        if not SUBDOMAIN_RE.match(sub):
+            raise UserError(
+                _("Refusing to build instance path: subdomain '%s' is invalid.")
+                % sub
+            )
+        path = '%s/%s/%s' % (base, partner, sub)
+        # Final containment check: the realpath must remain under base.
+        norm = os.path.normpath(path)
+        if not norm.startswith(os.path.normpath(base) + '/'):
+            raise UserError(
+                _("Refusing to build instance path: '%s' escapes base '%s'.")
+                % (norm, base)
+            )
+        return path
 
     def _get_container_name(self):
         """Return the Docker container name for this instance."""
@@ -1009,12 +1154,24 @@ class SaasInstance(models.Model):
                     % (repo.name, e)
                 )
 
+    # Cap the in-DB log to the last ~64 KB so the column does not grow
+    # unbounded. Postgres TOAST writes the whole column on every UPDATE,
+    # and `_append_log` is called dozens of times per deploy.
+    _PROVISIONING_LOG_MAX = 64 * 1024
+
     def _append_log(self, message):
-        """Append a timestamped message to provisioning_log."""
+        """Append a timestamped message to provisioning_log (size-bounded)."""
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         line = '[%s] %s\n' % (timestamp, message)
         current = self.provisioning_log or ''
-        self.provisioning_log = current + line
+        new_log = current + line
+        if len(new_log) > self._PROVISIONING_LOG_MAX:
+            # Drop the oldest data, but keep complete lines.
+            new_log = new_log[-self._PROVISIONING_LOG_MAX:]
+            nl = new_log.find('\n')
+            if nl >= 0 and nl < len(new_log) - 1:
+                new_log = '... [truncated] ...\n' + new_log[nl + 1:]
+        self.provisioning_log = new_log
 
     def _render_template(self, template_name, context):
         """Render a Jinja2 template from the templates/ directory."""
@@ -1254,22 +1411,47 @@ class SaasInstance(models.Model):
             self.subdomain,
         )
 
+    # PostgreSQL advisory-lock namespace key for per-server port allocation.
+    # Arbitrary 32-bit constant; pairs with docker_server_id to form a
+    # unique 64-bit key so two servers don't block each other.
+    _PORT_ALLOC_LOCK_NAMESPACE = 0x5AA5_0001
+
     def _auto_assign_ports(self):
-        """Auto-assign xmlrpc_port and longpolling_port if not already set."""
+        """Auto-assign xmlrpc_port and longpolling_port if not already set.
+
+        Uses a Postgres transaction-scoped advisory lock keyed by
+        docker_server_id so concurrent provisioning on the same server
+        cannot pick the same port pair. The previous SELECT FOR UPDATE
+        only locked rows whose `xmlrpc_port>0` — racing transactions
+        with NULL ports skipped each other and both wrote the same port,
+        triggering an opaque IntegrityError after every other side-effect
+        (DB created, container started) had run.
+        """
         self.ensure_one()
         if self.xmlrpc_port and self.longpolling_port:
             return
+        server_id = self.docker_server_id.id
+        if not server_id:
+            raise ValidationError(_(
+                "Cannot allocate ports: docker server is not set."
+            ))
 
         starting_port = int(self.env['ir.config_parameter'].sudo().get_param(
             'saas_master.default_instance_starting_port', '32000',
         ))
 
-        # Lock sibling rows to prevent concurrent port allocation races
+        # pg_advisory_xact_lock is released automatically at COMMIT/ROLLBACK.
+        self.env.cr.execute(
+            "SELECT pg_advisory_xact_lock(%s, %s)",
+            (self._PORT_ALLOC_LOCK_NAMESPACE, server_id),
+        )
+
+        # Now safely scan ALL ports (including ours) — we hold the lock.
         self.env.cr.execute(
             "SELECT xmlrpc_port, longpolling_port FROM saas_instance "
-            "WHERE docker_server_id = %s AND id != %s AND xmlrpc_port > 0 "
-            "FOR UPDATE",
-            (self.docker_server_id.id, self.id or 0),
+            "WHERE docker_server_id = %s AND id != %s "
+            "AND state NOT IN ('cancelled', 'cancelled_by_client')",
+            (server_id, self.id or 0),
         )
         used_ports = set()
         for row in self.env.cr.fetchall():
@@ -1292,6 +1474,13 @@ class SaasInstance(models.Model):
 
         self.xmlrpc_port = candidate
         self.longpolling_port = candidate + 1
+        # Flush so the rest of this transaction sees the assignment and
+        # other sessions can see it the moment we commit.
+        self.env.cr.execute(
+            "UPDATE saas_instance SET xmlrpc_port=%s, longpolling_port=%s "
+            "WHERE id=%s",
+            (candidate, candidate + 1, self.id),
+        )
 
     def _validate_deploy_fields(self):
         """Validate all required fields before deployment."""
@@ -1366,18 +1555,85 @@ class SaasInstance(models.Model):
                 exc_info=True,
             )
 
+    def _strict_refresh_usage(self):
+        """Refresh usage, raising if it cannot be measured.
+
+        Use this from places (downgrade gate, billing) where acting on
+        stale or zero data could let a customer move to a plan that
+        cannot accommodate them.
+        """
+        self.ensure_one()
+        self._ensure_can_ssh()
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            self._refresh_usage_with_ssh(ssh)
+
     @api.model
     def _cron_refresh_usage(self):
-        """Cron: refresh resource usage for all running instances."""
-        instances = self.search([('state', '=', 'running')])
-        for instance in instances:
+        """Cron: refresh resource usage for all running instances.
+
+        Batched: opens ONE SSH per (docker_server, db_server) per pass,
+        runs ONE psql query per db_server returning every DB size at
+        once. The naive per-instance loop opened 2N fresh paramiko
+        handshakes per cron run; this version drops that to ~M (number
+        of distinct servers).
+        """
+        instances = self.search([
+            ('state', '=', 'running'),
+            ('docker_server_id', '!=', False),
+        ])
+        if not instances:
+            return
+
+        # Pre-fetch all DB sizes from each db_server in one query.
+        db_sizes_by_server = {}
+        for db_server in instances.mapped('db_server_id'):
+            if not db_server:
+                continue
+            db_names = [
+                i.subdomain for i in instances
+                if i.db_server_id == db_server
+                and i.subdomain
+                and SUBDOMAIN_RE.match(i.subdomain)
+            ]
+            if not db_names:
+                continue
             try:
-                instance._safe_refresh_usage()
-                self.env.cr.commit()
+                db_sizes_by_server[db_server.id] = \
+                    db_server._fetch_database_sizes(db_names)
             except Exception:
-                self.env.cr.rollback()
                 _logger.exception(
-                    "Cron: failed to refresh usage for %s", instance.subdomain,
+                    "Cron: failed to batch-fetch DB sizes from server %s",
+                    db_server.name,
+                )
+                db_sizes_by_server[db_server.id] = {}
+
+        # Group by docker_server and refresh in one SSH session each.
+        for docker_server in instances.mapped('docker_server_id'):
+            server_instances = instances.filtered(
+                lambda i: i.docker_server_id == docker_server
+            )
+            try:
+                with docker_server._get_ssh_connection() as ssh:
+                    for instance in server_instances:
+                        try:
+                            db_sizes = db_sizes_by_server.get(
+                                instance.db_server_id.id, {}
+                            )
+                            instance._refresh_usage_with_ssh(
+                                ssh,
+                                precomputed_db_size=db_sizes.get(instance.subdomain),
+                            )
+                            self.env.cr.commit()
+                        except Exception:
+                            self.env.cr.rollback()
+                            _logger.exception(
+                                "Cron: failed to refresh usage for %s",
+                                instance.subdomain,
+                            )
+            except Exception:
+                _logger.exception(
+                    "Cron: cannot reach docker server %s for usage refresh",
+                    docker_server.name,
                 )
 
     @api.model
@@ -1405,14 +1661,18 @@ class SaasInstance(models.Model):
                     instance.subdomain,
                 )
 
+    # Operations that can be safely re-run if interrupted. Anything else
+    # (delete, cancel, suspend) must go to a manual-review state because
+    # the partial side-effects on the remote server make "resume" unsafe.
+    _RECOVERABLE_OPERATIONS = ('deploy', 'redeploy', 'restart', 'start', 'restore')
+
     def _cron_recover_stuck_provisioning(self):
         """Cron: recover instances stuck in ``provisioning`` after a restart.
 
-        When the Odoo service restarts while a background thread is running,
-        the thread is killed and the instance remains in ``provisioning``
-        forever.  This cron detects such instances (stuck for more than 15
-        minutes) and resets them using the same logic as
-        ``_on_background_error``.
+        Idempotent operations (deploy/redeploy/restart/start/restore) are
+        re-queued. Destructive operations (cancel/delete/suspend) are NOT
+        auto-reverted — doing so would mark a half-deleted instance as
+        "running" again. They are routed to ``failed`` for manual review.
         """
         threshold = fields.Datetime.now() - datetime.timedelta(minutes=15)
         stuck = self.search([
@@ -1426,15 +1686,31 @@ class SaasInstance(models.Model):
         )
         for instance in stuck:
             try:
+                op = instance.pending_operation
                 prev_state = instance.pre_provisioning_state or 'failed'
-                instance._append_log(
-                    "Recovered from stuck provisioning state "
-                    "(likely caused by a server restart)."
-                )
-                instance._on_background_error(
-                    Exception("Server restarted during provisioning"),
-                    prev_state,
-                )
+                if op and op not in self._RECOVERABLE_OPERATIONS:
+                    instance._append_log(
+                        "Recovery aborted: operation '%s' was in progress "
+                        "and cannot be safely auto-reverted. Marked as failed "
+                        "for manual review." % op
+                    )
+                    instance.write({
+                        'state': 'failed',
+                        'pre_provisioning_state': False,
+                        'pending_operation': False,
+                        'last_error': 'Server restarted during %s — manual review required' % op,
+                        'last_error_date': fields.Datetime.now(),
+                    })
+                else:
+                    instance._append_log(
+                        "Recovered from stuck provisioning state "
+                        "(likely caused by a server restart)."
+                    )
+                    instance._on_background_error(
+                        Exception("Server restarted during provisioning"),
+                        prev_state,
+                    )
+                    instance.pending_operation = False
                 self.env.cr.commit()
             except Exception:
                 self.env.cr.rollback()
@@ -1496,12 +1772,16 @@ class SaasInstance(models.Model):
         except (ValueError, TypeError):
             return 0
 
-    def _refresh_usage_with_ssh(self, ssh):
+    def _refresh_usage_with_ssh(self, ssh, precomputed_db_size=None):
         """Fetch resource usage relative to plan limits.
 
         CPU and RAM are reported as percentages of the plan's allocated
         resources (not the physical server), giving the client a clear
         picture of how much of *their* allocation they are consuming.
+
+        When *precomputed_db_size* is provided (in bytes), skip the
+        per-instance SSH to the DB server — the caller has already
+        batched that query.
         """
         self.ensure_one()
         container_name = self._get_container_name()
@@ -1576,8 +1856,13 @@ class SaasInstance(models.Model):
         self.disk_usage_bytes = disk_bytes
 
         # -- Fetch database size from PostgreSQL server (in bytes) --
+        # Use the precomputed batched value when the caller (cron) has
+        # already done the work; otherwise fall back to a per-instance
+        # SSH to the DB host.
         db_bytes = 0
-        if self.db_server_id and self.subdomain:
+        if precomputed_db_size is not None:
+            db_bytes = int(precomputed_db_size)
+        elif self.db_server_id and self.subdomain:
             try:
                 safe_db = self.subdomain.replace("'", "''")
                 with self.db_server_id._get_ssh_connection() as db_ssh:
@@ -2057,6 +2342,7 @@ class SaasInstance(models.Model):
             if not rec.deploy_retry_count:
                 rec.provisioning_log = ''
             rec.pre_provisioning_state = 'failed'
+            rec.pending_operation = 'deploy'
             rec.state = 'provisioning'
             rec._append_log(
                 "Deployment queued (attempt %d). Running in background..."
@@ -2265,6 +2551,7 @@ class SaasInstance(models.Model):
         self.deploy_retry_count = 0
         self.last_error = False
         self.last_error_date = False
+        self.pending_operation = False
         self._append_log("Deployment completed successfully. State: running.")
         self._safe_refresh_usage()
         self._send_notification('saas_core.mail_template_saas_deployed')
@@ -2288,6 +2575,7 @@ class SaasInstance(models.Model):
             rec._ensure_can_ssh()
             prev_state = rec.state
             rec.pre_provisioning_state = prev_state
+            rec.pending_operation = 'stop'
             rec.state = 'provisioning'
             rec._append_log("Stop queued. Running in background...")
             run_in_background(
@@ -2312,6 +2600,7 @@ class SaasInstance(models.Model):
                     % (container_name, stderr)
                 )
         self.state = 'stopped'
+        self.pending_operation = False
         self._append_log("Instance stopped successfully.")
 
     def action_restart(self):
@@ -2325,6 +2614,7 @@ class SaasInstance(models.Model):
             rec._ensure_can_ssh()
             prev_state = rec.state
             rec.pre_provisioning_state = prev_state
+            rec.pending_operation = 'restart'
             rec.state = 'provisioning'
             rec._append_log("Restart queued. Running in background...")
             run_in_background(
@@ -2349,6 +2639,7 @@ class SaasInstance(models.Model):
                     % (container_name, stderr)
                 )
         self.state = 'running'
+        self.pending_operation = False
         self._append_log("Instance restarted successfully.")
         self._safe_refresh_usage()
 
@@ -2356,14 +2647,21 @@ class SaasInstance(models.Model):
         """Redeploy: clone pending repos, pull cloned repos, update config/mounts,
         install pending modules, and restart the container (async)."""
         for rec in self:
-            if rec.state not in ('running', 'stopped', 'suspended'):
+            # Suspended instances must NOT be redeployed via this path —
+            # that would silently restore service to a non-paying or
+            # trial-expired customer. Use action_reactivate / payment
+            # flows instead, which validate billing.
+            if rec.state not in ('running', 'stopped'):
                 raise UserError(
-                    _("Cannot redeploy instance '%s': must be Running, Stopped, or Suspended (current: %s).")
+                    _("Cannot redeploy instance '%s': must be Running or "
+                      "Stopped (current: %s). Suspended instances must be "
+                      "reactivated through the payment flow first.")
                     % (rec.subdomain, rec.state)
                 )
             rec._ensure_can_ssh()
             prev_state = rec.state
             rec.pre_provisioning_state = prev_state
+            rec.pending_operation = 'redeploy'
             rec.state = 'provisioning'
             rec._append_log("Redeployment queued. Running in background...")
             run_in_background(
@@ -2441,7 +2739,13 @@ class SaasInstance(models.Model):
         # Ensure webhooks are registered for any new or updated repos
         self._ensure_webhooks_registered()
 
-        self.state = 'running'
+        # Restore the previous state instead of forcing 'running'.
+        # A redeploy on a Stopped instance should leave it Stopped.
+        target_state = self.pre_provisioning_state or 'running'
+        if target_state not in ('running', 'stopped'):
+            target_state = 'running'
+        self.state = target_state
+        self.pending_operation = False
         self._safe_refresh_usage()
 
     def action_suspend(self):
@@ -2455,6 +2759,7 @@ class SaasInstance(models.Model):
             rec._ensure_can_ssh()
             prev_state = rec.state
             rec.pre_provisioning_state = prev_state
+            rec.pending_operation = 'suspend'
             rec.state = 'provisioning'
             rec._append_log("Suspend queued. Running in background...")
             run_in_background(
@@ -2479,6 +2784,7 @@ class SaasInstance(models.Model):
                     % (container_name, stderr)
                 )
         self.state = 'suspended'
+        self.pending_operation = False
         self._append_log("Instance suspended successfully.")
 
     def action_cancel(self):
@@ -2494,6 +2800,7 @@ class SaasInstance(models.Model):
                 rec._ensure_can_ssh()
                 prev_state = rec.state
                 rec.pre_provisioning_state = prev_state
+                rec.pending_operation = 'cancel'
                 rec.state = 'provisioning'
                 rec._append_log("Cancellation queued. Cleaning up infrastructure...")
                 run_in_background(
@@ -2529,6 +2836,21 @@ class SaasInstance(models.Model):
 
         db_name = self.subdomain
         db_user = self.db_user
+
+        # Defence in depth: re-validate identifiers before passing them
+        # into shell. The fields are regex-validated on create, but if
+        # they were ever set via direct SQL/migration this would otherwise
+        # be a path to remote command execution as `postgres`.
+        if db_name and not SUBDOMAIN_RE.match(db_name):
+            _logger.error(
+                "Refusing to drop database with invalid identifier %r", db_name,
+            )
+            db_name = None
+        if db_user and not DB_USER_RE.match(db_user):
+            _logger.error(
+                "Refusing to drop role with invalid identifier %r", db_user,
+            )
+            db_user = None
 
         with psql_server._get_ssh_connection() as ssh:
             if db_name:
@@ -2570,6 +2892,7 @@ class SaasInstance(models.Model):
             rec._ensure_can_ssh()
             prev_state = rec.state
             rec.pre_provisioning_state = prev_state
+            rec.pending_operation = 'delete'
             rec.state = 'provisioning'
             rec._append_log("Deletion queued. Running in background...")
             run_in_background(
@@ -2754,6 +3077,7 @@ class SaasInstance(models.Model):
             })
 
         self.state = 'cancelled'
+        self.pending_operation = False
         self._append_log("Instance deleted successfully.")
 
     def action_config(self):
@@ -2818,6 +3142,7 @@ class SaasInstance(models.Model):
         self.last_error = error_msg
         self.last_error_date = fields.Datetime.now()
         self.pre_provisioning_state = False
+        self.pending_operation = False
 
         if prev_state == 'failed':
             # This was a deploy attempt (error_args=('failed',))
@@ -2839,6 +3164,54 @@ class SaasInstance(models.Model):
         else:
             self.state = prev_state
 
+    def _do_retained_restore(self, source_id, prev_state, delete_after):
+        """Restore the retained backup of *source_id* into this instance.
+
+        Runs in a background thread (queued by the wizard). On failure
+        the standard `_on_background_error` handler is invoked which
+        restores `prev_state`.
+        """
+        self.ensure_one()
+        source = self.env['saas.instance'].browse(source_id)
+        if not source.exists() or not source.retained_backup_path:
+            raise UserError(
+                _("Source instance %s no longer has a retained backup.")
+                % (source.name or source_id)
+            )
+
+        Backup = self.env['saas.instance.backup']
+        backup = Backup.create({
+            'instance_id': self.id,
+            'name': 'restored_from_%s' % (source.subdomain or source.id),
+            'bucket_path': source.retained_backup_path,
+            'state': 'done',
+        })
+
+        self._append_log("Restoring retained backup '%s'..." % backup.name)
+        try:
+            self._pre_restore_setup()
+            self._do_restore_backup(backup.id)
+        finally:
+            backup.unlink()
+
+        try:
+            self._ensure_webhooks_registered()
+        except Exception as exc:
+            _logger.warning(
+                "Post-restore webhook setup failed for %s: %s",
+                self.subdomain, exc,
+            )
+
+        if delete_after and source.retained_backup_path:
+            try:
+                Backup._delete_bucket_path(source.retained_backup_path)
+                source.retained_backup_path = False
+            except Exception:
+                _logger.exception(
+                    "Failed to delete retained backup from cloud for %s",
+                    source.name,
+                )
+
     def action_create_backup(self):
         """Create a backup in the background."""
         self.ensure_one()
@@ -2847,16 +3220,39 @@ class SaasInstance(models.Model):
         if self.plan_id and self.plan_id.is_trial_plan:
             raise UserError(_("Backups are not available on trial plans. Please upgrade to a paid plan."))
 
-        # Block if a backup is already running
-        running = self.backup_ids.filtered(lambda b: b.state == 'running')
+        # Lock the instance row for the duration of the backup-create check
+        # so two concurrent portal clicks cannot both pass the "no running
+        # backup" guard and both spawn a thread.
+        self.env.cr.execute(
+            "SELECT id FROM saas_instance WHERE id = %s FOR UPDATE",
+            (self.id,),
+        )
+
+        # Block if a backup is already running (re-read after the row lock)
+        Backup = self.env['saas.instance.backup']
+        running = Backup.search_count([
+            ('instance_id', '=', self.id),
+            ('state', '=', 'running'),
+        ])
         if running:
             raise UserError(_("A backup is already in progress. Please wait for it to finish."))
 
-        # Auto-rotate: if at plan limit, delete the oldest backup
+        # Create the running record FIRST so concurrent clicks see it.
+        now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        backup = Backup.create({
+            'instance_id': self.id,
+            'name': 'backup_%s' % now_str,
+            'state': 'running',
+        })
+
+        # Auto-rotate AFTER creating the new record: if we're now at plan
+        # limit + 1, delete the oldest. Doing this before creation could
+        # leave the customer with one fewer backup if creation fails.
         if self.plan_id and self.plan_id.max_backups > 0:
-            done_backups = self.backup_ids.filtered(
-                lambda b: b.state == 'done'
-            ).sorted('create_date')
+            done_backups = Backup.search([
+                ('instance_id', '=', self.id),
+                ('state', '=', 'done'),
+            ], order='create_date asc')
             while len(done_backups) >= self.plan_id.max_backups:
                 oldest = done_backups[0]
                 self._append_log(
@@ -2866,15 +3262,6 @@ class SaasInstance(models.Model):
                 oldest._delete_from_bucket()
                 oldest.unlink()
                 done_backups -= oldest
-
-        # Create the record NOW so subsequent clicks see state=running
-        Backup = self.env['saas.instance.backup']
-        now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        backup = Backup.create({
-            'instance_id': self.id,
-            'name': 'backup_%s' % now_str,
-            'state': 'running',
-        })
 
         self._append_log("Backup queued. Running in background...")
         run_in_background(
@@ -2902,8 +3289,19 @@ class SaasInstance(models.Model):
             raise UserError(_("Only completed backups can be restored."))
 
         self._ensure_can_ssh()
+        # Lock the row + refuse if another restore is already in flight.
+        # Concurrent restores would both run dropdb/createdb/psql -f
+        # against the same DB and corrupt it.
+        self.env.cr.execute(
+            "SELECT id FROM saas_instance WHERE id = %s FOR UPDATE",
+            (self.id,),
+        )
+        if self.pending_operation == 'restore' or self.state == 'provisioning':
+            raise UserError(_("A restore is already in progress for this instance."))
+
         prev_state = self.state
         self.pre_provisioning_state = prev_state
+        self.pending_operation = 'restore'
         self.state = 'provisioning'
         self._append_log("Restore from backup '%s' queued..." % backup.name)
         run_in_background(
@@ -2927,10 +3325,37 @@ class SaasInstance(models.Model):
         db_host = self._get_db_host_for_ssh()
         db_port = psql_server.psql_port or 5432
 
+        # Validate identifiers before any shell execution.
+        if not SUBDOMAIN_RE.match(db_name or ''):
+            raise UserError(
+                _("Refusing to restore: invalid db name %r") % db_name
+            )
+        if not DB_USER_RE.match(self.db_user or ''):
+            raise UserError(
+                _("Refusing to restore: invalid db user %r") % self.db_user
+            )
+
+        # Snapshot/backup version compatibility check (B7).
+        manifest = backup._read_manifest_safe() if hasattr(backup, '_read_manifest_safe') else None
+        backup_version = (manifest or {}).get('odoo_version') if isinstance(manifest, dict) else None
+        if backup_version and self.odoo_version_id and \
+                backup_version != self.odoo_version_id.name:
+            raise UserError(_(
+                "Backup was taken on Odoo version %s but this instance "
+                "runs %s. Aborting to avoid silent schema corruption."
+            ) % (backup_version, self.odoo_version_id.name))
+
         with server._get_ssh_connection() as ssh:
-            # 1. Stop container
+            # 1. Stop container — refuse to proceed if it didn't actually stop.
             self._append_log("Stopping container...")
-            ssh.execute('docker stop %s 2>&1' % shlex.quote(container_name))
+            exit_code, stdout, stderr = ssh.execute(
+                'docker stop %s 2>&1' % shlex.quote(container_name)
+            )
+            if exit_code != 0 and 'No such container' not in (stdout + stderr):
+                raise UserError(_(
+                    "Failed to stop container '%s' before restore — refusing "
+                    "to drop the database while connections may still be open:\n%s\n%s"
+                ) % (container_name, stdout, stderr))
 
             # 2. Download backup from cloud
             self._append_log("Downloading backup...")
@@ -2963,7 +3388,10 @@ class SaasInstance(models.Model):
                     _("Failed to extract backup:\n%s\n%s") % (stdout, stderr)
                 )
 
-            # 4. Drop current DB and recreate empty
+            # 4. Drop current DB and recreate empty.
+            # Both commands MUST succeed — otherwise psql -f below would
+            # restore into the existing (non-empty) DB and produce a
+            # silently corrupted half-merged database.
             self._append_log("Dropping current database...")
             def _run_on_db_server(cmd):
                 if psql_server == server:
@@ -2971,14 +3399,29 @@ class SaasInstance(models.Model):
                 with psql_server._get_ssh_connection() as db_ssh:
                     return db_ssh.execute(cmd)
 
+            # Terminate any lingering backends first (older PG ignores --force).
             _run_on_db_server(
+                "sudo -u postgres psql -c "
+                "\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname='%s' AND pid <> pg_backend_pid();\" 2>&1"
+                % db_name.replace("'", "''")
+            )
+            exit_code, stdout, stderr = _run_on_db_server(
                 'sudo -u postgres dropdb --force --if-exists %s 2>&1'
                 % shlex.quote(db_name)
             )
-            _run_on_db_server(
+            if exit_code != 0:
+                raise UserError(_(
+                    "dropdb failed for %s — aborting restore:\n%s\n%s"
+                ) % (db_name, stdout, stderr))
+            exit_code, stdout, stderr = _run_on_db_server(
                 'sudo -u postgres createdb -O %s %s 2>&1'
                 % (shlex.quote(self.db_user), shlex.quote(db_name))
             )
+            if exit_code != 0:
+                raise UserError(_(
+                    "createdb failed for %s — aborting restore:\n%s\n%s"
+                ) % (db_name, stdout, stderr))
 
             # 5. Restore dump.sql
             self._append_log("Restoring database...")
@@ -3034,6 +3477,7 @@ class SaasInstance(models.Model):
                 )
 
         self.state = 'running'
+        self.pending_operation = False
         self._append_log("Backup '%s' restored successfully." % backup.name)
         self._safe_refresh_usage()
 
@@ -3343,6 +3787,29 @@ class SaasInstance(models.Model):
         if not instances:
             return
 
+        # Pre-fetch DB sizes per db_server in a single batched query.
+        db_sizes_by_server = {}
+        for db_server in instances.mapped('db_server_id'):
+            if not db_server:
+                continue
+            db_names = [
+                i.subdomain for i in instances
+                if i.db_server_id == db_server
+                and i.subdomain
+                and SUBDOMAIN_RE.match(i.subdomain)
+            ]
+            if not db_names:
+                continue
+            try:
+                db_sizes_by_server[db_server.id] = \
+                    db_server._fetch_database_sizes(db_names)
+            except Exception:
+                _logger.exception(
+                    "Storage cron: failed to batch-fetch sizes from %s",
+                    db_server.name,
+                )
+                db_sizes_by_server[db_server.id] = {}
+
         # Group instances by docker server for batched SSH calls
         by_docker_server = {}
         for inst in instances:
@@ -3355,7 +3822,13 @@ class SaasInstance(models.Model):
                 with server._get_ssh_connection() as ssh:
                     for instance in server_instances:
                         try:
-                            instance._refresh_usage_with_ssh(ssh)
+                            db_sizes = db_sizes_by_server.get(
+                                instance.db_server_id.id, {}
+                            )
+                            instance._refresh_usage_with_ssh(
+                                ssh,
+                                precomputed_db_size=db_sizes.get(instance.subdomain),
+                            )
                         except Exception:
                             _logger.exception(
                                 "Failed to refresh usage for instance %s (id=%s)",
@@ -3389,14 +3862,21 @@ class SaasInstance(models.Model):
 
     @api.model
     def _cron_check_trial_expiry(self):
-        """Suspend running trial instances whose client trial period has expired."""
+        """Suspend running trial instances whose client trial period has expired.
+
+        A partner is considered expired only when their trial end date is
+        set AND in the past AND at least one trial flag is True. The
+        previous predicate broke the OR/AND grouping and would match any
+        partner with a flag regardless of date, mass-suspending paying
+        customers.
+        """
         today = fields.Date.today()
-        # Find partners whose trial has expired (service OR hosting)
         expired_partners = self.env['res.partner'].search([
+            ('saas_trial_end_date', '!=', False),
+            ('saas_trial_end_date', '<=', today),
             '|',
             ('saas_trial_used', '=', True),
             ('saas_hosting_trial_used', '=', True),
-            ('saas_trial_end_date', '<=', today),
         ])
         if not expired_partners:
             return
@@ -3408,15 +3888,18 @@ class SaasInstance(models.Model):
         ])
         for instance in expired_instances:
             try:
-                # Clear any pending upgrade that was never paid
+                # Clear any pending upgrade that was never paid (capture
+                # the plan name BEFORE clearing — otherwise the log entry
+                # below would dereference a False record).
                 if instance.pending_plan_id:
+                    pending_name = instance.pending_plan_id.name
                     instance.write({
                         'pending_plan_id': False,
                         'pending_billing_period': False,
                     })
                     instance._append_log(
                         "Pending upgrade to %s cleared (trial expired)."
-                        % instance.pending_plan_id.name
+                        % pending_name
                     )
                 instance.action_suspend()
                 instance._append_log(
@@ -3622,7 +4105,7 @@ class SaasInstance(models.Model):
 
         order_vals = {
             'partner_id': self.partner_id.id,
-            'origin': _('Renewal: %s') % (self.name or self.subdomain),
+            'origin': ORIGIN_RENEWAL % (self.name or self.subdomain),
             'order_line': order_lines,
         }
         if pricelist:
@@ -3632,9 +4115,11 @@ class SaasInstance(models.Model):
         # Keep sale_order_id pointing to the original SO for payment detection;
         # renewal invoices are tracked via partner + origin for dunning.
         invoice = order._create_invoices()
-        invoice.action_post()
 
-        # Advance billing cycle
+        # Advance the billing cycle *before* posting the invoice. account.move
+        # post commits the move at the accounting layer; if we advanced the
+        # date afterwards and any later step failed (mail, write), the cron
+        # would re-post a duplicate renewal tomorrow.
         if period == 'yearly':
             interval = relativedelta(years=1)
         else:
@@ -3644,6 +4129,7 @@ class SaasInstance(models.Model):
             'last_invoice_date': fields.Date.today(),
             'suspension_warning_sent': False,
         })
+        invoice.action_post()
         self._append_log(
             "Renewal invoice %s created for %s period."
             % (invoice.name, period_label)
@@ -3652,8 +4138,15 @@ class SaasInstance(models.Model):
             "Renewal invoice %s created (%s). Payment due.",
         ) % (invoice.name, period_label))
 
-        # Send payment-due notification
-        self._send_notification('saas_core.mail_template_saas_payment_due')
+        # Send payment-due notification (best-effort: never roll back the
+        # renewal if mail delivery fails).
+        try:
+            self._send_notification('saas_core.mail_template_saas_payment_due')
+        except Exception:
+            _logger.exception(
+                "Failed to send payment-due notification for renewal of %s",
+                self.subdomain,
+            )
 
     # ========== Dunning / Grace Period ==========
 
@@ -3683,19 +4176,15 @@ class SaasInstance(models.Model):
                     "Dunning check failed for %s", instance.subdomain,
                 )
 
-    # SO origins for optional charges (upgrades the client can back out of).
-    # Unpaid invoices with these origins should NOT trigger suspension.
-    _OPTIONAL_INVOICE_ORIGINS = (
-        'Subscription:',   # trial → paid (client can cancel)
-        'Plan upgrade:',   # paid plan upgrade (client can cancel)
-    )
-
     def _is_optional_invoice(self, invoice):
         """Return True if the invoice is for an optional upgrade that
         the client can back out of without losing their current service."""
         so_origins = invoice.line_ids.sale_line_ids.order_id.mapped('origin')
         return any(
-            origin and any(origin.startswith(prefix) for prefix in self._OPTIONAL_INVOICE_ORIGINS)
+            origin and any(
+                origin.startswith(prefix)
+                for prefix in OPTIONAL_INVOICE_ORIGIN_PREFIXES
+            )
             for origin in so_origins
         )
 
@@ -3822,7 +4311,7 @@ class SaasInstance(models.Model):
         pricelist = self.partner_id.property_product_pricelist
         order_vals = {
             'partner_id': self.partner_id.id,
-            'origin': _('Subscription: %s') % (self.name or self.subdomain),
+            'origin': ORIGIN_SUBSCRIPTION % (self.name or self.subdomain),
             'order_line': [(0, 0, {
                 'product_id': self._get_billing_product().id,
                 'name': _('%s (%s) — %s') % (
@@ -3865,8 +4354,33 @@ class SaasInstance(models.Model):
             return
 
         old_plan = self.plan_id
-
+        was_suspended = self.state == 'suspended'
+        was_trial = self.is_trial
         billing_period = self.pending_billing_period or 'monthly'
+
+        # Reactivate FIRST if suspended. If the restart fails we don't
+        # want to have already flipped is_trial=False — that would leave
+        # the customer charged but with a permanently unreachable instance
+        # and no way to retry.
+        if was_suspended:
+            self._append_log("Reactivating instance after paid subscription.")
+            try:
+                # Use _do_restart synchronously here (we're already inside
+                # the background payment thread). action_restart would
+                # spawn another bg thread and decouple error reporting.
+                self._do_restart()
+            except Exception as e:
+                # Leave plan/trial unchanged so the customer can retry.
+                _logger.exception(
+                    "Restart failed during paid-upgrade for %s — aborting "
+                    "plan switch so the customer is not charged for an "
+                    "unreachable instance.", self.subdomain,
+                )
+                self._append_log(
+                    "ERROR: restart failed during paid-upgrade — plan "
+                    "switch deferred. %s" % e
+                )
+                raise
 
         self.write({
             'plan_id': new_plan.id,
@@ -3883,10 +4397,13 @@ class SaasInstance(models.Model):
             % (old_plan.name if old_plan else 'Trial', new_plan.name)
         )
         self.message_post(body=_(
-            "Payment confirmed. Upgraded from trial to paid plan: %s."
-        ) % new_plan.name)
+            "Payment confirmed. Upgraded from %s to paid plan: %s."
+        ) % ('trial' if was_trial else (old_plan.name if old_plan else 'plan'),
+             new_plan.name))
 
-        # Update container resources if running
+        # Update container resources / regenerate configs (best effort —
+        # the customer is already paid and reactivated, don't roll back
+        # the upgrade if these fail; they can be retried by Redeploy).
         if self.state == 'running':
             try:
                 self._update_container_resources()
@@ -3898,18 +4415,10 @@ class SaasInstance(models.Model):
                 self._append_log(
                     "WARNING: Plan updated but container resource update failed: %s" % e
                 )
-
-        # Reactivate if suspended (trial expired)
-        if self.state == 'suspended':
-            self._append_log("Reactivating instance after paid subscription.")
-            self.action_restart()
-
-        # Regenerate configs with new plan settings (workers, etc.)
-        if self.state == 'running':
             try:
                 with self.docker_server_id._get_ssh_connection() as ssh:
                     self._render_and_write_configs(ssh)
-            except Exception as e:
+            except Exception:
                 _logger.exception(
                     "Failed to regenerate configs on subscription for %s",
                     self.subdomain,
@@ -4018,26 +4527,43 @@ class SaasInstance(models.Model):
     # ---------- AUTO-CANCEL PENDING ----------
 
     def _cancel_pending_upgrade(self):
-        """Cancel the current pending upgrade and its unpaid invoice.
+        """Cancel the current pending upgrade and ALL of its unpaid invoices.
 
         Called automatically when the client selects a different plan
-        while an upgrade is still awaiting payment.
+        while an upgrade is still awaiting payment. Cancels every unpaid
+        invoice tied to either an upgrade SO or a subscription SO for
+        this instance — using only `sale_order_id` would miss invoices
+        from earlier upgrade rounds whose SO has already been replaced.
         """
         self.ensure_one()
-        old_plan_name = self.pending_plan_id.name if self.pending_plan_id else 'Unknown'
+        old_plan_name = (
+            self.pending_plan_id.name if self.pending_plan_id else 'Unknown'
+        )
 
-        # Find and cancel the unpaid invoice for this pending upgrade
-        if self.sale_order_id:
-            for inv in self.sale_order_id.invoice_ids.sorted('create_date', reverse=True):
-                if (inv.state == 'posted'
-                        and inv.payment_state not in ('paid', 'in_payment')
-                        and inv.amount_residual > 0):
-                    inv.button_cancel()
-                    break
+        # Find any unpaid posted invoice originating from an upgrade
+        # or subscription SO (both are "optional" — the client may back
+        # out of paying without losing their current plan).
+        invoices = self._get_all_invoices().filtered(
+            lambda inv: (
+                inv.state == 'posted'
+                and inv.payment_state not in ('paid', 'in_payment')
+                and inv.amount_residual > 0
+                and self._is_optional_invoice(inv)
+            )
+        )
+        for inv in invoices:
+            try:
+                inv.button_cancel()
+            except Exception:
+                _logger.exception(
+                    "Failed to cancel optional invoice %s for instance %s",
+                    inv.name, self.subdomain,
+                )
 
         self._append_log(
-            "Auto-cancelled pending upgrade to %s (client selected a different plan)."
-            % old_plan_name
+            "Auto-cancelled pending upgrade to %s and %d unpaid invoice(s) "
+            "(client selected a different plan)."
+            % (old_plan_name, len(invoices))
         )
         self.write({
             'pending_plan_id': False,
@@ -4090,7 +4616,7 @@ class SaasInstance(models.Model):
         pricelist = self.partner_id.property_product_pricelist
         order_vals = {
             'partner_id': self.partner_id.id,
-            'origin': _('Plan upgrade: %s') % (self.name or self.subdomain),
+            'origin': ORIGIN_PLAN_UPGRADE % (self.name or self.subdomain),
             'order_line': [(0, 0, {
                 'product_id': self._get_billing_product().id,
                 'name': line_name,
@@ -4177,9 +4703,19 @@ class SaasInstance(models.Model):
         """
         self.ensure_one()
 
-        # Refresh storage usage before checking threshold to avoid
-        # blocking on stale data (e.g. client deleted data recently).
-        self._safe_refresh_usage()
+        # Refresh storage usage before checking threshold. Use the
+        # strict variant — if we can't measure usage we MUST refuse the
+        # downgrade rather than greenlight it on a stale/zero value
+        # (the customer could otherwise be charged for a plan that can
+        # never serve their data).
+        try:
+            self._strict_refresh_usage()
+        except Exception as exc:
+            raise UserError(_(
+                "Cannot verify current storage usage — refusing the "
+                "downgrade until usage can be measured. Please try again "
+                "in a few minutes.\n\nDetails: %s"
+            ) % exc)
 
         # --- Storage threshold check (75% of target plan limit) ---
         if new_plan.storage_limit > 0:

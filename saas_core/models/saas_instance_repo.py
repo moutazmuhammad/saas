@@ -89,12 +89,17 @@ class SaasInstanceRepo(models.Model):
         string='Webhook Secret',
         copy=False,
         readonly=True,
-        help='Secret token used to validate incoming webhook requests.',
+        groups='saas_core.group_saas_manager',
+        help='Secret token used to validate incoming webhook requests. '
+             'Only managers can read it — anyone with this secret can '
+             'trigger a deploy on the linked repo.',
     )
     webhook_url = fields.Char(
         string='Webhook URL',
         compute='_compute_webhook_url',
-        help='Webhook endpoint registered on the Git provider.',
+        groups='saas_core.group_saas_manager',
+        help='Webhook endpoint registered on the Git provider. '
+             'Embeds the secret — restricted to managers.',
     )
     webhook_provider_id = fields.Char(
         string='Provider Webhook ID',
@@ -106,6 +111,22 @@ class SaasInstanceRepo(models.Model):
         string='Last Webhook Event',
         readonly=True,
     )
+    last_delivery_id = fields.Char(
+        string='Last Delivery ID',
+        readonly=True,
+        copy=False,
+        help='Most recent X-GitHub-Delivery / X-Gitea-Delivery header processed. '
+             'Used to deduplicate provider retries (idempotency).',
+    )
+
+    def init(self):
+        # Index used by the webhook controller on every push receive.
+        # Without it each push sequentially scans saas_instance_repo.
+        self.env.cr.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS saas_instance_repo_webhook_secret_uidx
+                ON saas_instance_repo (webhook_secret)
+                WHERE webhook_secret IS NOT NULL
+        """)
 
     @api.model_create_multi
     def create(self, vals_list):
@@ -342,7 +363,10 @@ class SaasInstanceRepo(models.Model):
             # reset to cloned since the clone itself was fine.
             if rec.state == 'error' and not rec.error_message:
                 rec.state = 'cloned'
-            rec._register_webhook_on_provider()
+            # Use the retrying wrapper so transient provider failures
+            # don't roll back the user's transaction (which would lose
+            # the freshly-generated secret).
+            rec._register_webhook_with_retry()
 
     def action_disable_webhook(self):
         """Disable auto-deploy and remove webhook from Git provider."""
@@ -924,22 +948,22 @@ class SaasInstanceRepo(models.Model):
 
     @staticmethod
     def verify_signature(payload_body, secret, signature_header):
-        """Verify webhook signature (supports GitHub, GitLab, Gitea HMAC-SHA256)."""
+        """Verify webhook signature (HMAC-SHA256 or GitLab plain token).
+
+        SHA-1 signatures are explicitly rejected — they are deprecated
+        by every supported provider and accepting them would let an
+        attacker downgrade clients that send both headers.
+        """
         if not signature_header or not secret:
             return False
-        # GitHub: sha256=..., Gitea: sha256=...
+        if signature_header.startswith('sha1='):
+            return False
         if signature_header.startswith('sha256='):
             expected = 'sha256=' + hmac.new(
                 secret.encode(), payload_body, hashlib.sha256,
             ).hexdigest()
             return hmac.compare_digest(expected, signature_header)
-        # GitHub legacy: sha1=...
-        if signature_header.startswith('sha1='):
-            expected = 'sha1=' + hmac.new(
-                secret.encode(), payload_body, hashlib.sha1,
-            ).hexdigest()
-            return hmac.compare_digest(expected, signature_header)
-        # GitLab sends the token directly in X-Gitlab-Token header
+        # GitLab sends the token directly in X-Gitlab-Token header.
         return hmac.compare_digest(secret, signature_header)
 
     # Lock to prevent concurrent deploys on the same instance

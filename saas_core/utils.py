@@ -1,13 +1,45 @@
 import base64
+import hashlib
+import io
 import logging
 import os
-import stat
-import tempfile
 import threading
 
 import paramiko
 
 _logger = logging.getLogger(__name__)
+
+
+def _host_key_sha256(key):
+    """Return the SSH host key fingerprint as `SHA256:<base64>` (no padding).
+
+    Matches the format printed by `ssh-keygen -l -f` and shown by OpenSSH
+    on first connect.
+    """
+    digest = hashlib.sha256(key.asbytes()).digest()
+    b64 = base64.b64encode(digest).decode('ascii').rstrip('=')
+    return 'SHA256:' + b64
+
+
+class _PinnedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
+    """Refuse the connection unless the host key matches the pinned fingerprint.
+
+    Replaces paramiko's default `AutoAddPolicy()` which silently trusts
+    any host on first connect (every SSH call was MITM-able).
+    """
+
+    def __init__(self, expected_fingerprint):
+        self.expected = expected_fingerprint.strip()
+        if not self.expected.startswith('SHA256:'):
+            self.expected = 'SHA256:' + self.expected.lstrip(':')
+
+    def missing_host_key(self, client, hostname, key):
+        actual = _host_key_sha256(key)
+        if actual != self.expected:
+            raise paramiko.SSHException(
+                "Host key fingerprint mismatch for %s: expected %s, got %s"
+                % (hostname, self.expected, actual)
+            )
 
 
 def run_in_background(record, method_name, method_args=(),
@@ -91,15 +123,15 @@ class SSHConnection:
     """
 
     def __init__(self, host, port, user, private_key_b64, key_type='rsa',
-                 timeout=SSH_COMMAND_TIMEOUT):
+                 timeout=SSH_COMMAND_TIMEOUT, expected_host_key=None):
         self.host = host
         self.port = port
         self.user = user
         self.private_key_b64 = private_key_b64
         self.key_type = key_type
         self.timeout = timeout
+        self.expected_host_key = expected_host_key
         self._client = None
-        self._key_tmpfile = None
 
     def __enter__(self):
         self._connect()
@@ -110,20 +142,30 @@ class SSHConnection:
         return False
 
     def _connect(self):
-        """Decode the Binary field, write to temp file, connect via paramiko."""
+        """Connect via paramiko, loading the key in-memory (no tempfile).
+
+        Host-key policy:
+        - If `expected_host_key` is set, only that fingerprint is accepted
+          (MITM protection).
+        - Otherwise the connection is allowed but a WARNING is logged so
+          operators can spot infrastructure that hasn't been pinned yet.
+          (Replaces paramiko's silent AutoAddPolicy.)
+        """
         key_bytes = base64.b64decode(self.private_key_b64)
-
-        fd, self._key_tmpfile = tempfile.mkstemp(prefix='saas_ssh_', suffix='.pem')
-        try:
-            os.write(fd, key_bytes)
-        finally:
-            os.close(fd)
-        os.chmod(self._key_tmpfile, stat.S_IRUSR)
-
-        pkey = self._load_private_key(self._key_tmpfile)
+        pkey = self._load_private_key_bytes(key_bytes)
 
         self._client = paramiko.SSHClient()
-        self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        if self.expected_host_key:
+            self._client.set_missing_host_key_policy(
+                _PinnedHostKeyPolicy(self.expected_host_key)
+            )
+        else:
+            _logger.warning(
+                "SSH host key not pinned for %s (set expected_host_key_fingerprint "
+                "on the saas.server record to enable MITM protection).",
+                self.host,
+            )
+            self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         self._client.connect(
             hostname=self.host,
             port=self.port,
@@ -134,8 +176,8 @@ class SSHConnection:
             allow_agent=False,
         )
 
-    def _load_private_key(self, path):
-        """Load a private key file, trying the configured type first then auto-detecting."""
+    def _load_private_key_bytes(self, key_bytes):
+        """Parse a private key from raw bytes (never touches the filesystem)."""
         key_classes = [
             ('rsa', paramiko.RSAKey),
             ('ed25519', paramiko.Ed25519Key),
@@ -144,13 +186,12 @@ class SSHConnection:
         if hasattr(paramiko, 'DSSKey'):
             key_classes.append(('dsa', paramiko.DSSKey))
 
-        # Try the hinted key type first
         ordered = sorted(key_classes, key=lambda kv: kv[0] != self.key_type)
 
         errors = []
         for name, cls in ordered:
             try:
-                return cls.from_private_key_file(path)
+                return cls.from_private_key(io.StringIO(key_bytes.decode('utf-8')))
             except Exception as exc:
                 errors.append((name, exc))
 
@@ -161,19 +202,13 @@ class SSHConnection:
         )
 
     def _disconnect(self):
-        """Close SSH client and remove temp key file."""
+        """Close SSH client."""
         if self._client:
             try:
                 self._client.close()
             except Exception:
                 pass
             self._client = None
-        if self._key_tmpfile and os.path.exists(self._key_tmpfile):
-            try:
-                os.unlink(self._key_tmpfile)
-            except Exception:
-                pass
-            self._key_tmpfile = None
 
     def execute(self, command, timeout=None):
         """Execute a command over SSH.
@@ -181,7 +216,7 @@ class SSHConnection:
         Returns:
             tuple: (exit_code, stdout_str, stderr_str)
         """
-        _logger.info("SSH [%s@%s:%s] executing command", self.user, self.host, self.port)
+        _logger.debug("SSH [%s@%s:%s] executing command", self.user, self.host, self.port)
         stdin, stdout, stderr = self._client.exec_command(
             command, timeout=timeout or self.timeout,
         )

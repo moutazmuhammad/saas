@@ -700,12 +700,26 @@ class SaasPortal(CustomerPortal):
 
         # Block cancellation of mandatory invoices.
         # Only optional invoices (plan upgrades, subscriptions) can be
-        # cancelled by the client. Renewal and restoration invoices are
-        # mandatory — the dunning system enforces payment.
-        # invoice_origin is the SO name (e.g. S00123), so we trace
-        # back to the sale order's origin field.
+        # cancelled by the client. Initial subscriptions, renewals and
+        # restorations are mandatory — the dunning system enforces payment.
+        # invoice_origin is the SO name (e.g. S00123), so we trace back
+        # to the sale order's origin field.
+        #
+        # We match the canonical untranslated tokens written by saas_core
+        # (SAAS:INITIAL:, SAAS:RENEWAL:, SAAS:RESTORATION:) AND keep the
+        # legacy translated prefixes for backwards compatibility with
+        # historical SOs created before the token migration.
         so_origins = invoice.line_ids.sale_line_ids.order_id.mapped('origin')
-        non_cancellable_prefixes = ('Renewal:', 'Data restoration:')
+        non_cancellable_prefixes = (
+            'SAAS:INITIAL:',
+            'SAAS:RENEWAL:',
+            'SAAS:RESTORATION:',
+            # Legacy translated prefixes (any locale starting with these
+            # English forms; non-English locales will simply not match
+            # here, which is the same behaviour as before the token fix).
+            'Renewal:',
+            'Data restoration:',
+        )
         if any(
             o and any(o.startswith(prefix) for prefix in non_cancellable_prefixes)
             for o in so_origins
@@ -1259,9 +1273,24 @@ class SaasPortal(CustomerPortal):
         old_packages = (instance_sudo.pip_packages or '').strip()
 
         if new_packages != old_packages:
-            instance_sudo.pip_packages = new_packages or False
             install_result = 'success'
             install_output = ''
+            # Writing pip_packages triggers _sync_packages_from_text in
+            # saas_core, which validates each line against PEP 508 and
+            # raises UserError on bad input (e.g. "--index-url=…",
+            # "git+https://…", local paths). Catch it here so the customer
+            # gets the styled error banner instead of Odoo's bare error
+            # page.
+            try:
+                instance_sudo.pip_packages = new_packages or False
+            except UserError as e:
+                _logger.info(
+                    "Rejected pip_packages update for instance %s: %s",
+                    instance_sudo.name, e,
+                )
+                return request.redirect(
+                    '/my/instances/%s?pkg_result=invalid' % instance_id
+                )
             try:
                 with instance_sudo.docker_server_id.sudo()._get_ssh_connection() as ssh:
                     # Update requirements.txt and docker-compose on disk (for persistence)

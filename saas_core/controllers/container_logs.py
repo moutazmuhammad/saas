@@ -1,9 +1,10 @@
 import json
 import logging
+import re
 import shlex
 import select
 
-from werkzeug.exceptions import NotFound
+from werkzeug.exceptions import Forbidden, NotFound
 
 from odoo import http
 from odoo.http import request, Response
@@ -11,6 +12,17 @@ from odoo.http import request, Response
 _logger = logging.getLogger(__name__)
 
 STREAM_TIMEOUT = 300  # 5 minutes max
+# Cap the in-process line buffer per stream. A noisy container could
+# otherwise grow this without bound if the client reads slowly.
+MAX_BUFFER_BYTES = 1 * 1024 * 1024
+# Strip ANSI escape sequences before forwarding — a tenant can put any
+# bytes into their own logs and we don't want them rendered into the
+# manager's HTML log viewer.
+_ANSI_RE = re.compile(rb'\x1b\[[0-9;?]*[a-zA-Z]')
+
+# Group required for the cross-container log endpoint (which can target
+# any container on any server, including other tenants').
+ADMIN_LOG_GROUP = 'saas_core.group_saas_manager'
 
 
 class ContainerLogsController(http.Controller):
@@ -21,6 +33,8 @@ class ContainerLogsController(http.Controller):
         auth='user',
     )
     def stream_instance_logs(self, instance_id, tail='100', **kwargs):
+        # Per-instance route: any user with read access to the instance
+        # may stream logs. Record rules on saas.instance scope visibility.
         instance = request.env['saas.instance'].browse(instance_id)
         if not instance.exists():
             raise NotFound()
@@ -35,6 +49,13 @@ class ContainerLogsController(http.Controller):
         auth='user',
     )
     def stream_logs(self, container_id, tail='100', **kwargs):
+        # Cross-tenant route: a single container record can reference
+        # any container on any server. Restrict to managers — read access
+        # alone on saas.docker.container does not imply ownership.
+        if not request.env.user.has_group(ADMIN_LOG_GROUP):
+            raise Forbidden(
+                "SaaS Manager privileges required to stream container logs."
+            )
         container = request.env['saas.docker.container'].browse(container_id)
         if not container.exists():
             raise NotFound()
@@ -46,7 +67,7 @@ class ContainerLogsController(http.Controller):
 
         # Validate tail is a safe integer
         try:
-            tail_int = int(tail)
+            tail_int = max(0, min(int(tail), 10000))
         except (ValueError, TypeError):
             tail_int = 100
 
@@ -57,7 +78,7 @@ class ContainerLogsController(http.Controller):
 
         def generate():
             try:
-                ssh_conn._connect()  # noqa: uses ssh_conn from outer scope
+                ssh_conn._connect()
                 transport = ssh_conn._client.get_transport()
                 channel = transport.open_session()
                 channel.exec_command(
@@ -65,36 +86,39 @@ class ContainerLogsController(http.Controller):
                 )
                 channel.settimeout(STREAM_TIMEOUT)
 
-                # Send initial SSE comment to establish connection
                 yield b'retry: 1000\n\n'
 
                 buf = b''
                 while not channel.exit_status_ready():
-                    # Wait for data with a short timeout so we can check exit
                     ready, _, _ = select.select([channel], [], [], 1.0)
                     if ready:
                         chunk = channel.recv(4096)
                         if not chunk:
                             break
                         buf += chunk
-                        # Split on newlines and send complete lines
+                        # Bound buffer growth — drop oldest data if a
+                        # noisy container outpaces the client.
+                        if len(buf) > MAX_BUFFER_BYTES:
+                            buf = buf[-MAX_BUFFER_BYTES:]
                         while b'\n' in buf:
                             line, buf = buf.split(b'\n', 1)
+                            line = _ANSI_RE.sub(b'', line)
                             text = line.decode('utf-8', errors='replace')
                             yield ('data: %s\n\n' % json.dumps(text)).encode('utf-8')
 
-                # Drain remaining data
                 while channel.recv_ready():
                     chunk = channel.recv(4096)
                     buf += chunk
                 if buf:
-                    text = buf.decode('utf-8', errors='replace')
+                    text = _ANSI_RE.sub(b'', buf).decode('utf-8', errors='replace')
                     yield ('data: %s\n\n' % json.dumps(text)).encode('utf-8')
 
                 yield b'event: done\ndata: stream ended\n\n'
 
             except Exception as e:
-                _logger.exception("Log streaming error for container %s", container_name)
+                _logger.exception(
+                    "Log streaming error for container %s", container_name,
+                )
                 yield ('event: error\ndata: %s\n\n' % json.dumps(str(e))).encode('utf-8')
             finally:
                 ssh_conn._disconnect()

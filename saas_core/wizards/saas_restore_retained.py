@@ -3,6 +3,9 @@ import logging
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
+from ..models.saas_instance import ORIGIN_DATA_RESTORATION
+from ..utils import run_in_background
+
 _logger = logging.getLogger(__name__)
 
 
@@ -136,22 +139,38 @@ class SaasRestoreRetainedWizard(models.TransientModel):
         }
 
     def action_restore_now_free(self):
-        """Restore the backup immediately without charging."""
+        """Queue an immediate, free restore in the background.
+
+        The actual SSH/psql work runs asynchronously so that the user's
+        HTTP request returns immediately. State is set to 'provisioning'
+        synchronously so the UI reflects the in-progress restore.
+        """
         self._validate()
         source = self.source_instance_id
         target = self.target_instance_id
 
-        self._do_restore(source, target)
-
+        target._ensure_can_ssh()
+        prev_state = target.state
+        target.write({
+            'state': 'provisioning',
+            'pre_provisioning_state': prev_state,
+        })
         target._append_log(
-            "Retained backup restored by admin %s (free)." % self.env.user.name
+            "Retained backup restore queued by admin %s (free)."
+            % self.env.user.name
         )
         target.message_post(body=_(
-            "Retained backup restored by %s (no charge)."
+            "Retained backup restore queued by %s (no charge). "
+            "You will be notified when it completes."
         ) % self.env.user.name)
 
-        if self.delete_retained_after:
-            self._delete_retained_from_cloud(source)
+        run_in_background(
+            target,
+            '_do_retained_restore',
+            method_args=(source.id, prev_state, bool(self.delete_retained_after)),
+            error_method='_on_background_error',
+            error_args=(prev_state,),
+        )
 
         return {
             'type': 'ir.actions.act_window',
@@ -160,58 +179,6 @@ class SaasRestoreRetainedWizard(models.TransientModel):
             'view_mode': 'form',
             'target': 'current',
         }
-
-    def _do_restore(self, source, target):
-        """Execute the actual restore: setup repos, restore backup, webhooks."""
-        _logger.info(
-            "Restoring retained backup from %s to %s (path: %s)",
-            source.name, target.name, source.retained_backup_path,
-        )
-
-        Backup = self.env['saas.instance.backup']
-        backup = Backup.create({
-            'instance_id': target.id,
-            'name': 'restored_from_%s' % (source.subdomain or source.id),
-            'bucket_path': source.retained_backup_path,
-            'state': 'done',
-        })
-
-        target._ensure_can_ssh()
-        prev_state = target.state
-        target.state = 'provisioning'
-        target._append_log("Restoring retained backup '%s'..." % backup.name)
-        self.env.cr.commit()
-
-        # Re-setup custom repos, configs, and pip packages BEFORE restore
-        target._pre_restore_setup()
-
-        try:
-            target._do_restore_backup(backup.id)
-        except Exception as e:
-            target.state = prev_state
-            if prev_state == 'running':
-                try:
-                    target._restart_container()
-                except Exception:
-                    _logger.exception(
-                        "Failed to restart %s after restore failure",
-                        target.subdomain,
-                    )
-            backup.unlink()
-            self.env.cr.commit()
-            raise UserError(_(
-                "Backup restoration failed:\n%s"
-            ) % str(e))
-
-        backup.unlink()
-
-        try:
-            target._ensure_webhooks_registered()
-        except Exception as e:
-            _logger.warning(
-                "Post-restore webhook setup failed for %s: %s",
-                target.subdomain, e,
-            )
 
     # _pre_restore_setup is now on saas.instance model — called as
     # target._pre_restore_setup() from both the wizard and the auto flow.
@@ -224,7 +191,7 @@ class SaasRestoreRetainedWizard(models.TransientModel):
 
         order = self.env['sale.order'].create({
             'partner_id': partner.id,
-            'origin': _('Data restoration: %s') % (
+            'origin': ORIGIN_DATA_RESTORATION % (
                 target.name or target.subdomain
             ),
             'order_line': [(0, 0, {
@@ -252,12 +219,9 @@ class SaasRestoreRetainedWizard(models.TransientModel):
     def _delete_retained_from_cloud(self, source):
         """Delete the retained backup file from cloud storage."""
         try:
-            Backup = self.env['saas.instance.backup']
-            temp = Backup.new({
-                'instance_id': source.id,
-                'bucket_path': source.retained_backup_path,
-            })
-            temp._delete_from_bucket()
+            self.env['saas.instance.backup']._delete_bucket_path(
+                source.retained_backup_path
+            )
             source.retained_backup_path = False
             source._append_log("Retained backup deleted from cloud storage.")
         except Exception:

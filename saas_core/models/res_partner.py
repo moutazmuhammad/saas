@@ -37,27 +37,51 @@ class ResPartner(models.Model):
         for rec in self:
             rec.saas_instance_count = counts.get(rec.id, 0)
 
+    def _saas_uniqueness_applies(self, partner):
+        """Whether the saas_core uniqueness checks apply to *partner*.
+
+        Restrict to commercial customers (those with sales activity or
+        explicitly flagged as customers) so non-SaaS uses of res.partner
+        — multiple shipping addresses, accounting contacts, etc. — are
+        not blocked. Subclass to broaden/narrow as needed.
+        """
+        return bool(partner.customer_rank)
+
     @api.constrains('email')
     def _check_unique_email(self):
-        for partner in self:
-            if not partner.email:
-                continue
-            duplicate = self.sudo().search([
-                ('email', '=ilike', partner.email),
-                ('id', '!=', partner.id),
-            ], limit=1)
-            if duplicate:
-                raise ValidationError(
-                    _("The email address '%s' is already used by another contact.",
-                      partner.email)
-                )
+        candidates = self.filtered(
+            lambda p: p.email and self._saas_uniqueness_applies(p)
+        )
+        if not candidates:
+            return
+        emails = list({(p.email or '').lower() for p in candidates})
+        # Single batched search for any partner outside *self* sharing
+        # any of the candidate emails.
+        duplicates = self.sudo().search([
+            ('email', 'in', emails),
+            ('id', 'not in', candidates.ids),
+        ])
+        # Map by lowercased email for O(1) per-record lookup.
+        dup_emails = {(p.email or '').lower() for p in duplicates}
+        # Also detect intra-batch duplicates.
+        seen = {}
+        for p in candidates:
+            key = (p.email or '').lower()
+            if key in dup_emails or key in seen:
+                raise ValidationError(_(
+                    "The email address '%s' is already used by another contact."
+                ) % p.email)
+            seen[key] = p.id
 
     @api.constrains('phone', 'country_id')
     def _check_phone_country(self):
-        for partner in self:
-            if not partner.phone:
-                continue
-            # Validate phone matches the partner's country
+        candidates = self.filtered(
+            lambda p: p.phone and self._saas_uniqueness_applies(p)
+        )
+        if not candidates:
+            return
+        # Per-record format validation (cheap, in-memory).
+        for partner in candidates:
             if partner.country_id:
                 try:
                     phone_format(
@@ -67,22 +91,24 @@ class ResPartner(models.Model):
                         force_format='E164',
                         raise_exception=True,
                     )
-                except Exception:
-                    raise ValidationError(
-                        _("The phone number '%s' is not valid for %s. "
-                          "Please enter a phone number that matches your country.",
-                          partner.phone, partner.country_id.name)
-                    )
-            # Check uniqueness
-            duplicate = self.sudo().search([
-                ('phone', '=', partner.phone),
-                ('id', '!=', partner.id),
-            ], limit=1)
-            if duplicate:
-                raise ValidationError(
-                    _("The phone number '%s' is already used by another contact.",
-                      partner.phone)
-                )
+                except Exception as exc:
+                    raise ValidationError(_(
+                        "The phone number '%s' is not valid for %s: %s"
+                    ) % (partner.phone, partner.country_id.name, exc))
+        # Single batched uniqueness lookup.
+        phones = list({p.phone for p in candidates})
+        duplicates = self.sudo().search([
+            ('phone', 'in', phones),
+            ('id', 'not in', candidates.ids),
+        ])
+        dup_phones = {p.phone for p in duplicates}
+        seen = {}
+        for p in candidates:
+            if p.phone in dup_phones or p.phone in seen:
+                raise ValidationError(_(
+                    "The phone number '%s' is already used by another contact."
+                ) % p.phone)
+            seen[p.phone] = p.id
 
     def action_view_saas_instances(self):
         self.ensure_one()

@@ -92,6 +92,36 @@
             <field name="perm_unlink" eval="True"/>
         </record>
 
+        <!-- Servers: company-scoped record rule for managers; users get
+             no record-level access at all (the table has no user ACL,
+             so this is defence in depth). Without this rule, a SaaS
+             Manager in company A could see/edit company B's servers
+             (and from there open an SSH terminal as root). -->
+        <record id="rule_saas_server_manager_company" model="ir.rule">
+            <field name="name">SaaS Server: company-scoped (manager)</field>
+            <field name="model_id" ref="model_saas_server"/>
+            <field name="domain_force">['|', ('company_id', '=', False), ('company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_manager'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
+        <!-- Docker containers: scope by the owning server's company.
+             The container record otherwise lets anyone with read access
+             stream live logs of any tenant on the host. -->
+        <record id="rule_saas_docker_container_manager_company" model="ir.rule">
+            <field name="name">SaaS Docker Container: company-scoped (manager)</field>
+            <field name="model_id" ref="model_saas_docker_container"/>
+            <field name="domain_force">['|', ('server_id.company_id', '=', False), ('server_id.company_id', 'in', company_ids)]</field>
+            <field name="groups" eval="[(4, ref('group_saas_manager'))]"/>
+            <field name="perm_read" eval="True"/>
+            <field name="perm_write" eval="True"/>
+            <field name="perm_create" eval="True"/>
+            <field name="perm_unlink" eval="True"/>
+        </record>
+
     </data>
 
 </odoo>

@@ -1,18 +1,57 @@
+"""Pre-migrate 18.0.8.0.0 — merge saas_container_physical_server,
+saas_psql_physical_server, and saas_proxy_server into the unified
+saas_server table.
+
+DEFENSIVE: every operation is guarded so the script is a safe no-op on
+DBs that never had the older tables (i.e. installs created on or after
+18.0.8.0.0).
+"""
 import logging
 
 _logger = logging.getLogger(__name__)
 
 
+def _table_exists(cr, table):
+    cr.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = %s",
+        (table,),
+    )
+    return bool(cr.fetchone())
+
+
+def _column_exists(cr, table, column):
+    cr.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = %s AND column_name = %s",
+        (table, column),
+    )
+    return bool(cr.fetchone())
+
+
 def migrate(cr, version):
-    """Merge saas_container_physical_server, saas_psql_physical_server,
-    and saas_proxy_server into the unified saas_server table."""
     if not version:
         return
 
-    _logger.info("Pre-migration 18.0.8.0.0: unifying server models into saas_server")
+    # If none of the legacy tables exist, this DB never had the old
+    # split-server schema — nothing to migrate. Bail out early.
+    legacy_tables = (
+        'saas_container_physical_server',
+        'saas_psql_physical_server',
+        'saas_proxy_server',
+    )
+    if not any(_table_exists(cr, t) for t in legacy_tables):
+        _logger.info(
+            "Pre-migration 18.0.8.0.0: no legacy server tables found, "
+            "skipping unification (already on unified schema)."
+        )
+        return
+
+    _logger.info(
+        "Pre-migration 18.0.8.0.0: unifying server models into saas_server"
+    )
 
     # ------------------------------------------------------------------
-    # 1. Create the new saas_server table
+    # 1. Create the new saas_server table.
     # ------------------------------------------------------------------
     cr.execute("""
         CREATE TABLE IF NOT EXISTS saas_server (
@@ -38,14 +77,12 @@ def migrate(cr, version):
     """)
 
     # ------------------------------------------------------------------
-    # 2. Migrate Docker servers
+    # 2. Migrate Docker servers.
     # ------------------------------------------------------------------
-    cr.execute("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'saas_container_physical_server' AND column_name = 'id'
-    """)
-    if cr.fetchone():
+    if _table_exists(cr, 'saas_container_physical_server'):
         _logger.info("Migrating Docker servers...")
+        # ON CONFLICT DO NOTHING in case rows with the same id already
+        # exist (re-running the migration must be safe).
         cr.execute("""
             INSERT INTO saas_server (
                 id, sequence, name, is_docker_host,
@@ -61,20 +98,14 @@ def migrate(cr, version):
                 docker_base_path,
                 create_uid, create_date, write_uid, write_date
             FROM saas_container_physical_server
+            ON CONFLICT (id) DO NOTHING
         """)
 
     # ------------------------------------------------------------------
-    # 3. Migrate DB servers — merge with existing if same IP
+    # 3. Migrate DB servers — merge with existing if same IP.
     # ------------------------------------------------------------------
-    cr.execute("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'saas_psql_physical_server' AND column_name = 'id'
-    """)
-    if cr.fetchone():
+    if _table_exists(cr, 'saas_psql_physical_server'):
         _logger.info("Migrating DB servers...")
-
-        # For DB servers that match an already-migrated Docker server by IP,
-        # just enable the is_db_server flag and set psql_port.
         cr.execute("""
             UPDATE saas_server ss
             SET is_db_server = TRUE,
@@ -85,8 +116,6 @@ def migrate(cr, version):
                 OR (ss.private_ip_v4 IS NOT NULL AND ss.private_ip_v4 = ps.private_ip_v4)
             )
         """)
-
-        # For DB servers that don't match any existing Docker server, insert new rows.
         cr.execute("""
             INSERT INTO saas_server (
                 sequence, name, is_db_server,
@@ -112,15 +141,10 @@ def migrate(cr, version):
         """)
 
     # ------------------------------------------------------------------
-    # 4. Migrate Proxy servers — merge with existing if same IP
+    # 4. Migrate Proxy servers — merge with existing if same IP.
     # ------------------------------------------------------------------
-    cr.execute("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'saas_proxy_server' AND column_name = 'id'
-    """)
-    if cr.fetchone():
+    if _table_exists(cr, 'saas_proxy_server'):
         _logger.info("Migrating Proxy servers...")
-
         cr.execute("""
             UPDATE saas_server ss
             SET is_proxy_server = TRUE
@@ -130,7 +154,6 @@ def migrate(cr, version):
                 OR (ss.private_ip_v4 IS NOT NULL AND ss.private_ip_v4 = pxs.private_ip_v4)
             )
         """)
-
         cr.execute("""
             INSERT INTO saas_server (
                 sequence, name, is_proxy_server,
@@ -154,7 +177,7 @@ def migrate(cr, version):
         """)
 
     # ------------------------------------------------------------------
-    # 5. Fix sequence value for saas_server id
+    # 5. Fix sequence value for saas_server id.
     # ------------------------------------------------------------------
     cr.execute("""
         SELECT setval('saas_server_id_seq',
@@ -163,106 +186,86 @@ def migrate(cr, version):
     """)
 
     # ------------------------------------------------------------------
-    # 6. Re-point foreign keys on saas_instance
+    # 6. Re-point db_server_id on saas_instance.
     # ------------------------------------------------------------------
-    # docker_server_id already points to correct IDs (we preserved them)
-    # db_server_id needs to be re-mapped from old psql server IDs to new saas_server IDs
-    cr.execute("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'saas_instance' AND column_name = 'db_server_id'
-    """)
-    if cr.fetchone():
+    if _column_exists(cr, 'saas_instance', 'db_server_id') \
+            and _table_exists(cr, 'saas_psql_physical_server'):
+        _logger.info("Re-mapping db_server_id on saas_instance...")
         cr.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'saas_psql_physical_server' AND column_name = 'id'
-        """)
-        if cr.fetchone():
-            _logger.info("Re-mapping db_server_id on saas_instance...")
-            cr.execute("""
-                UPDATE saas_instance si
-                SET db_server_id = ss.id
-                FROM saas_psql_physical_server ps
-                JOIN saas_server ss ON (
-                    ss.is_db_server = TRUE
-                    AND (
-                        (ss.ip_v4 IS NOT NULL AND ss.ip_v4 = ps.ip_v4)
-                        OR (ss.private_ip_v4 IS NOT NULL AND ss.private_ip_v4 = ps.private_ip_v4)
-                    )
+            UPDATE saas_instance si
+            SET db_server_id = ss.id
+            FROM saas_psql_physical_server ps
+            JOIN saas_server ss ON (
+                ss.is_db_server = TRUE
+                AND (
+                    (ss.ip_v4 IS NOT NULL AND ss.ip_v4 = ps.ip_v4)
+                    OR (ss.private_ip_v4 IS NOT NULL AND ss.private_ip_v4 = ps.private_ip_v4)
                 )
-                WHERE si.db_server_id = ps.id
-            """)
+            )
+            WHERE si.db_server_id = ps.id
+        """)
 
     # ------------------------------------------------------------------
-    # 7. Re-point proxy_server_id on saas_based_domain
+    # 7. Re-point proxy_server_id on saas_based_domain.
     # ------------------------------------------------------------------
-    cr.execute("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'saas_based_domain' AND column_name = 'proxy_server_id'
-    """)
-    if cr.fetchone():
+    if _column_exists(cr, 'saas_based_domain', 'proxy_server_id') \
+            and _table_exists(cr, 'saas_proxy_server'):
+        _logger.info("Re-mapping proxy_server_id on saas_based_domain...")
         cr.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'saas_proxy_server' AND column_name = 'id'
-        """)
-        if cr.fetchone():
-            _logger.info("Re-mapping proxy_server_id on saas_based_domain...")
-            cr.execute("""
-                UPDATE saas_based_domain bd
-                SET proxy_server_id = ss.id
-                FROM saas_proxy_server pxs
-                JOIN saas_server ss ON (
-                    ss.is_proxy_server = TRUE
-                    AND (
-                        (ss.ip_v4 IS NOT NULL AND ss.ip_v4 = pxs.ip_v4)
-                        OR (ss.private_ip_v4 IS NOT NULL AND ss.private_ip_v4 = pxs.private_ip_v4)
-                    )
+            UPDATE saas_based_domain bd
+            SET proxy_server_id = ss.id
+            FROM saas_proxy_server pxs
+            JOIN saas_server ss ON (
+                ss.is_proxy_server = TRUE
+                AND (
+                    (ss.ip_v4 IS NOT NULL AND ss.ip_v4 = pxs.ip_v4)
+                    OR (ss.private_ip_v4 IS NOT NULL AND ss.private_ip_v4 = pxs.private_ip_v4)
                 )
-                WHERE bd.proxy_server_id = pxs.id
-            """)
+            )
+            WHERE bd.proxy_server_id = pxs.id
+        """)
 
     # ------------------------------------------------------------------
-    # 8. Re-point server_id on saas_docker_container
+    # 8. Drop FK constraints that reference the old tables.
     # ------------------------------------------------------------------
-    # server_id already references the same IDs as the old Docker server table
-    # Just drop the old FK constraint so Odoo can create the new one
-    cr.execute("""
-        SELECT constraint_name FROM information_schema.table_constraints
-        WHERE table_name = 'saas_docker_container'
-          AND constraint_type = 'FOREIGN KEY'
-          AND constraint_name LIKE '%%server_id%%'
-    """)
-    for row in cr.fetchall():
-        cr.execute('ALTER TABLE saas_docker_container DROP CONSTRAINT IF EXISTS "%s"' % row[0])
+    if _table_exists(cr, 'saas_docker_container'):
+        cr.execute("""
+            SELECT constraint_name FROM information_schema.table_constraints
+            WHERE table_name = 'saas_docker_container'
+              AND constraint_type = 'FOREIGN KEY'
+              AND constraint_name LIKE %s
+        """, ('%server_id%',))
+        for row in cr.fetchall():
+            cr.execute(
+                'ALTER TABLE saas_docker_container '
+                'DROP CONSTRAINT IF EXISTS "%s"' % row[0]
+            )
 
-    # ------------------------------------------------------------------
-    # 9. Drop old FK constraints on saas_instance
-    # ------------------------------------------------------------------
-    cr.execute("""
-        SELECT constraint_name FROM information_schema.table_constraints
-        WHERE table_name = 'saas_instance'
-          AND constraint_type = 'FOREIGN KEY'
-          AND constraint_name LIKE '%%docker_server_id%%'
-    """)
-    for row in cr.fetchall():
-        cr.execute('ALTER TABLE saas_instance DROP CONSTRAINT IF EXISTS "%s"' % row[0])
+    if _table_exists(cr, 'saas_instance'):
+        for like in ('%docker_server_id%', '%db_server_id%'):
+            cr.execute("""
+                SELECT constraint_name FROM information_schema.table_constraints
+                WHERE table_name = 'saas_instance'
+                  AND constraint_type = 'FOREIGN KEY'
+                  AND constraint_name LIKE %s
+            """, (like,))
+            for row in cr.fetchall():
+                cr.execute(
+                    'ALTER TABLE saas_instance '
+                    'DROP CONSTRAINT IF EXISTS "%s"' % row[0]
+                )
 
-    cr.execute("""
-        SELECT constraint_name FROM information_schema.table_constraints
-        WHERE table_name = 'saas_instance'
-          AND constraint_type = 'FOREIGN KEY'
-          AND constraint_name LIKE '%%db_server_id%%'
-    """)
-    for row in cr.fetchall():
-        cr.execute('ALTER TABLE saas_instance DROP CONSTRAINT IF EXISTS "%s"' % row[0])
-
-    # Drop old FK on saas_based_domain
-    cr.execute("""
-        SELECT constraint_name FROM information_schema.table_constraints
-        WHERE table_name = 'saas_based_domain'
-          AND constraint_type = 'FOREIGN KEY'
-          AND constraint_name LIKE '%%proxy_server_id%%'
-    """)
-    for row in cr.fetchall():
-        cr.execute('ALTER TABLE saas_based_domain DROP CONSTRAINT IF EXISTS "%s"' % row[0])
+    if _table_exists(cr, 'saas_based_domain'):
+        cr.execute("""
+            SELECT constraint_name FROM information_schema.table_constraints
+            WHERE table_name = 'saas_based_domain'
+              AND constraint_type = 'FOREIGN KEY'
+              AND constraint_name LIKE %s
+        """, ('%proxy_server_id%',))
+        for row in cr.fetchall():
+            cr.execute(
+                'ALTER TABLE saas_based_domain '
+                'DROP CONSTRAINT IF EXISTS "%s"' % row[0]
+            )
 
     _logger.info("Pre-migration 18.0.8.0.0: completed")

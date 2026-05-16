@@ -5,7 +5,7 @@
     <menuitem id="saas_master_menu_root"
               name="SaaS Manager"
               sequence="50"
-              web_icon="saas_master,static/description/icon.png"
+              web_icon="saas_core,static/description/icon.png"
               groups="base.group_user"/>
 
     <!-- Instances -->

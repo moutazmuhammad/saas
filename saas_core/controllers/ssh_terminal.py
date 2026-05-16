@@ -24,6 +24,14 @@ SESSION_TIMEOUT = 600  # 10 minutes idle timeout
 STREAM_READ_TIMEOUT = 300  # 5 minutes max stream
 SSH_KEEPALIVE_INTERVAL = 15  # seconds between SSH keepalive packets
 SSE_HEARTBEAT_INTERVAL = 10  # seconds between SSE heartbeat comments
+# Hard cap on concurrent terminal sessions per process. Each session pins
+# a paramiko Transport + thread; an attacker (or careless tab-leaver)
+# could otherwise exhaust file descriptors.
+MAX_CONCURRENT_SESSIONS = 32
+
+# Group required to open a terminal. Hiding the UI button is not security;
+# every endpoint enforces this server-side via has_group().
+TERMINAL_GROUP = 'saas_core.group_saas_manager'
 
 
 def _cleanup_session(session_id):
@@ -70,12 +78,19 @@ class SshTerminalController(http.Controller):
     def create_session(self, server_model, server_id, **kwargs):
         """Create a new interactive SSH terminal session.
 
-        Args:
-            server_model: 'saas.server'
-            server_id: ID of the server record
-        Returns:
-            dict with session_id
+        Authorization: requires `saas_core.group_saas_manager`. Read
+        access on `saas.server` alone is insufficient — the terminal
+        grants an interactive root shell on managed infrastructure.
         """
+        if not request.env.user.has_group(TERMINAL_GROUP):
+            _logger.warning(
+                "Terminal access denied for uid=%s (not a SaaS Manager)",
+                request.env.uid,
+            )
+            raise Forbidden(
+                "SaaS Manager privileges required to open a terminal."
+            )
+
         allowed_models = (
             'saas.server',
         )
@@ -85,10 +100,25 @@ class SshTerminalController(http.Controller):
         server = request.env[server_model].browse(int(server_id))
         if not server.exists():
             raise NotFound("Server not found")
+        # check_access raises AccessError if the user can't read the row
+        # (record rule on saas.server scopes by company).
         server.check_access('read')
 
         # Clean up stale sessions first
         _cleanup_stale_sessions()
+
+        # Refuse if the per-process session cap is reached. Without this
+        # an attacker (or stuck tab) could open enough sessions to exhaust
+        # FDs and threads.
+        with _sessions_lock:
+            if len(_terminal_sessions) >= MAX_CONCURRENT_SESSIONS:
+                _logger.warning(
+                    "Terminal session cap reached (%d) — refusing new session",
+                    MAX_CONCURRENT_SESSIONS,
+                )
+                raise Forbidden(
+                    "Maximum concurrent terminal sessions reached."
+                )
 
         # Create SSH connection and open interactive shell
         ssh_conn = server._get_ssh_connection()
@@ -288,16 +318,19 @@ class SshTerminalController(http.Controller):
 
     def _get_session(self, session_id):
         """Get session dict, verifying the current user owns it."""
+        if not request.env.user.has_group(TERMINAL_GROUP):
+            raise Forbidden(
+                "SaaS Manager privileges required for terminal access."
+            )
         with _sessions_lock:
             session = _terminal_sessions.get(session_id)
         if not session:
+            # Do NOT log other live session UUIDs — they grant access to
+            # whoever owns them. Log only counts.
             _logger.warning(
-                "Terminal session %s not found on pid %s "
-                "(have %d sessions: %s). "
+                "Terminal session not found on pid %s (have %d sessions). "
                 "If using --workers > 0, terminal requires --workers=0.",
-                session_id, os.getpid(),
-                len(_terminal_sessions),
-                list(_terminal_sessions.keys())[:5],
+                os.getpid(), len(_terminal_sessions),
             )
             raise NotFound(
                 "Terminal session not found or expired. "

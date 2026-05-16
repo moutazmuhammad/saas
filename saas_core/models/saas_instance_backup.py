@@ -76,10 +76,30 @@ class SaasInstanceBackup(models.Model):
 
     def action_delete_backup(self):
         self.ensure_one()
-        if self.state == 'done' and self.bucket_path:
-            self._delete_from_bucket()
+        # The unlink() override below also deletes the cloud object;
+        # action_delete_backup is kept as a thin wrapper for the UI button.
         self.unlink()
         return True
+
+    def unlink(self):
+        """Delete cloud objects when the backup record is removed.
+
+        Without this override, cancelling/deleting an instance triggers
+        ondelete='cascade' on instance_id and silently leaks every
+        backup object in cloud storage. We best-effort delete here; failures
+        are logged but do not block the unlink.
+        """
+        for rec in self:
+            if rec.bucket_path and rec.state == 'done':
+                try:
+                    rec._delete_from_bucket()
+                except Exception:
+                    _logger.exception(
+                        "Failed to delete cloud object for backup %s "
+                        "(path: %s) on unlink — orphan possible.",
+                        rec.id, rec.bucket_path,
+                    )
+        return super().unlink()
 
     # ------------------------------------------------------------------
     # Cloud storage helpers
@@ -248,18 +268,82 @@ class SaasInstanceBackup(models.Model):
             )
 
     def _delete_from_bucket(self):
+        self.ensure_one()
+        if self.bucket_path:
+            self._delete_bucket_path(self.bucket_path)
+
+    # Hard limit on backup size we'll download just to inspect manifest.
+    # For larger backups the version check is skipped — safer to allow
+    # the restore than to OOM the worker reading hundreds of MB.
+    _MANIFEST_PEEK_MAX_MB = 100
+
+    def _read_manifest_safe(self):
+        """Read manifest.json from this backup's bucket object if available.
+
+        Returns the parsed dict, or None if anything fails. Skips the
+        check entirely for backups larger than _MANIFEST_PEEK_MAX_MB to
+        avoid memory blowup. Used by restore to verify Odoo-version
+        compatibility before nuking the target database.
+        """
+        self.ensure_one()
+        if not self.bucket_path:
+            return None
+        if self.size_mb and self.size_mb > self._MANIFEST_PEEK_MAX_MB:
+            _logger.info(
+                "Skipping manifest check for %s (size %.1f MB > %d MB)",
+                self.bucket_path, self.size_mb, self._MANIFEST_PEEK_MAX_MB,
+            )
+            return None
+        try:
+            cfg = self._get_backup_config()
+            import io
+            import json as _json
+            import zipfile
+            buf = io.BytesIO()
+            if cfg['provider'] == 'gcs':
+                client, bucket_name = self._get_gcs_client()
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(self.bucket_path)
+                blob.download_to_file(buf)
+            else:
+                client, bucket_name = self._get_s3_client()
+                client.download_fileobj(bucket_name, self.bucket_path, buf)
+            buf.seek(0)
+            with zipfile.ZipFile(buf) as zf:
+                if 'manifest.json' not in zf.namelist():
+                    return None
+                with zf.open('manifest.json') as mf:
+                    return _json.load(mf)
+        except Exception:
+            _logger.warning(
+                "Could not read manifest from backup %s",
+                self.bucket_path, exc_info=True,
+            )
+            return None
+
+    @api.model
+    def _delete_bucket_path(self, bucket_path):
+        """Delete an arbitrary object key from the configured backup bucket.
+
+        Use this when you have a bucket path but no `saas.instance.backup`
+        record (e.g. retained backup paths after the source instance has
+        been wiped). Replaces the previous `Backup.new(...)._delete_from_bucket()`
+        anti-pattern.
+        """
+        if not bucket_path:
+            return
         try:
             cfg = self._get_backup_config()
             if cfg['provider'] == 'gcs':
                 client, bucket_name = self._get_gcs_client()
                 bucket = client.bucket(bucket_name)
-                blob = bucket.blob(self.bucket_path)
+                blob = bucket.blob(bucket_path)
                 blob.delete()
             else:
                 client, bucket = self._get_s3_client()
-                client.delete_object(Bucket=bucket, Key=self.bucket_path)
+                client.delete_object(Bucket=bucket, Key=bucket_path)
         except Exception as e:
-            _logger.warning("Failed to delete backup object %s: %s", self.bucket_path, e)
+            _logger.warning("Failed to delete backup object %s: %s", bucket_path, e)
 
     def _move_to_cancelled_folder(self):
         """Move this backup's cloud object into the cancelled_backups/ prefix.

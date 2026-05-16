@@ -31,8 +31,9 @@ class SaasSshKeyPair(models.Model):
     )
     private_key_file = fields.Binary(
         string='Private Key File',
-        help='Upload the PEM-encoded private key file. '
-             'The key is stored encrypted and used for SSH authentication.',
+        groups='saas_core.group_saas_manager',
+        help='PEM-encoded private key file. Restricted to SaaS Managers; '
+             'never expose this field to regular users via JSON-RPC.',
     )
     private_key_file_name = fields.Char(
         string='Upload Filename',

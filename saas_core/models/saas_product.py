@@ -121,10 +121,14 @@ class SaasProduct(models.Model):
         }
 
     def _compute_instance_count(self):
+        data = self.env['saas.instance']._read_group(
+            [('saas_product_id', 'in', self.ids)],
+            ['saas_product_id'],
+            ['__count'],
+        )
+        counts = {prod.id: count for prod, count in data}
         for rec in self:
-            rec.instance_count = self.env['saas.instance'].search_count(
-                [('saas_product_id', '=', rec.id)]
-            )
+            rec.instance_count = counts.get(rec.id, 0)
 
     # ========== Snapshot Helpers ==========
 

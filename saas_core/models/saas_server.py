@@ -1,7 +1,11 @@
+import re
+
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
 from ..utils import SSHConnection
+
+_DB_NAME_RE = re.compile(r'^[a-z0-9-]+$')
 
 
 class SaasServer(models.Model):
@@ -40,6 +44,23 @@ class SaasServer(models.Model):
         tracking=True,
         help='This server acts as a reverse proxy (Nginx) for routing '
              'traffic from wildcard domains to Docker servers.',
+    )
+    company_id = fields.Many2one(
+        'res.company',
+        string='Company',
+        default=lambda self: self.env.company,
+        index=True,
+        help='Company that owns this server. Used by the multi-company '
+             'record rule — set to empty for shared infrastructure.',
+    )
+    expected_host_key_fingerprint = fields.Char(
+        string='Expected SSH Host Key (SHA256)',
+        groups='saas_core.group_saas_manager',
+        help='Pinned SHA-256 fingerprint of the SSH host key. When set, '
+             'connections that present a different fingerprint are refused '
+             '(MITM protection). Format: "SHA256:base64string" — copy from '
+             '`ssh-keyscan host | ssh-keygen -lf -`. Leave empty to allow '
+             'any host key (TOFU-on-first-use, INSECURE).',
     )
 
     # ========== Topology ==========
@@ -152,11 +173,18 @@ class SaasServer(models.Model):
 
     # ========== Capacity ==========
 
+    @api.depends('is_docker_host')
     def _compute_capacity_usage(self):
-        """Compute current allocation from running/provisioning instances."""
+        """Compute current allocation from running/provisioning instances.
+
+        Single batched query grouped by (docker_server_id, plan_id) so we
+        never per-record `search()` regardless of how many servers are
+        loaded. Plans are pre-fetched once.
+        """
         Instance = self.env['saas.instance']
         active_states = ('provisioning', 'running')
-        data = Instance._read_group(
+        # Count of active instances per server
+        count_data = Instance._read_group(
             [
                 ('docker_server_id', 'in', self.ids),
                 ('state', 'in', active_states),
@@ -164,25 +192,32 @@ class SaasServer(models.Model):
             ['docker_server_id'],
             ['__count'],
         )
-        count_map = {srv.id: count for srv, count in data}
+        count_map = {srv.id: count for srv, count in count_data}
+
+        # Resource allocation per server, grouped by plan to amortise
+        # plan-attribute lookups across all instances of the same plan.
+        alloc_data = Instance._read_group(
+            [
+                ('docker_server_id', 'in', self.ids),
+                ('state', 'in', active_states),
+                ('plan_id', '!=', False),
+            ],
+            ['docker_server_id', 'plan_id'],
+            ['__count'],
+        )
+        cpu_map = {sid: 0.0 for sid in self.ids}
+        ram_map = {sid: 0.0 for sid in self.ids}
+        for server, plan, count in alloc_data:
+            cpu_map[server.id] = cpu_map.get(server.id, 0.0) + plan.cpu_limit * count
+            ram_map[server.id] = ram_map.get(server.id, 0.0) + self._parse_ram_to_gb(
+                plan.ram_limit or '0'
+            ) * count
 
         for rec in self:
             rec.instance_count = count_map.get(rec.id, 0)
             if rec.is_docker_host:
-                instances = Instance.search([
-                    ('docker_server_id', '=', rec.id),
-                    ('state', 'in', active_states),
-                    ('plan_id', '!=', False),
-                ])
-                total_cpu = 0.0
-                total_ram = 0.0
-                for inst in instances:
-                    total_cpu += inst.plan_id.cpu_limit
-                    total_ram += self._parse_ram_to_gb(
-                        inst.plan_id.ram_limit or '0'
-                    )
-                rec.allocated_cpu = total_cpu
-                rec.allocated_ram_gb = total_ram
+                rec.allocated_cpu = cpu_map.get(rec.id, 0.0)
+                rec.allocated_ram_gb = ram_map.get(rec.id, 0.0)
             else:
                 rec.allocated_cpu = 0.0
                 rec.allocated_ram_gb = 0.0
@@ -285,10 +320,49 @@ class SaasServer(models.Model):
             )
         return self.ip_v4
 
+    def _fetch_database_sizes(self, db_names):
+        """Return ``{db_name: size_bytes}`` for the given DB names.
+
+        Single SSH + single psql call instead of N. Used by the usage-
+        and storage-check crons to avoid opening a fresh paramiko
+        handshake per instance.
+        """
+        self.ensure_one()
+        # Re-validate names (defence in depth — caller should have done it).
+        safe = [n for n in db_names if n and _DB_NAME_RE.match(n)]
+        if not safe:
+            return {}
+        # Build a quoted list literal for the IN clause.
+        in_list = ', '.join("'%s'" % n.replace("'", "''") for n in safe)
+        cmd = (
+            "sudo -u postgres psql -At -F '|' -c "
+            "\"SELECT datname, pg_database_size(datname) "
+            "FROM pg_database WHERE datname IN (%s);\""
+        ) % in_list
+        sizes = {}
+        with self._get_ssh_connection() as ssh:
+            exit_code, stdout, _stderr = ssh.execute(cmd)
+        if exit_code != 0:
+            return {}
+        for line in stdout.splitlines():
+            parts = line.strip().split('|', 1)
+            if len(parts) == 2:
+                try:
+                    sizes[parts[0]] = int(parts[1])
+                except (ValueError, TypeError):
+                    pass
+        return sizes
+
     def _get_ssh_connection(self):
         """Return an SSHConnection context manager for this server."""
         self.ensure_one()
-        if not self.ssh_key_pair_id or not self.ssh_key_pair_id.private_key_file:
+        # Read the private key with sudo() so callers without manager
+        # privileges (e.g. cron-triggered controllers in the future)
+        # don't trigger an AccessError on the field-level group on
+        # `private_key_file` / `expected_host_key_fingerprint`. The
+        # cleartext key never leaves this module.
+        keypair = self.sudo().ssh_key_pair_id
+        if not keypair or not keypair.private_key_file:
             raise ValidationError(
                 _("SSH key pair with a private key file is required on server '%s'.")
                 % self.name
@@ -298,8 +372,9 @@ class SaasServer(models.Model):
             host=ssh_ip,
             port=self.ssh_port or 22,
             user=self.ssh_user or 'root',
-            private_key_b64=self.ssh_key_pair_id.private_key_file,
-            key_type=self.ssh_key_pair_id.type or 'rsa',
+            private_key_b64=keypair.private_key_file,
+            key_type=keypair.type or 'rsa',
+            expected_host_key=self.sudo().expected_host_key_fingerprint or None,
         )
 
     def action_test_connection(self):
