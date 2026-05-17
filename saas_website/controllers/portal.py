@@ -255,6 +255,21 @@ class SaasPortal(CustomerPortal):
         if active_ondemand:
             ondemand_by_db[active_ondemand.db_name] = active_ondemand
 
+        # Per-DB history: recent on-demand attempts for each database
+        # the customer currently has. The store is small (1 active +
+        # any failed/expired sitting around until cleanup), so we
+        # fetch them all and bucket by ``db_name`` in Python. Only
+        # show the last 5 per DB to keep the row compact.
+        recent_by_db = {}
+        recent = instance.backup_ids.filtered(
+            lambda b: b.ephemeral and b.db_name
+        ).sorted('create_date', reverse=True)
+        for b in recent:
+            recent_by_db.setdefault(b.db_name, []).append(b)
+        # Cap each list at 5 entries for display.
+        for k in recent_by_db:
+            recent_by_db[k] = recent_by_db[k][:5]
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance,
@@ -265,6 +280,7 @@ class SaasPortal(CustomerPortal):
             'default_login': request.env.user.partner_id.email or 'admin',
             'active_ondemand': active_ondemand,
             'ondemand_by_db': ondemand_by_db,
+            'recent_by_db': recent_by_db,
             'page_name': 'saas_instance_databases',
         })
         return request.render(
@@ -1011,21 +1027,42 @@ class SaasPortal(CustomerPortal):
 
     # ==================== Backups: list + download ====================
 
+    # If a ``running`` backup record is older than this, treat it as a
+    # zombie — most likely the worker crashed before flipping it to
+    # ``failed``. We don't want a dead row to lock the slot forever.
+    _ONDEMAND_RUNNING_FUSE = datetime.timedelta(minutes=15)
+
     def _active_ondemand_backup(self, instance):
         """Return the in-flight on-demand backup for ``instance``, if any.
 
-        "Active" = either still running, or completed and not yet expired.
-        Only one such backup is allowed per instance at a time — gates
-        both ``Backup Now`` in the template and ``/backups/ondemand``
-        in the controller so a refresh-click can't race.
+        "Active" = either still actively running, or completed and not
+        yet expired. Only one such backup is allowed per instance at a
+        time — gates both ``Backup Now`` in the template and
+        ``/backups/ondemand`` in the controller so a refresh-click
+        can't race. Stale ``running`` rows (worker died before writing
+        ``failed``) are flipped here so the slot frees up.
         """
         now = fields.Datetime.now()
-        return instance.backup_ids.filtered(lambda b: (
-            b.ephemeral
-            and (
-                b.state == 'running'
-                or (b.state == 'done' and (not b.expires_at or b.expires_at > now))
-            )
+        cutoff = now - self._ONDEMAND_RUNNING_FUSE
+
+        candidates = instance.backup_ids.filtered(lambda b: b.ephemeral)
+
+        # Reap zombies first — anything in ``running`` past the fuse.
+        zombies = candidates.filtered(
+            lambda b: b.state == 'running' and b.create_date and b.create_date < cutoff
+        )
+        if zombies:
+            zombies.sudo().write({
+                'state': 'failed',
+                'error_message': _(
+                    'Backup process appears to have died before completing — '
+                    'no status update for over %d minutes.'
+                ) % (self._ONDEMAND_RUNNING_FUSE.total_seconds() / 60),
+            })
+
+        return candidates.filtered(lambda b: (
+            b.state == 'running'
+            or (b.state == 'done' and (not b.expires_at or b.expires_at > now))
         ))[:1]
 
     @http.route(

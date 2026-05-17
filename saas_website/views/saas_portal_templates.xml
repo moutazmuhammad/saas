@@ -2876,6 +2876,7 @@
                                 <tbody>
                                     <t t-foreach="databases" t-as="db">
                                         <t t-set="this_ondemand" t-value="ondemand_by_db.get(db['name'])"/>
+                                        <t t-set="db_history" t-value="recent_by_db.get(db['name']) or []"/>
                                         <tr>
                                             <td>
                                                 <i class="fas fa-database me-2" style="color:var(--co-text-muted);"></i>
@@ -2930,6 +2931,15 @@
                                                     </form>
                                                 </t>
 
+                                                <t t-if="db_history">
+                                                    <button type="button"
+                                                            class="btn btn-sm btn-outline-secondary"
+                                                            data-bs-toggle="collapse"
+                                                            t-attf-data-bs-target="#dbHistory-#{db['name']}">
+                                                        <i class="fas fa-history me-1"></i>Backups (<t t-esc="len(db_history)"/>)
+                                                    </button>
+                                                </t>
+
                                                 <button type="button"
                                                         class="btn btn-sm btn-outline-secondary"
                                                         data-bs-toggle="modal"
@@ -2944,6 +2954,90 @@
                                                 </button>
                                             </td>
                                         </tr>
+                                        <!-- Per-DB backup history. Collapsed by default;
+                                             expands inline so it stays next to the DB it
+                                             belongs to. Max 5 most-recent entries. -->
+                                        <t t-if="db_history">
+                                            <tr class="collapse" t-attf-id="dbHistory-#{db['name']}">
+                                                <td colspan="2" style="background:rgba(255,255,255,0.02);">
+                                                    <div class="small text-muted mb-2">
+                                                        Last <t t-esc="len(db_history)"/> backups for
+                                                        <code t-esc="db['name']"/>:
+                                                    </div>
+                                                    <table class="table table-sm align-middle mb-0">
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Date</th>
+                                                                <th>Size</th>
+                                                                <th>Status</th>
+                                                                <th class="text-end">Actions</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            <t t-foreach="db_history" t-as="b">
+                                                                <tr>
+                                                                    <td>
+                                                                        <t t-esc="b.create_date.strftime('%Y-%m-%d %H:%M') if b.create_date else ''"/>
+                                                                    </td>
+                                                                    <td>
+                                                                        <t t-if="b.size_mb">
+                                                                            <t t-esc="'%.1f MB' % b.size_mb"/>
+                                                                        </t>
+                                                                        <t t-else="">—</t>
+                                                                    </td>
+                                                                    <td>
+                                                                        <t t-if="b.state == 'done'">
+                                                                            <span class="badge bg-success">Ready</span>
+                                                                            <t t-if="b.expires_at">
+                                                                                <small class="text-muted ms-1">
+                                                                                    until <t t-esc="b.expires_at.strftime('%H:%M UTC')"/>
+                                                                                </small>
+                                                                            </t>
+                                                                        </t>
+                                                                        <t t-elif="b.state == 'running'">
+                                                                            <span class="badge bg-info">
+                                                                                <i class="fas fa-spinner fa-spin me-1"></i>Running
+                                                                            </span>
+                                                                        </t>
+                                                                        <t t-elif="b.state == 'failed'">
+                                                                            <span class="badge bg-danger"
+                                                                                  t-att-title="b.error_message or ''">Failed</span>
+                                                                        </t>
+                                                                        <t t-else="">
+                                                                            <span class="badge bg-secondary" t-esc="b.state"/>
+                                                                        </t>
+                                                                    </td>
+                                                                    <td class="text-end">
+                                                                        <t t-if="b.state == 'done'">
+                                                                            <a t-attf-href="/my/instances/#{instance.id}/backups/#{b.id}/download"
+                                                                               class="btn btn-sm btn-outline-primary">
+                                                                                <i class="fas fa-download me-1"></i>Download
+                                                                            </a>
+                                                                            <form t-attf-action="/my/instances/#{instance.id}/backups/#{b.id}/discard"
+                                                                                  method="POST" class="d-inline">
+                                                                                <input type="hidden" name="csrf_token"
+                                                                                       t-att-value="request.csrf_token()"/>
+                                                                                <button type="submit"
+                                                                                        class="btn btn-sm btn-outline-secondary">
+                                                                                    <i class="fas fa-trash me-1"></i>Discard
+                                                                                </button>
+                                                                            </form>
+                                                                        </t>
+                                                                        <t t-elif="b.state == 'failed' and b.error_message">
+                                                                            <small class="text-muted text-truncate"
+                                                                                   t-att-title="b.error_message"
+                                                                                   style="max-width:300px;display:inline-block;vertical-align:middle;">
+                                                                                <t t-esc="b.error_message[:80]"/>
+                                                                            </small>
+                                                                        </t>
+                                                                    </td>
+                                                                </tr>
+                                                            </t>
+                                                        </tbody>
+                                                    </table>
+                                                </td>
+                                            </tr>
+                                        </t>
                                     </t>
                                 </tbody>
                             </table>

@@ -1390,10 +1390,19 @@ fi
                 )
             self.write(vals)
         except Exception as e:
+            # Persist the failure BEFORE re-raising. ``run_in_background``
+            # rolls back the thread's cursor when the method bubbles an
+            # exception, so without an explicit commit here the record
+            # stays in ``state='running'`` forever — which then blocks
+            # the singleton guard from ever releasing the on-demand slot.
             self.write({
                 'state': 'failed',
                 'error_message': str(e),
             })
+            try:
+                self.env.cr.commit()
+            except Exception:
+                pass
             raise
 
     # Fixed retention for hosting backups, per the product spec. 7 days
