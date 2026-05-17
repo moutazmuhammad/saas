@@ -1090,7 +1090,7 @@
                                 <t t-if="instance.daily_backup_enabled or instance.backup_ids">
                                     <a t-attf-href="/my/instances/#{instance.id}/backups"
                                        class="action-btn action-logs">
-                                        <i class="fas fa-archive"></i>View Backups
+                                        <i class="fas fa-archive"></i>View Snapshots
                                     </a>
                                 </t>
 
@@ -2332,7 +2332,7 @@
 
                     <div class="d-flex justify-content-between align-items-start mb-3">
                         <div>
-                            <h3 class="mb-1">Backups for
+                            <h3 class="mb-1">Snapshots for
                                 <span class="text-muted" t-esc="instance.subdomain"/>
                             </h3>
                             <t t-if="instance.is_hosting">
@@ -2340,11 +2340,11 @@
                                     <i class="fas fa-info-circle me-1"></i>
                                     <t t-if="instance.daily_backup_enabled">
                                         Daily full-instance snapshots are enabled. Restore points are kept for
-                                        <t t-esc="retention_days"/> days. Cron fires at 03:00 UTC.
+                                        <t t-esc="retention_days"/> days. The cron fires at 03:00 UTC.
                                     </t>
                                     <t t-else="">
-                                        Daily snapshots are <strong>off</strong>.
-                                        Only on-demand backups will appear here.
+                                        Daily snapshots are <strong>off</strong>. Per-database backups
+                                        live on the <a t-attf-href="/my/instances/#{instance.id}/databases">Databases</a> page.
                                     </t>
                                 </p>
                             </t>
@@ -2430,7 +2430,7 @@
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <h5 class="mb-0">
                                     <i class="fas fa-server me-2" style="color:var(--co-text-muted);"></i>
-                                    Daily Restore Points
+                                    Daily Snapshots
                                     <span class="badge ms-2"
                                           style="background:var(--bg-elevated);color:var(--text-secondary);font-size:0.7rem;">
                                         <t t-esc="len(full_instance_backups)"/> snapshots
@@ -2446,9 +2446,9 @@
                                 the current state is taken automatically before any restore.
                                 <br/>
                                 <em>
-                                    Restore points are not directly downloadable. If you need a
-                                    portable copy of a database, use <strong>Backup Now</strong>
-                                    below to take an on-demand dump.
+                                    Snapshots are not directly downloadable. For a portable copy
+                                    of a single database, use <strong>Backup Now</strong> on the
+                                    <a t-attf-href="/my/instances/#{instance.id}/databases">Databases</a> page.
                                 </em>
                             </p>
                             <table class="table align-middle mb-0">
@@ -2576,7 +2576,11 @@
                         <div class="info-card text-center py-5">
                             <i class="fas fa-archive" style="font-size:2rem;color:var(--co-text-muted);"></i>
                             <p class="mt-3 mb-0" style="color:var(--co-text-muted);">
-                                No backups yet.
+                                No snapshots yet.
+                                <t t-if="instance.is_hosting and not instance.daily_backup_enabled">
+                                    <br/>
+                                    Enable daily snapshots above to start capturing restore points.
+                                </t>
                             </p>
                         </div>
                     </t>
@@ -2919,14 +2923,36 @@
                                                     <i class="fas fa-external-link-alt me-1"></i>Open
                                                 </a>
 
-                                                <!-- Per-DB Backup Now. Disabled while ANY
-                                                     on-demand backup is in flight for this
-                                                     instance — see banner above. -->
+                                                <!-- Per-DB backup actions. Three states:
+                                                       - This DB has a ready backup → Download + Discard
+                                                       - This DB has a running backup → Cancel
+                                                       - Another DB has an active backup → Backup Now disabled
+                                                       - Else → Backup Now -->
                                                 <t t-if="this_ondemand and this_ondemand.state == 'done'">
                                                     <a t-attf-href="/my/instances/#{instance.id}/backups/#{this_ondemand.id}/download"
                                                        class="btn btn-sm btn-primary">
-                                                        <i class="fas fa-download me-1"></i>Download
+                                                        <i class="fas fa-download me-1"></i>Download Backup
                                                     </a>
+                                                    <form t-attf-action="/my/instances/#{instance.id}/backups/#{this_ondemand.id}/discard"
+                                                          method="POST" class="d-inline">
+                                                        <input type="hidden" name="csrf_token"
+                                                               t-att-value="request.csrf_token()"/>
+                                                        <input type="hidden" name="return_to" value="databases"/>
+                                                        <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                                            <i class="fas fa-trash me-1"></i>Discard Backup
+                                                        </button>
+                                                    </form>
+                                                </t>
+                                                <t t-elif="this_ondemand and this_ondemand.state == 'running'">
+                                                    <form t-attf-action="/my/instances/#{instance.id}/backups/#{this_ondemand.id}/discard"
+                                                          method="POST" class="d-inline">
+                                                        <input type="hidden" name="csrf_token"
+                                                               t-att-value="request.csrf_token()"/>
+                                                        <input type="hidden" name="return_to" value="databases"/>
+                                                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                            <i class="fas fa-times me-1"></i>Cancel Backup
+                                                        </button>
+                                                    </form>
                                                 </t>
                                                 <t t-elif="active_ondemand">
                                                     <button type="button" class="btn btn-sm btn-secondary"
@@ -2934,6 +2960,7 @@
                                                             t-att-title="
                                                                 'Backup of ' + active_ondemand.db_name + ' is '
                                                                 + active_ondemand.state
+                                                                + ' — only one on-demand backup per instance at a time.'
                                                             ">
                                                         <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
                                                     </button>
