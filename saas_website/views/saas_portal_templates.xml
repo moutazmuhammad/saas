@@ -930,116 +930,113 @@
                                 </t>
                             </div>
 
-                            <!-- Backups -->
-                            <div class="info-card">
-                                <div class="d-flex justify-content-between align-items-center mb-3">
-                                    <h5 class="mb-0">Backups</h5>
-                                    <div class="d-flex align-items-center gap-3">
-                                        <!-- Service: plan.max_backups is the cap.
-                                             Hosting: no plan-level cap (daily uses 7-day
-                                             rolling retention; on-demand is ephemeral). -->
-                                        <t t-if="not is_hosting">
+                            <!-- Backups card — legacy single-DB layout. Hosting
+                                 instances now own backups in two cleaner places:
+                                   * On-demand per database: Manage Databases page
+                                   * Daily full-instance snapshots: View Snapshots page
+                                 The combined card here is misleading for hosting
+                                 customers, so we render it only for service plans. -->
+                            <t t-if="not is_hosting">
+                                <div class="info-card">
+                                    <div class="d-flex justify-content-between align-items-center mb-3">
+                                        <h5 class="mb-0">Backups</h5>
+                                        <div class="d-flex align-items-center gap-3">
                                             <span class="text-muted small">
                                                 <t t-esc="len(backups)"/> / <t t-esc="instance.plan_id.max_backups"/> used
                                             </span>
-                                        </t>
-                                        <t t-elif="instance.daily_backup_enabled">
-                                            <span class="text-muted small">
-                                                Daily backups · 7-day retention
-                                            </span>
-                                        </t>
-                                        <t t-set="backup_running" t-value="any(b.state == 'running' for b in backups)"/>
-                                        <t t-if="not instance.is_trial and instance.state == 'running' and not backup_running">
-                                            <button class="btn btn-sm btn-primary"
-                                                    id="btn-create-backup"
-                                                    t-att-data-instance-id="instance.id">
-                                                <i class="fas fa-plus me-1"></i>Create Backup
-                                            </button>
-                                        </t>
-                                        <t t-if="backup_running">
-                                            <span class="badge-status badge-provisioning"
-                                                  id="backup-poll"
-                                                  t-att-data-instance-id="instance.id">
-                                                <span class="spinner-sm"></span> Backup in progress...
-                                            </span>
-                                        </t>
-                                    </div>
-                                </div>
-
-                                <t t-if="instance.is_trial">
-                                    <p class="text-muted small mb-3">
-                                        <i class="fas fa-info-circle me-1"></i>
-                                        Backups are not available on the trial plan
-                                    </p>
-                                </t>
-
-                                <t t-if="backups">
-                                    <div class="table-responsive">
-                                        <table class="table table-dark-custom mb-0">
-                                            <thead>
-                                                <tr>
-                                                    <th>Backup</th>
-                                                    <th>Date</th>
-                                                    <th>Status</th>
-                                                    <th>Actions</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <t t-foreach="backups" t-as="backup">
-                                                    <tr>
-                                                        <td t-esc="backup.name"/>
-                                                        <td t-esc="backup.create_date" t-options="{'widget': 'date'}"/>
-                                                        <td>
-                                                            <span t-attf-class="badge-status #{'badge-running' if backup.state == 'done' else 'badge-provisioning'}">
-                                                                <t t-if="backup.state == 'running'"><span class="spinner-sm"></span> </t>
-                                                                <t t-esc="backup.state"/>
-                                                            </span>
-                                                        </td>
-                                                        <td>
-                                                            <t t-if="backup.state == 'done' and instance.state == 'running'">
-                                                                <form t-attf-action="/my/instances/#{instance.id}/backup/#{backup.id}/restore"
-                                                                      method="post" style="display:inline;">
-                                                                    <input type="hidden" name="csrf_token"
-                                                                           t-att-value="request.csrf_token()"/>
-                                                                    <button type="submit"
-                                                                            class="btn btn-sm btn-outline-secondary"
-                                                                            data-confirm="Restore your instance from this backup? Current data will be replaced."
-                                                                            data-confirm-variant="warning"
-                                                                            data-confirm-yes="Yes, restore"
-                                                                            data-confirm-no="Cancel"
-                                                                            data-loading-text="Restoring...">
-                                                                        <i class="fas fa-undo"></i> Restore
-                                                                    </button>
-                                                                </form>
-                                                            </t>
-                                                        </td>
-                                                    </tr>
-                                                </t>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </t>
-                                <t t-if="not backups and not instance.is_trial">
-                                    <div class="empty-state" style="padding:2.5rem 1.5rem;">
-                                        <div class="empty-state-icon">
-                                            <i class="fas fa-database"></i>
+                                            <t t-set="backup_running" t-value="any(b.state == 'running' for b in backups)"/>
+                                            <t t-if="not instance.is_trial and instance.state == 'running' and not backup_running">
+                                                <button class="btn btn-sm btn-primary"
+                                                        id="btn-create-backup"
+                                                        t-att-data-instance-id="instance.id">
+                                                    <i class="fas fa-plus me-1"></i>Create Backup
+                                                </button>
+                                            </t>
+                                            <t t-if="backup_running">
+                                                <span class="badge-status badge-provisioning"
+                                                      id="backup-poll"
+                                                      t-att-data-instance-id="instance.id">
+                                                    <span class="spinner-sm"></span> Backup in progress...
+                                                </span>
+                                            </t>
                                         </div>
-                                        <h5>No backups yet</h5>
-                                        <p>Create your first backup to protect your data.</p>
-                                        <t t-if="instance.state == 'running'">
-                                            <button class="btn btn-primary"
-                                                    id="btn-create-backup"
-                                                    t-att-data-instance-id="instance.id"
-                                                    data-confirm="Create a new backup of your instance?"
-                                                    data-confirm-variant="info"
-                                                    data-confirm-yes="Yes, create backup"
-                                                    data-confirm-no="Cancel">
-                                                <i class="fas fa-plus me-2"></i>Create Your First Backup
-                                            </button>
-                                        </t>
                                     </div>
-                                </t>
-                            </div>
+
+                                    <t t-if="instance.is_trial">
+                                        <p class="text-muted small mb-3">
+                                            <i class="fas fa-info-circle me-1"></i>
+                                            Backups are not available on the trial plan
+                                        </p>
+                                    </t>
+
+                                    <t t-if="backups">
+                                        <div class="table-responsive">
+                                            <table class="table table-dark-custom mb-0">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Backup</th>
+                                                        <th>Date</th>
+                                                        <th>Status</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <t t-foreach="backups" t-as="backup">
+                                                        <tr>
+                                                            <td t-esc="backup.name"/>
+                                                            <td t-esc="backup.create_date" t-options="{'widget': 'date'}"/>
+                                                            <td>
+                                                                <span t-attf-class="badge-status #{'badge-running' if backup.state == 'done' else 'badge-provisioning'}">
+                                                                    <t t-if="backup.state == 'running'"><span class="spinner-sm"></span> </t>
+                                                                    <t t-esc="backup.state"/>
+                                                                </span>
+                                                            </td>
+                                                            <td>
+                                                                <t t-if="backup.state == 'done' and instance.state == 'running'">
+                                                                    <form t-attf-action="/my/instances/#{instance.id}/backup/#{backup.id}/restore"
+                                                                          method="post" style="display:inline;">
+                                                                        <input type="hidden" name="csrf_token"
+                                                                               t-att-value="request.csrf_token()"/>
+                                                                        <button type="submit"
+                                                                                class="btn btn-sm btn-outline-secondary"
+                                                                                data-confirm="Restore your instance from this backup? Current data will be replaced."
+                                                                                data-confirm-variant="warning"
+                                                                                data-confirm-yes="Yes, restore"
+                                                                                data-confirm-no="Cancel"
+                                                                                data-loading-text="Restoring...">
+                                                                            <i class="fas fa-undo"></i> Restore
+                                                                        </button>
+                                                                    </form>
+                                                                </t>
+                                                            </td>
+                                                        </tr>
+                                                    </t>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </t>
+                                    <t t-if="not backups and not instance.is_trial">
+                                        <div class="empty-state" style="padding:2.5rem 1.5rem;">
+                                            <div class="empty-state-icon">
+                                                <i class="fas fa-database"></i>
+                                            </div>
+                                            <h5>No backups yet</h5>
+                                            <p>Create your first backup to protect your data.</p>
+                                            <t t-if="instance.state == 'running'">
+                                                <button class="btn btn-primary"
+                                                        id="btn-create-backup"
+                                                        t-att-data-instance-id="instance.id"
+                                                        data-confirm="Create a new backup of your instance?"
+                                                        data-confirm-variant="info"
+                                                        data-confirm-yes="Yes, create backup"
+                                                        data-confirm-no="Cancel">
+                                                    <i class="fas fa-plus me-2"></i>Create Your First Backup
+                                                </button>
+                                            </t>
+                                        </div>
+                                    </t>
+                                </div>
+                            </t>
                         </div>
 
                         <!-- Right Column - Sidebar -->
@@ -3116,11 +3113,14 @@
                                             </span>
                                             <input type="text" name="name" class="form-control"
                                                    placeholder="my-erp" required="required"
-                                                   pattern="[a-z][a-z0-9_\-]{0,62}"/>
+                                                   minlength="3" maxlength="40"
+                                                   pattern="[a-z][a-z0-9]*([_\-][a-z0-9]+)*"
+                                                   title="Lowercase letters, digits, single hyphens or underscores between groups. Starts with a letter. At least 3 characters."/>
                                         </div>
                                         <div class="form-text">
-                                            Lowercase letters, digits, hyphens and underscores.
-                                            Starts with a letter. The full database name will be
+                                            Lowercase letters, digits, single hyphens or underscores
+                                            between groups. Starts with a letter, ends with a letter
+                                            or digit. The full database name will be
                                             <code><t t-esc="instance.subdomain"/>_</code> followed by
                                             what you type.
                                         </div>
@@ -3186,7 +3186,9 @@
                                                 <input type="text" name="new_name" class="form-control"
                                                        t-attf-value="#{src_suffix}-copy"
                                                        required="required"
-                                                       pattern="[a-z][a-z0-9_\-]{0,62}"/>
+                                                       minlength="3" maxlength="40"
+                                                       pattern="[a-z][a-z0-9]*([_\-][a-z0-9]+)*"
+                                                       title="Lowercase letters, digits, single hyphens or underscores between groups. Starts with a letter. At least 3 characters."/>
                                             </div>
                                         </div>
                                     </div>

@@ -565,9 +565,19 @@ cat > "$SAAS_TMP_DIR/manifest.json" << 'MANIFEST_EOF'
 %s
 MANIFEST_EOF
 
-# 4) Zip
+# 4) Zip via Python's stdlib so we don't depend on `zip` being
+# installed on the docker host. Walks $SAAS_TMP_DIR recursively and
+# packs everything under root-relative paths inside the archive.
 cd "$SAAS_TMP_DIR"
-zip -r -q "$SAAS_ZIP_PATH" dump.sql filestore manifest.json
+python3 - "$SAAS_TMP_DIR" "$SAAS_ZIP_PATH" <<'PYZIP'
+import os, sys, zipfile
+src, dst = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+    for root, dirs, files in os.walk(src):
+        for f in files:
+            full = os.path.join(root, f)
+            zf.write(full, os.path.relpath(full, src))
+PYZIP
 
 # Cleanup temp dir (keep zip)
 rm -rf "$SAAS_TMP_DIR"
@@ -948,10 +958,18 @@ cat > "$SAAS_TMP_DIR/manifest.json" << 'MANIFEST_EOF'
 %s
 MANIFEST_EOF
 
-# 5) Zip the whole thing
+# 5) Zip via Python's stdlib so we don't depend on `zip` being
+# installed on the docker host.
 echo "Zipping..." >&2
-cd "$SAAS_TMP_DIR"
-zip -rq "$SAAS_ZIP_PATH" .
+python3 - "$SAAS_TMP_DIR" "$SAAS_ZIP_PATH" <<'PYZIP'
+import os, sys, zipfile
+src, dst = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+    for root, dirs, files in os.walk(src):
+        for f in files:
+            full = os.path.join(root, f)
+            zf.write(full, os.path.relpath(full, src))
+PYZIP
 
 # Cleanup workdir (keep zip)
 rm -rf "$SAAS_TMP_DIR"

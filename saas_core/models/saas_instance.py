@@ -3591,9 +3591,11 @@ class SaasInstance(models.Model):
             ssh.execute('rm -rf %s && mkdir -p %s' % (
                 shlex.quote(extract_dir), shlex.quote(extract_dir),
             ))
+            # Use Python's zipfile module instead of the `unzip` binary
+            # so we don't fail on docker hosts that don't ship it.
             exit_code, stdout, stderr = ssh.execute(
-                'cd %s && unzip -q %s 2>&1' % (
-                    shlex.quote(extract_dir), shlex.quote(tmp_zip),
+                'python3 -m zipfile -e %s %s 2>&1' % (
+                    shlex.quote(tmp_zip), shlex.quote(extract_dir),
                 ),
                 timeout=1800,
             )
@@ -5565,7 +5567,13 @@ class SaasInstance(models.Model):
     # PostgreSQL identifier rules: starts with a letter, [a-z0-9_-],
     # max 63 bytes. Reject the catalog DBs explicitly.
     _DB_NAME_RE = re.compile(r'^[a-z][a-z0-9_-]{0,62}$')
-    _DB_RESERVED = frozenset(['postgres', 'template0', 'template1'])
+    # Reserved DB names — PostgreSQL system catalogs and Odoo defaults.
+    _DB_RESERVED = frozenset([
+        'postgres', 'template0', 'template1', 'odoo',
+    ])
+    # Hard floor for customer-typed suffixes. Anything shorter is
+    # almost certainly a slip; reject before we waste a CLI init.
+    _DB_NAME_MIN_LENGTH = 3
 
     def _hosting_db_prefix(self):
         """Prefix every customer-created DB with the instance subdomain.
@@ -5586,20 +5594,69 @@ class SaasInstance(models.Model):
         """Validate a raw customer-typed DB name.
 
         ``name`` is the bare value the customer entered, **without**
-        the subdomain prefix. The full DB name is built by the caller
-        via ``_hosting_db_full_name``. Validating after prefix-prepend
-        elsewhere means there's a single check, and we get to surface
-        clean error messages for naming-rule violations.
+        the subdomain prefix. Returns the normalized (stripped +
+        lower-cased) name on success, raises ``UserError`` with a
+        specific message otherwise.
+
+        Each branch surfaces a distinct error so the customer knows
+        *why* their input was rejected, not just that it was.
         """
-        name = (name or '').strip().lower()
+        # Strip + normalize. Doing this first lets us tell "empty"
+        # apart from "wrong chars".
+        raw = (name or '').strip()
+        if not raw:
+            raise UserError(_("Database name is required."))
+
+        # Reject inputs that change after lower-casing — better to
+        # be explicit than silently accept and produce something the
+        # customer didn't type.
+        if raw != raw.lower():
+            raise UserError(_(
+                "Database name must be lowercase. '%s' contains uppercase letters."
+            ) % raw)
+        name = raw
+
+        if len(name) < self._DB_NAME_MIN_LENGTH:
+            raise UserError(_(
+                "Database name must be at least %d characters long."
+            ) % self._DB_NAME_MIN_LENGTH)
+        if len(name) > 63:
+            raise UserError(_(
+                "Database name is too long: %d characters (max 63)."
+            ) % len(name))
+
+        # Catch the most common mistakes with specific messages
+        # before falling through to the generic regex check.
+        if not name[0].isalpha():
+            raise UserError(_(
+                "Database name must start with a letter (got '%s')."
+            ) % name[0])
+        bad_chars = [c for c in name if not (c.isalnum() or c in '_-')]
+        if bad_chars:
+            raise UserError(_(
+                "Database name contains characters that aren't allowed: %s. "
+                "Use only letters, digits, underscores, and hyphens."
+            ) % ', '.join("'%s'" % c for c in sorted(set(bad_chars))))
+        if name.endswith('-') or name.endswith('_'):
+            raise UserError(_(
+                "Database name can't end with a hyphen or underscore."
+            ))
+        if '--' in name or '__' in name:
+            raise UserError(_(
+                "Database name can't contain consecutive underscores or hyphens."
+            ))
+
+        # Final regex check — catches anything the messages above
+        # missed (shouldn't be reachable, but defensive).
         if not self._DB_NAME_RE.match(name):
             raise UserError(_(
-                "Database name must start with a letter and contain only "
-                "lowercase letters, digits, hyphens, and underscores "
-                "(max 63 chars)."
-            ))
+                "Database name '%s' is not a valid PostgreSQL identifier."
+            ) % name)
+
         if name in self._DB_RESERVED:
-            raise UserError(_("'%s' is reserved by PostgreSQL.") % name)
+            raise UserError(_(
+                "'%s' is reserved and can't be used as a database name."
+            ) % name)
         return name
 
     def _hosting_db_full_name(self, name):

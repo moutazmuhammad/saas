@@ -298,6 +298,18 @@ class SaasPortal(CustomerPortal):
             instance = self._hosting_instance(instance_id, access_token)
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
+
+        # Up-front validation BEFORE we kick off the slow CLI init —
+        # the customer gets an immediate, specific error instead of
+        # waiting 30-60 seconds for the backend to discover the issue.
+        try:
+            instance._hosting_db_full_name(post.get('name', ''))
+        except UserError as e:
+            return request.redirect(
+                '/my/instances/%d/databases?error=%s'
+                % (instance_id, url_quote(str(e)))
+            )
+
         try:
             name = instance.hosting_db_create(
                 name=post.get('name', ''),
@@ -328,6 +340,18 @@ class SaasPortal(CustomerPortal):
             instance = self._hosting_instance(instance_id, access_token)
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
+
+        # Validate the new name UPFRONT. Duplicate can take a minute
+        # on a big DB — fail fast on a bad name rather than after the
+        # copy starts.
+        try:
+            instance._hosting_db_full_name(post.get('new_name', ''))
+        except UserError as e:
+            return request.redirect(
+                '/my/instances/%d/databases?error=%s'
+                % (instance_id, url_quote(str(e)))
+            )
+
         try:
             new_name = instance.hosting_db_duplicate(
                 source=post.get('source', ''),
