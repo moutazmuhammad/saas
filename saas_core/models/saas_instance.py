@@ -5704,17 +5704,24 @@ class SaasInstance(models.Model):
         """
         self._ensure_hosting_for_db_ops()
         prefix = self._hosting_db_prefix()
-        # We use psql LIKE matching with the literal prefix. SQL
-        # injection risk is bounded because subdomain has already
-        # passed SUBDOMAIN_RE; even so, defense in depth: percent and
-        # underscore in LIKE are wildcards, so we escape with the
-        # `ESCAPE '\'` clause + quote the prefix in Python.
-        like = prefix.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        # LIKE-escape the prefix: underscore and percent are wildcards,
+        # so a subdomain like ``acme_prod`` would over-match without
+        # quoting. Use ``!`` as the escape char — it can't appear in
+        # the prefix (subdomain is [a-z0-9-] only) and dodges the
+        # backslash/standard-conforming-strings minefield that bit us
+        # in production (`ESCAPE '\\'` is two chars to PG, which it
+        # rejects with "Escape string must be empty or one character").
+        like = (
+            prefix
+            .replace('!', '!!')   # not strictly necessary today, future-proof
+            .replace('%', '!%')
+            .replace('_', '!_')
+        )
         sql = (
             "SELECT datname FROM pg_database "
             "WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = current_user) "
             "AND NOT datistemplate "
-            "AND datname LIKE '%s%%' ESCAPE '\\\\' "
+            "AND datname LIKE '%s%%' ESCAPE '!' "
             "ORDER BY datname"
         ) % like
         with self.docker_server_id._get_ssh_connection() as ssh:
