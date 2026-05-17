@@ -270,6 +270,23 @@ class SaasPortal(CustomerPortal):
         for k in recent_by_db:
             recent_by_db[k] = recent_by_db[k][:5]
 
+        # Pending and recently-failed DB operations (create / duplicate
+        # / drop). Running ones get an in-progress banner; failed ones
+        # surface the error so the customer can act.
+        Op = request.env['saas.instance.db.operation'].sudo()
+        recent_cutoff = (
+            fields.Datetime.now() - datetime.timedelta(hours=1)
+        )
+        running_ops = Op.search([
+            ('instance_id', '=', instance.id),
+            ('state', '=', 'running'),
+        ])
+        failed_ops = Op.search([
+            ('instance_id', '=', instance.id),
+            ('state', '=', 'failed'),
+            ('create_date', '>=', recent_cutoff),
+        ])
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance,
@@ -281,6 +298,8 @@ class SaasPortal(CustomerPortal):
             'active_ondemand': active_ondemand,
             'ondemand_by_db': ondemand_by_db,
             'recent_by_db': recent_by_db,
+            'running_ops': running_ops,
+            'failed_ops': failed_ops,
             'page_name': 'saas_instance_databases',
         })
         return request.render(
@@ -299,26 +318,18 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        # Up-front validation BEFORE we kick off the slow CLI init —
-        # the customer gets an immediate, specific error instead of
-        # waiting 30-60 seconds for the backend to discover the issue.
         try:
-            instance._hosting_db_full_name(post.get('name', ''))
-        except UserError as e:
-            return request.redirect(
-                '/my/instances/%d/databases?error=%s'
-                % (instance_id, url_quote(str(e)))
-            )
-
-        try:
-            name = instance.hosting_db_create(
+            op = instance.hosting_db_create_async(
                 name=post.get('name', ''),
                 login=post.get('login', ''),
                 password=post.get('password', ''),
                 lang=post.get('lang') or 'en_US',
                 country_code=post.get('country_code') or None,
             )
-            notice = _("Database '%s' created.") % name
+            notice = _(
+                "Creating database '%s'… this takes about a minute. "
+                "Refresh the page to see its progress."
+            ) % op.db_name
             return request.redirect(
                 '/my/instances/%d/databases?notice=%s'
                 % (instance_id, url_quote(notice))
@@ -341,23 +352,14 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        # Validate the new name UPFRONT. Duplicate can take a minute
-        # on a big DB — fail fast on a bad name rather than after the
-        # copy starts.
         try:
-            instance._hosting_db_full_name(post.get('new_name', ''))
-        except UserError as e:
-            return request.redirect(
-                '/my/instances/%d/databases?error=%s'
-                % (instance_id, url_quote(str(e)))
-            )
-
-        try:
-            new_name = instance.hosting_db_duplicate(
+            op = instance.hosting_db_duplicate_async(
                 source=post.get('source', ''),
                 new_name=post.get('new_name', ''),
             )
-            notice = _("Database duplicated as '%s'.") % new_name
+            notice = _(
+                "Duplicating to '%s'… refresh to see progress."
+            ) % op.db_name
             return request.redirect(
                 '/my/instances/%d/databases?notice=%s'
                 % (instance_id, url_quote(notice))
@@ -391,8 +393,8 @@ class SaasPortal(CustomerPortal):
                 )))
             )
         try:
-            dropped = instance.hosting_db_drop(name=name)
-            notice = _("Database '%s' deleted.") % dropped
+            op = instance.hosting_db_drop_async(name=name)
+            notice = _("Deleting database '%s'…") % op.db_name
             return request.redirect(
                 '/my/instances/%d/databases?notice=%s'
                 % (instance_id, url_quote(notice))

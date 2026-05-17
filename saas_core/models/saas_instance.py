@@ -6044,6 +6044,111 @@ class SaasInstance(models.Model):
                 "Best-effort rollback of %s failed", name,
             )
 
+    def hosting_db_create_async(self, name, login, password,
+                                lang='en_US', country_code=None):
+        """Queue a database create and return the tracking record.
+
+        The actual create runs in a background thread so the HTTP
+        request returns within ~200 ms — far below nginx's
+        ``proxy_read_timeout`` and without tying up a worker for the
+        30-90 s the CLI init takes.
+        """
+        self._ensure_hosting_for_db_ops()
+        # Validate upfront so the customer gets a synchronous error
+        # for bad names instead of a "failed" record they have to
+        # discover on refresh.
+        full_name = self._hosting_db_full_name(name)
+        if not password:
+            raise UserError(_("Initial admin password is required."))
+        existing = {r['name'] for r in self.hosting_db_list()}
+        if full_name in existing:
+            raise UserError(_("Database '%s' already exists.") % full_name)
+        # Don't queue a second create for the same target name while
+        # the first is still running.
+        Op = self.env['saas.instance.db.operation']
+        if Op.search_count([
+            ('instance_id', '=', self.id),
+            ('db_name', '=', full_name),
+            ('state', '=', 'running'),
+        ]):
+            raise UserError(
+                _("A create for '%s' is already in progress.") % full_name
+            )
+
+        op = Op.create({
+            'instance_id': self.id,
+            'db_name': full_name,
+            'operation': 'create',
+        })
+        run_in_background(
+            op, '_run_create',
+            method_args=(
+                login, password, lang or 'en_US', country_code or None,
+            ),
+            thread_name='saas_db_create_%s' % full_name,
+        )
+        return op
+
+    def hosting_db_duplicate_async(self, source, new_name):
+        """Queue a database duplicate and return the tracking record."""
+        self._ensure_hosting_for_db_ops()
+        source_full = self._hosting_db_full_name(source)
+        new_full = self._hosting_db_full_name(new_name)
+        existing = {r['name'] for r in self.hosting_db_list()}
+        if source_full not in existing:
+            raise UserError(_("Source database '%s' does not exist.") % source_full)
+        if new_full in existing:
+            raise UserError(_("Target database '%s' already exists.") % new_full)
+        Op = self.env['saas.instance.db.operation']
+        if Op.search_count([
+            ('instance_id', '=', self.id),
+            ('db_name', '=', new_full),
+            ('state', '=', 'running'),
+        ]):
+            raise UserError(
+                _("A duplicate to '%s' is already in progress.") % new_full
+            )
+        op = Op.create({
+            'instance_id': self.id,
+            'db_name': new_full,
+            'source_db': source_full,
+            'operation': 'duplicate',
+        })
+        run_in_background(
+            op, '_run_duplicate',
+            thread_name='saas_db_dup_%s' % new_full,
+        )
+        return op
+
+    def hosting_db_drop_async(self, name):
+        """Queue a database drop and return the tracking record.
+
+        Drop is fast (a single ``DROP DATABASE``) but still goes async
+        so the experience matches create / duplicate and the customer
+        sees the same in-flight indicator.
+        """
+        self._ensure_hosting_for_db_ops()
+        full_name = self._hosting_db_full_name(name)
+        Op = self.env['saas.instance.db.operation']
+        if Op.search_count([
+            ('instance_id', '=', self.id),
+            ('db_name', '=', full_name),
+            ('state', '=', 'running'),
+        ]):
+            raise UserError(
+                _("A drop of '%s' is already in progress.") % full_name
+            )
+        op = Op.create({
+            'instance_id': self.id,
+            'db_name': full_name,
+            'operation': 'drop',
+        })
+        run_in_background(
+            op, '_run_drop',
+            thread_name='saas_db_drop_%s' % full_name,
+        )
+        return op
+
     def hosting_db_duplicate(self, source, new_name):
         """Copy an existing database under a new name."""
         self._ensure_hosting_for_db_ops()
