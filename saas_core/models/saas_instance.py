@@ -296,6 +296,22 @@ class SaasInstance(models.Model):
              'Billed monthly as an add-on at the rate configured in SaaS '
              'settings.',
     )
+    daily_backup_pending_invoice_id = fields.Many2one(
+        'account.move',
+        string='Daily Backup Pending Invoice',
+        tracking=True,
+        copy=False,
+        ondelete='set null',
+        help='Unpaid invoice gating the activation of daily backups. '
+             'Set when the customer clicks "Enable Daily Backups" on the '
+             'portal; cleared (and daily_backup_enabled flipped to True) '
+             'as soon as the invoice transitions to paid / in_payment.',
+    )
+    daily_backup_pending_state = fields.Selection(
+        related='daily_backup_pending_invoice_id.payment_state',
+        string='Daily Backup Pending Payment State',
+        readonly=True,
+    )
     restic_password = fields.Char(
         string='Restic Repository Password',
         readonly=True,
@@ -863,6 +879,114 @@ class SaasInstance(models.Model):
         return sale_orders.mapped('invoice_ids')
 
     # ========== Sales & Invoicing Actions ==========
+
+    def _get_daily_backup_product(self):
+        """Return the singleton product.product for the daily-backup add-on.
+
+        Created on first use. Used both in the one-time purchase
+        invoice (when the customer enables the feature) and as a
+        recurring line on subsequent renewal invoices.
+        """
+        product = self.env['product.product'].sudo().search(
+            [('default_code', '=', 'SAAS-BACKUP-ADDON')], limit=1,
+        )
+        if not product:
+            product = self.env['product.product'].sudo().create({
+                'name': 'Daily Backups Add-on',
+                'default_code': 'SAAS-BACKUP-ADDON',
+                'type': 'service',
+                'list_price': 0.0,
+                'sale_ok': True,
+                'purchase_ok': False,
+                'taxes_id': [(5, 0, 0)],
+            })
+        return product
+
+    def _get_daily_backup_price(self):
+        """Monthly price of the backup add-on from SaaS settings."""
+        try:
+            return float(
+                self.env['ir.config_parameter'].sudo().get_param(
+                    'saas_master.hosting_daily_backup_price', '0.0',
+                )
+            )
+        except (TypeError, ValueError):
+            return 0.0
+
+    def action_purchase_daily_backup(self):
+        """Create an unpaid invoice for the backup add-on.
+
+        Sequence:
+        1. Sale order with a single ``Daily Backups Add-on`` line at
+           the monthly add-on price from settings.
+        2. Confirm SO → create + post the invoice.
+        3. Store it on ``daily_backup_pending_invoice_id``. Once it
+           transitions to ``paid``/``in_payment``, the
+           ``account.move.write`` override below flips
+           ``daily_backup_enabled`` to True and clears the pointer.
+
+        Caller (portal route) then redirects to our custom checkout
+        page where the customer pays.
+        """
+        self.ensure_one()
+        if not self.is_hosting:
+            raise UserError(_(
+                "Daily backups are a hosting-only feature."
+            ))
+        if self.is_trial:
+            raise UserError(_(
+                "Daily backups can't be purchased on a trial plan."
+            ))
+        if self.daily_backup_enabled:
+            raise UserError(_(
+                "Daily backups are already enabled on this instance."
+            ))
+        if self.daily_backup_pending_invoice_id:
+            existing = self.daily_backup_pending_invoice_id
+            if existing.state == 'posted' and existing.payment_state not in (
+                'paid', 'in_payment', 'reversed', 'invoicing_legacy',
+            ):
+                # An unpaid invoice already exists — return it instead
+                # of creating a second one. Portal redirects there.
+                return existing
+            # Old invoice is paid (shouldn't happen — hook would have
+            # cleared this), or cancelled. Clear and re-issue.
+            self.daily_backup_pending_invoice_id = False
+
+        price = self._get_daily_backup_price()
+        if price <= 0:
+            raise UserError(_(
+                "Daily backup pricing isn't configured. Ask the "
+                "platform operator to set the monthly add-on price "
+                "in SaaS settings."
+            ))
+
+        product = self._get_daily_backup_product()
+        pricelist = self.partner_id.property_product_pricelist
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': 'SAAS:BACKUP-ADDON:%s' % (self.name or self.subdomain),
+            'order_line': [(0, 0, {
+                'product_id': product.id,
+                'name': _(
+                    'Daily Backups Add-on (monthly) — %s'
+                ) % (self.name or self.subdomain),
+                'product_uom_qty': 1,
+                'price_unit': price,
+            })],
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].sudo().create(order_vals)
+        order.action_confirm()
+        invoice = order._create_invoices()
+        invoice.action_post()
+        self.daily_backup_pending_invoice_id = invoice.id
+        self._append_log(
+            "Daily-backup add-on invoice %s created (%s)."
+            % (invoice.name, price)
+        )
+        return invoice
 
     def _get_billing_product(self):
         """Return the default product.product used on SaaS sale order lines.
@@ -4977,6 +5101,29 @@ class SaasInstance(models.Model):
             'product_uom_qty': 1,
             'price_unit': price,
         })]
+
+        # Daily-backup add-on line: charge each renewal cycle while
+        # the flag is on. The amount comes from settings so an
+        # operator-side price change applies on the next renewal.
+        if self.is_hosting and self.daily_backup_enabled:
+            backup_price = self._get_daily_backup_price()
+            if backup_price > 0:
+                if period == 'yearly':
+                    backup_total = backup_price * 12
+                    backup_label = _('Daily Backups Add-on (yearly) — %s') % (
+                        self.name or self.subdomain,
+                    )
+                else:
+                    backup_total = backup_price
+                    backup_label = _('Daily Backups Add-on (monthly) — %s') % (
+                        self.name or self.subdomain,
+                    )
+                order_lines.append((0, 0, {
+                    'product_id': self._get_daily_backup_product().id,
+                    'name': backup_label,
+                    'product_uom_qty': 1,
+                    'price_unit': backup_total,
+                }))
 
         # Add extra storage charge if usage exceeds plan limit
         extra_storage_price = float(

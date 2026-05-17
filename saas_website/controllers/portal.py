@@ -1068,11 +1068,16 @@ class SaasPortal(CustomerPortal):
     )
     def portal_toggle_daily_backup(self, instance_id, access_token=None,
                                    **post):
-        """Flip the daily-backup opt-in for a hosting instance.
+        """Enable / disable daily backups for a hosting instance.
 
-        The pricing change isn't reconciled to the in-flight subscription
-        in this MVP — the next invoice picks up the new state. Trial
-        instances can't enable backups.
+        Enable path requires payment — we create an unpaid invoice and
+        redirect the customer to a custom checkout page. Only once the
+        invoice transitions to paid does ``daily_backup_enabled`` flip
+        to True (see ``account.move._saas_check_instance_payment``).
+
+        Disable path is a direct flag flip. No refund logic in this
+        version — the customer keeps backups until the current
+        billing period ends (we just stop charging on next renewal).
         """
         try:
             instance = self._document_check_access(
@@ -1092,17 +1097,143 @@ class SaasPortal(CustomerPortal):
             )
 
         want_enabled = (post.get('enable') == '1')
-        instance.sudo().daily_backup_enabled = want_enabled
-        msg = (
-            _("Daily backups enabled. The next 03:00 UTC run will "
-              "create your first snapshot.")
-            if want_enabled else
-            _("Daily backups disabled. Existing snapshots remain "
-              "available until their 7-day retention expires.")
-        )
+
+        if want_enabled:
+            # Already on, or a pending invoice exists — bounce to the
+            # checkout page (handles both cases cleanly).
+            if instance.daily_backup_enabled:
+                return request.redirect(
+                    '/my/instances/%d/backups?notice=%s'
+                    % (instance_id, url_quote(_(
+                        "Daily backups are already enabled."
+                    )))
+                )
+            try:
+                instance.sudo().action_purchase_daily_backup()
+            except UserError as e:
+                return request.redirect(
+                    '/my/instances/%d/backups?error=%s'
+                    % (instance_id, url_quote(str(e)))
+                )
+            return request.redirect(
+                '/my/instances/%d/daily-backup/checkout' % instance_id
+            )
+
+        # Disable — instant, no refund. Cancel any pending invoice so a
+        # stale "pay now" link doesn't activate a feature the customer
+        # has explicitly turned off.
+        vals = {'daily_backup_enabled': False}
+        pending = instance.sudo().daily_backup_pending_invoice_id
+        if pending and pending.state == 'posted' and pending.payment_state not in (
+            'paid', 'in_payment',
+        ):
+            try:
+                pending.button_cancel()
+            except Exception:
+                _logger.exception(
+                    "Failed to cancel pending backup invoice %s",
+                    pending.name,
+                )
+            vals['daily_backup_pending_invoice_id'] = False
+        instance.sudo().write(vals)
         return request.redirect(
             '/my/instances/%d/backups?notice=%s'
-            % (instance_id, url_quote(msg))
+            % (instance_id, url_quote(_(
+                "Daily backups disabled. Existing snapshots remain "
+                "available until their 7-day retention expires."
+            )))
+        )
+
+    @http.route(
+        '/my/instances/<int:instance_id>/daily-backup/checkout',
+        type='http', auth='user', website=True,
+    )
+    def portal_daily_backup_checkout(self, instance_id,
+                                     access_token=None, **kw):
+        """Custom checkout for the daily-backup add-on.
+
+        Renders the unpaid invoice and an embedded Odoo payment widget
+        (same payment.form macro the main instance checkout uses), so
+        the customer can pay in-place without bouncing through the
+        generic /my/invoices portal. On successful payment the
+        ``account.move`` write hook flips ``daily_backup_enabled``
+        for the linked instance.
+        """
+        try:
+            instance = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        invoice = instance.daily_backup_pending_invoice_id
+        if not invoice or invoice.payment_state in ('paid', 'in_payment'):
+            # Nothing to pay — back to backups page (the payment hook
+            # will have flipped the flag if this was a successful
+            # transition).
+            return request.redirect(
+                '/my/instances/%d/backups?notice=%s'
+                % (instance_id, url_quote(_(
+                    "No pending payment. If you just paid, daily "
+                    "backups should now be enabled."
+                )))
+            )
+
+        partner_sudo = request.env.user.partner_id.sudo()
+        invoice_company = invoice.company_id or request.env.company
+        landing_route = (
+            '/my/instances/%d/backups?notice=%s'
+            % (instance_id, url_quote(_(
+                "Payment received. Daily backups are now active."
+            )))
+        )
+
+        availability_report = {}
+        providers_sudo = request.env['payment.provider'].sudo()._get_compatible_providers(
+            invoice_company.id,
+            partner_sudo.id,
+            invoice.amount_residual,
+            currency_id=invoice.currency_id.id,
+            report=availability_report,
+        )
+        payment_methods_sudo = request.env['payment.method'].sudo()._get_compatible_payment_methods(
+            providers_sudo.ids,
+            partner_sudo.id,
+            currency_id=invoice.currency_id.id,
+            report=availability_report,
+        )
+        tokens_sudo = request.env['payment.token'].sudo()._get_available_tokens(
+            providers_sudo.ids, partner_sudo.id,
+        )
+        invoice_access_token = invoice._portal_ensure_token()
+
+        values = self._prepare_portal_layout_values()
+        values.update({
+            'instance': instance,
+            'invoice': invoice,
+            'monthly_price': instance.sudo()._get_daily_backup_price(),
+            'page_name': 'saas_daily_backup_checkout',
+            # Same shape as portal_checkout uses, so the same
+            # ``payment.form`` macro renders.
+            'payment_action_id': request.env.ref('payment.action_payment_provider').id,
+            'providers_sudo': providers_sudo,
+            'payment_methods_sudo': payment_methods_sudo,
+            'tokens_sudo': tokens_sudo,
+            'show_tokenize_input_mapping': PaymentPortal._compute_show_tokenize_input_mapping(
+                PaymentPortal, providers_sudo, logged_in=True,
+            ),
+            'amount': invoice.amount_residual,
+            'currency': invoice.currency_id,
+            'partner_id': partner_sudo.id,
+            'access_token': invoice_access_token,
+            'transaction_route': invoice.get_portal_url(),
+            'landing_route': landing_route,
+            'invoice_id': invoice.id,
+            'transaction_type': 'online_direct',
+            'availability_report': availability_report,
+        })
+        return request.render(
+            'saas_website.portal_daily_backup_checkout', values,
         )
 
     # ==================== Backups: list + download ====================

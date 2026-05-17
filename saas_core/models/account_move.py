@@ -44,6 +44,32 @@ class AccountMove(models.Model):
         if not paid_invoices:
             return
 
+        # --- Handle daily-backup add-on payments ---
+        # The customer clicked Enable Daily Backups, we created an
+        # unpaid invoice and stored it on the instance. Now that the
+        # invoice is paid, flip the feature on.
+        backup_instances = self.env['saas.instance'].search([
+            ('daily_backup_pending_invoice_id', 'in', paid_invoices.ids),
+        ])
+        for instance in backup_instances:
+            _logger.info(
+                "SaaS instance %s: daily-backup add-on paid (invoice %s), "
+                "enabling daily backups.",
+                instance.subdomain,
+                instance.daily_backup_pending_invoice_id.name,
+            )
+            instance.write({
+                'daily_backup_enabled': True,
+                'daily_backup_pending_invoice_id': False,
+            })
+            instance._append_log(
+                "Daily backups enabled — add-on payment received."
+            )
+            instance.message_post(body=_(
+                "Daily Backups add-on paid. The next 03:00 UTC backup "
+                "cron will create the first snapshot."
+            ))
+
         # --- Handle restoration fee payments ---
         _logger.info(
             "Checking restoration invoices among paid: %s",

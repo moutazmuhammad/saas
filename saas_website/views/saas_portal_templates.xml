@@ -2339,6 +2339,12 @@
                                         Daily full-instance snapshots are enabled. Restore points are kept for
                                         <t t-esc="retention_days"/> days. The cron fires at 03:00 UTC.
                                     </t>
+                                    <t t-elif="instance.daily_backup_pending_invoice_id">
+                                        Daily snapshots are <strong>pending payment</strong>.
+                                        Complete the invoice to start the 03:00 UTC cron.
+                                        Per-database backups remain available on the
+                                        <a t-attf-href="/my/instances/#{instance.id}/databases">Databases</a> page.
+                                    </t>
                                     <t t-else="">
                                         Daily snapshots are <strong>off</strong>. Per-database backups
                                         live on the <a t-attf-href="/my/instances/#{instance.id}/databases">Databases</a> page.
@@ -2346,25 +2352,55 @@
                                 </p>
                             </t>
                         </div>
-                        <!-- Daily-backup toggle (hosting only, non-trial) -->
+                        <!-- Daily-backup toggle (hosting only, non-trial).
+                             Three states:
+                              - enabled  → red Disable button (POST enable=0)
+                              - pending  → yellow Complete-payment link
+                                           + small Cancel button
+                              - off      → green Enable button (POST enable=1)
+                                           which goes through the purchase
+                                           flow and lands on the checkout page -->
                         <t t-if="instance.is_hosting and not instance.is_trial">
-                            <form t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
-                                  method="POST" class="ms-3">
-                                <input type="hidden" name="csrf_token"
-                                       t-att-value="request.csrf_token()"/>
-                                <input type="hidden" name="enable"
-                                       t-att-value="'0' if instance.daily_backup_enabled else '1'"/>
-                                <t t-if="instance.daily_backup_enabled">
+                            <t t-if="instance.daily_backup_enabled">
+                                <form t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
+                                      method="POST" class="ms-3">
+                                    <input type="hidden" name="csrf_token"
+                                           t-att-value="request.csrf_token()"/>
+                                    <input type="hidden" name="enable" value="0"/>
                                     <button type="submit" class="btn btn-outline-danger btn-sm">
                                         <i class="fas fa-toggle-on me-1"></i>Disable Daily Backups
                                     </button>
-                                </t>
-                                <t t-else="">
+                                </form>
+                            </t>
+                            <t t-elif="instance.daily_backup_pending_invoice_id">
+                                <div class="ms-3 d-flex gap-2">
+                                    <a t-attf-href="/my/instances/#{instance.id}/daily-backup/checkout"
+                                       class="btn btn-warning btn-sm">
+                                        <i class="fas fa-credit-card me-1"></i>Complete Payment
+                                    </a>
+                                    <form t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
+                                          method="POST">
+                                        <input type="hidden" name="csrf_token"
+                                               t-att-value="request.csrf_token()"/>
+                                        <input type="hidden" name="enable" value="0"/>
+                                        <button type="submit" class="btn btn-outline-secondary btn-sm"
+                                                title="Cancel the pending invoice">
+                                            <i class="fas fa-times me-1"></i>Cancel
+                                        </button>
+                                    </form>
+                                </div>
+                            </t>
+                            <t t-else="">
+                                <form t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
+                                      method="POST" class="ms-3">
+                                    <input type="hidden" name="csrf_token"
+                                           t-att-value="request.csrf_token()"/>
+                                    <input type="hidden" name="enable" value="1"/>
                                     <button type="submit" class="btn btn-success btn-sm">
                                         <i class="fas fa-toggle-off me-1"></i>Enable Daily Backups
                                     </button>
-                                </t>
-                            </form>
+                                </form>
+                            </t>
                         </t>
                     </div>
 
@@ -2774,6 +2810,144 @@
     <!-- ============================================================ -->
     <!--  Hosting: Database Management                                 -->
     <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!--  Daily Backups add-on: custom checkout page                   -->
+    <!-- ============================================================ -->
+    <template id="portal_daily_backup_checkout" name="Daily Backup Checkout">
+        <t t-call="saas_website.cloudodoo_layout">
+            <section class="py-6" style="padding-top:120px;">
+                <div class="container">
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="/my/instances">My Instances</a></li>
+                            <li class="breadcrumb-item">
+                                <a t-attf-href="/my/instances/#{instance.id}" t-esc="instance.subdomain or instance.name"/>
+                            </li>
+                            <li class="breadcrumb-item">
+                                <a t-attf-href="/my/instances/#{instance.id}/backups">Snapshots</a>
+                            </li>
+                            <li class="breadcrumb-item active">Activate Daily Backups</li>
+                        </ol>
+                    </nav>
+
+                    <h1 class="mb-4">Activate Daily Backups</h1>
+
+                    <div class="row g-4">
+                        <!-- Order summary -->
+                        <div class="col-lg-7">
+                            <div class="info-card">
+                                <h5>Order Summary</h5>
+                                <p class="text-muted small">
+                                    Daily full-instance snapshots for
+                                    <strong t-esc="instance.subdomain"/>.
+                                    Captures every database, the filestore,
+                                    custom addons, configuration, Docker layout
+                                    and pip packages on each run; keeps the
+                                    last 7 days. Charged again on every
+                                    renewal of your hosting subscription
+                                    while the feature is on.
+                                </p>
+                                <table class="table align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Item</th>
+                                            <th class="text-end">Price</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td>
+                                                Daily Backups Add-on
+                                                <span class="badge ms-2 bg-info">Monthly</span>
+                                            </td>
+                                            <td class="text-end">
+                                                <t t-esc="monthly_price"
+                                                   t-options="{'widget': 'monetary', 'display_currency': currency}"/>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td class="fw-bold fs-5">Total Due Today</td>
+                                            <td class="text-end fw-bold fs-5">
+                                                <t t-esc="amount"
+                                                   t-options="{'widget': 'monetary', 'display_currency': currency}"/>
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                                <p class="small text-muted mt-3 mb-0">
+                                    Invoice: <code t-esc="invoice.name"/>.
+                                    You can pay any time from
+                                    <a t-att-href="invoice.get_portal_url()">
+                                        the invoice page
+                                    </a>
+                                    too.
+                                </p>
+                            </div>
+                        </div>
+                        <!-- Payment widget -->
+                        <div class="col-lg-5">
+                            <div class="info-card">
+                                <h5>Payment Method</h5>
+                                <t t-call="payment.form"/>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-center mt-4">
+                        <a t-attf-href="/my/instances/#{instance.id}/backups"
+                           class="btn btn-outline-secondary">
+                            <i class="fas fa-arrow-left me-2"></i>Cancel and go back
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Same trick as portal_checkout: rewrite the post-pay
+                     redirect target so the customer lands back on the
+                     Snapshots page, not Odoo's generic /payment/status. -->
+                <script>
+                    (function () {
+                        var url = '/my/instances/<t t-esc="instance.id"/>/backups?notice=Payment+received.+Daily+backups+are+now+active.';
+
+                        var observer = new MutationObserver(function () {
+                            if (window.location.pathname === '/payment/status') {
+                                window.location.replace(url);
+                            }
+                        });
+                        observer.observe(document, { childList: true, subtree: true });
+
+                        var origPush = history.pushState;
+                        history.pushState = function () {
+                            if (arguments[2] &amp;&amp; String(arguments[2]).indexOf('/payment/status') !== -1) {
+                                window.location.replace(url);
+                                return;
+                            }
+                            return origPush.apply(this, arguments);
+                        };
+
+                        var origReplace = history.replaceState;
+                        history.replaceState = function () {
+                            if (arguments[2] &amp;&amp; String(arguments[2]).indexOf('/payment/status') !== -1) {
+                                window.location.replace(url);
+                                return;
+                            }
+                            return origReplace.apply(this, arguments);
+                        };
+
+                        var checkInterval = setInterval(function () {
+                            if (window.location.pathname === '/payment/status') {
+                                clearInterval(checkInterval);
+                                window.location.replace(url);
+                            }
+                        }, 500);
+                        setTimeout(function () { clearInterval(checkInterval); }, 60000);
+                    })();
+                </script>
+            </section>
+        </t>
+    </template>
+
     <template id="portal_instance_databases" name="Manage Databases">
         <t t-call="saas_website.cloudodoo_layout">
             <section class="py-6" style="padding-top:120px;">
