@@ -5961,6 +5961,142 @@ class SaasInstance(models.Model):
                 names.append(line)
         return [{'name': n} for n in names]
 
+    # ------------------------------------------------------------------
+    # Customer DB management via XML-RPC to the instance's own ``db``
+    # service. This is the same endpoint Odoo's /web/database/manager
+    # uses — the request is handled by the LIVE Odoo worker process,
+    # which means:
+    #   * Registry.new(update_module=True) runs in the worker that's
+    #     already fully initialised — no fresh-interpreter setup
+    #     gotchas like our earlier ``docker exec python3 -`` attempts.
+    #   * No racing init container vs running workers — there's only
+    #     one process touching the DB.
+    #   * No memory doubling.
+    # The master password (`saas.instance.admin_password`) flows over
+    # HTTPS in the request body; the customer never sees it.
+    # ------------------------------------------------------------------
+    def _hosting_xmlrpc_db_proxy(self):
+        """Return an XML-RPC proxy for this instance's ``db`` service."""
+        import xmlrpc.client
+        import ssl
+
+        if not self.url:
+            raise UserError(_(
+                "Instance has no URL yet — is it deployed?"
+            ))
+        # Some customer instances haven't issued a Let's Encrypt cert
+        # yet (e.g. brand-new deploys). We trust our own infra so we
+        # disable verification for these server-to-server calls.
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        url = '%s/xmlrpc/2/db' % self.url.rstrip('/')
+        return xmlrpc.client.ServerProxy(url, context=ctx, allow_none=True)
+
+    def hosting_db_create(self, name, login, password, lang='en_US',
+                          country_code=None):
+        """Create a new Odoo database via the instance's XML-RPC db service.
+
+        The customer's running Odoo handles the create end-to-end:
+        empty PG database, ``base`` module install + auto-install
+        dependencies, admin user with the provided credentials, the
+        per-DB filestore. We do nothing on the host but receive a
+        success or fault back.
+        """
+        self._ensure_hosting_for_db_ops()
+        name = self._hosting_db_full_name(name)
+        login = (login or 'admin').strip()
+        if not password:
+            raise UserError(_("Initial admin password is required."))
+
+        existing = {r['name'] for r in self.hosting_db_list()}
+        if name in existing:
+            raise UserError(_("Database '%s' already exists.") % name)
+
+        import xmlrpc.client
+        proxy = self._hosting_xmlrpc_db_proxy()
+        master_pwd = self.sudo().admin_password
+        try:
+            proxy.create_database(
+                master_pwd,
+                name,
+                False,           # demo
+                lang or 'en_US',
+                password,        # admin password
+                login,           # admin login
+                country_code,    # country
+                None,            # phone
+            )
+        except xmlrpc.client.Fault as e:
+            msg = (e.faultString or '').strip() or str(e)
+            raise UserError(_(
+                "Database create failed: %s"
+            ) % msg)
+        except Exception as e:
+            raise UserError(_(
+                "Could not reach instance at %s: %s"
+            ) % (self.url, e))
+        return name
+
+    def hosting_db_duplicate(self, source, new_name):
+        """Duplicate a database via the instance's XML-RPC db service."""
+        self._ensure_hosting_for_db_ops()
+        source = self._hosting_db_full_name(source)
+        new_name = self._hosting_db_full_name(new_name)
+        existing = {r['name'] for r in self.hosting_db_list()}
+        if source not in existing:
+            raise UserError(
+                _("Source database '%s' does not exist.") % source
+            )
+        if new_name in existing:
+            raise UserError(
+                _("Target database '%s' already exists.") % new_name
+            )
+
+        import xmlrpc.client
+        proxy = self._hosting_xmlrpc_db_proxy()
+        master_pwd = self.sudo().admin_password
+        try:
+            proxy.duplicate_database(master_pwd, source, new_name)
+        except xmlrpc.client.Fault as e:
+            msg = (e.faultString or '').strip() or str(e)
+            raise UserError(_(
+                "Database duplicate failed: %s"
+            ) % msg)
+        except Exception as e:
+            raise UserError(_(
+                "Could not reach instance: %s"
+            ) % e)
+        return new_name
+
+    def hosting_db_drop(self, name):
+        """Drop a database via the instance's XML-RPC db service.
+
+        The customer can only target DBs in the instance's prefix
+        namespace — ``_hosting_db_full_name`` enforces that even if a
+        crafted POST tried to drop e.g. ``postgres``.
+        """
+        self._ensure_hosting_for_db_ops()
+        name = self._hosting_db_full_name(name)
+        if name not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % name
+            )
+
+        import xmlrpc.client
+        proxy = self._hosting_xmlrpc_db_proxy()
+        master_pwd = self.sudo().admin_password
+        try:
+            proxy.drop(master_pwd, name)
+        except xmlrpc.client.Fault as e:
+            msg = (e.faultString or '').strip() or str(e)
+            raise UserError(_("Database drop failed: %s") % msg)
+        except Exception as e:
+            raise UserError(_(
+                "Could not reach instance: %s"
+            ) % e)
+        return name
+
     def _hosting_template_db_name(self):
         """Per-instance template DB name.
 
@@ -6067,11 +6203,17 @@ class SaasInstance(models.Model):
         self._append_log("Template DB ready.")
         return template
 
-    def hosting_db_create(self, name, login, password, lang='en_US',
+    def _DEPRECATED_hosting_db_create_template_clone(self, name, login, password, lang='en_US',
                           country_code=None):
-        """Create a customer database via PG template cloning.
+        """[DEPRECATED — kept for reference] Create a customer DB via
+        PG template cloning.
 
-        Production-grade path:
+        Replaced by the XML-RPC-based ``hosting_db_create`` above —
+        the live Odoo handles registry plumbing properly there, and
+        template-clone added too much moving infrastructure (per-
+        instance template bootstrap, filestore cp, datistemplate flag
+        management) that bit us in production. This body kept only so
+        the design intent is documented.
 
         1. Validate the customer's name.
         2. Ensure the per-instance template exists (slow on first
@@ -6485,8 +6627,11 @@ class SaasInstance(models.Model):
         )
         return op
 
-    def hosting_db_duplicate(self, source, new_name):
-        """Copy an existing database under a new name."""
+    def _DEPRECATED_hosting_db_duplicate_dockerexec(self, source, new_name):
+        """[DEPRECATED] Pre-XML-RPC duplicate path via docker exec.
+
+        Replaced by the XML-RPC ``hosting_db_duplicate`` above.
+        """
         self._ensure_hosting_for_db_ops()
         # Both source and target live under the instance prefix.
         # _hosting_db_full_name strips a re-pasted prefix so the
@@ -6521,12 +6666,10 @@ class SaasInstance(models.Model):
             ) % (stdout[-1000:], stderr[-500:]))
         return new_name
 
-    def hosting_db_drop(self, name):
-        """Drop a database. Irreversible — caller must confirm.
+    def _DEPRECATED_hosting_db_drop_dockerexec(self, name):
+        """[DEPRECATED] Pre-XML-RPC drop path via docker exec.
 
-        The customer can only target DBs that already belong to the
-        instance prefix — ``_hosting_db_full_name`` enforces that even
-        if a crafted POST tried to drop e.g. ``postgres``.
+        Replaced by the XML-RPC ``hosting_db_drop`` above.
         """
         self._ensure_hosting_for_db_ops()
         name = self._hosting_db_full_name(name)
