@@ -2828,6 +2828,24 @@
                                 <t t-if="active_ondemand.state == 'running'">
                                     <strong>Backup of '<t t-esc="active_ondemand.db_name"/>' in progress.</strong>
                                     Refresh in a moment — only one on-demand backup is allowed at a time per instance.
+                                    <t t-if="active_ondemand.create_date">
+                                        <br/>
+                                        <small class="text-muted">
+                                            Started <t t-esc="active_ondemand.create_date.strftime('%H:%M UTC')"/>.
+                                            Stuck for more than 5 minutes? Click Cancel to release the slot.
+                                        </small>
+                                    </t>
+                                    <div class="mt-2">
+                                        <form t-attf-action="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/discard"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token"
+                                                   t-att-value="request.csrf_token()"/>
+                                            <input type="hidden" name="return_to" value="databases"/>
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="fas fa-times me-1"></i>Cancel Backup
+                                            </button>
+                                        </form>
+                                    </div>
                                 </t>
                                 <t t-else="">
                                     <strong>A backup of '<t t-esc="active_ondemand.db_name"/>' is ready.</strong>
@@ -2846,6 +2864,7 @@
                                               method="POST" class="d-inline">
                                             <input type="hidden" name="csrf_token"
                                                    t-att-value="request.csrf_token()"/>
+                                            <input type="hidden" name="return_to" value="databases"/>
                                             <button type="submit" class="btn btn-sm btn-outline-secondary">
                                                 <i class="fas fa-trash me-1"></i>Discard
                                             </button>

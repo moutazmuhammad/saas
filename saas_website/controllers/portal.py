@@ -1030,7 +1030,10 @@ class SaasPortal(CustomerPortal):
     # If a ``running`` backup record is older than this, treat it as a
     # zombie — most likely the worker crashed before flipping it to
     # ``failed``. We don't want a dead row to lock the slot forever.
-    _ONDEMAND_RUNNING_FUSE = datetime.timedelta(minutes=15)
+    # Five minutes is comfortably above a typical small/medium DB dump
+    # and small enough that a stuck record gets released on the next
+    # page refresh, not 15+ minutes later.
+    _ONDEMAND_RUNNING_FUSE = datetime.timedelta(minutes=5)
 
     def _active_ondemand_backup(self, instance):
         """Return the in-flight on-demand backup for ``instance``, if any.
@@ -1229,12 +1232,19 @@ class SaasPortal(CustomerPortal):
     )
     def portal_backup_discard(self, instance_id, backup_id,
                               access_token=None, **kw):
-        """Release the on-demand backup slot before the 8-hour timeout.
+        """Release the on-demand backup slot.
 
-        Only valid on the customer's own ephemeral backups. Sets
-        ``expires_at = now`` so the next 5-min cleanup cron deletes the
-        bucket object and the row; the customer can immediately request
-        a fresh one after that.
+        - On a ``done`` ephemeral: shrinks ``expires_at`` to now so the
+          next 5-min cron deletes the bucket object and the row.
+        - On a ``running`` ephemeral: flips it to ``failed`` immediately
+          and commits, freeing the singleton slot right away. The
+          background thread, if still alive, may still complete and try
+          to write — that write loses the race; any uploaded bucket
+          object gets reaped on the next cleanup pass.
+
+        Where to redirect: respect a ``return_to=databases`` form field
+        so a cancel from the per-DB page lands back there instead of
+        the backups page.
         """
         try:
             instance = self._document_check_access(
@@ -1246,10 +1256,31 @@ class SaasPortal(CustomerPortal):
         backup = instance.backup_ids.filtered(
             lambda b: b.id == backup_id and b.ephemeral
         )
-        redirect = '/my/instances/%d/backups' % instance_id
+        return_to = (kw.get('return_to') or '').strip()
+        if return_to == 'databases':
+            redirect = '/my/instances/%d/databases' % instance_id
+        else:
+            redirect = '/my/instances/%d/backups' % instance_id
         if not backup:
             return request.redirect('%s?error=%s' % (
                 redirect, url_quote(_("Backup not found.")),
+            ))
+        if backup.state == 'running':
+            backup.sudo().write({
+                'state': 'failed',
+                'error_message': _(
+                    'Cancelled by customer while still in progress.'
+                ),
+                'expires_at': fields.Datetime.now(),
+            })
+            # Persist so a still-alive background thread doesn't roll
+            # this back on its own re-raise.
+            try:
+                request.env.cr.commit()
+            except Exception:
+                pass
+            return request.redirect('%s?notice=%s' % (
+                redirect, url_quote(_("Backup cancelled.")),
             ))
         backup.sudo().expires_at = fields.Datetime.now()
         return request.redirect('%s?notice=%s' % (
