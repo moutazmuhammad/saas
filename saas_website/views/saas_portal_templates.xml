@@ -2817,6 +2817,29 @@
                             <div t-esc="list_error"/>
                         </div>
                     </t>
+                    <!-- After Odoo renders the notice/error from the
+                         ?notice= or ?error= query params, strip them
+                         out of the URL so an F5 / browser back doesn't
+                         re-display the same one-shot message. -->
+                    <t t-if="notice or error">
+                        <script>
+                            (function() {
+                                try {
+                                    var u = new URL(window.location.href);
+                                    var changed = false;
+                                    ['notice', 'error'].forEach(function(p) {
+                                        if (u.searchParams.has(p)) {
+                                            u.searchParams.delete(p);
+                                            changed = true;
+                                        }
+                                    });
+                                    if (changed) {
+                                        history.replaceState(null, '', u.toString());
+                                    }
+                                } catch (e) { /* old browser, no-op */ }
+                            })();
+                        </script>
+                    </t>
 
                     <!-- In-flight DB operations (create / duplicate / drop).
                          These run async via run_in_background so the customer
@@ -2896,29 +2919,12 @@
                         </div>
                     </t>
 
-                    <!-- Slim status notice for the one in-flight or
-                         downloadable on-demand backup. Action buttons
-                         (Download / Discard / Cancel) live on the
-                         backup's own database row so the customer
-                         doesn't see them in two places. -->
-                    <t t-if="active_ondemand">
-                        <div class="alert-banner alert-warning mb-3">
-                            <i class="fas fa-clock"></i>
-                            <div>
-                                <t t-if="active_ondemand.state == 'running'">
-                                    Backup of '<strong t-esc="active_ondemand.db_name"/>' is in progress.
-                                    Use the row below to cancel or refresh to see the download link.
-                                </t>
-                                <t t-else="">
-                                    Backup of '<strong t-esc="active_ondemand.db_name"/>' is ready
-                                    <t t-if="active_ondemand.expires_at">
-                                        until <t t-esc="active_ondemand.expires_at.strftime('%H:%M UTC')"/>
-                                    </t>.
-                                    Use the buttons on its row to download or discard it.
-                                </t>
-                            </div>
-                        </div>
-                    </t>
+                    <!-- The DB row already shows ``Backing up`` / ``Backup
+                         ready`` badges and the action buttons, so a separate
+                         top banner just clutters the page. Intentionally
+                         empty here — kept as a comment so the template
+                         history is clear. -->
+
 
                     <div class="info-card">
                         <t t-if="not databases and not list_error">

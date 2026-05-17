@@ -1316,7 +1316,7 @@ class SaasPortal(CustomerPortal):
         return request.redirect('%s?notice=%s' % (
             redirect, url_quote(_(
                 "Backup of '%s' started. Refresh in a minute — a download "
-                "link valid for 1 hour will appear once ready."
+                "link valid for 24 hours will appear once ready."
             ) % db_name),
         ))
 
