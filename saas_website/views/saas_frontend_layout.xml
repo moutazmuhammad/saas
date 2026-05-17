@@ -422,7 +422,7 @@
                         <h2 class="display-5 fw-bold">Launch Your Business Today</h2>
                         <p class="lead" style="color:var(--co-text-muted);">Choose a ready-made solution or deploy your own project</p>
                     </div>
-                    <div class="row g-4">
+                    <div class="row g-4 justify-content-center">
                         <!-- Ready-Made Services -->
                         <div t-if="show_services_section" class="col-lg-6">
                             <div class="info-card h-100" style="border-left:3px solid var(--primary);padding:2rem;">
