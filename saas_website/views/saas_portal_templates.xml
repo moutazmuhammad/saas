@@ -2362,16 +2362,88 @@
                                            flow and lands on the checkout page -->
                         <t t-if="instance.is_hosting and not instance.is_trial">
                             <t t-if="instance.daily_backup_enabled">
-                                <form t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
-                                      method="POST" class="ms-3"
-                                      onsubmit="return confirm('Disable daily backups? You will not be refunded for the current billing period, and the add-on line will be removed from your next renewal invoice.');">
+                                <form t-attf-id="disable-backup-form-#{instance.id}"
+                                      t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
+                                      method="POST" class="ms-3">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="enable" value="0"/>
-                                    <button type="submit" class="btn btn-outline-danger btn-sm">
+                                    <button type="button" class="btn btn-outline-danger btn-sm"
+                                            data-bs-toggle="modal"
+                                            t-attf-data-bs-target="#disable-backup-modal-#{instance.id}">
                                         <i class="fas fa-toggle-on me-1"></i>Disable Daily Backups
                                     </button>
                                 </form>
+
+                                <!-- Custom confirmation modal — replaces the
+                                     browser's native confirm() so the warning
+                                     matches the rest of the portal. -->
+                                <div class="modal fade saas-confirm-modal"
+                                     t-attf-id="disable-backup-modal-#{instance.id}"
+                                     tabindex="-1"
+                                     t-attf-aria-labelledby="disable-backup-title-#{instance.id}"
+                                     aria-hidden="true">
+                                    <div class="modal-dialog modal-dialog-centered">
+                                        <div class="modal-content saas-confirm-content">
+                                            <div class="saas-confirm-header">
+                                                <div class="saas-confirm-icon">
+                                                    <i class="fas fa-exclamation-triangle"></i>
+                                                </div>
+                                                <h5 class="modal-title"
+                                                    t-attf-id="disable-backup-title-#{instance.id}">
+                                                    Disable daily backups?
+                                                </h5>
+                                                <button type="button"
+                                                        class="btn-close btn-close-white"
+                                                        data-bs-dismiss="modal"
+                                                        aria-label="Close"/>
+                                            </div>
+                                            <div class="saas-confirm-body">
+                                                <p class="mb-3">
+                                                    Switching daily snapshots off for
+                                                    <strong t-esc="instance.subdomain"/>
+                                                    has two consequences:
+                                                </p>
+                                                <ul class="saas-confirm-list">
+                                                    <li>
+                                                        <i class="fas fa-ban text-danger me-2"></i>
+                                                        <strong>No refund</strong> for the current
+                                                        billing period. You've already paid for
+                                                        backups through your next renewal.
+                                                    </li>
+                                                    <li>
+                                                        <i class="fas fa-receipt text-warning me-2"></i>
+                                                        The add-on line will be
+                                                        <strong>removed from your next renewal</strong>
+                                                        invoice — no further charges.
+                                                    </li>
+                                                    <li>
+                                                        <i class="fas fa-clock text-info me-2"></i>
+                                                        Existing snapshots stay available until
+                                                        their 7-day retention window expires.
+                                                    </li>
+                                                </ul>
+                                                <p class="saas-confirm-reenable mb-0">
+                                                    <i class="fas fa-info-circle me-1"></i>
+                                                    You can re-enable at any time — proration
+                                                    starts over from the day you turn it back on.
+                                                </p>
+                                            </div>
+                                            <div class="saas-confirm-footer">
+                                                <button type="button"
+                                                        class="btn btn-outline-secondary"
+                                                        data-bs-dismiss="modal">
+                                                    <i class="fas fa-arrow-left me-1"></i>Keep backups on
+                                                </button>
+                                                <button type="button"
+                                                        class="btn btn-danger"
+                                                        t-attf-onclick="document.getElementById('disable-backup-form-#{instance.id}').submit();">
+                                                    <i class="fas fa-power-off me-1"></i>Yes, disable
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </t>
                             <t t-elif="instance.daily_backup_pending_invoice_id">
                                 <div class="ms-3 d-flex gap-2">

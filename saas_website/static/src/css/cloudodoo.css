@@ -3298,3 +3298,121 @@ h1, h2, h3, h4, h5, h6 {
 .log-line:hover {
     background: rgba(255, 255, 255, 0.04);
 }
+
+/* ============================================
+   Confirmation Modal (saas-confirm-modal)
+   ============================================ */
+.saas-confirm-modal .modal-dialog {
+    max-width: 520px;
+}
+.saas-confirm-content {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg, 16px);
+    box-shadow:
+        0 25px 50px -12px rgba(0, 0, 0, 0.6),
+        0 0 0 1px rgba(239, 68, 68, 0.08);
+    overflow: hidden;
+    color: var(--text-primary, #fff);
+}
+.saas-confirm-header {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 1.25rem 1.5rem 1rem;
+    background:
+        linear-gradient(135deg,
+            rgba(239, 68, 68, 0.12) 0%,
+            rgba(239, 68, 68, 0.02) 100%);
+    border-bottom: 1px solid var(--border-color);
+    position: relative;
+}
+.saas-confirm-header .modal-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin: 0;
+    flex: 1;
+    color: var(--text-primary, #fff);
+}
+.saas-confirm-header .btn-close {
+    margin: 0;
+    opacity: 0.6;
+    transition: opacity 0.15s ease;
+}
+.saas-confirm-header .btn-close:hover {
+    opacity: 1;
+}
+.saas-confirm-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--danger, #EF4444);
+    font-size: 1.2rem;
+    flex-shrink: 0;
+    box-shadow: 0 0 24px rgba(239, 68, 68, 0.15);
+}
+.saas-confirm-body {
+    padding: 1.5rem;
+    color: var(--text-secondary, #A1A1AA);
+    font-size: 0.95rem;
+    line-height: 1.55;
+}
+.saas-confirm-body strong {
+    color: var(--text-primary, #fff);
+}
+.saas-confirm-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.25rem 0;
+}
+.saas-confirm-list li {
+    background: var(--bg-elevated, rgba(255, 255, 255, 0.03));
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.15rem;
+    font-size: 0.9rem;
+}
+.saas-confirm-list li:last-child {
+    margin-bottom: 0;
+}
+.saas-confirm-list li i {
+    margin-top: 0.18rem;
+    flex-shrink: 0;
+}
+.saas-confirm-reenable {
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    color: #93C5FD;
+    padding: 0.65rem 0.9rem;
+    border-radius: 10px;
+    font-size: 0.85rem;
+}
+.saas-confirm-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+    padding: 1rem 1.5rem 1.25rem;
+    background: rgba(0, 0, 0, 0.15);
+    border-top: 1px solid var(--border-color);
+}
+.saas-confirm-footer .btn {
+    min-width: 140px;
+    font-weight: 600;
+}
+.saas-confirm-footer .btn-danger {
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+}
+.saas-confirm-footer .btn-danger:hover {
+    box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4);
+    transform: translateY(-1px);
+    transition: all 0.15s ease;
+}
