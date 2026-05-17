@@ -1398,6 +1398,104 @@ class SaasInstance(models.Model):
                 ) % (db_name, stderr or stdout))
             self._pg_grant_public_schema(ssh, db_name, db_user)
 
+    # ------------------------------------------------------------------
+    # PG-level template helpers — production path for fast DB creation.
+    # The template is initialised once per instance, then every
+    # customer-requested DB is a near-instant CREATE DATABASE ...
+    # WITH TEMPLATE off it. Avoids the racing-Odoo-worker problems that
+    # plagued the per-create-init approach.
+    # ------------------------------------------------------------------
+    _DB_IDENT_RE = re.compile(r'^[_a-z][a-z0-9_-]{0,62}$')
+
+    def _pg_db_exists(self, db_name):
+        """Return True if ``db_name`` exists on the instance's db server."""
+        self.ensure_one()
+        psql_server = self.db_server_id
+        if not psql_server or not db_name:
+            return False
+        if not self._DB_IDENT_RE.match(db_name):
+            raise UserError(_("Invalid db name %r") % db_name)
+        safe = db_name.replace("'", "''")
+        cmd = (
+            "sudo -u postgres psql -tA -c "
+            "\"SELECT 1 FROM pg_database WHERE datname='%s'\""
+        ) % safe
+        with psql_server._get_ssh_connection() as ssh:
+            exit_code, stdout, _ = ssh.execute(cmd)
+        return exit_code == 0 and stdout.strip() == '1'
+
+    def _pg_clone_db(self, source, target):
+        """``CREATE DATABASE target WITH TEMPLATE source OWNER <role>``.
+
+        Postgres copies the data files at the storage layer — typically
+        seconds — without running any Odoo init. ``source`` must be
+        flagged ``datistemplate=true`` (or have no active connections)
+        for the clone to succeed.
+        """
+        self.ensure_one()
+        psql_server = self.db_server_id
+        if not psql_server:
+            raise UserError(_("No database server configured."))
+        for ident in (source, target, self.db_user):
+            if not ident or not self._DB_IDENT_RE.match(ident):
+                raise UserError(
+                    _("Refusing to clone with invalid identifier %r") % ident
+                )
+        sql = (
+            'CREATE DATABASE "%(t)s" WITH TEMPLATE "%(s)s" OWNER "%(u)s"'
+        ) % {'t': target, 's': source, 'u': self.db_user}
+        cmd = 'sudo -u postgres psql -v ON_ERROR_STOP=1 -c %s 2>&1' % (
+            shlex.quote(sql),
+        )
+        with psql_server._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = ssh.execute(cmd, timeout=600)
+        if exit_code != 0:
+            raise UserError(_(
+                "Failed to clone database from template:\n%s"
+            ) % (stderr or stdout))
+
+    def _pg_mark_template(self, db_name, flag=True):
+        """Toggle ``datistemplate`` on a DB.
+
+        Marking as a template:
+        * tells Postgres it can be used as a clone source without
+          requiring the absence of connections;
+        * tells our Odoo workers to skip it (they don't load DBs
+          where ``datistemplate=true`` because they aren't customer
+          databases).
+        """
+        self.ensure_one()
+        psql_server = self.db_server_id
+        if not psql_server or not self._DB_IDENT_RE.match(db_name or ''):
+            return
+        safe = db_name.replace("'", "''")
+        sql = (
+            "UPDATE pg_database SET datistemplate=%s "
+            "WHERE datname='%s'"
+        ) % ('true' if flag else 'false', safe)
+        cmd = 'sudo -u postgres psql -v ON_ERROR_STOP=1 -c %s 2>&1' % (
+            shlex.quote(sql),
+        )
+        with psql_server._get_ssh_connection() as ssh:
+            ssh.execute(cmd)
+
+    def _pg_drop_db(self, db_name):
+        """Drop a database (best-effort). Used to clean up half-built
+        templates or failed clones."""
+        self.ensure_one()
+        psql_server = self.db_server_id
+        if not psql_server or not self._DB_IDENT_RE.match(db_name or ''):
+            return
+        # PG won't drop a database flagged ``datistemplate=true`` even
+        # for superuser, so clear the flag first.
+        self._pg_mark_template(db_name, flag=False)
+        cmd = (
+            'sudo -u postgres dropdb --force --if-exists %s 2>&1'
+            % shlex.quote(db_name)
+        )
+        with psql_server._get_ssh_connection() as ssh:
+            ssh.execute(cmd, timeout=120)
+
     def _ensure_can_ssh(self):
         """Validate that the instance has the necessary server config for SSH."""
         self.ensure_one()
@@ -2988,13 +3086,15 @@ class SaasInstance(models.Model):
             # 1. Enumerate every database currently owned by our role.
             #    Filtering by owner means we won't accidentally drop a
             #    catalog DB (template0, postgres) which is owned by a
-            #    different role.
+            #    different role. We DO include the per-instance Odoo
+            #    template (datistemplate=true, owned by our role) so
+            #    a cancelled instance doesn't leak templates either.
             list_sql = (
-                "SELECT datname FROM pg_database "
+                "SELECT datname, datistemplate FROM pg_database "
                 "WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname='%s') "
-                "AND NOT datistemplate ORDER BY datname"
+                "ORDER BY datname"
             ) % safe_user
-            list_cmd = "sudo -u postgres psql -tA -c %s" % shlex.quote(list_sql)
+            list_cmd = "sudo -u postgres psql -tA -F '|' -c %s" % shlex.quote(list_sql)
             exit_code, stdout, stderr = ssh.execute(list_cmd)
             if exit_code != 0:
                 _logger.warning(
@@ -3003,20 +3103,36 @@ class SaasInstance(models.Model):
                 )
                 owned = []
             else:
-                owned = [
-                    line.strip() for line in stdout.splitlines()
-                    if line.strip()
-                ]
+                owned = []
+                for line in stdout.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    parts = line.split('|', 1)
+                    name = parts[0].strip()
+                    is_template = (
+                        parts[1].strip() == 't' if len(parts) > 1 else False
+                    )
+                    owned.append((name, is_template))
 
             # 2. Drop each owned DB. ``--force`` terminates any open
             #    sessions first; ``--if-exists`` swallows a race.
-            for db_name in owned:
+            #    Templates need datistemplate=false first or dropdb
+            #    refuses.
+            for db_name, is_template in owned:
                 if not owned_name_re.match(db_name):
                     _logger.warning(
                         "Skipping drop of suspicious-looking db name %r",
                         db_name,
                     )
                     continue
+                if is_template:
+                    flag_cmd = (
+                        "sudo -u postgres psql -c "
+                        "\"UPDATE pg_database SET datistemplate=false "
+                        "WHERE datname='%s'\""
+                    ) % db_name.replace("'", "''")
+                    ssh.execute(flag_cmd)
                 drop_cmd = (
                     'sudo -u postgres dropdb --force --if-exists %s'
                     % shlex.quote(db_name)
@@ -5838,72 +5954,53 @@ class SaasInstance(models.Model):
                 names.append(line)
         return [{'name': n} for n in names]
 
-    def hosting_db_create(self, name, login, password, lang='en_US',
-                          country_code=None):
-        """Create a fresh empty Odoo database on this instance.
+    def _hosting_template_db_name(self):
+        """Per-instance template DB name.
 
-        Uses the same ``odoo -d <name> -i base`` CLI bootstrap as the
-        service-instance deploy flow — that runs Odoo's full module
-        loader and writes a clean ``ir_module_module`` table including
-        the auto-installable ``web`` module. A short follow-up Python
-        invocation sets the admin user's login / password / lang via
-        Odoo's ORM (so the password is hashed by Odoo, not us) and the
-        company's country if one was provided.
-
-        We deliberately avoid calling ``odoo.service.db.exp_create_database``
-        from a one-shot ``python3 -`` interpreter: that path can leave
-        modules half-installed when the embedded Registry construction
-        races other state, producing the ``KeyError: 'ir.http'`` we saw
-        in production. The two-step approach below mirrors what
-        ``_do_deploy`` does for service instances, which is known good.
+        Lives outside the customer's prefix namespace so:
+        * ``hosting_db_list`` (which filters by ``<sub>_``) won't show it;
+        * ``_DB_NAME_RE`` rejects names starting with ``_``, so a
+          customer can't accidentally target it via the portal.
         """
-        self._ensure_hosting_for_db_ops()
-        # Always namespace under the instance subdomain so two
-        # customers can't collide and our list query stays sound.
-        name = self._hosting_db_full_name(name)
-        login = (login or 'admin').strip()
-        if not password:
-            raise UserError(_("Initial admin password is required."))
+        self.ensure_one()
+        # Strip hyphens; PG identifiers are happier with underscores.
+        safe = (self.subdomain or '').replace('-', '_').lower()
+        return '__odoo_template_%s' % safe
 
-        # Up-front existence check for a nicer error message than the
-        # one Odoo would raise after a minute of init.
-        existing = {r['name'] for r in self.hosting_db_list()}
-        if name in existing:
-            raise UserError(_("Database '%s' already exists.") % name)
+    def _hosting_ensure_template_db(self):
+        """Create the per-instance template DB if it doesn't exist.
+
+        The template is a fully-initialised Odoo database (``base`` +
+        every auto-installable module). It's created once via the
+        slow ``odoo -i base`` path, then ``datistemplate=true`` flags
+        it as a Postgres template so subsequent customer DB creates
+        are near-instant ``CREATE DATABASE WITH TEMPLATE`` clones
+        instead of repeating the slow init.
+
+        Container is stopped for the duration of the init (~60-90s)
+        — there's no way to run init alongside live Odoo workers
+        without one of them caching a half-initialised registry. We
+        accept the brief downtime on FIRST DB create only.
+
+        Idempotent and concurrency-safe: if the template already
+        exists, this is a single ``SELECT`` and returns. If two
+        creates race the bootstrap, the second's
+        ``_pg_ensure_db_with_grants`` will fail on "database already
+        exists" — caller handles.
+        """
+        self.ensure_one()
+        template = self._hosting_template_db_name()
+        if self._pg_db_exists(template):
+            return template
+
+        self._append_log(
+            "Bootstrapping per-instance template DB '%s' (one-time, "
+            "~60s)..." % template
+        )
+        self._pg_ensure_db_with_grants(template)
 
         instance_path = self._get_instance_path()
-
-        # Step 0 — pre-create the database with proper public-schema
-        # grants. PostgreSQL 15+ no longer grants `PUBLIC` on the
-        # public schema by default, so a fresh DB owned by our role
-        # still can't `CREATE SEQUENCE` etc. inside it. We createdb
-        # ourselves and run an `ALTER SCHEMA ... OWNER` so Odoo's
-        # subsequent init has the privileges it needs.
-        self._pg_ensure_db_with_grants(name)
-
         with self.docker_server_id._get_ssh_connection() as ssh:
-            # Step 1 — stop the running container so its workers
-            # don't race the init.
-            #
-            # We tried two earlier approaches that both failed in
-            # production:
-            #
-            # * ``docker compose run --rm`` (sibling container): the
-            #   ephemeral init had the SAME memory limit as the
-            #   running one, doubling host RAM use and OOM-killing
-            #   the init at the ``web_tour`` install step.
-            #
-            # * ``docker compose exec`` (inside running container):
-            #   the running container's healthcheck and any /web/login
-            #   request would auto-select the in-flight DB the moment
-            #   we created it, load an empty registry, cache it, and
-            #   then deadlock with the init process on the
-            #   ``ir_module_module`` rows.
-            #
-            # Stopping the container for the duration of the init
-            # sidesteps both problems. Only this customer's instance
-            # is offline for ~1 minute; other customers on the same
-            # docker host are unaffected (separate containers).
             self._hosting_db_pause_container(ssh, instance_path)
 
             init_cmd = (
@@ -5917,94 +6014,258 @@ class SaasInstance(models.Model):
                 '--log-level=info 2>&1'
             ) % (
                 shlex.quote(instance_path),
-                shlex.quote(name),
+                shlex.quote(template),
             )
             init_exit = 0
             init_output = ''
             try:
                 init_exit, stdout, stderr = ssh.execute(
-                    init_cmd, timeout=900,
+                    init_cmd, timeout=1200,
                 )
                 init_output = (stdout or '') + (stderr or '')
             finally:
-                # Bring the customer's container back up before we
-                # verify or roll back — ``_hosting_db_is_initialized``
-                # and ``_hosting_db_rollback`` both use
-                # ``docker compose exec``, which fails when the
-                # container is down. Running them with the container
-                # paused would silently treat every install as
-                # "verification failed" and leave an undropped DB
-                # behind (which is exactly what we saw in production).
                 self._hosting_db_resume_container(ssh, instance_path)
 
-            # Now the container is back up. Workers come up fresh, so
-            # there's no stale empty-registry cached from before init.
+            def _cleanup_template():
+                # Drop the half-built template + its filestore so a
+                # retry starts from a fully-clean slate.
+                try:
+                    self._pg_drop_db(template)
+                except Exception:
+                    pass
+                try:
+                    self._hosting_drop_filestore(template)
+                except Exception:
+                    pass
+
             if init_exit != 0:
-                self._hosting_db_rollback(ssh, name)
+                _cleanup_template()
                 raise UserError(_(
-                    "Database init failed for '%s' (exit %s):\n\n%s"
-                ) % (name, init_exit, init_output[-8000:]))
+                    "Template DB init failed (exit %s):\n\n%s"
+                ) % (init_exit, init_output[-8000:]))
 
-            # ``--stop-after-init`` is supposed to bail non-zero on a
-            # broken install, but OOM-kills and other process-level
-            # deaths can slip past. Confirm the schema is live before
-            # we tell the customer it worked.
-            if not self._hosting_db_is_initialized(ssh, name):
-                self._hosting_db_rollback(ssh, name)
+            if not self._hosting_db_is_initialized(ssh, template):
+                _cleanup_template()
                 raise UserError(_(
-                    "Database '%s' was created but ``base`` did not "
-                    "finish installing — the init exited cleanly but "
-                    "left an incomplete schema. Last 8KB of init "
-                    "output:\n\n%s"
-                ) % (name, init_output[-8000:]))
+                    "Template DB init exited cleanly but left an "
+                    "incomplete schema. Last 8KB of init output:\n\n%s"
+                ) % init_output[-8000:])
 
-            # Step 2 — set the admin user's credentials, language, and
-            # (optionally) the company country. Done via the running
-            # container's ORM so the password gets Odoo's standard hash.
-            creds_script = (
-                "from contextlib import closing\n"
-                "import odoo\n"
-                "from odoo import api, SUPERUSER_ID\n"
-                "from odoo.modules.registry import Registry\n"
-                "registry = Registry(os.environ['SAAS_DB_NAME'])\n"
-                "with closing(registry.cursor()) as cr:\n"
-                "    env = api.Environment(cr, SUPERUSER_ID, {})\n"
-                "    admin = env.ref('base.user_admin')\n"
-                "    vals = {\n"
-                "        'login': os.environ['SAAS_DB_LOGIN'],\n"
-                "        'password': os.environ['SAAS_DB_PWD'],\n"
-                "        'lang': os.environ['SAAS_DB_LANG'],\n"
-                "    }\n"
-                "    if '@' in os.environ['SAAS_DB_LOGIN']:\n"
-                "        vals['email'] = os.environ['SAAS_DB_LOGIN']\n"
-                "    admin.write(vals)\n"
-                "    cc = os.environ.get('SAAS_DB_CC') or ''\n"
-                "    if cc:\n"
-                "        country = env['res.country'].search([('code', 'ilike', cc)], limit=1)\n"
-                "        if country:\n"
-                "            env['res.company'].browse(1).write({\n"
-                "                'country_id': country.id,\n"
-                "                'currency_id': country.currency_id.id,\n"
-                "            })\n"
-                "    cr.commit()\n"
-                "print('OK')\n"
+        # Flip ``datistemplate=true``. Two effects:
+        # 1. ``CREATE DATABASE x WITH TEMPLATE __odoo_template_X``
+        #    works without disconnecting whoever's connected.
+        # 2. Our Odoo workers never auto-load it (they filter out
+        #    ``datistemplate`` databases at the registry level).
+        self._pg_mark_template(template, flag=True)
+        self._append_log("Template DB ready.")
+        return template
+
+    def hosting_db_create(self, name, login, password, lang='en_US',
+                          country_code=None):
+        """Create a customer database via PG template cloning.
+
+        Production-grade path:
+
+        1. Validate the customer's name.
+        2. Ensure the per-instance template exists (slow on first
+           call, instant after — runs only when the template's
+           genuinely missing).
+        3. ``CREATE DATABASE <new> WITH TEMPLATE <template> OWNER
+           <role>`` on the db server. Postgres copies data files at
+           the storage layer — typically seconds, no Odoo init runs.
+        4. ``docker compose exec`` a short ORM patch to update the
+           admin user's login / password / lang (the cloned DB has
+           the template's ``admin / admin`` placeholders) and set
+           the company country if supplied.
+
+        No container restart. No racing workers. The new DB is
+        always either fully present or fully absent — half-built
+        states are impossible because Postgres' ``CREATE DATABASE
+        WITH TEMPLATE`` is atomic.
+        """
+        self._ensure_hosting_for_db_ops()
+        name = self._hosting_db_full_name(name)
+        login = (login or 'admin').strip()
+        if not password:
+            raise UserError(_("Initial admin password is required."))
+
+        existing = {r['name'] for r in self.hosting_db_list()}
+        if name in existing:
+            raise UserError(_("Database '%s' already exists.") % name)
+
+        # 1. Make sure the template exists. First call: slow (~60-90s
+        # init, container down). Subsequent calls: a single SELECT.
+        template = self._hosting_ensure_template_db()
+
+        # 2. Clone the PG database from the template. Fast (atomic).
+        self._append_log(
+            "Cloning '%s' from template '%s'..." % (name, template)
+        )
+        self._pg_clone_db(template, name)
+
+        # 3. Clone the filestore directory. An Odoo DB is two things:
+        # the psql database (cloned in step 2) AND a per-DB filestore
+        # directory at /var/lib/odoo/filestore/<name>. ``CREATE
+        # DATABASE WITH TEMPLATE`` only covers the first. Without
+        # this step, the new DB's first request would 500 on missing
+        # attachments / icons that the cloned ir_attachment rows
+        # point at.
+        try:
+            self._hosting_clone_filestore(template, name)
+        except Exception as e:
+            self._pg_drop_db(name)
+            raise UserError(_(
+                "Database '%s' was cloned but filestore copy failed; "
+                "rolled back:\n%s"
+            ) % (name, e))
+
+        # 4. Patch admin credentials via a short ORM script. The
+        # cloned DB inherits the template's admin user; we replace
+        # the placeholder login/password with what the customer
+        # entered. On failure we drop both the DB and its filestore
+        # so a retry starts clean.
+        try:
+            self._hosting_patch_admin_creds(
+                db_name=name, login=login, password=password,
+                lang=lang or 'en_US', country_code=country_code,
             )
-            env = {
-                'SAAS_DB_NAME': name,
-                'SAAS_DB_LANG': lang or 'en_US',
-                'SAAS_DB_PWD': password,
-                'SAAS_DB_LOGIN': login,
-                'SAAS_DB_CC': country_code or '',
-            }
-            exit_code, stdout, stderr = self._docker_exec_python(
-                ssh, creds_script, env=env, timeout=120,
-            )
-            if exit_code != 0 or 'OK' not in stdout:
-                raise UserError(_(
-                    "Database '%s' was created but admin credentials "
-                    "could not be set:\n%s\n%s"
-                ) % (name, stdout[-1000:], stderr[-500:]))
+        except Exception as e:
+            try:
+                self._hosting_drop_filestore(name)
+            except Exception:
+                pass
+            self._pg_drop_db(name)
+            raise UserError(_(
+                "Database '%s' cloned but admin credential patch "
+                "failed; rolled back:\n%s"
+            ) % (name, e))
+
+        self._append_log("Database '%s' ready." % name)
         return name
+
+    def _hosting_filestore_path(self, db_name):
+        """Return the host-side path to a DB's Odoo filestore.
+
+        The compose volume mounts ``./data/odoo`` →
+        ``/var/lib/odoo`` inside the container, so the host path is
+        ``<instance_path>/data/odoo/filestore/<db>``. Used to copy /
+        delete filestores without entering the container.
+        """
+        return '%s/data/odoo/filestore/%s' % (
+            self._get_instance_path(), db_name,
+        )
+
+    def _hosting_clone_filestore(self, source_db, target_db):
+        """Copy the template's filestore directory to the new DB's path.
+
+        Runs ``cp -a`` on the docker host (sudo so we can read the
+        container-owned source even when our SSH user can't), then
+        fixes ownership so the running container can write to it.
+        If the template never had a filestore directory (no modules
+        wrote any files), we just create an empty target.
+        """
+        self.ensure_one()
+        src = self._hosting_filestore_path(source_db)
+        dst = self._hosting_filestore_path(target_db)
+        instance_path = self._get_instance_path()
+
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            container_uid = self._get_container_uid(ssh)
+            cmd = (
+                # Idempotent: if dst already exists from a previous
+                # half-run, blow it away first.
+                'sudo rm -rf %(dst)s && '
+                # Copy or create empty. The template's filestore may
+                # legitimately not exist if no module wrote anything
+                # to disk; cover that case so we don't error out.
+                'if [ -d %(src)s ]; then '
+                '  sudo cp -a %(src)s %(dst)s; '
+                'else '
+                '  sudo mkdir -p %(dst)s; '
+                'fi && '
+                'sudo chown -R %(uid)s:%(uid)s %(dst)s && '
+                'sudo chmod -R 755 %(dst)s'
+            ) % {
+                'src': shlex.quote(src),
+                'dst': shlex.quote(dst),
+                'uid': container_uid,
+            }
+            exit_code, stdout, stderr = ssh.execute(cmd, timeout=600)
+            if exit_code != 0:
+                raise UserError(_(
+                    "Failed to clone filestore:\n%s"
+                ) % (stderr or stdout))
+
+    def _hosting_drop_filestore(self, db_name):
+        """Remove a DB's filestore directory. Best-effort.
+
+        Called from rollback paths and from instance deletion. We
+        guard the name regex one more time before passing to the
+        shell — defense in depth even though callers already validate.
+        """
+        self.ensure_one()
+        if not self._DB_IDENT_RE.match(db_name or ''):
+            return
+        path = self._hosting_filestore_path(db_name)
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            ssh.execute(
+                'sudo rm -rf %s' % shlex.quote(path), timeout=120,
+            )
+
+    def _hosting_patch_admin_creds(self, db_name, login, password,
+                                   lang, country_code):
+        """Set admin login / password / lang on a freshly-cloned DB.
+
+        Goes through ``docker compose exec python3 -`` so Odoo's
+        password hashing runs (we never see or store the plaintext
+        in PG). The script writes directly via the ORM — short, no
+        registry preload contention because the DB was just cloned
+        and no worker has touched it yet.
+        """
+        script = (
+            "from contextlib import closing\n"
+            "import odoo\n"
+            "from odoo import api, SUPERUSER_ID\n"
+            "from odoo.modules.registry import Registry\n"
+            "registry = Registry(os.environ['SAAS_DB_NAME'])\n"
+            "with closing(registry.cursor()) as cr:\n"
+            "    env = api.Environment(cr, SUPERUSER_ID, {})\n"
+            "    admin = env.ref('base.user_admin')\n"
+            "    vals = {\n"
+            "        'login': os.environ['SAAS_DB_LOGIN'],\n"
+            "        'password': os.environ['SAAS_DB_PWD'],\n"
+            "        'lang': os.environ['SAAS_DB_LANG'],\n"
+            "    }\n"
+            "    if '@' in os.environ['SAAS_DB_LOGIN']:\n"
+            "        vals['email'] = os.environ['SAAS_DB_LOGIN']\n"
+            "    admin.write(vals)\n"
+            "    cc = os.environ.get('SAAS_DB_CC') or ''\n"
+            "    if cc:\n"
+            "        country = env['res.country'].search("
+            "            [('code', 'ilike', cc)], limit=1)\n"
+            "        if country:\n"
+            "            env['res.company'].browse(1).write({\n"
+            "                'country_id': country.id,\n"
+            "                'currency_id': country.currency_id.id,\n"
+            "            })\n"
+            "    cr.commit()\n"
+            "print('OK')\n"
+        )
+        env = {
+            'SAAS_DB_NAME': db_name,
+            'SAAS_DB_LANG': lang,
+            'SAAS_DB_PWD': password,
+            'SAAS_DB_LOGIN': login,
+            'SAAS_DB_CC': country_code or '',
+        }
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = self._docker_exec_python(
+                ssh, script, env=env, timeout=120,
+            )
+        if exit_code != 0 or 'OK' not in (stdout or ''):
+            raise UserError(_(
+                "Could not patch admin credentials:\n%s\n%s"
+            ) % ((stdout or '')[-1000:], (stderr or '')[-500:]))
 
     def _hosting_db_pause_container(self, ssh, instance_path):
         """Stop the customer's Odoo container so it doesn't race the
