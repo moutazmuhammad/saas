@@ -166,6 +166,14 @@ class ResConfigSettings(models.TransientModel):
         config_parameter='saas_master.hosting_yearly_discount_pct',
         default=20,
     )
+    saas_hosting_daily_backup_price = fields.Float(
+        string='Hosting: Daily Backup Add-on Price',
+        config_parameter='saas_master.hosting_daily_backup_price',
+        default=5.0,
+        help='Monthly add-on price for daily database backups on hosting '
+             'instances. Charged in addition to workers / storage. Retention '
+             'is fixed at 7 days per database.',
+    )
     saas_hosting_min_backups = fields.Integer(
         string='Hosting: Min Backups',
         config_parameter='saas_master.hosting_min_backups',

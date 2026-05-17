@@ -284,6 +284,35 @@ class SaasInstance(models.Model):
         for rec in self:
             rec.is_hosting = rec.saas_product_id.is_hosting if rec.saas_product_id else False
 
+    # ========== Hosting add-ons ==========
+    daily_backup_enabled = fields.Boolean(
+        string='Daily Backups',
+        default=False,
+        tracking=True,
+        help='Hosting-only: when enabled, the daily backup cron dumps '
+             'every database on this instance and keeps the last 7 days '
+             'per database in the cloud bucket. Billed monthly as an '
+             'add-on at the rate configured in SaaS settings.',
+    )
+    daily_backup_monthly_price = fields.Float(
+        string='Daily Backup Monthly Price',
+        compute='_compute_daily_backup_monthly_price',
+        help='Monthly add-on price charged for this instance when daily '
+             'backups are enabled. Pulled from SaaS settings at compute time.',
+    )
+
+    @api.depends('daily_backup_enabled')
+    def _compute_daily_backup_monthly_price(self):
+        ICP = self.env['ir.config_parameter'].sudo()
+        try:
+            price = float(ICP.get_param(
+                'saas_master.hosting_daily_backup_price', '0.0',
+            ))
+        except (TypeError, ValueError):
+            price = 0.0
+        for rec in self:
+            rec.daily_backup_monthly_price = price if rec.daily_backup_enabled else 0.0
+
     # ========== Free Trial ==========
     is_trial = fields.Boolean(
         string='Free Trial',
@@ -1210,8 +1239,14 @@ class SaasInstance(models.Model):
                     result[key.strip()] = value.strip()
         return result or None
 
-    def _provision_postgresql(self):
-        """Create the PostgreSQL role and database on the database server via SSH."""
+    def _provision_postgresql(self, create_db=True):
+        """Ensure the PostgreSQL role exists, and optionally the per-instance DB.
+
+        Hosting instances pass ``create_db=False`` — they get an empty
+        Odoo container and create databases themselves via the master
+        password (or, once portal CRUD ships, via /my/instances).
+        The role still gets ``CREATEDB``, which is what makes that work.
+        """
         self.ensure_one()
         psql_server = self.db_server_id
         if not psql_server:
@@ -1219,15 +1254,10 @@ class SaasInstance(models.Model):
 
         db_user = self.db_user
         db_password = self.db_password
-        db_name = self.subdomain
 
         if not DB_USER_RE.match(db_user):
             raise ValidationError(
                 _("Database user '%s' contains unsafe characters.") % db_user
-            )
-        if not SUBDOMAIN_RE.match(db_name):
-            raise ValidationError(
-                _("Subdomain '%s' contains unsafe characters for a database name.") % db_name
             )
 
         sql_script = (
@@ -1246,13 +1276,6 @@ class SaasInstance(models.Model):
 
         ensure_role_cmd = "sudo -u postgres psql <<'SAAS_END_SQL'\n%s\nSAAS_END_SQL" % sql_script
 
-        create_db_cmd = (
-            "sudo -u postgres psql -tc "
-            "\"SELECT 1 FROM pg_database WHERE datname='%(db)s'\" "
-            "| grep -q 1 "
-            "|| sudo -u postgres createdb -O %(user)s %(db)s"
-        ) % {'db': db_name, 'user': db_user}
-
         with psql_server._get_ssh_connection() as ssh:
             self._append_log("Ensuring PostgreSQL role '%s'..." % db_user)
             exit_code, stdout, stderr = ssh.execute(ensure_role_cmd)
@@ -1265,6 +1288,26 @@ class SaasInstance(models.Model):
                     _("Failed to create/update PostgreSQL role '%s':\n%s")
                     % (db_user, stderr)
                 )
+
+            if not create_db:
+                self._append_log(
+                    "Skipping database creation (hosting instance — "
+                    "customer creates DBs themselves)."
+                )
+                return
+
+            db_name = self.subdomain
+            if not SUBDOMAIN_RE.match(db_name):
+                raise ValidationError(
+                    _("Subdomain '%s' contains unsafe characters for a database name.") % db_name
+                )
+
+            create_db_cmd = (
+                "sudo -u postgres psql -tc "
+                "\"SELECT 1 FROM pg_database WHERE datname='%(db)s'\" "
+                "| grep -q 1 "
+                "|| sudo -u postgres createdb -O %(user)s %(db)s"
+            ) % {'db': db_name, 'user': db_user}
 
             self._append_log("Ensuring database '%s'..." % db_name)
             exit_code, stdout, stderr = ssh.execute(create_db_cmd)
@@ -2405,38 +2448,46 @@ class SaasInstance(models.Model):
             # Render and write config files (initial — without custom repos)
             self._render_and_write_configs(ssh)
 
-            # Create PostgreSQL user and database
-            self._append_log("Creating PostgreSQL role and database...")
-            self._provision_postgresql()
-            self._append_log("PostgreSQL role and database ready.")
+            # Create PostgreSQL user (and the per-instance DB for service
+            # plans). Hosting instances get only the role — with CREATEDB
+            # — so the customer can spin up databases themselves via the
+            # Odoo database manager.
+            if self.is_hosting:
+                self._append_log("Creating PostgreSQL role (hosting — no DB)...")
+                self._provision_postgresql(create_db=False)
+                self._append_log("PostgreSQL role ready.")
+            else:
+                self._append_log("Creating PostgreSQL role and database...")
+                self._provision_postgresql(create_db=True)
+                self._append_log("PostgreSQL role and database ready.")
 
-            # Restore pre-built database snapshot (if configured)
-            snapshot_restored = self._restore_snapshot(ssh)
+                # Restore pre-built database snapshot (if configured)
+                snapshot_restored = self._restore_snapshot(ssh)
 
-            if not snapshot_restored:
-                # No snapshot — initialize database with base modules
-                self._append_log("Initializing database...")
-                init_cmd = (
-                    'cd %s && docker compose run --rm -T odoo '
-                    'odoo -d %s '
-                    '-i base '
-                    '--without-demo=all '
-                    '--stop-after-init '
-                    '--no-http 2>&1'
-                ) % (
-                    shlex.quote(instance_path),
-                    shlex.quote(self.subdomain),
-                )
-                exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=600)
-                self._append_log(
-                    "Init output (last 1000 chars):\n%s" % stdout[-1000:]
-                )
-                if exit_code != 0:
-                    raise UserError(
-                        _("Database initialization failed:\n%s\n%s")
-                        % (stdout[-500:], stderr[-500:])
+                if not snapshot_restored:
+                    # No snapshot — initialize database with base modules
+                    self._append_log("Initializing database...")
+                    init_cmd = (
+                        'cd %s && docker compose run --rm -T odoo '
+                        'odoo -d %s '
+                        '-i base '
+                        '--without-demo=all '
+                        '--stop-after-init '
+                        '--no-http 2>&1'
+                    ) % (
+                        shlex.quote(instance_path),
+                        shlex.quote(self.subdomain),
                     )
-                self._append_log("Database initialized.")
+                    exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=600)
+                    self._append_log(
+                        "Init output (last 1000 chars):\n%s" % stdout[-1000:]
+                    )
+                    if exit_code != 0:
+                        raise UserError(
+                            _("Database initialization failed:\n%s\n%s")
+                            % (stdout[-500:], stderr[-500:])
+                        )
+                    self._append_log("Database initialized.")
 
             # Re-set permissions after init — docker compose run may
             # have created files as root inside the data directory.
@@ -3314,19 +3365,33 @@ class SaasInstance(models.Model):
         return True
 
     def _do_restore_backup(self, backup_id):
-        """Restore a backup — replace current DB and filestore (background)."""
+        """Restore a backup — replace target DB and filestore (background).
+
+        For service instances, the target DB is always ``self.subdomain``.
+        For hosting instances, the target is ``backup.db_name`` (which can
+        be one of many DBs on the container) so other databases on the
+        same instance stay online during the restore.
+        """
         self.ensure_one()
         backup = self.env['saas.instance.backup'].browse(backup_id)
         server = self.docker_server_id
         container_name = self._get_container_name()
         instance_path = self._get_instance_path()
-        db_name = self.subdomain
+        # Restore target = the database the backup was taken from. Falls
+        # back to subdomain for legacy backups recorded before db_name.
+        db_name = backup.db_name or self.subdomain
         psql_server = self.db_server_id
         db_host = self._get_db_host_for_ssh()
         db_port = psql_server.psql_port or 5432
 
         # Validate identifiers before any shell execution.
-        if not SUBDOMAIN_RE.match(db_name or ''):
+        # Hosting DB names are slightly more permissive than subdomains
+        # (underscores allowed), so apply the right regex per case.
+        name_re = (
+            re.compile(r'^[a-z][a-z0-9_-]{0,62}$')
+            if self.is_hosting else SUBDOMAIN_RE
+        )
+        if not name_re.match(db_name or ''):
             raise UserError(
                 _("Refusing to restore: invalid db name %r") % db_name
             )
@@ -3346,16 +3411,46 @@ class SaasInstance(models.Model):
             ) % (backup_version, self.odoo_version_id.name))
 
         with server._get_ssh_connection() as ssh:
-            # 1. Stop container — refuse to proceed if it didn't actually stop.
-            self._append_log("Stopping container...")
-            exit_code, stdout, stderr = ssh.execute(
-                'docker stop %s 2>&1' % shlex.quote(container_name)
-            )
-            if exit_code != 0 and 'No such container' not in (stdout + stderr):
-                raise UserError(_(
-                    "Failed to stop container '%s' before restore — refusing "
-                    "to drop the database while connections may still be open:\n%s\n%s"
-                ) % (container_name, stdout, stderr))
+            # 1. Make sure no Odoo workers are holding the target DB open.
+            # Service instances: stop the whole container (it only serves
+            # this one DB anyway).
+            # Hosting instances: ask Odoo to release just this DB so other
+            # databases on the same container keep serving traffic.
+            if self.is_hosting:
+                self._append_log(
+                    "Releasing connections to database '%s'..." % db_name
+                )
+                release_script = (
+                    "from odoo.service import db\n"
+                    "try:\n"
+                    "    db._drop_conn(None, os.environ['SAAS_DB_NAME'])\n"
+                    "except Exception as e:\n"
+                    "    print('release-error:', e)\n"
+                    "print('OK')\n"
+                )
+                # Best-effort: don't fail the restore if release errors.
+                # The dropdb --force below still terminates any leftover
+                # backends.
+                try:
+                    self._docker_exec_python(
+                        ssh, release_script,
+                        env={'SAAS_DB_NAME': db_name},
+                        timeout=60,
+                    )
+                except Exception as e:
+                    self._append_log(
+                        "Note: _drop_conn failed (%s); continuing." % e
+                    )
+            else:
+                self._append_log("Stopping container...")
+                exit_code, stdout, stderr = ssh.execute(
+                    'docker stop %s 2>&1' % shlex.quote(container_name)
+                )
+                if exit_code != 0 and 'No such container' not in (stdout + stderr):
+                    raise UserError(_(
+                        "Failed to stop container '%s' before restore — refusing "
+                        "to drop the database while connections may still be open:\n%s\n%s"
+                    ) % (container_name, stdout, stderr))
 
             # 2. Download backup from cloud
             self._append_log("Downloading backup...")
@@ -3467,14 +3562,16 @@ class SaasInstance(models.Model):
                 shlex.quote(tmp_zip), shlex.quote(extract_dir),
             ))
 
-            # 8. Restart container
-            self._append_log("Starting container...")
-            start_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
-            exit_code, stdout, stderr = ssh.execute(start_cmd)
-            if exit_code != 0:
-                raise UserError(
-                    _("Failed to start container:\n%s") % stderr
-                )
+            # 8. Restart the container — service only. Hosting kept it
+            # running so other databases stayed online; nothing to start.
+            if not self.is_hosting:
+                self._append_log("Starting container...")
+                start_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
+                exit_code, stdout, stderr = ssh.execute(start_cmd)
+                if exit_code != 0:
+                    raise UserError(
+                        _("Failed to start container:\n%s") % stderr
+                    )
 
         self.state = 'running'
         self.pending_operation = False
@@ -4815,6 +4912,222 @@ class SaasInstance(models.Model):
             "Container resources updated: CPU=%s, RAM=%s"
             % (plan.cpu_limit, plan.ram_limit)
         )
+
+    # ========== Hosting: customer-facing DB management ==========
+    # Run on the docker host via SSH + ``docker compose exec`` against
+    # the running Odoo container. We use Odoo's own
+    # ``odoo.service.db.exp_*`` functions for create / duplicate / drop
+    # so passwords are hashed correctly and ``base`` is initialised the
+    # same way the official /web/database/manager UI would.
+    # Plain ``psql`` is enough for the list query.
+
+    # PostgreSQL identifier rules: starts with a letter, [a-z0-9_-],
+    # max 63 bytes. Reject the catalog DBs explicitly.
+    _DB_NAME_RE = re.compile(r'^[a-z][a-z0-9_-]{0,62}$')
+    _DB_RESERVED = frozenset(['postgres', 'template0', 'template1'])
+
+    def _validate_db_name(self, name):
+        name = (name or '').strip().lower()
+        if not self._DB_NAME_RE.match(name):
+            raise UserError(_(
+                "Database name must start with a letter and contain only "
+                "lowercase letters, digits, hyphens, and underscores "
+                "(max 63 chars)."
+            ))
+        if name in self._DB_RESERVED:
+            raise UserError(_("'%s' is reserved by PostgreSQL.") % name)
+        return name
+
+    def _ensure_hosting_for_db_ops(self):
+        self.ensure_one()
+        if not self.is_hosting:
+            raise UserError(_(
+                "Database management is only available for hosting instances."
+            ))
+        if self.state != 'running':
+            raise UserError(_(
+                "Instance must be running to manage databases (current: %s)."
+            ) % self.state)
+        if not self.docker_server_id:
+            raise UserError(_("No Docker server assigned to this instance."))
+
+    def _docker_exec_python(self, ssh, py_script, env=None, timeout=600):
+        """Run ``py_script`` inside the instance's Odoo container.
+
+        Values that need to reach the script (db names, passwords) go
+        via env vars so shell-quoting can't bite us. ``odoo.tools.config``
+        is preloaded so the script can call into ``odoo.service.db``
+        functions immediately.
+
+        Returns ``(exit_code, stdout, stderr)``.
+        """
+        instance_path = self._get_instance_path()
+        env_flags = ''
+        if env:
+            env_flags = ' '.join(
+                '-e %s=%s' % (k, shlex.quote(str(v)))
+                for k, v in env.items()
+            )
+        prelude = (
+            "import os, sys\n"
+            "import odoo\n"
+            "odoo.tools.config.parse_config(['-c','/etc/odoo/odoo.conf'])\n"
+        )
+        full_script = prelude + py_script
+        cmd = (
+            "cd %s && docker compose exec -T %s odoo python3 - <<'SAAS_DBOPS_EOF'\n"
+            "%s\n"
+            "SAAS_DBOPS_EOF"
+        ) % (shlex.quote(instance_path), env_flags, full_script)
+        return ssh.execute(cmd, timeout=timeout)
+
+    def _docker_exec_sql(self, ssh, sql, db='postgres', timeout=60):
+        """Run a single SQL via psql inside the container.
+
+        ``db_password`` is passed via PGPASSWORD env so it doesn't show
+        up in process listings.
+        """
+        instance_path = self._get_instance_path()
+        psql_server = self.db_server_id
+        env_flags = (
+            '-e PGPASSWORD=%s' % shlex.quote(self.sudo().db_password or '')
+        )
+        cmd = (
+            "cd %s && docker compose exec -T %s odoo psql "
+            "-h %s -p %s -U %s -d %s -tA -c %s"
+        ) % (
+            shlex.quote(instance_path),
+            env_flags,
+            shlex.quote(self._get_db_host()),
+            shlex.quote(str(psql_server.psql_port or 5432)),
+            shlex.quote(self.sudo().db_user or ''),
+            shlex.quote(db),
+            shlex.quote(sql),
+        )
+        return ssh.execute(cmd, timeout=timeout)
+
+    def hosting_db_list(self):
+        """List databases owned by this instance's PG role.
+
+        Returns a list of dicts: ``{'name': str}``. The shape stays
+        extensible — phase 4 will add size and created_at fields once
+        backups land.
+        """
+        self._ensure_hosting_for_db_ops()
+        sql = (
+            "SELECT datname FROM pg_database "
+            "WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = current_user) "
+            "AND NOT datistemplate ORDER BY datname"
+        )
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = self._docker_exec_sql(ssh, sql)
+        if exit_code != 0:
+            raise UserError(
+                _("Could not list databases: %s") % (stderr or stdout)
+            )
+        names = [line.strip() for line in stdout.splitlines() if line.strip()]
+        return [{'name': n} for n in names]
+
+    def hosting_db_create(self, name, login, password, lang='en_US',
+                          country_code=None):
+        """Create a fresh empty Odoo database on this instance.
+
+        Calls ``odoo.service.db.exp_create_database`` inside the
+        container — that runs ``base`` init and writes the admin user
+        with the supplied login/password (hashed by Odoo, not us).
+        """
+        self._ensure_hosting_for_db_ops()
+        name = self._validate_db_name(name)
+        login = (login or 'admin').strip()
+        if not password:
+            raise UserError(_("Initial admin password is required."))
+
+        # Up-front existence check for a nicer error message than the
+        # one Odoo would raise after a minute of init.
+        existing = {r['name'] for r in self.hosting_db_list()}
+        if name in existing:
+            raise UserError(_("Database '%s' already exists.") % name)
+
+        script = (
+            "from odoo.service import db\n"
+            "db.exp_create_database(\n"
+            "  os.environ['SAAS_DB_NAME'],\n"
+            "  False,\n"
+            "  os.environ['SAAS_DB_LANG'],\n"
+            "  user_password=os.environ['SAAS_DB_PWD'],\n"
+            "  login=os.environ['SAAS_DB_LOGIN'],\n"
+            "  country_code=os.environ.get('SAAS_DB_CC') or None,\n"
+            ")\n"
+            "print('OK')\n"
+        )
+        env = {
+            'SAAS_DB_NAME': name,
+            'SAAS_DB_LANG': lang or 'en_US',
+            'SAAS_DB_PWD': password,
+            'SAAS_DB_LOGIN': login,
+            'SAAS_DB_CC': country_code or '',
+        }
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = self._docker_exec_python(
+                ssh, script, env=env, timeout=900,
+            )
+        if exit_code != 0 or 'OK' not in stdout:
+            raise UserError(_(
+                "Database create failed:\n%s\n%s"
+            ) % (stdout[-1000:], stderr[-500:]))
+        return name
+
+    def hosting_db_duplicate(self, source, new_name):
+        """Copy an existing database under a new name."""
+        self._ensure_hosting_for_db_ops()
+        source = self._validate_db_name(source)
+        new_name = self._validate_db_name(new_name)
+        existing = {r['name'] for r in self.hosting_db_list()}
+        if source not in existing:
+            raise UserError(
+                _("Source database '%s' does not exist.") % source
+            )
+        if new_name in existing:
+            raise UserError(
+                _("Target database '%s' already exists.") % new_name
+            )
+        script = (
+            "from odoo.service import db\n"
+            "db.exp_duplicate_database(\n"
+            "  os.environ['SAAS_DB_SRC'],\n"
+            "  os.environ['SAAS_DB_DST'],\n"
+            ")\n"
+            "print('OK')\n"
+        )
+        env = {'SAAS_DB_SRC': source, 'SAAS_DB_DST': new_name}
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = self._docker_exec_python(
+                ssh, script, env=env, timeout=600,
+            )
+        if exit_code != 0 or 'OK' not in stdout:
+            raise UserError(_(
+                "Database duplicate failed:\n%s\n%s"
+            ) % (stdout[-1000:], stderr[-500:]))
+        return new_name
+
+    def hosting_db_drop(self, name):
+        """Drop a database. Irreversible — caller must confirm."""
+        self._ensure_hosting_for_db_ops()
+        name = self._validate_db_name(name)
+        script = (
+            "from odoo.service import db\n"
+            "db.exp_drop(os.environ['SAAS_DB_NAME'])\n"
+            "print('OK')\n"
+        )
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = self._docker_exec_python(
+                ssh, script, env={'SAAS_DB_NAME': name}, timeout=120,
+            )
+        if exit_code != 0 or 'OK' not in stdout:
+            raise UserError(_(
+                "Database drop failed:\n%s\n%s"
+            ) % (stdout[-1000:], stderr[-500:]))
+        return name
 
     # ========== Email Notifications ==========
 

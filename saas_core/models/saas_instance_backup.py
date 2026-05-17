@@ -9,6 +9,11 @@ _logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BACKUPS = 7
 PRESIGNED_URL_EXPIRY = 7 * 24 * 3600
+# On-demand backups are deliberately short-lived. The customer gets a
+# 1-hour window to download; afterwards the file is reaped from the
+# bucket so we don't accumulate orphaned ondemand/ objects.
+ONDEMAND_URL_EXPIRY = 3600
+ONDEMAND_PREFIX = 'ondemand'
 
 
 class SaasInstanceBackup(models.Model):
@@ -21,6 +26,13 @@ class SaasInstanceBackup(models.Model):
         required=True, ondelete='cascade', index=True,
     )
     name = fields.Char(string='Backup Name', required=True)
+    db_name = fields.Char(
+        string='Database', index=True,
+        help='PostgreSQL database name this backup is a snapshot of. '
+             'For service instances this equals instance.subdomain. '
+             'Hosting instances can have multiple databases; the cron '
+             'creates one backup record per database per day.',
+    )
     bucket_path = fields.Char(
         string='Bucket Path', readonly=True,
         help='Full object key inside the cloud bucket.',
@@ -38,6 +50,17 @@ class SaasInstanceBackup(models.Model):
     )
     download_url_expiry = fields.Datetime(
         string='Link Expires', readonly=True,
+    )
+    ephemeral = fields.Boolean(
+        string='On-Demand', default=False, index=True,
+        help='True for on-demand backups requested by the customer. '
+             'The bucket object is deleted automatically after the '
+             '1-hour download window via the ephemeral-cleanup cron.',
+    )
+    expires_at = fields.Datetime(
+        string='Auto-Delete At', index=True,
+        help='When this on-demand backup is reaped from the bucket. '
+             'Only set on ephemeral backups.',
     )
 
     def _refresh_download_url(self):
@@ -225,14 +248,20 @@ class SaasInstanceBackup(models.Model):
                     ExtraArgs={'ContentType': 'application/zip'},
                 )
 
-    def _generate_presigned_url(self):
+    def _generate_presigned_url(self, expiry=None):
+        """Return a presigned GET URL for this backup's bucket object.
+
+        ``expiry`` overrides the default 7-day TTL — used by on-demand
+        backups (1 hour) so the URL dies with the bucket object.
+        """
+        ttl = expiry or PRESIGNED_URL_EXPIRY
         cfg = self._get_backup_config()
         if cfg['provider'] == 'gcs':
             client, bucket_name = self._get_gcs_client()
             bucket = client.bucket(bucket_name)
             blob = bucket.blob(self.bucket_path)
             return blob.generate_signed_url(
-                expiration=datetime.timedelta(seconds=PRESIGNED_URL_EXPIRY),
+                expiration=datetime.timedelta(seconds=ttl),
                 method='GET',
             )
         else:
@@ -240,7 +269,7 @@ class SaasInstanceBackup(models.Model):
             return client.generate_presigned_url(
                 'get_object',
                 Params={'Bucket': bucket, 'Key': self.bucket_path},
-                ExpiresIn=PRESIGNED_URL_EXPIRY,
+                ExpiresIn=ttl,
             )
 
     def _generate_presigned_put_url(self, object_key):
@@ -388,15 +417,20 @@ class SaasInstanceBackup(models.Model):
     # ------------------------------------------------------------------
     # Backup creation — zip on server, upload directly to bucket
     # ------------------------------------------------------------------
-    def _create_and_upload_backup(self, instance, object_key):
+    def _create_and_upload_backup(self, instance, object_key, db_name=None):
         """SSH to the docker server, dump DB + copy filestore + manifest, zip,
         then upload directly from the server to the bucket via presigned URL.
+
+        ``db_name`` selects which database to dump. Defaults to the
+        record's own ``db_name`` (or ``instance.subdomain`` if blank
+        for service instances).
+
         Returns the zip size in bytes.
         """
         instance._ensure_can_ssh()
         docker_server = instance.docker_server_id
         container_name = instance._get_container_name()
-        db_name = instance.subdomain
+        db_name = db_name or self.db_name or instance.subdomain
         db_server = instance.db_server_id
         db_host = instance._get_db_host()
         db_port = db_server.psql_port or 5432
@@ -566,7 +600,12 @@ fi
     @api.model
     def _cron_backup_all_instances(self):
         """Create backups for all running instances and clean up old ones.
-        Skips trial plan instances (backups not available on trial).
+
+        Service instances: one backup per instance (DB name = subdomain).
+        Hosting instances: skipped unless ``daily_backup_enabled``; then
+        one backup per database owned by the instance's PG role. Hosting
+        retention is fixed at 7 days per database (see _cleanup_old_backups).
+        Trial-plan instances are skipped on both sides.
         """
         instances = self.env['saas.instance'].search([
             ('state', '=', 'running'),
@@ -576,19 +615,42 @@ fi
         ])
         for instance in instances:
             try:
-                self._perform_backup_in_new_cursor(instance.id)
+                if instance.is_hosting:
+                    if not instance.daily_backup_enabled:
+                        continue
+                    try:
+                        dbs = [r['name'] for r in instance.hosting_db_list()]
+                    except Exception as e:
+                        _logger.error(
+                            "Backup: could not list DBs for hosting %s: %s",
+                            instance.name, e,
+                        )
+                        continue
+                    for db_name in dbs:
+                        try:
+                            self._perform_backup_in_new_cursor(
+                                instance.id, db_name=db_name,
+                            )
+                        except Exception as e:
+                            _logger.error(
+                                "Backup failed for %s/%s: %s",
+                                instance.name, db_name, e,
+                            )
+                else:
+                    self._perform_backup_in_new_cursor(instance.id)
             except Exception as e:
                 _logger.error("Backup failed for instance %s: %s", instance.name, e)
 
         self._cleanup_old_backups()
 
-    def _perform_backup_in_new_cursor(self, instance_id):
+    def _perform_backup_in_new_cursor(self, instance_id, db_name=None):
         """Run a single backup in a separate cursor to isolate transactions."""
         new_cr = self.pool.cursor()
         try:
             new_env = api.Environment(new_cr, self.env.uid, self.env.context)
             new_env['saas.instance.backup']._perform_backup(
-                new_env['saas.instance'].browse(instance_id)
+                new_env['saas.instance'].browse(instance_id),
+                db_name=db_name,
             )
             new_cr.commit()
         except Exception:
@@ -597,26 +659,44 @@ fi
         finally:
             new_cr.close()
 
-    def _perform_backup(self, instance):
-        """Perform a single backup for an instance."""
+    def _perform_backup(self, instance, db_name=None):
+        """Perform a single backup for an instance.
+
+        ``db_name`` is the database to snapshot. Defaults to
+        ``instance.subdomain`` (service instances). For hosting
+        instances the cron passes each enumerated DB name in turn.
+        """
+        db_name = db_name or instance.subdomain
         now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         backup_name = 'backup_%s' % now_str
         partner = instance.partner_id
         partner_folder = '%s_%s' % (
             partner.id, self._sanitize_name(partner.name),
         ) if partner else 'no_partner'
-        db_name = instance.subdomain
-        object_key = '%s/%s/%s.zip' % (partner_folder, db_name, backup_name)
+        # For hosting, segregate per DB so multiple DBs per instance
+        # don't collide in the bucket. Service instances continue with
+        # the legacy layout (partner/db/backup.zip) since their db == sub.
+        if instance.is_hosting:
+            object_key = '%s/%s/%s/%s.zip' % (
+                partner_folder, instance.subdomain, db_name, backup_name,
+            )
+        else:
+            object_key = '%s/%s/%s.zip' % (
+                partner_folder, db_name, backup_name,
+            )
 
         backup = self.create({
             'instance_id': instance.id,
             'name': backup_name,
+            'db_name': db_name,
             'bucket_path': object_key,
             'state': 'running',
         })
 
         try:
-            size_bytes = backup._create_and_upload_backup(instance, object_key)
+            size_bytes = backup._create_and_upload_backup(
+                instance, object_key, db_name=db_name,
+            )
             url = backup._generate_presigned_url()
             now = fields.Datetime.now()
             backup.write({
@@ -633,28 +713,58 @@ fi
             raise
 
     def _run_portal_backup(self):
-        """Run backup for an already-created record (called from portal)."""
+        """Run backup for an already-created record (called from portal).
+
+        Honours ``self.ephemeral`` (on-demand path) and ``self.db_name``
+        (multi-DB hosting). Layout:
+
+        - Daily / legacy portal:   ``<partner>/<sub>/<db>/<name>.zip``
+          (or ``<partner>/<db>/<name>.zip`` for non-hosting)
+        - On-demand:                ``ondemand/<partner>/<sub>/<db>/<name>.zip``
+
+        On-demand backups also get a 1-hour presigned URL and an
+        ``expires_at`` timestamp so the cleanup cron can reap them.
+        """
         self.ensure_one()
         instance = self.instance_id
         partner = instance.partner_id
         partner_folder = '%s_%s' % (
             partner.id, self._sanitize_name(partner.name),
         ) if partner else 'no_partner'
-        db_name = instance.subdomain
-        object_key = '%s/%s/%s.zip' % (partner_folder, db_name, self.name)
+        db_name = self.db_name or instance.subdomain
+
+        if self.ephemeral:
+            object_key = '%s/%s/%s/%s/%s.zip' % (
+                ONDEMAND_PREFIX, partner_folder, instance.subdomain,
+                db_name, self.name,
+            )
+        elif instance.is_hosting:
+            object_key = '%s/%s/%s/%s.zip' % (
+                partner_folder, instance.subdomain, db_name, self.name,
+            )
+        else:
+            object_key = '%s/%s/%s.zip' % (partner_folder, db_name, self.name)
 
         self.bucket_path = object_key
 
         try:
-            size_bytes = self._create_and_upload_backup(instance, object_key)
-            url = self._generate_presigned_url()
+            size_bytes = self._create_and_upload_backup(
+                instance, object_key, db_name=db_name,
+            )
+            ttl = ONDEMAND_URL_EXPIRY if self.ephemeral else PRESIGNED_URL_EXPIRY
+            url = self._generate_presigned_url(expiry=ttl)
             now = fields.Datetime.now()
-            self.write({
+            vals = {
                 'state': 'done',
                 'size_mb': round(size_bytes / (1024 * 1024), 2),
                 'download_url': url,
-                'download_url_expiry': now + datetime.timedelta(seconds=PRESIGNED_URL_EXPIRY),
-            })
+                'download_url_expiry': now + datetime.timedelta(seconds=ttl),
+            }
+            if self.ephemeral:
+                vals['expires_at'] = now + datetime.timedelta(
+                    seconds=ONDEMAND_URL_EXPIRY,
+                )
+            self.write(vals)
         except Exception as e:
             self.write({
                 'state': 'failed',
@@ -662,11 +772,68 @@ fi
             })
             raise
 
+    # Fixed retention for hosting backups, per the product spec. 7 days
+    # per database — exactly what the customer sees in the portal.
+    HOSTING_RETENTION_DAYS = 7
+
+    @api.model
+    def _cron_cleanup_ephemeral_backups(self):
+        """Reap on-demand backups whose 1-hour window has elapsed.
+
+        Deletes the bucket object and the local record. ``unlink()``
+        already drops the bucket object via its ondelete handler, but
+        we call ``_delete_from_bucket`` explicitly first so a deletion
+        failure still removes the local record — we don't want a stuck
+        object to keep us re-trying forever.
+        """
+        now = fields.Datetime.now()
+        expired = self.search([
+            ('ephemeral', '=', True),
+            ('state', '=', 'done'),
+            ('expires_at', '!=', False),
+            ('expires_at', '<=', now),
+        ])
+        for backup in expired:
+            try:
+                if backup.bucket_path:
+                    backup._delete_from_bucket()
+            except Exception as e:
+                _logger.warning(
+                    "Ephemeral cleanup: bucket delete failed for %s: %s",
+                    backup.bucket_path, e,
+                )
+            try:
+                backup.with_context(_skip_bucket_delete=True).unlink()
+            except Exception:
+                _logger.exception(
+                    "Ephemeral cleanup: unlink failed for backup %s",
+                    backup.id,
+                )
+
+        # Also handle ephemeral backups stuck in 'running' for too long
+        # (worker crash, network outage). 2 hours is generous.
+        stuck_cutoff = now - datetime.timedelta(hours=2)
+        stuck = self.search([
+            ('ephemeral', '=', True),
+            ('state', '=', 'running'),
+            ('create_date', '<', stuck_cutoff),
+        ])
+        for backup in stuck:
+            try:
+                backup.unlink()
+            except Exception:
+                _logger.exception(
+                    "Ephemeral cleanup: unlink stuck %s failed", backup.id,
+                )
+
     @api.model
     def _cleanup_old_backups(self):
-        """Keep at most max_backups (from plan) per instance.
+        """Trim old backups.
 
-        Also removes stale 'running' backups older than 1 day.
+        - Service instances: keep at most ``plan.max_backups`` per
+          instance (legacy behavior).
+        - Hosting instances: keep 7 days per (instance, db_name).
+        - Stale ``running`` backups older than 1 day are dropped.
         """
         # Clean up stale 'running' backups older than 1 day (stuck records)
         stale_cutoff = fields.Datetime.now() - datetime.timedelta(days=1)
@@ -680,9 +847,37 @@ fi
             except Exception as e:
                 _logger.error("Failed to cleanup stale backup %s: %s", backup.name, e)
 
-        # Use read_group to find instances that have completed backups
+        # --- Hosting: 7-day retention per (instance, db_name).
+        # Ephemeral on-demand backups are handled by a separate cron
+        # so they don't double-fire on the same record.
+        hosting_cutoff = (
+            fields.Datetime.now()
+            - datetime.timedelta(days=self.HOSTING_RETENTION_DAYS)
+        )
+        hosting_old = self.search([
+            ('state', '=', 'done'),
+            ('ephemeral', '=', False),
+            ('instance_id.is_hosting', '=', True),
+            ('create_date', '<', hosting_cutoff),
+        ])
+        for backup in hosting_old:
+            try:
+                if backup.bucket_path:
+                    backup._delete_from_bucket()
+                backup.unlink()
+            except Exception as e:
+                _logger.error(
+                    "Failed to cleanup hosting backup %s: %s", backup.name, e,
+                )
+
+        # --- Service instances: keep at most plan.max_backups per instance.
+        # Ephemeral excluded for the same reason as hosting above.
         data = self._read_group(
-            [('state', '=', 'done')],
+            [
+                ('state', '=', 'done'),
+                ('ephemeral', '=', False),
+                ('instance_id.is_hosting', '=', False),
+            ],
             ['instance_id'],
             ['__count'],
         )

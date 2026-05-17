@@ -298,6 +298,35 @@
                                         </select>
                                     </div>
 
+                                    <!-- Daily backup add-on (paid only — hidden for trials) -->
+                                    <t t-if="form_values.get('is_trial') != '1' and config.get('daily_backup_price', 0) &gt; 0">
+                                        <div class="mb-3 p-3"
+                                             style="background:rgba(16,185,129,0.05);
+                                                    border:1px solid rgba(16,185,129,0.25);
+                                                    border-radius:10px;">
+                                            <div class="form-check d-flex align-items-start gap-2">
+                                                <input type="checkbox" name="daily_backup" value="1"
+                                                       class="form-check-input mt-1"
+                                                       id="daily-backup-toggle"
+                                                       t-att-data-price="config.get('daily_backup_price', 0)"
+                                                       t-att-data-yearly-discount="config.get('yearly_discount_pct', 20)"
+                                                       t-att-checked="daily_backup or None"/>
+                                                <label class="form-check-label" for="daily-backup-toggle">
+                                                    <span class="fw-semibold">
+                                                        <i class="fas fa-shield-alt me-1"></i>Add daily backups
+                                                        — <t t-esc="'${:,.2f}'.format(config.get('daily_backup_price', 0))"/>/mo
+                                                    </span>
+                                                    <div class="small mt-1" style="color:var(--co-text-muted,#71717A);">
+                                                        Every database on this instance is dumped daily to encrypted
+                                                        cloud storage. The last 7 days per database are kept; older
+                                                        backups roll off automatically. Restore any backup with one
+                                                        click from your portal.
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </t>
+
                                     <hr style="border-color:var(--border-color,#27272A);"/>
                                     <h5 class="mb-3">
                                         <i class="fas fa-code-branch me-2"></i>Your Project
@@ -389,8 +418,16 @@
                                                 <span class="breakdown-label"><i class="fas fa-hdd me-2"></i><t t-esc="storage"/>GB Storage</span>
                                                 <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(storage_cost)"/>/mo</span>
                                             </div>
+                                            <div class="breakdown-row"
+                                                 id="backup-cost-row"
+                                                 t-att-style="'' if daily_backup else 'display:none;'">
+                                                <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Daily Backups</span>
+                                                <span class="breakdown-value" id="backup-cost-value">
+                                                    <t t-esc="'${:,.2f}'.format(backup_cost)"/>/mo
+                                                </span>
+                                            </div>
                                             <div class="breakdown-row">
-                                                <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Backups</span>
+                                                <span class="breakdown-label"><i class="fas fa-archive me-2"></i>Plan Backups</span>
                                                 <span class="breakdown-value" style="font-weight:700;"><t t-esc="backup_count"/></span>
                                             </div>
                                             <div class="breakdown-divider"></div>
@@ -399,7 +436,9 @@
                                                     <t t-if="billing_period == 'yearly'">Yearly Total</t>
                                                     <t t-else="">Monthly Total</t>
                                                 </span>
-                                                <span class="total-amount">
+                                                <span class="total-amount" id="hosting-total-amount"
+                                                      t-att-data-base-monthly="monthly_total - backup_cost"
+                                                      t-att-data-billing="billing_period">
                                                     <t t-if="billing_period == 'yearly'">
                                                         <t t-esc="'${:,.2f}'.format(yearly_total)"/>
                                                     </t>
@@ -409,6 +448,33 @@
                                                 </span>
                                             </div>
                                         </div>
+                                        <!-- Live update when the daily-backup checkbox toggles, so
+                                             the customer sees the new total without a page reload. -->
+                                        <script>
+                                            (function(){
+                                                var cb = document.getElementById('daily-backup-toggle');
+                                                if (!cb) return;
+                                                var row = document.getElementById('backup-cost-row');
+                                                var costEl = document.getElementById('backup-cost-value');
+                                                var totalEl = document.getElementById('hosting-total-amount');
+                                                if (!totalEl) return;
+                                                var baseMonthly = parseFloat(totalEl.dataset.baseMonthly) || 0;
+                                                var billing = totalEl.dataset.billing;
+                                                var price = parseFloat(cb.dataset.price) || 0;
+                                                var yd = (parseFloat(cb.dataset.yearlyDiscount) || 0) / 100;
+                                                function fmt(n) { return '$' + n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+                                                function refresh() {
+                                                    var addon = cb.checked ? price : 0;
+                                                    var monthly = baseMonthly + addon;
+                                                    if (row) row.style.display = cb.checked ? '' : 'none';
+                                                    if (costEl) costEl.textContent = fmt(addon) + '/mo';
+                                                    totalEl.textContent = billing === 'yearly'
+                                                        ? fmt(monthly * 12 * (1 - yd))
+                                                        : fmt(monthly);
+                                                }
+                                                cb.addEventListener('change', refresh);
+                                            })();
+                                        </script>
                                     </t>
 
                                     <t t-if="form_values.get('is_trial') == '1'">

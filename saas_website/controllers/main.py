@@ -623,6 +623,9 @@ class SaasWebsite(http.Controller):
             'min_backups': int(ICP.get_param('saas_master.hosting_min_backups', '3')),
             'max_backups': int(ICP.get_param('saas_master.hosting_max_backups', '14')),
             'yearly_discount_pct': int(ICP.get_param('saas_master.hosting_yearly_discount_pct', '20')),
+            'daily_backup_price': float(ICP.get_param(
+                'saas_master.hosting_daily_backup_price', '5.0',
+            )),
             'currency': request.env.company.currency_id.name or 'USD',
         }
 
@@ -749,9 +752,14 @@ class SaasWebsite(http.Controller):
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
+        # Backup add-on: a hidden checkbox on the form. Trials get it
+        # free or not at all (per spec — paid feature only).
+        daily_backup = (kw.get('daily_backup') == '1')
+
         workers_cost = workers * config['worker_price']
         storage_cost = storage * config['storage_price_per_gb']
-        monthly_total = workers_cost + storage_cost
+        backup_cost = config['daily_backup_price'] if daily_backup else 0.0
+        monthly_total = workers_cost + storage_cost + backup_cost
         discount = config['yearly_discount_pct'] / 100.0
         yearly_total = monthly_total * 12 * (1 - discount)
 
@@ -776,6 +784,8 @@ class SaasWebsite(http.Controller):
             'storage': storage,
             'workers_cost': workers_cost,
             'storage_cost': storage_cost,
+            'backup_cost': backup_cost,
+            'daily_backup': daily_backup,
             'monthly_total': monthly_total,
             'yearly_total': yearly_total,
             'backup_count': backup_count,
@@ -895,6 +905,10 @@ class SaasWebsite(http.Controller):
                 'odoo_version_id': version.id,
                 'billing_period': billing_period,
                 'pip_packages': pip_packages or False,
+                # Paid daily-backup add-on. Trials don't get it.
+                'daily_backup_enabled': (
+                    not is_trial and post.get('daily_backup') == '1'
+                ),
             }
             if is_trial:
                 vals['is_trial'] = True

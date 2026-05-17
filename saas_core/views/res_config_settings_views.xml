@@ -288,6 +288,17 @@
                                 </div>
                             </div>
                         </setting>
+                        <setting id="saas_hosting_daily_backup_price_setting"
+                                 string="Daily Backup Add-on"
+                                 help="Optional add-on selectable at hosting checkout. Backs up every database on the instance daily; keeps the last 7 days per database.">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_hosting_daily_backup_price" string="Monthly price" class="col-3 col-lg-3 o_light_label"/>
+                                    <field name="saas_hosting_daily_backup_price" class="col-2"/>
+                                    <span class="text-muted ms-1">/ month</span>
+                                </div>
+                            </div>
+                        </setting>
                     </block>
 
                     <!-- ==================== Billing ==================== -->

@@ -18,6 +18,28 @@
     <p><strong>Access URL:</strong>
        <a t-att-href="object.url"><t t-out="object.url"/></a></p>
     <p>Plan: <t t-out="object.plan_id.name or 'N/A'"/></p>
+
+    <t t-if="object.is_hosting">
+        <hr style="margin:16px 0;border:0;border-top:1px solid #ddd;"/>
+        <p><strong>Your instance starts empty.</strong> Create as many
+           Odoo databases as you need from the database manager:</p>
+        <p>
+            <a t-attf-href="{{ object.url }}/web/database/manager"
+               t-attf-style="display:inline-block;padding:10px 16px;background:#10B981;color:white;text-decoration:none;border-radius:6px;">
+                Open Database Manager
+            </a>
+        </p>
+        <p>When prompted for the <em>master password</em>, use:</p>
+        <p style="font-family:monospace;background:#f4f4f5;padding:10px;border-radius:6px;display:inline-block;">
+            <t t-out="object.sudo().admin_password"/>
+        </p>
+        <p style="color:#666;font-size:13px;">
+            Keep this password safe — it's required to create, duplicate,
+            restore or delete databases on your instance. We never share
+            it again by email.
+        </p>
+    </t>
+
     <p>You can manage your instance from the
        <a t-attf-href="/my/instances/{{ object.id }}">customer portal</a>.</p>
     <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>

@@ -203,6 +203,155 @@ class SaasPortal(CustomerPortal):
         })
         return request.render('saas_website.portal_instance_detail', values)
 
+    # ==================== Hosting: Database Management ====================
+    # These routes proxy to the instance's own /jsonrpc using the stored
+    # admin master password (see saas.instance.hosting_db_*). The
+    # customer never sees the master password.
+
+    def _hosting_instance(self, instance_id, access_token=None):
+        """Return an authorized sudo() recordset for a hosting instance.
+
+        Raises a redirect-like response or AccessError when the request
+        is invalid. Callers handle ``AccessError`` / ``MissingError``.
+        """
+        instance = self._document_check_access(
+            'saas.instance', instance_id, access_token=access_token,
+        )
+        if not instance.is_hosting:
+            raise AccessError(_(
+                "Database management is only available for hosting instances."
+            ))
+        return instance
+
+    @http.route(
+        '/my/instances/<int:instance_id>/databases',
+        type='http', auth='user', website=True,
+    )
+    def portal_instance_databases(self, instance_id, access_token=None,
+                                  error=None, notice=None, **kw):
+        try:
+            instance = self._hosting_instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        databases = []
+        list_error = None
+        if instance.state == 'running':
+            try:
+                databases = instance.hosting_db_list()
+            except UserError as e:
+                list_error = str(e)
+        else:
+            list_error = _(
+                "Instance is %s — start it to manage databases."
+            ) % instance.state
+
+        values = self._prepare_portal_layout_values()
+        values.update({
+            'instance': instance,
+            'databases': databases,
+            'list_error': list_error,
+            'error': error,
+            'notice': notice,
+            'default_login': request.env.user.partner_id.email or 'admin',
+            'page_name': 'saas_instance_databases',
+        })
+        return request.render(
+            'saas_website.portal_instance_databases', values,
+        )
+
+    @http.route(
+        '/my/instances/<int:instance_id>/databases/create',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_instance_db_create(self, instance_id, access_token=None,
+                                  **post):
+        try:
+            instance = self._hosting_instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+        try:
+            name = instance.hosting_db_create(
+                name=post.get('name', ''),
+                login=post.get('login', ''),
+                password=post.get('password', ''),
+                lang=post.get('lang') or 'en_US',
+                country_code=post.get('country_code') or None,
+            )
+            notice = _("Database '%s' created.") % name
+            return request.redirect(
+                '/my/instances/%d/databases?notice=%s'
+                % (instance_id, url_quote(notice))
+            )
+        except UserError as e:
+            return request.redirect(
+                '/my/instances/%d/databases?error=%s'
+                % (instance_id, url_quote(str(e)))
+            )
+
+    @http.route(
+        '/my/instances/<int:instance_id>/databases/duplicate',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_instance_db_duplicate(self, instance_id, access_token=None,
+                                     **post):
+        try:
+            instance = self._hosting_instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+        try:
+            new_name = instance.hosting_db_duplicate(
+                source=post.get('source', ''),
+                new_name=post.get('new_name', ''),
+            )
+            notice = _("Database duplicated as '%s'.") % new_name
+            return request.redirect(
+                '/my/instances/%d/databases?notice=%s'
+                % (instance_id, url_quote(notice))
+            )
+        except UserError as e:
+            return request.redirect(
+                '/my/instances/%d/databases?error=%s'
+                % (instance_id, url_quote(str(e)))
+            )
+
+    @http.route(
+        '/my/instances/<int:instance_id>/databases/drop',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_instance_db_drop(self, instance_id, access_token=None,
+                                **post):
+        try:
+            instance = self._hosting_instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+        # Defensive: require the customer to retype the DB name to confirm.
+        # Without this an errant click could nuke a production DB.
+        name = (post.get('name') or '').strip()
+        confirm = (post.get('confirm') or '').strip()
+        if not name or name != confirm:
+            return request.redirect(
+                '/my/instances/%d/databases?error=%s'
+                % (instance_id, url_quote(_(
+                    "Type the database name exactly to confirm deletion."
+                )))
+            )
+        try:
+            dropped = instance.hosting_db_drop(name=name)
+            notice = _("Database '%s' deleted.") % dropped
+            return request.redirect(
+                '/my/instances/%d/databases?notice=%s'
+                % (instance_id, url_quote(notice))
+            )
+        except UserError as e:
+            return request.redirect(
+                '/my/instances/%d/databases?error=%s'
+                % (instance_id, url_quote(str(e)))
+            )
+
     # ==================== Deployment Status Polling ====================
 
     @http.route(
@@ -803,6 +952,163 @@ class SaasPortal(CustomerPortal):
 
         return request.redirect('/my/instances/%s' % instance_id)
 
+    # ==================== Backups: list + download ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/backups',
+        type='http', auth='user', website=True,
+    )
+    def portal_instance_backups(self, instance_id, access_token=None,
+                                error=None, notice=None, **kw):
+        try:
+            instance = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        # All non-deleted backups, newest first. We include ``running``
+        # so an on-demand backup the customer just kicked off shows up
+        # immediately as "running" and they know it's in flight.
+        backups = instance.backup_ids.filtered(
+            lambda b: b.state in ('done', 'running', 'failed')
+        ).sorted('create_date', reverse=True)
+
+        # Group by db_name. Legacy records (no db_name) fall under the
+        # subdomain so the table still reads naturally for service
+        # instances that pre-date the column.
+        grouped = {}
+        for b in backups:
+            key = b.db_name or instance.subdomain
+            grouped.setdefault(key, []).append(b)
+        # Sort group keys so the customer sees a deterministic order.
+        db_groups = sorted(grouped.items())
+
+        values = self._prepare_portal_layout_values()
+        values.update({
+            'instance': instance,
+            'db_groups': db_groups,
+            'error': error,
+            'notice': notice,
+            'retention_days': 7 if instance.is_hosting else None,
+            'page_name': 'saas_instance_backups',
+        })
+        return request.render(
+            'saas_website.portal_instance_backups', values,
+        )
+
+    @http.route(
+        '/my/instances/<int:instance_id>/backups/ondemand',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_backup_ondemand(self, instance_id, access_token=None, **post):
+        """Kick off an on-demand backup of one database.
+
+        Hosting-only by spec. Creates a ``saas.instance.backup`` row
+        with ``ephemeral=True`` and dispatches the upload to a thread;
+        the cleanup cron reaps the bucket object after 1 hour.
+        """
+        try:
+            instance = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        redirect = '/my/instances/%d/backups' % instance_id
+
+        if not instance.is_hosting:
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(_(
+                    "On-demand backups are available for hosting instances only."
+                )),
+            ))
+        if instance.state != 'running':
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(_(
+                    "Instance must be running to create a backup."
+                )),
+            ))
+
+        db_name = (post.get('db_name') or '').strip()
+        if not db_name:
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(_("Pick a database to back up.")),
+            ))
+
+        # Ensure the DB exists on the instance — protects against a
+        # crafted POST trying to dump an unrelated catalog DB.
+        try:
+            existing = {r['name'] for r in instance.hosting_db_list()}
+        except UserError as e:
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(str(e)),
+            ))
+        if db_name not in existing:
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(_(
+                    "Database '%s' does not exist on this instance."
+                ) % db_name),
+            ))
+
+        Backup = request.env['saas.instance.backup'].sudo()
+        now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        backup = Backup.create({
+            'instance_id': instance.id,
+            'db_name': db_name,
+            'name': 'ondemand_%s_%s' % (db_name, now_str),
+            'state': 'running',
+            'ephemeral': True,
+        })
+
+        from odoo.addons.saas_core.utils import run_in_background
+        run_in_background(
+            backup, '_run_portal_backup',
+            thread_name='saas_ondemand_%s_%s' % (instance.subdomain, db_name),
+        )
+
+        return request.redirect('%s?notice=%s' % (
+            redirect, url_quote(_(
+                "Backup of '%s' started. Refresh in a minute — a download "
+                "link valid for 1 hour will appear once ready."
+            ) % db_name),
+        ))
+
+    @http.route(
+        '/my/instances/<int:instance_id>/backups/<int:backup_id>/download',
+        type='http', auth='user', website=True,
+    )
+    def portal_backup_download(self, instance_id, backup_id,
+                               access_token=None, **kw):
+        try:
+            instance = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        backup = instance.backup_ids.filtered(
+            lambda b: b.id == backup_id and b.state == 'done'
+        )
+        if not backup:
+            return request.redirect(
+                '/my/instances/%d/backups?error=%s'
+                % (instance_id, url_quote(_("Backup not available.")))
+            )
+
+        try:
+            backup._refresh_download_url()
+        except Exception:
+            _logger.exception("Could not refresh download URL for backup %s",
+                              backup.id)
+        if not backup.download_url:
+            return request.redirect(
+                '/my/instances/%d/backups?error=%s'
+                % (instance_id, url_quote(_("Could not generate download link.")))
+            )
+        return werkzeug.utils.redirect(backup.download_url)
+
     # ==================== Restore Backup ====================
 
     @http.route(
@@ -818,14 +1124,42 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
+        # Submitter can ask to return to the backups page (the typical
+        # caller now) instead of the instance detail. Whitelist the
+        # values so this can't be turned into an open redirect.
+        return_to = kw.get('return_to')
+        if return_to == 'backups':
+            redirect_path = '/my/instances/%s/backups' % instance_id
+        else:
+            redirect_path = '/my/instances/%s' % instance_id
+
         if instance_sudo.state not in ('running', 'stopped'):
-            return request.redirect('/my/instances/%s' % instance_id)
+            return request.redirect('%s?error=%s' % (
+                redirect_path,
+                url_quote(_("Instance must be Running or Stopped to restore.")),
+            ))
 
         backup = instance_sudo.backup_ids.filtered(
             lambda b: b.id == backup_id and b.state == 'done'
         )
         if not backup:
-            return request.redirect('/my/instances/%s' % instance_id)
+            return request.redirect('%s?error=%s' % (
+                redirect_path, url_quote(_("Backup not available.")),
+            ))
+
+        # Defensive name retype — without this an errant click could
+        # nuke a production DB. Only enforced from the new backups page;
+        # the legacy form on the detail page submits without it.
+        if return_to == 'backups':
+            confirm = (kw.get('confirm') or '').strip()
+            expected = backup.db_name or instance_sudo.subdomain
+            if confirm != expected:
+                return request.redirect('%s?error=%s' % (
+                    redirect_path,
+                    url_quote(_(
+                        "Type the database name exactly to confirm restore."
+                    )),
+                ))
 
         try:
             instance_sudo.action_restore_backup(backup.id)
@@ -836,8 +1170,15 @@ class SaasPortal(CustomerPortal):
             # Reset state if it was changed before the error
             if instance_sudo.state == 'provisioning':
                 instance_sudo.state = 'running'
+            return request.redirect('%s?error=%s' % (
+                redirect_path,
+                url_quote(_("Restore failed — see instance logs.")),
+            ))
 
-        return request.redirect('/my/instances/%s' % instance_id)
+        return request.redirect('%s?notice=%s' % (
+            redirect_path,
+            url_quote(_("Restore started. Refresh in a moment.")),
+        ))
 
     # ==================== Log Stream Proxy (Hosting) ====================
 

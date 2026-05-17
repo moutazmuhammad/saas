@@ -11,4 +11,18 @@
         <field name="active">True</field>
     </record>
 
+    <!-- On-demand backups have a fixed 1-hour download window. After
+         that, the bucket object is reaped and the local record removed
+         so we don't accumulate orphans. 5-minute granularity is plenty:
+         worst case a customer's expired link survives 5 extra minutes. -->
+    <record id="ir_cron_saas_backup_ephemeral" model="ir.cron">
+        <field name="name">SaaS: Reap Expired On-Demand Backups</field>
+        <field name="model_id" ref="model_saas_instance_backup"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_cleanup_ephemeral_backups()</field>
+        <field name="interval_number">5</field>
+        <field name="interval_type">minutes</field>
+        <field name="active">True</field>
+    </record>
+
 </odoo>
