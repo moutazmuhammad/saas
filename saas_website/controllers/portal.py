@@ -1235,7 +1235,7 @@ class SaasPortal(CustomerPortal):
             'payment_methods_sudo': payment_methods_sudo,
             'tokens_sudo': tokens_sudo,
             'show_tokenize_input_mapping': PaymentPortal._compute_show_tokenize_input_mapping(
-                PaymentPortal, providers_sudo, logged_in=True,
+                providers_sudo
             ),
             'amount': invoice.amount_residual,
             'currency': invoice.currency_id,
