@@ -5882,23 +5882,32 @@ class SaasInstance(models.Model):
         self._pg_ensure_db_with_grants(name)
 
         with self.docker_server_id._get_ssh_connection() as ssh:
-            # Step 1 — bootstrap via the Odoo CLI run INSIDE the
-            # already-running container with ``docker compose exec``.
-            # Previously we used ``docker compose run --rm`` which
-            # spawned a SECOND container with the same memory limit —
-            # on a host where the running container is already using
-            # ~half its quota, doubling pushed the host over and the
-            # init process was OOM-killed mid-install. The killer
-            # signal got swallowed somewhere along the line and the
-            # outer command returned exit 0, fooling our check.
+            # Step 1 — stop the running container so its workers
+            # don't race the init.
             #
-            # ``exec`` shares the running container's namespace and
-            # memory pool, so init memory adds to the running process
-            # instead of duplicating it. We pass ``--workers=0`` and
-            # ``--no-http`` so the init process doesn't fight the
-            # parent for the HTTP port or fork workers.
+            # We tried two earlier approaches that both failed in
+            # production:
+            #
+            # * ``docker compose run --rm`` (sibling container): the
+            #   ephemeral init had the SAME memory limit as the
+            #   running one, doubling host RAM use and OOM-killing
+            #   the init at the ``web_tour`` install step.
+            #
+            # * ``docker compose exec`` (inside running container):
+            #   the running container's healthcheck and any /web/login
+            #   request would auto-select the in-flight DB the moment
+            #   we created it, load an empty registry, cache it, and
+            #   then deadlock with the init process on the
+            #   ``ir_module_module`` rows.
+            #
+            # Stopping the container for the duration of the init
+            # sidesteps both problems. Only this customer's instance
+            # is offline for ~1 minute; other customers on the same
+            # docker host are unaffected (separate containers).
+            self._hosting_db_pause_container(ssh, instance_path)
+
             init_cmd = (
-                'cd %s && docker compose exec -T odoo '
+                'cd %s && docker compose run --rm -T odoo '
                 'odoo -d %s '
                 '-i base '
                 '--without-demo=all '
@@ -5910,31 +5919,34 @@ class SaasInstance(models.Model):
                 shlex.quote(instance_path),
                 shlex.quote(name),
             )
-            exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=900)
-            init_output = (stdout or '') + (stderr or '')
+            try:
+                exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=900)
+                init_output = (stdout or '') + (stderr or '')
 
-            if exit_code != 0:
-                # Roll back the half-built DB so a retry can succeed
-                # cleanly. Best effort — if the cleanup itself fails we
-                # surface the original error.
-                self._hosting_db_rollback(ssh, name)
-                raise UserError(_(
-                    "Database init failed for '%s' (exit %s):\n\n%s"
-                ) % (name, exit_code, init_output[-8000:]))
+                if exit_code != 0:
+                    self._hosting_db_rollback(ssh, name)
+                    raise UserError(_(
+                        "Database init failed for '%s' (exit %s):\n\n%s"
+                    ) % (name, exit_code, init_output[-8000:]))
 
-            # Even when exit_code is 0, double-check the schema is
-            # actually live. If something fails late in module install
-            # (timeouts, broken dep, OOM) Odoo can exit cleanly with a
-            # half-built DB. The customer would then hit
-            # ``KeyError: 'ir.http'`` on first access. Verify here.
-            if not self._hosting_db_is_initialized(ssh, name):
-                self._hosting_db_rollback(ssh, name)
-                raise UserError(_(
-                    "Database '%s' was created but ``base`` did not "
-                    "finish installing — the init exited cleanly but "
-                    "left an incomplete schema. Last 8KB of init "
-                    "output:\n\n%s"
-                ) % (name, init_output[-8000:]))
+                # Even when exit_code is 0, double-check the schema is
+                # live. ``--stop-after-init`` is supposed to bail
+                # non-zero on a broken install, but OOM-kills and
+                # other process-level deaths slip past.
+                if not self._hosting_db_is_initialized(ssh, name):
+                    self._hosting_db_rollback(ssh, name)
+                    raise UserError(_(
+                        "Database '%s' was created but ``base`` did "
+                        "not finish installing — the init exited "
+                        "cleanly but left an incomplete schema. "
+                        "Last 8KB of init output:\n\n%s"
+                    ) % (name, init_output[-8000:]))
+            finally:
+                # Bring the customer's container back up no matter
+                # what — even if the init failed and we rolled back
+                # the DB. Otherwise the rest of their databases stay
+                # offline.
+                self._hosting_db_resume_container(ssh, instance_path)
 
             # Step 2 — set the admin user's credentials, language, and
             # (optionally) the company country. Done via the running
@@ -5983,6 +5995,45 @@ class SaasInstance(models.Model):
                     "could not be set:\n%s\n%s"
                 ) % (name, stdout[-1000:], stderr[-500:]))
         return name
+
+    def _hosting_db_pause_container(self, ssh, instance_path):
+        """Stop the customer's Odoo container so it doesn't race the
+        init we're about to run on a new database.
+
+        Why ``docker compose down`` rather than ``docker stop``: we
+        also want the container removed so the ephemeral
+        ``docker compose run --rm`` below can reuse the service slot
+        cleanly without name conflicts. The volumes are preserved
+        because we don't pass ``-v``.
+        """
+        self._append_log(
+            "Pausing instance container during DB init..."
+        )
+        ssh.execute(
+            'cd %s && docker compose down 2>&1'
+            % shlex.quote(instance_path),
+            timeout=120,
+        )
+
+    def _hosting_db_resume_container(self, ssh, instance_path):
+        """Bring the instance container back up after a DB init.
+
+        Best-effort: if this fails we log it but don't raise — the
+        operator can also bring it back manually. Raising here would
+        mask the original (init) failure from the caller.
+        """
+        self._append_log("Resuming instance container...")
+        ec, out, err = ssh.execute(
+            'cd %s && docker compose up -d 2>&1'
+            % shlex.quote(instance_path),
+            timeout=300,
+        )
+        if ec != 0:
+            self._append_log(
+                "WARNING: container resume returned exit %s — manual "
+                "intervention may be needed.\n%s"
+                % (ec, (err or out or '')[-1000:])
+            )
 
     def _hosting_db_is_initialized(self, ssh, name):
         """Return True iff ``base`` is fully installed in ``name``.
