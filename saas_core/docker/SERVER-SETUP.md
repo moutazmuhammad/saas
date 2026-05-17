@@ -59,6 +59,33 @@ ssh -i ~/.ssh/saas_deploy saas@your-server-ip "echo OK"
 
 ---
 
+## Step 1.5: Install restic (required for daily backups)
+
+The daily-backup feature uses [restic](https://restic.net/) to push
+incremental, deduplicated, encrypted snapshots to the same object
+store you've configured for backups (S3 / DO Spaces / GCS). Without
+restic on this host, `daily_backup_enabled=True` instances will fail
+the nightly cron with a clear "restic not installed" error.
+
+```bash
+# Debian 12+ / Ubuntu 22.04+: restic is in the repos
+sudo apt install -y restic
+
+# Verify
+restic version
+# expected: restic 0.16.x (or newer)
+```
+
+If your distro's restic is older than 0.16, pull a static binary
+from <https://github.com/restic/restic/releases> and drop it at
+`/usr/local/bin/restic` (chmod +x). The Odoo backup code only needs
+the `restic` binary on `$PATH`.
+
+**You do not need to set any restic env vars in the shell.** The
+SaaS Manager passes the repository URL, encryption password, and
+cloud credentials via environment on each invocation — they never
+sit on disk and never appear in `ps`.
+
 ## Step 2: Install Docker
 
 ### 2.1 Install Docker Engine

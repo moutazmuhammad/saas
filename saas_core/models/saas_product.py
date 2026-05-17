@@ -133,23 +133,30 @@ class SaasProduct(models.Model):
     # ========== Snapshot Helpers ==========
 
     def _get_storage_config(self):
-        """Return the snapshot cloud storage configuration from system parameters."""
+        """Return the cloud storage configuration for product snapshots.
+
+        Snapshots and backups always live in the same bucket — there's a
+        single Storage section in SaaS settings and the snapshot path is
+        just a different prefix inside it. We read the backup params
+        directly (no shadow ``saas_snapshot.*`` keys to keep in sync).
+        """
         ICP = self.env['ir.config_parameter'].sudo()
-        provider = ICP.get_param('saas_snapshot.provider', '')
-        bucket = ICP.get_param('saas_snapshot.bucket_name', '')
+        provider = ICP.get_param('saas_backup.provider', '')
+        bucket = ICP.get_param('saas_backup.bucket_name', '')
         if not provider or not bucket:
             raise UserError(_(
-                "Snapshot storage is not configured. Go to SaaS Manager > "
-                "Configuration > Settings and set the snapshot provider and bucket."
+                "Cloud storage is not configured. Go to SaaS Manager > "
+                "Configuration > Settings and set the storage provider "
+                "and bucket."
             ))
         return {
             'provider': provider,
             'bucket': bucket,
-            'access_key': ICP.get_param('saas_snapshot.access_key', ''),
-            'secret_key': ICP.get_param('saas_snapshot.secret_key', ''),
-            'region': ICP.get_param('saas_snapshot.region', ''),
-            'endpoint_url': ICP.get_param('saas_snapshot.endpoint', ''),
-            'gcs_credentials': ICP.get_param('saas_snapshot.service_account_key', ''),
+            'access_key': ICP.get_param('saas_backup.access_key', ''),
+            'secret_key': ICP.get_param('saas_backup.secret_key', ''),
+            'region': ICP.get_param('saas_backup.region', ''),
+            'endpoint_url': ICP.get_param('saas_backup.endpoint', ''),
+            'gcs_credentials': ICP.get_param('saas_backup.service_account_key', ''),
         }
 
     def _generate_snapshot_download_url(self):

@@ -952,7 +952,70 @@ class SaasPortal(CustomerPortal):
 
         return request.redirect('/my/instances/%s' % instance_id)
 
+    # ==================== Daily backup toggle ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/daily-backup/toggle',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_toggle_daily_backup(self, instance_id, access_token=None,
+                                   **post):
+        """Flip the daily-backup opt-in for a hosting instance.
+
+        The pricing change isn't reconciled to the in-flight subscription
+        in this MVP — the next invoice picks up the new state. Trial
+        instances can't enable backups.
+        """
+        try:
+            instance = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        if not instance.is_hosting:
+            return request.redirect('/my/instances/%d' % instance_id)
+        if instance.is_trial:
+            return request.redirect(
+                '/my/instances/%d/backups?error=%s'
+                % (instance_id, url_quote(_(
+                    "Daily backups are not available on trial plans."
+                )))
+            )
+
+        want_enabled = (post.get('enable') == '1')
+        instance.sudo().daily_backup_enabled = want_enabled
+        msg = (
+            _("Daily backups enabled. The next 03:00 UTC run will "
+              "create your first snapshot.")
+            if want_enabled else
+            _("Daily backups disabled. Existing snapshots remain "
+              "available until their 7-day retention expires.")
+        )
+        return request.redirect(
+            '/my/instances/%d/backups?notice=%s'
+            % (instance_id, url_quote(msg))
+        )
+
     # ==================== Backups: list + download ====================
+
+    def _active_ondemand_backup(self, instance):
+        """Return the in-flight on-demand backup for ``instance``, if any.
+
+        "Active" = either still running, or completed and not yet expired.
+        Only one such backup is allowed per instance at a time — gates
+        both ``Backup Now`` in the template and ``/backups/ondemand``
+        in the controller so a refresh-click can't race.
+        """
+        now = fields.Datetime.now()
+        return instance.backup_ids.filtered(lambda b: (
+            b.ephemeral
+            and (
+                b.state == 'running'
+                or (b.state == 'done' and (not b.expires_at or b.expires_at > now))
+            )
+        ))[:1]
 
     @http.route(
         '/my/instances/<int:instance_id>/backups',
@@ -974,20 +1037,39 @@ class SaasPortal(CustomerPortal):
             lambda b: b.state in ('done', 'running', 'failed')
         ).sorted('create_date', reverse=True)
 
-        # Group by db_name. Legacy records (no db_name) fall under the
-        # subdomain so the table still reads naturally for service
-        # instances that pre-date the column.
+        # Split full-instance backups (daily restore points) from
+        # per-DB backups (on-demand downloads). They render in
+        # different sections — different semantics: a full-instance
+        # row is a whole-system snapshot you Restore; a per-DB row is
+        # a download artifact.
+        full_instance_backups = [b for b in backups if b.is_full_instance]
+        per_db_backups = [b for b in backups if not b.is_full_instance]
+
+        # Group per-DB by db_name. Legacy records (no db_name) fall
+        # under the subdomain so the table still reads naturally for
+        # service instances that pre-date the column.
         grouped = {}
-        for b in backups:
+        for b in per_db_backups:
             key = b.db_name or instance.subdomain
             grouped.setdefault(key, []).append(b)
-        # Sort group keys so the customer sees a deterministic order.
+
+        # For hosting, also show empty groups for any current DBs so
+        # the customer can click "Backup Now" before they have history.
+        if instance.is_hosting and instance.state == 'running':
+            try:
+                for entry in instance.hosting_db_list():
+                    grouped.setdefault(entry['name'], [])
+            except Exception:
+                pass  # listing failure shouldn't break the page
+
         db_groups = sorted(grouped.items())
 
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance,
             'db_groups': db_groups,
+            'full_instance_backups': full_instance_backups,
+            'active_ondemand': self._active_ondemand_backup(instance),
             'error': error,
             'notice': notice,
             'retention_days': 7 if instance.is_hosting else None,
@@ -1052,6 +1134,31 @@ class SaasPortal(CustomerPortal):
                 ) % db_name),
             ))
 
+        # One on-demand backup at a time per instance. Forbid a new one
+        # while a previous backup is running, or done-but-not-yet-expired.
+        # The customer must download (which shrinks expires_at) or wait
+        # for the 8-hour fallback. Without this guard, a refresh-spam
+        # could fill the bucket with parallel dumps.
+        active = self._active_ondemand_backup(instance)
+        if active:
+            if active.state == 'running':
+                msg = _(
+                    "A backup of '%s' is still being prepared. Please wait."
+                ) % (active.db_name or instance.subdomain)
+            else:
+                expires_str = (
+                    active.expires_at.strftime('%H:%M UTC')
+                    if active.expires_at else _("soon")
+                )
+                msg = _(
+                    "You already have a backup of '%s' ready to download. "
+                    "Download it, or wait until %s for the link to expire "
+                    "before requesting another."
+                ) % (active.db_name or instance.subdomain, expires_str)
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(msg),
+            ))
+
         Backup = request.env['saas.instance.backup'].sudo()
         now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         backup = Backup.create({
@@ -1073,6 +1180,43 @@ class SaasPortal(CustomerPortal):
                 "Backup of '%s' started. Refresh in a minute — a download "
                 "link valid for 1 hour will appear once ready."
             ) % db_name),
+        ))
+
+    @http.route(
+        '/my/instances/<int:instance_id>/backups/<int:backup_id>/discard',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_backup_discard(self, instance_id, backup_id,
+                              access_token=None, **kw):
+        """Release the on-demand backup slot before the 8-hour timeout.
+
+        Only valid on the customer's own ephemeral backups. Sets
+        ``expires_at = now`` so the next 5-min cleanup cron deletes the
+        bucket object and the row; the customer can immediately request
+        a fresh one after that.
+        """
+        try:
+            instance = self._document_check_access(
+                'saas.instance', instance_id, access_token=access_token,
+            )
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+
+        backup = instance.backup_ids.filtered(
+            lambda b: b.id == backup_id and b.ephemeral
+        )
+        redirect = '/my/instances/%d/backups' % instance_id
+        if not backup:
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(_("Backup not found.")),
+            ))
+        backup.sudo().expires_at = fields.Datetime.now()
+        return request.redirect('%s?notice=%s' % (
+            redirect, url_quote(_(
+                "Backup discarded. The slot will open up within "
+                "a few minutes once cleanup runs."
+            )),
         ))
 
     @http.route(
@@ -1108,22 +1252,10 @@ class SaasPortal(CustomerPortal):
                 % (instance_id, url_quote(_("Could not generate download link.")))
             )
 
-        # For on-demand backups, shrink the lifetime on the click. The
-        # customer is in the act of downloading; once they have the
-        # file we want the bucket object gone. The 5-minute cleanup
-        # cron will reap it during the next sweep. We deliberately
-        # don't unlink synchronously — that would 404 a paused or
-        # resumed download.
-        if backup.ephemeral:
-            from odoo.addons.saas_core.models.saas_instance_backup import (
-                ONDEMAND_DOWNLOAD_GRACE,
-            )
-            new_expiry = fields.Datetime.now() + datetime.timedelta(
-                seconds=ONDEMAND_DOWNLOAD_GRACE,
-            )
-            if not backup.expires_at or backup.expires_at > new_expiry:
-                backup.sudo().expires_at = new_expiry
-
+        # NOTE: on-demand backups keep their full 8-hour window even
+        # after the customer downloads — protects them if the download
+        # was interrupted or the zip got corrupted. If they want the
+        # slot freed earlier, they can hit the Discard button.
         return werkzeug.utils.redirect(backup.download_url)
 
     # ==================== Restore Backup ====================
@@ -1179,7 +1311,10 @@ class SaasPortal(CustomerPortal):
                 ))
 
         try:
-            instance_sudo.action_restore_backup(backup.id)
+            if backup.is_full_instance:
+                instance_sudo.action_restore_full_instance(backup.id)
+            else:
+                instance_sudo.action_restore_backup(backup.id)
         except Exception:
             _logger.exception(
                 "Backup restore failed for instance %s", instance_sudo.name

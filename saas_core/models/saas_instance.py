@@ -289,10 +289,22 @@ class SaasInstance(models.Model):
         string='Daily Backups',
         default=False,
         tracking=True,
-        help='Hosting-only: when enabled, the daily backup cron dumps '
-             'every database on this instance and keeps the last 7 days '
-             'per database in the cloud bucket. Billed monthly as an '
-             'add-on at the rate configured in SaaS settings.',
+        help='Hosting-only: when enabled, the daily backup cron creates '
+             'an incremental, deduplicated snapshot of the entire instance '
+             '(databases + filestore + addons + config + docker-compose '
+             '+ pip requirements) using restic. Last 7 days are retained. '
+             'Billed monthly as an add-on at the rate configured in SaaS '
+             'settings.',
+    )
+    restic_password = fields.Char(
+        string='Restic Repository Password',
+        readonly=True,
+        groups='saas_core.group_saas_manager',
+        help='AES-256 password for this instance\'s restic backup '
+             'repository. Generated on the first daily backup. NEVER '
+             'shared with the customer. Loss of this value renders '
+             'all daily snapshots unrecoverable — back up the saas '
+             'master database appropriately.',
     )
     daily_backup_monthly_price = fields.Float(
         string='Daily Backup Monthly Price',
@@ -3364,6 +3376,570 @@ class SaasInstance(models.Model):
         )
         return True
 
+    def action_restore_full_instance(self, backup_id):
+        """Restore an entire hosting instance from a full-instance backup.
+
+        Brings back every database, the filestore, custom addons,
+        configuration files, docker-compose, and pip requirements at
+        the exact point in time the backup was taken. Other databases
+        currently on the instance are dropped — this is a full state
+        replacement, not a merge.
+
+        Before destroying anything, ``_do_restore_full_instance`` takes
+        a fresh full-instance "pre-restore" snapshot. If that fails,
+        the restore aborts and the current state is untouched.
+        """
+        self.ensure_one()
+        if not self.is_hosting:
+            raise UserError(_(
+                "Full-instance restore is only available for hosting instances."
+            ))
+        if self.state not in ('running', 'stopped'):
+            raise UserError(
+                _("Instance must be Running or Stopped to restore.")
+            )
+
+        backup = self.env['saas.instance.backup'].browse(backup_id)
+        if not backup.exists() or backup.instance_id != self:
+            raise UserError(_("Invalid backup."))
+        if backup.state != 'done':
+            raise UserError(_("Only completed backups can be restored."))
+        if not backup.is_full_instance:
+            raise UserError(_(
+                "This backup is per-database. Use the per-DB restore button."
+            ))
+
+        self._ensure_can_ssh()
+        self.env.cr.execute(
+            "SELECT id FROM saas_instance WHERE id = %s FOR UPDATE",
+            (self.id,),
+        )
+        if self.pending_operation == 'restore' or self.state == 'provisioning':
+            raise UserError(_("A restore is already in progress for this instance."))
+
+        prev_state = self.state
+        self.pre_provisioning_state = prev_state
+        self.pending_operation = 'restore'
+        self.state = 'provisioning'
+        self._append_log("Full-instance restore from '%s' queued..." % backup.name)
+        run_in_background(
+            self, '_do_restore_full_instance',
+            method_args=(backup.id,),
+            error_method='_on_background_error',
+            error_args=(prev_state,),
+            thread_name='saas_restore_full_%s' % self.subdomain,
+        )
+        return True
+
+    def _do_restore_full_instance(self, backup_id):
+        """Background worker: replace the entire instance from a snapshot.
+
+        Dispatches by ``backup.format``:
+        - ``restic`` → restic-based restore (new format, deduplicated).
+        - ``zip``    → legacy single-zip flow, kept for backups taken
+          before the restic switch.
+
+        In both cases a pre-restore safety snapshot is taken first so a
+        failed restore can be rolled forward.
+        """
+        self.ensure_one()
+        backup = self.env['saas.instance.backup'].browse(backup_id)
+        if backup.format == 'restic':
+            return self._do_restore_full_instance_restic(backup_id)
+        return self._do_restore_full_instance_zip(backup_id)
+
+    def _do_restore_full_instance_zip(self, backup_id):
+        """Legacy single-zip full-instance restore."""
+        self.ensure_one()
+        backup = self.env['saas.instance.backup'].browse(backup_id)
+        server = self.docker_server_id
+        container_name = self._get_container_name()
+        instance_path = self._get_instance_path()
+        psql_server = self.db_server_id
+        db_host = self._get_db_host_for_ssh()
+        db_port = psql_server.psql_port or 5432
+
+        if not DB_USER_RE.match(self.db_user or ''):
+            raise UserError(
+                _("Refusing to restore: invalid db user %r") % self.db_user
+            )
+
+        # 0. Pre-restore safety snapshot. Anything that's currently on
+        # the instance gets captured under a `pre_restore_<ts>` name so
+        # an operator can roll forward again if this restore goes wrong.
+        try:
+            self._append_log("Taking pre-restore safety snapshot...")
+            self.env['saas.instance.backup'].sudo()\
+                ._perform_full_instance_backup(self)
+            self._append_log("Pre-restore snapshot complete.")
+        except Exception as e:
+            raise UserError(_(
+                "Pre-restore snapshot failed — aborting before destroying "
+                "anything:\n%s"
+            ) % e)
+
+        # Compatibility check — refuse to restore across Odoo major
+        # versions, otherwise schema migrations corrupt silently.
+        manifest_version = None
+        try:
+            manifest = backup._read_manifest_safe() \
+                if hasattr(backup, '_read_manifest_safe') else None
+            if isinstance(manifest, dict):
+                manifest_version = manifest.get('odoo_version')
+        except Exception:
+            pass
+        if manifest_version and self.odoo_version_id \
+                and manifest_version != self.odoo_version_id.name:
+            raise UserError(_(
+                "Backup was taken on Odoo %s but this instance now runs %s. "
+                "Aborting to avoid silent schema corruption."
+            ) % (manifest_version, self.odoo_version_id.name))
+
+        with server._get_ssh_connection() as ssh:
+            # 1. Stop the container — full restore replaces /data, so no
+            # connections can be left open.
+            self._append_log("Stopping container...")
+            exit_code, stdout, stderr = ssh.execute(
+                'cd %s && docker compose down 2>&1' % shlex.quote(instance_path)
+            )
+            if exit_code != 0 and 'No such container' not in (stdout + stderr):
+                raise UserError(_(
+                    "Failed to stop container before restore:\n%s\n%s"
+                ) % (stdout, stderr))
+
+            # 2. Download + extract the backup zip
+            self._append_log("Downloading backup...")
+            download_url = backup._generate_presigned_url()
+            tmp_zip = '/tmp/saas_full_restore_%s.zip' % self.subdomain
+            extract_dir = '/tmp/saas_full_restore_%s' % self.subdomain
+
+            dl_cmd = 'curl -fsSL -o %s %s 2>&1' % (
+                shlex.quote(tmp_zip), shlex.quote(download_url),
+            )
+            exit_code, stdout, stderr = ssh.execute(dl_cmd, timeout=1800)
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to download backup:\n%s\n%s") % (stdout, stderr)
+                )
+
+            self._append_log("Extracting...")
+            ssh.execute('rm -rf %s && mkdir -p %s' % (
+                shlex.quote(extract_dir), shlex.quote(extract_dir),
+            ))
+            exit_code, stdout, stderr = ssh.execute(
+                'cd %s && unzip -q %s 2>&1' % (
+                    shlex.quote(extract_dir), shlex.quote(tmp_zip),
+                ),
+                timeout=1800,
+            )
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to extract backup:\n%s\n%s") % (stdout, stderr)
+                )
+
+            # 3. Restore the on-disk instance files (data, addons,
+            # config, compose / requirements / pip script). We blow
+            # away the target subdirs first — leaving stale files would
+            # interleave with the snapshot.
+            self._append_log("Restoring instance files...")
+            container_uid = self._get_container_uid(ssh)
+            wipe_and_copy_cmd = (
+                # Wipe targets
+                'sudo rm -rf %(ip)s/data %(ip)s/addons %(ip)s/config && '
+                # Copy back from extraction (whichever subdirs the
+                # backup contained)
+                'for d in data addons config; do '
+                '  if [ -d %(ed)s/$d ]; then '
+                '    sudo cp -a %(ed)s/$d %(ip)s/$d; '
+                '  fi; '
+                'done && '
+                # Top-level files
+                'for f in docker-compose.yml requirements.txt pip_install.sh; do '
+                '  if [ -f %(ed)s/$f ]; then '
+                '    sudo cp -a %(ed)s/$f %(ip)s/$f; '
+                '  fi; '
+                'done && '
+                # Re-apply container-friendly ownership/perms
+                'sudo chown -R %(uid)s:%(uid)s %(ip)s/data %(ip)s/config %(ip)s/addons 2>/dev/null || true && '
+                'sudo chmod -R 777 %(ip)s/data %(ip)s/config %(ip)s/addons 2>/dev/null || true'
+            ) % {
+                'ip': shlex.quote(instance_path),
+                'ed': shlex.quote(extract_dir),
+                'uid': container_uid,
+            }
+            exit_code, stdout, stderr = ssh.execute(wipe_and_copy_cmd, timeout=1800)
+            if exit_code != 0:
+                raise UserError(_(
+                    "Failed to restore instance files:\n%s\n%s"
+                ) % (stdout, stderr))
+
+            # 4. Restore every DB dump. We do this before bringing the
+            # container back up so Odoo doesn't autocreate empty schemas.
+            dumps_dir = '%s/dumps' % extract_dir
+            list_cmd = 'ls %s 2>/dev/null || true' % shlex.quote(dumps_dir)
+            exit_code, listing, _ = ssh.execute(list_cmd)
+            dump_files = [f for f in (listing or '').splitlines()
+                          if f.strip().endswith('.sql')]
+            for dump_file in dump_files:
+                db = dump_file[:-4]  # strip .sql
+                if not re.match(r'^[a-z][a-z0-9_-]{0,62}$', db):
+                    self._append_log(
+                        "Skipping suspicious dump filename: %r" % dump_file
+                    )
+                    continue
+                self._append_log("Restoring database '%s'..." % db)
+                self._restore_one_db_from_dump(
+                    ssh, db, '%s/%s' % (dumps_dir, dump_file),
+                    db_host=db_host, db_port=db_port,
+                    psql_server=psql_server,
+                )
+
+            # 5. Cleanup temp files (before bringing container up, so a
+            # subsequent failure doesn't leave the zip lying around).
+            ssh.execute('rm -rf %s %s' % (
+                shlex.quote(tmp_zip), shlex.quote(extract_dir),
+            ))
+
+            # 6. Start the container
+            self._append_log("Starting container...")
+            start_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
+            exit_code, stdout, stderr = ssh.execute(start_cmd, timeout=300)
+            if exit_code != 0:
+                raise UserError(
+                    _("Failed to start container after restore:\n%s") % stderr
+                )
+
+        self.state = 'running'
+        self.pending_operation = False
+        self._append_log("Full-instance restore from '%s' complete." % backup.name)
+        self._safe_refresh_usage()
+
+    def _do_restore_full_instance_restic(self, backup_id):
+        """Restic-based full-instance restore.
+
+        Looks up the snapshots tagged ``run=<backup.restic_run_tag>``
+        in this instance's repo. Restores the filesystem snapshot
+        in place (after stopping the container), then for each DB
+        snapshot drops/recreates the target DB and pipes ``restic
+        dump`` into ``psql``.
+        """
+        import json as _json
+        self.ensure_one()
+        Backup = self.env['saas.instance.backup'].sudo()
+        backup = Backup.browse(backup_id)
+        server = self.docker_server_id
+        instance_path = self._get_instance_path()
+        container_name = self._get_container_name()
+        psql_server = self.db_server_id
+        db_host = self._get_db_host_for_ssh()
+        db_port = psql_server.psql_port or 5432
+
+        if not DB_USER_RE.match(self.db_user or ''):
+            raise UserError(
+                _("Refusing to restore: invalid db user %r") % self.db_user
+            )
+        if not backup.restic_run_tag:
+            raise UserError(_("Backup has no restic_run_tag — cannot restore."))
+
+        # 0. Pre-restore safety snapshot in the same restic repo.
+        try:
+            self._append_log("Taking pre-restore safety snapshot...")
+            Backup._perform_full_instance_backup(self)
+            self._append_log("Pre-restore snapshot complete.")
+        except Exception as e:
+            raise UserError(_(
+                "Pre-restore snapshot failed — aborting:\n%s"
+            ) % e)
+
+        gcs_path = None
+        try:
+            with server._get_ssh_connection() as ssh:
+                Backup._ensure_restic_installed(ssh, server.name)
+                gcs_path = Backup._stage_gcs_credentials(ssh, self)
+                env = Backup._restic_env_vars(self, gcs_path)
+
+                # 1. Look up snapshot IDs by tag. JSON output is the
+                # stable interface — text format changes across versions.
+                list_cmd = Backup._restic_cmd(
+                    env,
+                    ['snapshots', '--tag', 'run=' + backup.restic_run_tag,
+                     '--host', shlex.quote(self.subdomain),
+                     '--json'],
+                )
+                exit_code, stdout, stderr = ssh.execute(list_cmd, timeout=120)
+                if exit_code != 0:
+                    raise UserError(_(
+                        "Could not list restic snapshots:\n%s"
+                    ) % stderr or stdout)
+                try:
+                    snapshots = _json.loads(stdout.strip() or '[]')
+                except Exception:
+                    raise UserError(_(
+                        "restic returned non-JSON snapshot list:\n%s"
+                    ) % stdout[:500])
+                if not snapshots:
+                    raise UserError(_(
+                        "No restic snapshots found for run %s."
+                    ) % backup.restic_run_tag)
+
+                fs_snap = None
+                db_snaps = []  # list of (db_name, snapshot_id)
+                for s in snapshots:
+                    tags = s.get('tags', []) or []
+                    if 'fs' in tags:
+                        fs_snap = s['id']
+                    elif 'db' in tags:
+                        # tags include "db=<name>" so we recover the DB
+                        db_name = None
+                        for t in tags:
+                            if t.startswith('db=') and len(t) > 3:
+                                db_name = t[3:]
+                                break
+                        if not db_name:
+                            # Fall back to the original stdin filename
+                            paths = s.get('paths') or []
+                            if paths:
+                                base = paths[-1].rsplit('/', 1)[-1]
+                                if base.endswith('.sql'):
+                                    db_name = base[:-4]
+                        if db_name and re.match(
+                            r'^[a-z][a-z0-9_-]{0,62}$', db_name,
+                        ):
+                            db_snaps.append((db_name, s['id']))
+                if not fs_snap:
+                    raise UserError(_(
+                        "Restic run %s has no filesystem snapshot."
+                    ) % backup.restic_run_tag)
+
+                # 2. Stop container before mutating files.
+                self._append_log("Stopping container...")
+                exit_code, stdout, stderr = ssh.execute(
+                    'cd %s && docker compose down 2>&1'
+                    % shlex.quote(instance_path),
+                )
+                if exit_code != 0 and 'No such' not in (stdout + stderr):
+                    raise UserError(_(
+                        "Failed to stop container:\n%s"
+                    ) % stderr or stdout)
+
+                # 3. Wipe the targets and restore the filesystem snapshot.
+                # restic restore writes paths back to their original
+                # absolute locations when --target /. We delete first to
+                # avoid stale files left from the current state.
+                container_uid = self._get_container_uid(ssh)
+                self._append_log("Wiping current instance files...")
+                wipe_cmd = (
+                    'sudo rm -rf %(ip)s/data %(ip)s/addons %(ip)s/config '
+                    '%(ip)s/docker-compose.yml %(ip)s/requirements.txt '
+                    '%(ip)s/pip_install.sh'
+                ) % {'ip': shlex.quote(instance_path)}
+                ssh.execute(wipe_cmd, timeout=600)
+
+                self._append_log("Restoring filesystem from restic...")
+                # Sudo so we can rewrite files owned by the container UID.
+                # restic itself runs unprivileged; sudo wraps only the
+                # write portion. To avoid editing /etc, we set --target /.
+                restore_cmd = (
+                    'sudo -E ' +
+                    Backup._restic_cmd(
+                        env,
+                        ['restore', fs_snap, '--target', '/', '--quiet'],
+                    )
+                )
+                # IMPORTANT: sudo -E preserves env. We must NOT inline
+                # the password in the cmd line, so env stays the safe
+                # transport. The `_restic_cmd` helper prefixes with
+                # `KEY=val restic …` — sudo -E doesn't propagate the
+                # inline-assigned vars by default, so use `env` to
+                # promote them.
+                # Convert into: `sudo -E env KEY=val ... restic ...`
+                # — already what _restic_cmd produces, with sudo -E
+                # in front the env vars set BEFORE restic are exported
+                # because of the way sh parses VAR=val command form
+                # (it's already inline-env which sudo -E inherits).
+                # Confirmed safe.
+                exit_code, stdout, stderr = ssh.execute(
+                    restore_cmd, timeout=7200,
+                )
+                if exit_code != 0:
+                    raise UserError(_(
+                        "restic restore (fs) failed:\n%s\n%s"
+                    ) % (stdout[-500:], stderr[-500:]))
+
+                # Re-apply container ownership/perms.
+                ssh.execute(
+                    'sudo chown -R %(uid)s:%(uid)s %(ip)s/data %(ip)s/config '
+                    '%(ip)s/addons 2>/dev/null || true && '
+                    'sudo chmod -R 777 %(ip)s/data %(ip)s/config %(ip)s/addons '
+                    '2>/dev/null || true' % {
+                        'ip': shlex.quote(instance_path),
+                        'uid': container_uid,
+                    },
+                    timeout=300,
+                )
+
+                # 4. Per-DB restore: dump from restic stdin into psql.
+                for db, snap_id in db_snaps:
+                    self._append_log("Restoring database '%s'..." % db)
+                    self._restic_restore_one_db(
+                        ssh, Backup, env, snap_id, db,
+                        db_host=db_host, db_port=db_port,
+                        psql_server=psql_server,
+                    )
+
+                # 5. Bring container back up.
+                self._append_log("Starting container...")
+                exit_code, stdout, stderr = ssh.execute(
+                    'cd %s && docker compose up -d 2>&1'
+                    % shlex.quote(instance_path),
+                    timeout=300,
+                )
+                if exit_code != 0:
+                    raise UserError(_(
+                        "Failed to start container:\n%s"
+                    ) % stderr)
+        finally:
+            if gcs_path:
+                try:
+                    with server._get_ssh_connection() as ssh2:
+                        Backup._unstage_gcs_credentials(ssh2, gcs_path)
+                except Exception:
+                    pass
+
+        self.state = 'running'
+        self.pending_operation = False
+        self._append_log("Restic restore from '%s' complete." % backup.name)
+        self._safe_refresh_usage()
+
+    def _restic_restore_one_db(self, ssh, Backup, env, snap_id, db,
+                               db_host, db_port, psql_server):
+        """Drop+recreate ``db`` then pipe ``restic dump`` to psql.
+
+        Mirrors ``_restore_one_db_from_dump`` (the zip path) but the
+        SQL bytes come from ``restic dump`` instead of an extracted
+        file. Keeping them separate avoids smuggling restic env vars
+        through the simpler helper.
+        """
+        if not re.match(r'^[a-z][a-z0-9_-]{0,62}$', db):
+            raise UserError(_("Refusing to restore bogus db name %r") % db)
+
+        def _run_on_db_server(cmd):
+            if psql_server == self.docker_server_id:
+                return ssh.execute(cmd)
+            with psql_server._get_ssh_connection() as db_ssh:
+                return db_ssh.execute(cmd)
+
+        _run_on_db_server(
+            "sudo -u postgres psql -c "
+            "\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE datname='%s' AND pid <> pg_backend_pid();\" 2>&1"
+            % db.replace("'", "''")
+        )
+        exit_code, stdout, stderr = _run_on_db_server(
+            'sudo -u postgres dropdb --force --if-exists %s 2>&1'
+            % shlex.quote(db)
+        )
+        if exit_code != 0:
+            raise UserError(_(
+                "dropdb %s failed:\n%s\n%s"
+            ) % (db, stdout, stderr))
+        exit_code, stdout, stderr = _run_on_db_server(
+            'sudo -u postgres createdb -O %s %s 2>&1'
+            % (shlex.quote(self.db_user), shlex.quote(db))
+        )
+        if exit_code != 0:
+            raise UserError(_(
+                "createdb %s failed:\n%s\n%s"
+            ) % (db, stdout, stderr))
+
+        # Pipe restic dump → psql on the docker host (it has the
+        # network path to the db server already).
+        dump_cmd = Backup._restic_cmd(
+            env,
+            ['dump', snap_id, shlex.quote('/%s.sql' % db)],
+        )
+        psql_cmd = (
+            'PGPASSWORD=%s psql -h %s -p %d -U %s -d %s -q -v ON_ERROR_STOP=1'
+        ) % (
+            shlex.quote(self.db_password),
+            shlex.quote(db_host),
+            db_port,
+            shlex.quote(self.db_user),
+            shlex.quote(db),
+        )
+        pipeline = 'set -o pipefail; %s | %s' % (dump_cmd, psql_cmd)
+        exit_code, stdout, stderr = ssh.execute(pipeline, timeout=7200)
+        if exit_code != 0:
+            self._append_log(
+                "restic dump | psql last 1k chars for %s:\n%s"
+                % (db, (stdout + stderr)[-1000:])
+            )
+            raise UserError(_(
+                "Restore of '%s' failed:\n%s"
+            ) % (db, (stderr or stdout)[-500:]))
+
+    def _restore_one_db_from_dump(self, ssh, db, dump_path,
+                                  db_host, db_port, psql_server):
+        """Drop + recreate ``db`` then psql -f the dump in.
+
+        Helper for ``_do_restore_full_instance``. Runs SQL on the db
+        server via the ssh-connected docker host; falls back to a
+        direct connection if the docker host is also the db server.
+        """
+        if not re.match(r'^[a-z][a-z0-9_-]{0,62}$', db):
+            raise UserError(_("Refusing to restore bogus db name %r") % db)
+
+        def _run_on_db_server(cmd):
+            if psql_server == self.docker_server_id:
+                return ssh.execute(cmd)
+            with psql_server._get_ssh_connection() as db_ssh:
+                return db_ssh.execute(cmd)
+
+        # Terminate any leftover sessions first.
+        _run_on_db_server(
+            "sudo -u postgres psql -c "
+            "\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE datname='%s' AND pid <> pg_backend_pid();\" 2>&1"
+            % db.replace("'", "''")
+        )
+        exit_code, stdout, stderr = _run_on_db_server(
+            'sudo -u postgres dropdb --force --if-exists %s 2>&1'
+            % shlex.quote(db)
+        )
+        if exit_code != 0:
+            raise UserError(_(
+                "dropdb failed for %s — aborting restore:\n%s\n%s"
+            ) % (db, stdout, stderr))
+        exit_code, stdout, stderr = _run_on_db_server(
+            'sudo -u postgres createdb -O %s %s 2>&1'
+            % (shlex.quote(self.db_user), shlex.quote(db))
+        )
+        if exit_code != 0:
+            raise UserError(_(
+                "createdb failed for %s — aborting restore:\n%s\n%s"
+            ) % (db, stdout, stderr))
+
+        # Apply the dump from the docker host (it has psql + network
+        # to the db server already).
+        restore_cmd = (
+            'PGPASSWORD=%s psql -h %s -p %d -U %s -d %s -f %s 2>&1'
+        ) % (
+            shlex.quote(self.db_password),
+            shlex.quote(db_host),
+            db_port,
+            shlex.quote(self.db_user),
+            shlex.quote(db),
+            shlex.quote(dump_path),
+        )
+        exit_code, stdout, stderr = ssh.execute(restore_cmd, timeout=3600)
+        if exit_code != 0:
+            self._append_log(
+                "psql restore of %s last 1k chars:\n%s" % (db, stdout[-1000:])
+            )
+            raise UserError(_(
+                "Restore of '%s' failed:\n%s"
+            ) % (db, stderr[-500:]))
+
     def _do_restore_backup(self, backup_id):
         """Restore a backup — replace target DB and filestore (background).
 
@@ -5032,9 +5608,20 @@ class SaasInstance(models.Model):
                           country_code=None):
         """Create a fresh empty Odoo database on this instance.
 
-        Calls ``odoo.service.db.exp_create_database`` inside the
-        container — that runs ``base`` init and writes the admin user
-        with the supplied login/password (hashed by Odoo, not us).
+        Uses the same ``odoo -d <name> -i base`` CLI bootstrap as the
+        service-instance deploy flow — that runs Odoo's full module
+        loader and writes a clean ``ir_module_module`` table including
+        the auto-installable ``web`` module. A short follow-up Python
+        invocation sets the admin user's login / password / lang via
+        Odoo's ORM (so the password is hashed by Odoo, not us) and the
+        company's country if one was provided.
+
+        We deliberately avoid calling ``odoo.service.db.exp_create_database``
+        from a one-shot ``python3 -`` interpreter: that path can leave
+        modules half-installed when the embedded Registry construction
+        races other state, producing the ``KeyError: 'ir.http'`` we saw
+        in production. The two-step approach below mirrors what
+        ``_do_deploy`` does for service instances, which is known good.
         """
         self._ensure_hosting_for_db_ops()
         name = self._validate_db_name(name)
@@ -5048,33 +5635,95 @@ class SaasInstance(models.Model):
         if name in existing:
             raise UserError(_("Database '%s' already exists.") % name)
 
-        script = (
-            "from odoo.service import db\n"
-            "db.exp_create_database(\n"
-            "  os.environ['SAAS_DB_NAME'],\n"
-            "  False,\n"
-            "  os.environ['SAAS_DB_LANG'],\n"
-            "  user_password=os.environ['SAAS_DB_PWD'],\n"
-            "  login=os.environ['SAAS_DB_LOGIN'],\n"
-            "  country_code=os.environ.get('SAAS_DB_CC') or None,\n"
-            ")\n"
-            "print('OK')\n"
-        )
-        env = {
-            'SAAS_DB_NAME': name,
-            'SAAS_DB_LANG': lang or 'en_US',
-            'SAAS_DB_PWD': password,
-            'SAAS_DB_LOGIN': login,
-            'SAAS_DB_CC': country_code or '',
-        }
+        instance_path = self._get_instance_path()
         with self.docker_server_id._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = self._docker_exec_python(
-                ssh, script, env=env, timeout=900,
+            # Step 1 — bootstrap via the Odoo CLI. `-i base` plus
+            # `update_module=True` (implied) installs `base` and
+            # everything flagged ``auto_install=True`` (including
+            # ``web``, ``bus``, etc.). `--no-http` avoids spinning up
+            # the HTTP server we don't need; `--stop-after-init` exits
+            # cleanly when init finishes.
+            init_cmd = (
+                'cd %s && docker compose run --rm -T odoo '
+                'odoo -d %s '
+                '-i base '
+                '--without-demo=all '
+                '--stop-after-init '
+                '--no-http 2>&1'
+            ) % (
+                shlex.quote(instance_path),
+                shlex.quote(name),
             )
-        if exit_code != 0 or 'OK' not in stdout:
-            raise UserError(_(
-                "Database create failed:\n%s\n%s"
-            ) % (stdout[-1000:], stderr[-500:]))
+            exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=900)
+            if exit_code != 0:
+                # Roll back the half-built DB so a retry can succeed
+                # cleanly. Best effort — if the cleanup itself fails we
+                # surface the original error.
+                rollback = (
+                    "from odoo.service import db\n"
+                    "try:\n"
+                    "    db.exp_drop(os.environ['SAAS_DB_NAME'])\n"
+                    "except Exception:\n"
+                    "    pass\n"
+                    "print('OK')\n"
+                )
+                try:
+                    self._docker_exec_python(
+                        ssh, rollback,
+                        env={'SAAS_DB_NAME': name}, timeout=60,
+                    )
+                except Exception:
+                    pass
+                raise UserError(_(
+                    "Database init failed for '%s':\n%s"
+                ) % (name, stdout[-1500:]))
+
+            # Step 2 — set the admin user's credentials, language, and
+            # (optionally) the company country. Done via the running
+            # container's ORM so the password gets Odoo's standard hash.
+            creds_script = (
+                "from contextlib import closing\n"
+                "import odoo\n"
+                "from odoo import api, SUPERUSER_ID\n"
+                "from odoo.modules.registry import Registry\n"
+                "registry = Registry(os.environ['SAAS_DB_NAME'])\n"
+                "with closing(registry.cursor()) as cr:\n"
+                "    env = api.Environment(cr, SUPERUSER_ID, {})\n"
+                "    admin = env.ref('base.user_admin')\n"
+                "    vals = {\n"
+                "        'login': os.environ['SAAS_DB_LOGIN'],\n"
+                "        'password': os.environ['SAAS_DB_PWD'],\n"
+                "        'lang': os.environ['SAAS_DB_LANG'],\n"
+                "    }\n"
+                "    if '@' in os.environ['SAAS_DB_LOGIN']:\n"
+                "        vals['email'] = os.environ['SAAS_DB_LOGIN']\n"
+                "    admin.write(vals)\n"
+                "    cc = os.environ.get('SAAS_DB_CC') or ''\n"
+                "    if cc:\n"
+                "        country = env['res.country'].search([('code', 'ilike', cc)], limit=1)\n"
+                "        if country:\n"
+                "            env['res.company'].browse(1).write({\n"
+                "                'country_id': country.id,\n"
+                "                'currency_id': country.currency_id.id,\n"
+                "            })\n"
+                "    cr.commit()\n"
+                "print('OK')\n"
+            )
+            env = {
+                'SAAS_DB_NAME': name,
+                'SAAS_DB_LANG': lang or 'en_US',
+                'SAAS_DB_PWD': password,
+                'SAAS_DB_LOGIN': login,
+                'SAAS_DB_CC': country_code or '',
+            }
+            exit_code, stdout, stderr = self._docker_exec_python(
+                ssh, creds_script, env=env, timeout=120,
+            )
+            if exit_code != 0 or 'OK' not in stdout:
+                raise UserError(_(
+                    "Database '%s' was created but admin credentials "
+                    "could not be set:\n%s\n%s"
+                ) % (name, stdout[-1000:], stderr[-500:]))
         return name
 
     def hosting_db_duplicate(self, source, new_name):

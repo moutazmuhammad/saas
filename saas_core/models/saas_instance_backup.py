@@ -1,6 +1,7 @@
 import datetime
 import logging
 import shlex
+import time
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
@@ -57,13 +58,42 @@ class SaasInstanceBackup(models.Model):
     ephemeral = fields.Boolean(
         string='On-Demand', default=False, index=True,
         help='True for on-demand backups requested by the customer. '
-             'The bucket object is deleted automatically after the '
-             '1-hour download window via the ephemeral-cleanup cron.',
+             'The bucket object is deleted automatically 8 hours after '
+             'creation via the ephemeral-cleanup cron.',
     )
     expires_at = fields.Datetime(
         string='Auto-Delete At', index=True,
         help='When this on-demand backup is reaped from the bucket. '
              'Only set on ephemeral backups.',
+    )
+    is_full_instance = fields.Boolean(
+        string='Full Instance', default=False, index=True,
+        help='Hosting daily backups: a complete instance snapshot — '
+             'every database dump, the filestore, custom addons, '
+             'configuration files, docker-compose, and pip requirements. '
+             'Restorable as a single unit.',
+    )
+    format = fields.Selection(
+        [('zip', 'Zip (legacy)'), ('restic', 'Restic (deduplicated)')],
+        string='Backup Format', default='zip', index=True,
+        help='Storage format. New daily full-instance backups use '
+             'restic for incremental deduplication and per-instance '
+             'encryption; on-demand and pre-restic legacy backups '
+             'remain in single-zip format.',
+    )
+    restic_run_tag = fields.Char(
+        string='Restic Run Tag', index=True,
+        help='ISO-8601 timestamp used as the restic ``run`` tag '
+             'binding together all snapshots from one backup run '
+             '(one per database + one for the filesystem). Set only '
+             'on ``format=restic`` rows.',
+    )
+    restic_db_names = fields.Char(
+        string='Restic DB Snapshots',
+        help='Comma-separated list of databases included in this '
+             'restic run, used at restore time to enumerate which '
+             'per-DB snapshots to fetch by tag. Set only on '
+             '``format=restic`` rows.',
     )
 
     def _refresh_download_url(self):
@@ -598,6 +628,577 @@ fi
         return size_bytes
 
     # ------------------------------------------------------------------
+    # Restic plumbing — daily snapshots are stored in a per-instance,
+    # password-encrypted, deduplicated repository in the same object
+    # store we already use for zip backups. We never embed credentials
+    # in shell args (they leak via `ps`); everything goes via env.
+    # ------------------------------------------------------------------
+    @api.model
+    def _restic_repository_url(self, instance):
+        """Build the ``RESTIC_REPOSITORY`` URL for an instance.
+
+        Layout:  restic/<partner>/<subdomain>  inside the configured
+        backup bucket. Provider-specific URL prefix.
+        """
+        cfg = self._get_backup_config()
+        partner = instance.partner_id
+        partner_folder = '%s_%s' % (
+            partner.id, self._sanitize_name(partner.name),
+        ) if partner else 'no_partner'
+        path = 'restic/%s/%s' % (partner_folder, instance.subdomain)
+
+        if cfg['provider'] == 'gcs':
+            return 'gs:%s:%s' % (cfg['bucket'], path)
+
+        # S3 / S3-compatible (AWS / DO Spaces / MinIO / etc.). restic
+        # accepts s3:<host>/<bucket>/<path>. For AWS-region setups
+        # we synthesize the regional endpoint; otherwise rely on the
+        # admin-provided endpoint.
+        endpoint = cfg.get('endpoint')
+        if not endpoint and cfg['provider'] == 'aws':
+            region = cfg.get('region') or 'us-east-1'
+            endpoint = 'https://s3.%s.amazonaws.com' % region
+        elif not endpoint and cfg['provider'] == 'digitalocean':
+            region = cfg.get('region') or 'nyc3'
+            endpoint = 'https://%s.digitaloceanspaces.com' % region
+        endpoint = (endpoint or '').rstrip('/')
+        # strip scheme — restic expects s3:host/bucket/path
+        host = endpoint.split('://', 1)[-1] if endpoint else 's3.amazonaws.com'
+        return 's3:%s/%s/%s' % (host, cfg['bucket'], path)
+
+    @api.model
+    def _ensure_restic_password(self, instance):
+        """Lazy-generate the per-instance restic password.
+
+        Called once on the first backup. Stored on
+        ``saas.instance.restic_password`` with manager-only ACL.
+        """
+        if instance.sudo().restic_password:
+            return instance.sudo().restic_password
+        import secrets as _secrets
+        pwd = _secrets.token_urlsafe(48)
+        instance.sudo().restic_password = pwd
+        return pwd
+
+    @api.model
+    def _restic_env_vars(self, instance, gcs_credentials_path=None):
+        """Env vars to expose restic to its repository.
+
+        On GCS, the caller must first stage the service-account JSON
+        to a path on the docker host (``gcs_credentials_path``) and
+        pass it in — restic reads it via ``GOOGLE_APPLICATION_CREDENTIALS``.
+        """
+        cfg = self._get_backup_config()
+        env = {
+            'RESTIC_REPOSITORY': self._restic_repository_url(instance),
+            'RESTIC_PASSWORD': self._ensure_restic_password(instance),
+        }
+        if cfg['provider'] == 'gcs':
+            # Cloud Storage project id env is optional; restic
+            # picks up the project from the SA JSON. Keep it out.
+            if gcs_credentials_path:
+                env['GOOGLE_APPLICATION_CREDENTIALS'] = gcs_credentials_path
+        else:
+            env['AWS_ACCESS_KEY_ID'] = cfg.get('access_key') or ''
+            env['AWS_SECRET_ACCESS_KEY'] = cfg.get('secret_key') or ''
+            if cfg.get('region'):
+                env['AWS_DEFAULT_REGION'] = cfg['region']
+        return env
+
+    @api.model
+    def _stage_gcs_credentials(self, ssh, instance):
+        """Write the GCS service-account JSON to a temp file on the
+        docker host so restic can pick it up via env. Returns the path,
+        or ``None`` if not applicable. Caller MUST clean up via
+        ``_unstage_gcs_credentials``.
+        """
+        cfg = self._get_backup_config()
+        if cfg['provider'] != 'gcs':
+            return None
+        ICP = self.env['ir.config_parameter'].sudo()
+        sa_key = ICP.get_param('saas_backup.service_account_key', '')
+        if not sa_key:
+            raise UserError(_("GCS provider selected but no service-account JSON configured."))
+        path = '/tmp/saas_restic_gcs_%s_%d.json' % (
+            instance.subdomain, int(time.time()),
+        )
+        ssh.write_file(path, sa_key)
+        ssh.execute('chmod 600 %s' % shlex.quote(path))
+        return path
+
+    @api.model
+    def _unstage_gcs_credentials(self, ssh, path):
+        if path:
+            try:
+                ssh.execute('rm -f %s' % shlex.quote(path))
+            except Exception:
+                _logger.warning("Failed to clean up GCS creds at %s", path)
+
+    @api.model
+    def _ensure_restic_installed(self, ssh, docker_server_name=''):
+        """Verify restic is present on the docker host. Raises UserError
+        with an install hint if absent."""
+        exit_code, stdout, stderr = ssh.execute(
+            'command -v restic >/dev/null 2>&1 && restic version 2>&1 || echo MISSING'
+        )
+        if 'MISSING' in (stdout or '') or exit_code != 0:
+            raise UserError(_(
+                "restic is not installed on docker host %s. "
+                "Install it with `sudo apt-get install -y restic` "
+                "(Debian 12+/Ubuntu 22.04+) or grab the static binary "
+                "from https://github.com/restic/restic/releases and "
+                "place it on $PATH. See saas_core/docker/SERVER-SETUP.md."
+            ) % (docker_server_name or 'this server'))
+
+    @api.model
+    def _restic_cmd(self, env_vars, args, stdin_pipeline=None):
+        """Build a shell command that runs ``restic <args>`` with
+        env_vars exported (NOT inline-quoted on the command line, so
+        passwords don't show up in `ps`).
+        """
+        # `env -` clears the environment then sets ours; we then run
+        # restic. Using env vars from a heredoc-style assignment is
+        # safer than embedding the password in the command line.
+        exports = ' '.join(
+            '%s=%s' % (k, shlex.quote(v or ''))
+            for k, v in env_vars.items()
+        )
+        cmd = '%s restic %s' % (exports, ' '.join(args))
+        if stdin_pipeline:
+            cmd = '%s | %s' % (stdin_pipeline, cmd)
+        return cmd
+
+    # ------------------------------------------------------------------
+    # Full-instance backup (hosting daily) — bundle DBs + filestore +
+    # addons + config + docker-compose + pip into a single restore zip.
+    # ------------------------------------------------------------------
+    def _create_full_instance_backup(self, instance, object_key):
+        """Zip the entire instance directory + every DB dump, upload it.
+
+        Layout inside the zip:
+            manifest.json
+            dumps/<db>.sql           — one per database owned by the role
+            data/                    — the instance's data dir (filestore +
+                                       Odoo data); sessions/ pruned.
+            addons/                  — customer addons + cloned repos
+            config/                  — odoo.conf and friends
+            docker-compose.yml
+            requirements.txt
+            pip_install.sh           — if present
+
+        Returns the zip size in bytes. Raises UserError on failure.
+        """
+        instance._ensure_can_ssh()
+        docker_server = instance.docker_server_id
+        container_name = instance._get_container_name()
+        instance_path = instance._get_instance_path()
+        db_server = instance.db_server_id
+        db_host = instance._get_db_host()
+        db_port = db_server.psql_port or 5432
+        ts = fields.Datetime.now().strftime('%Y%m%d%H%M%S')
+        tmp_dir = '/tmp/saas_full_%s_%s' % (instance.subdomain, ts)
+        zip_path = '%s.zip' % tmp_dir
+        script_path = '/tmp/saas_full_script_%s_%s.sh' % (
+            instance.subdomain, ts,
+        )
+
+        # Enumerate the databases owned by this instance's role. We do
+        # this from the saas master (not the bash script) so a failure
+        # surfaces as a clean UserError before the SSH session even
+        # starts the dump.
+        try:
+            db_names = [r['name'] for r in instance.hosting_db_list()]
+        except Exception as e:
+            raise UserError(
+                _("Could not list databases on instance %s: %s")
+                % (instance.name, e)
+            )
+
+        import json
+        manifest = json.dumps({
+            'backup_type': 'full_instance',
+            'odoo_version': instance.odoo_version_id.name or '',
+            'docker_image': instance.odoo_version_id._get_docker_image()
+                if hasattr(instance.odoo_version_id, '_get_docker_image')
+                else '',
+            'subdomain': instance.subdomain,
+            'domain': instance.domain_id.name or '',
+            'partner': instance.partner_id.name or '',
+            'partner_id': instance.partner_id.id,
+            'timestamp': fields.Datetime.now().isoformat(),
+            'databases': db_names,
+            'instance': instance.name or '',
+            'pip_packages': instance.pip_packages or '',
+            'plan': instance.plan_id.name or '',
+            'workers': (instance.plan_id.workers or 0)
+                if instance.plan_id else 0,
+            'storage_limit': (instance.plan_id.storage_limit or 0)
+                if instance.plan_id else 0,
+        }, indent=2)
+
+        try:
+            presigned_put_url = self._generate_presigned_put_url(object_key)
+        except Exception:
+            presigned_put_url = None
+
+        env_vars = {
+            'SAAS_TMP_DIR': tmp_dir,
+            'SAAS_ZIP_PATH': zip_path,
+            'SAAS_INSTANCE_PATH': instance_path,
+            'SAAS_CONTAINER': container_name,
+            'SAAS_DB_HOST': db_host,
+            'SAAS_DB_PORT': str(db_port),
+            'SAAS_DB_USER': instance.db_user,
+            'SAAS_DB_PASS': instance.db_password,
+            # newline-separated, no shell injection because we read it
+            # back through `mapfile -t` (no word splitting / no eval).
+            'SAAS_DB_NAMES': '\n'.join(db_names),
+        }
+        if presigned_put_url:
+            env_vars['SAAS_UPLOAD_URL'] = presigned_put_url
+
+        env_prefix = ' '.join(
+            '%s=%s' % (k, shlex.quote(v)) for k, v in env_vars.items()
+        )
+
+        if presigned_put_url:
+            upload_step = (
+                'if curl -f -X PUT -H "Content-Type: application/zip" '
+                '--data-binary "@$SAAS_ZIP_PATH" "$SAAS_UPLOAD_URL"; then\n'
+                '    UPLOAD_OK=0\n'
+                'else\n'
+                '    UPLOAD_OK=1\n'
+                'fi\n'
+            )
+        else:
+            upload_step = 'UPLOAD_OK=1\n'
+
+        script = r"""#!/bin/bash
+set -e
+
+mkdir -p "$SAAS_TMP_DIR"
+mkdir -p "$SAAS_TMP_DIR/dumps"
+
+# 1) pg_dump every database owned by the instance role
+mapfile -t DBS <<< "$SAAS_DB_NAMES"
+for db in "${DBS[@]}"; do
+    [ -z "$db" ] && continue
+    echo "Dumping $db..." >&2
+    docker exec -e PGPASSWORD="$SAAS_DB_PASS" "$SAAS_CONTAINER" pg_dump \
+        -h "$SAAS_DB_HOST" -p "$SAAS_DB_PORT" -U "$SAAS_DB_USER" \
+        -d "$db" --no-owner > "$SAAS_TMP_DIR/dumps/$db.sql" 2>>/tmp/saas_pgdump_err_$$
+    if [ ! -s "$SAAS_TMP_DIR/dumps/$db.sql" ]; then
+        # container pg_dump failed; try from the host (if present)
+        if command -v pg_dump >/dev/null 2>&1; then
+            PGPASSWORD="$SAAS_DB_PASS" pg_dump \
+                -h "$SAAS_DB_HOST" -p "$SAAS_DB_PORT" -U "$SAAS_DB_USER" \
+                -d "$db" --no-owner > "$SAAS_TMP_DIR/dumps/$db.sql" 2>&1
+        fi
+    fi
+    if [ ! -s "$SAAS_TMP_DIR/dumps/$db.sql" ]; then
+        echo "ERROR: pg_dump produced empty file for $db" >&2
+        cat /tmp/saas_pgdump_err_$$ 2>/dev/null >&2 || true
+        rm -f /tmp/saas_pgdump_err_$$
+        exit 1
+    fi
+done
+rm -f /tmp/saas_pgdump_err_$$
+
+# 2) Copy instance directory contents — addons, config, docker-compose,
+#    requirements, pip script. Use a manifest exclude file so we skip
+#    transient noise (logs, lock files) but keep everything else.
+echo "Copying instance files..." >&2
+if [ -d "$SAAS_INSTANCE_PATH/addons" ]; then
+    cp -a "$SAAS_INSTANCE_PATH/addons" "$SAAS_TMP_DIR/addons"
+fi
+if [ -d "$SAAS_INSTANCE_PATH/config" ]; then
+    cp -a "$SAAS_INSTANCE_PATH/config" "$SAAS_TMP_DIR/config"
+fi
+for f in docker-compose.yml requirements.txt pip_install.sh; do
+    if [ -f "$SAAS_INSTANCE_PATH/$f" ]; then
+        cp -a "$SAAS_INSTANCE_PATH/$f" "$SAAS_TMP_DIR/$f"
+    fi
+done
+
+# 3) Filestore + data dir. Exclude session files — they're regenerated
+#    on next login and can be huge. Also exclude __pycache__/.
+if [ -d "$SAAS_INSTANCE_PATH/data" ]; then
+    echo "Copying data/filestore (skip sessions)..." >&2
+    mkdir -p "$SAAS_TMP_DIR/data"
+    # rsync if available, otherwise a tar pipe.
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a \
+            --exclude='sessions' \
+            --exclude='__pycache__' \
+            "$SAAS_INSTANCE_PATH/data/" "$SAAS_TMP_DIR/data/"
+    else
+        ( cd "$SAAS_INSTANCE_PATH" \
+          && tar --exclude='sessions' --exclude='__pycache__' -cf - data ) \
+        | ( cd "$SAAS_TMP_DIR" && tar -xf - )
+    fi
+fi
+
+# 4) Manifest
+cat > "$SAAS_TMP_DIR/manifest.json" << 'MANIFEST_EOF'
+%s
+MANIFEST_EOF
+
+# 5) Zip the whole thing
+echo "Zipping..." >&2
+cd "$SAAS_TMP_DIR"
+zip -rq "$SAAS_ZIP_PATH" .
+
+# Cleanup workdir (keep zip)
+rm -rf "$SAAS_TMP_DIR"
+
+%s
+
+# Output zip size on stdout so the caller can record it.
+stat -c %%s "$SAAS_ZIP_PATH" 2>/dev/null \
+    || stat -f %%z "$SAAS_ZIP_PATH" 2>/dev/null \
+    || echo 0
+
+if [ "${UPLOAD_OK:-1}" = "0" ]; then
+    rm -f "$SAAS_ZIP_PATH"
+fi
+""" % (manifest, upload_step)
+
+        with docker_server._get_ssh_connection() as ssh:
+            ssh.write_file(script_path, script)
+            ssh.execute('chmod +x %s' % shlex.quote(script_path))
+
+            # Generous timeout — full-instance dumps can take many
+            # minutes on a 10 GB filestore.
+            exit_code, stdout, stderr = ssh.execute(
+                '%s bash %s' % (env_prefix, shlex.quote(script_path)),
+                timeout=3600,
+            )
+
+            ssh.execute('rm -f %s' % shlex.quote(script_path))
+
+            if exit_code != 0:
+                ssh.execute('rm -f %s' % shlex.quote(zip_path))
+                raise UserError(
+                    _("Full-instance backup failed on %s:\n%s")
+                    % (docker_server.name, stderr or stdout)
+                )
+
+            size_bytes = 0
+            for line in stdout.strip().splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    size_bytes = int(line)
+
+            # SFTP fallback if presigned PUT didn't fly
+            check_code, _, _ = ssh.execute(
+                'test -f %s' % shlex.quote(zip_path)
+            )
+            if check_code == 0:
+                try:
+                    zip_data = ssh.read_file_bytes(zip_path)
+                    size_bytes = len(zip_data)
+                finally:
+                    ssh.execute('rm -f %s' % shlex.quote(zip_path))
+                if not zip_data:
+                    raise UserError(_("Full-instance backup produced empty file."))
+                self._upload_to_bucket(object_key, zip_data)
+
+        return size_bytes
+
+    def _perform_full_instance_backup(self, instance):
+        """Create a restic-based full-instance snapshot.
+
+        Each backup run produces N+1 restic snapshots (N = number of
+        databases on the instance, +1 for the filesystem) all tagged
+        ``run=<iso-ts>``. The local ``saas.instance.backup`` row holds
+        the run tag, the list of DB snapshot names, and total size
+        info from ``restic stats`` for display.
+
+        Retention is handled by ``restic forget --keep-daily 7 --prune``
+        after a successful run.
+        """
+        instance._ensure_can_ssh()
+        docker_server = instance.docker_server_id
+        container_name = instance._get_container_name()
+        instance_path = instance._get_instance_path()
+        db_server = instance.db_server_id
+        db_host = instance._get_db_host()
+        db_port = db_server.psql_port or 5432
+
+        now = fields.Datetime.now()
+        run_tag = now.strftime('%Y%m%dT%H%M%SZ')
+        backup_name = 'full_%s' % run_tag
+
+        # Enumerate databases up-front so a clean failure surfaces
+        # before we touch restic.
+        try:
+            db_names = [r['name'] for r in instance.hosting_db_list()]
+        except Exception as e:
+            raise UserError(
+                _("Could not list databases on %s: %s") % (instance.name, e)
+            )
+
+        backup = self.create({
+            'instance_id': instance.id,
+            'name': backup_name,
+            'is_full_instance': True,
+            'format': 'restic',
+            'restic_run_tag': run_tag,
+            'restic_db_names': ','.join(db_names),
+            'state': 'running',
+        })
+
+        gcs_path = None
+        try:
+            with docker_server._get_ssh_connection() as ssh:
+                self._ensure_restic_installed(ssh, docker_server.name)
+
+                gcs_path = self._stage_gcs_credentials(ssh, instance)
+                env_vars = self._restic_env_vars(instance, gcs_path)
+
+                # 1) Init repo (idempotent — restic init fails if it
+                # already exists; we swallow that specific case).
+                init_cmd = self._restic_cmd(
+                    env_vars, ['init', '--quiet'],
+                )
+                exit_code, stdout, stderr = ssh.execute(
+                    init_cmd, timeout=180,
+                )
+                already_exists = (
+                    'already initialized' in (stdout + stderr).lower()
+                    or 'config file already exists' in (stdout + stderr).lower()
+                )
+                if exit_code != 0 and not already_exists:
+                    raise UserError(_(
+                        "restic init failed:\n%s\n%s"
+                    ) % (stdout, stderr))
+
+                # 2) Per-DB pg_dump → restic backup --stdin
+                for db in db_names:
+                    pg_dump = (
+                        'docker exec -e PGPASSWORD=%s %s pg_dump '
+                        '-h %s -p %d -U %s -d %s --no-owner'
+                    ) % (
+                        shlex.quote(instance.db_password),
+                        shlex.quote(container_name),
+                        shlex.quote(db_host),
+                        db_port,
+                        shlex.quote(instance.db_user),
+                        shlex.quote(db),
+                    )
+                    backup_cmd = self._restic_cmd(
+                        env_vars,
+                        [
+                            'backup', '--stdin',
+                            '--stdin-filename', shlex.quote('%s.sql' % db),
+                            '--tag', 'db', '--tag', 'run=' + run_tag,
+                            '--tag', 'db=' + db,
+                            '--host', shlex.quote(instance.subdomain),
+                            '--quiet',
+                        ],
+                        stdin_pipeline='set -o pipefail; ' + pg_dump,
+                    )
+                    exit_code, stdout, stderr = ssh.execute(
+                        backup_cmd, timeout=3600,
+                    )
+                    if exit_code != 0:
+                        raise UserError(_(
+                            "restic backup of database '%s' failed:\n%s\n%s"
+                        ) % (db, stdout[-500:], stderr[-500:]))
+
+                # 3) Filesystem snapshot — data/addons/config/compose/
+                # requirements/pip script in a single restic run.
+                paths = []
+                for p in ('data', 'addons', 'config',
+                          'docker-compose.yml', 'requirements.txt',
+                          'pip_install.sh'):
+                    full = '%s/%s' % (instance_path, p)
+                    paths.append(shlex.quote(full))
+                fs_cmd = self._restic_cmd(
+                    env_vars,
+                    [
+                        'backup', *paths,
+                        '--tag', 'fs', '--tag', 'run=' + run_tag,
+                        '--host', shlex.quote(instance.subdomain),
+                        '--exclude', shlex.quote('**/sessions'),
+                        '--exclude', shlex.quote('**/__pycache__'),
+                        '--quiet',
+                    ],
+                )
+                # `restic backup` returns 3 for partial errors (e.g.
+                # transient permission denied on a file). 0 = clean.
+                exit_code, stdout, stderr = ssh.execute(
+                    fs_cmd, timeout=7200,
+                )
+                if exit_code not in (0, 3):
+                    raise UserError(_(
+                        "restic backup of filesystem failed:\n%s\n%s"
+                    ) % (stdout[-500:], stderr[-500:]))
+                if exit_code == 3:
+                    _logger.warning(
+                        "restic backup of fs for %s had partial errors; "
+                        "snapshot still created", instance.name,
+                    )
+
+                # 4) Retention: keep last 7 daily runs, prune.
+                # Group by host so we don't accidentally trim across
+                # instances if a repo gets reused.
+                forget_cmd = self._restic_cmd(
+                    env_vars,
+                    [
+                        'forget', '--prune',
+                        '--keep-daily', '7',
+                        '--group-by', 'host,tags',
+                        '--quiet',
+                    ],
+                )
+                # Forget is best-effort. Failing here shouldn't fail
+                # the backup as a whole — surface but continue.
+                ec, fout, ferr = ssh.execute(forget_cmd, timeout=600)
+                if ec != 0:
+                    _logger.warning(
+                        "restic forget for %s exit=%s out=%s err=%s",
+                        instance.name, ec, fout[-200:], ferr[-200:],
+                    )
+
+                # 5) Stats — read the repo size for display. Optional;
+                # if it fails we just skip size_mb.
+                size_mb = False
+                stats_cmd = self._restic_cmd(
+                    env_vars,
+                    ['stats', '--mode', 'raw-data', '--json',
+                     '--tag', 'run=' + run_tag],
+                )
+                ec, sout, _serr = ssh.execute(stats_cmd, timeout=120)
+                if ec == 0:
+                    try:
+                        import json as _json
+                        stats = _json.loads(sout.strip().splitlines()[-1])
+                        size_mb = round(
+                            stats.get('total_size', 0) / (1024 * 1024), 2,
+                        )
+                    except Exception:
+                        pass
+
+            backup.write({
+                'state': 'done',
+                'size_mb': size_mb or 0.0,
+            })
+        except Exception as e:
+            backup.write({
+                'state': 'failed',
+                'error_message': str(e),
+            })
+            raise
+        finally:
+            if gcs_path:
+                try:
+                    with docker_server._get_ssh_connection() as ssh2:
+                        self._unstage_gcs_credentials(ssh2, gcs_path)
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------------
     # Cron entry point
     # ------------------------------------------------------------------
     @api.model
@@ -621,30 +1222,40 @@ fi
                 if instance.is_hosting:
                     if not instance.daily_backup_enabled:
                         continue
+                    # One full-instance snapshot per night, not per DB —
+                    # so restoring is a single atomic action that brings
+                    # back every database, the filestore, custom code,
+                    # config and Docker layout together.
                     try:
-                        dbs = [r['name'] for r in instance.hosting_db_list()]
+                        self._perform_full_instance_backup_in_new_cursor(
+                            instance.id,
+                        )
                     except Exception as e:
                         _logger.error(
-                            "Backup: could not list DBs for hosting %s: %s",
+                            "Full-instance backup failed for %s: %s",
                             instance.name, e,
                         )
-                        continue
-                    for db_name in dbs:
-                        try:
-                            self._perform_backup_in_new_cursor(
-                                instance.id, db_name=db_name,
-                            )
-                        except Exception as e:
-                            _logger.error(
-                                "Backup failed for %s/%s: %s",
-                                instance.name, db_name, e,
-                            )
                 else:
                     self._perform_backup_in_new_cursor(instance.id)
             except Exception as e:
                 _logger.error("Backup failed for instance %s: %s", instance.name, e)
 
         self._cleanup_old_backups()
+
+    def _perform_full_instance_backup_in_new_cursor(self, instance_id):
+        """Run a full-instance backup in a separate cursor."""
+        new_cr = self.pool.cursor()
+        try:
+            new_env = api.Environment(new_cr, self.env.uid, self.env.context)
+            new_env['saas.instance.backup']._perform_full_instance_backup(
+                new_env['saas.instance'].browse(instance_id),
+            )
+            new_cr.commit()
+        except Exception:
+            new_cr.rollback()
+            raise
+        finally:
+            new_cr.close()
 
     def _perform_backup_in_new_cursor(self, instance_id, db_name=None):
         """Run a single backup in a separate cursor to isolate transactions."""

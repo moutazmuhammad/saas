@@ -690,7 +690,9 @@
                                                     <div class="mt-1">
                                                         <span class="me-3"><i class="fas fa-cogs me-1"></i><t t-esc="instance.scheduled_plan_id.workers"/> Workers</span>
                                                         <span class="me-3"><i class="fas fa-hdd me-1"></i><t t-esc="int(instance.scheduled_plan_id.storage_limit)"/>GB Storage</span>
-                                                        <span><i class="fas fa-shield-alt me-1"></i><t t-esc="instance.scheduled_plan_id.max_backups"/> Backups</span>
+                                                        <t t-if="not is_hosting">
+                                                            <span><i class="fas fa-shield-alt me-1"></i><t t-esc="instance.scheduled_plan_id.max_backups"/> Backups</span>
+                                                        </t>
                                                     </div>
                                                 </div>
                                             </div>
@@ -933,9 +935,19 @@
                                 <div class="d-flex justify-content-between align-items-center mb-3">
                                     <h5 class="mb-0">Backups</h5>
                                     <div class="d-flex align-items-center gap-3">
-                                        <span class="text-muted small">
-                                            <t t-esc="len(backups)"/> / <t t-esc="instance.plan_id.max_backups"/> used
-                                        </span>
+                                        <!-- Service: plan.max_backups is the cap.
+                                             Hosting: no plan-level cap (daily uses 7-day
+                                             rolling retention; on-demand is ephemeral). -->
+                                        <t t-if="not is_hosting">
+                                            <span class="text-muted small">
+                                                <t t-esc="len(backups)"/> / <t t-esc="instance.plan_id.max_backups"/> used
+                                            </span>
+                                        </t>
+                                        <t t-elif="instance.daily_backup_enabled">
+                                            <span class="text-muted small">
+                                                Daily backups · 7-day retention
+                                            </span>
+                                        </t>
                                         <t t-set="backup_running" t-value="any(b.state == 'running' for b in backups)"/>
                                         <t t-if="not instance.is_trial and instance.state == 'running' and not backup_running">
                                             <button class="btn btn-sm btn-primary"
@@ -1199,7 +1211,20 @@
                                 <ul class="plan-specs mb-0">
                                     <li><i class="fas fa-cogs"></i><t t-esc="instance.plan_id.workers"/> Workers</li>
                                     <li><i class="fas fa-hdd"></i><t t-esc="int(instance.plan_id.storage_limit)"/>GB Storage</li>
-                                    <li><i class="fas fa-shield-alt"></i><t t-esc="instance.plan_id.max_backups"/> Backups</li>
+                                    <!-- Hosting: daily backups are opt-in with fixed 7-day
+                                         retention; the legacy plan.max_backups is meaningless.
+                                         Service plans still show the cap as before. -->
+                                    <t t-if="is_hosting">
+                                        <t t-if="instance.daily_backup_enabled">
+                                            <li><i class="fas fa-shield-alt"></i>Daily backups · 7-day retention</li>
+                                        </t>
+                                        <t t-else="">
+                                            <li><i class="fas fa-shield-alt"></i>On-demand backups</li>
+                                        </t>
+                                    </t>
+                                    <t t-else="">
+                                        <li><i class="fas fa-shield-alt"></i><t t-esc="instance.plan_id.max_backups"/> Backups</li>
+                                    </t>
                                 </ul>
 
                                 <t t-if="not instance.is_trial and instance.next_invoice_date">
@@ -1865,8 +1890,10 @@
                                     </t>
                                     <span class="mx-2">|</span>
                                     <t t-esc="current_plan.workers"/> Workers
-                                    <span class="mx-1">·</span>
-                                    <t t-esc="current_plan.max_backups"/> Backups
+                                    <t t-if="not instance.is_hosting">
+                                        <span class="mx-1">·</span>
+                                        <t t-esc="current_plan.max_backups"/> Backups
+                                    </t>
                                 </div>
                             </div>
                             <t t-if="instance.next_invoice_date">
@@ -2312,16 +2339,36 @@
                                 <p class="text-muted mb-0">
                                     <i class="fas fa-info-circle me-1"></i>
                                     <t t-if="instance.daily_backup_enabled">
-                                        Daily backups are enabled. Each database keeps the last
-                                        <t t-esc="retention_days"/> days.
+                                        Daily full-instance snapshots are enabled. Restore points are kept for
+                                        <t t-esc="retention_days"/> days. Cron fires at 03:00 UTC.
                                     </t>
                                     <t t-else="">
-                                        Daily backups are <strong>not enabled</strong>.
-                                        Only on-demand backups (Phase 5) will appear here.
+                                        Daily snapshots are <strong>off</strong>.
+                                        Only on-demand backups will appear here.
                                     </t>
                                 </p>
                             </t>
                         </div>
+                        <!-- Daily-backup toggle (hosting only, non-trial) -->
+                        <t t-if="instance.is_hosting and not instance.is_trial">
+                            <form t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
+                                  method="POST" class="ms-3">
+                                <input type="hidden" name="csrf_token"
+                                       t-att-value="request.csrf_token()"/>
+                                <input type="hidden" name="enable"
+                                       t-att-value="'0' if instance.daily_backup_enabled else '1'"/>
+                                <t t-if="instance.daily_backup_enabled">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm">
+                                        <i class="fas fa-toggle-on me-1"></i>Disable Daily Backups
+                                    </button>
+                                </t>
+                                <t t-else="">
+                                    <button type="submit" class="btn btn-success btn-sm">
+                                        <i class="fas fa-toggle-off me-1"></i>Enable Daily Backups
+                                    </button>
+                                </t>
+                            </form>
+                        </t>
                     </div>
 
                     <t t-if="error">
@@ -2337,7 +2384,195 @@
                         </div>
                     </t>
 
-                    <t t-if="not db_groups">
+                    <!-- One-at-a-time guard banner. Either we're still
+                         preparing the dump, or the customer has a
+                         download ready but hasn't grabbed it yet. -->
+                    <t t-if="active_ondemand">
+                        <div class="alert-banner alert-warning mb-3">
+                            <i class="fas fa-clock"></i>
+                            <div>
+                                <t t-if="active_ondemand.state == 'running'">
+                                    <strong>Backup of '<t t-esc="active_ondemand.db_name"/>' in progress.</strong>
+                                    Refresh in a moment — only one on-demand backup is allowed at a time.
+                                </t>
+                                <t t-else="">
+                                    <strong>A backup of '<t t-esc="active_ondemand.db_name"/>' is ready.</strong>
+                                    The link stays live for the full 8-hour window
+                                    <t t-if="active_ondemand.expires_at">
+                                        (expires at <t t-esc="active_ondemand.expires_at.strftime('%H:%M UTC')"/>)
+                                    </t>
+                                    so a failed download can be retried. Only one on-demand
+                                    backup is allowed at a time — discard this one if you
+                                    need to request a fresh dump immediately.
+                                    <div class="mt-2">
+                                        <a t-attf-href="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/download"
+                                           class="btn btn-sm btn-primary me-1">
+                                            <i class="fas fa-download me-1"></i>Download
+                                        </a>
+                                        <form t-attf-action="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/discard"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token"
+                                                   t-att-value="request.csrf_token()"/>
+                                            <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                                    t-attf-data-confirm="'This deletes the current on-demand backup so you can request a new one. Continue?'">
+                                                <i class="fas fa-trash me-1"></i>Discard
+                                            </button>
+                                        </form>
+                                    </div>
+                                </t>
+                            </div>
+                        </div>
+                    </t>
+
+                    <!-- ===== Daily full-instance restore points ===== -->
+                    <t t-if="full_instance_backups">
+                        <div class="info-card mb-3">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-server me-2" style="color:var(--co-text-muted);"></i>
+                                    Daily Restore Points
+                                    <span class="badge ms-2"
+                                          style="background:var(--bg-elevated);color:var(--text-secondary);font-size:0.7rem;">
+                                        <t t-esc="len(full_instance_backups)"/> snapshots
+                                    </span>
+                                </h5>
+                                <small class="text-muted">7-day rolling retention</small>
+                            </div>
+                            <p class="small text-muted mb-3">
+                                Each snapshot captures every database, the filestore, custom addons,
+                                Odoo configuration, Docker layout and pip requirements — stored as
+                                a deduplicated, encrypted restic repository. Restoring rolls the
+                                entire instance back to that point in time. A safety snapshot of
+                                the current state is taken automatically before any restore.
+                                <br/>
+                                <em>
+                                    Restore points are not directly downloadable. If you need a
+                                    portable copy of a database, use <strong>Backup Now</strong>
+                                    below to take an on-demand dump.
+                                </em>
+                            </p>
+                            <table class="table align-middle mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Size</th>
+                                        <th>Status</th>
+                                        <th class="text-end">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <t t-foreach="full_instance_backups" t-as="b">
+                                        <tr>
+                                            <td>
+                                                <t t-esc="b.create_date.strftime('%Y-%m-%d %H:%M') if b.create_date else ''"/>
+                                            </td>
+                                            <td>
+                                                <t t-if="b.size_mb">
+                                                    <t t-esc="'%.1f MB' % b.size_mb"/>
+                                                </t>
+                                                <t t-else="">—</t>
+                                            </td>
+                                            <td>
+                                                <t t-if="b.state == 'done'">
+                                                    <span class="badge bg-success">Done</span>
+                                                </t>
+                                                <t t-elif="b.state == 'running'">
+                                                    <span class="badge bg-info">
+                                                        <i class="fas fa-spinner fa-spin me-1"></i>Running
+                                                    </span>
+                                                </t>
+                                                <t t-elif="b.state == 'failed'">
+                                                    <span class="badge bg-danger"
+                                                          t-att-title="b.error_message">Failed</span>
+                                                </t>
+                                                <t t-else="">
+                                                    <span class="badge bg-secondary" t-esc="b.state"/>
+                                                </t>
+                                            </td>
+                                            <td class="text-end">
+                                                <t t-if="b.state == 'done'">
+                                                    <!-- Restic snapshots aren't single files,
+                                                         so we only expose Restore. Zip legacy
+                                                         rows keep Download until they age out. -->
+                                                    <t t-if="b.format == 'zip'">
+                                                        <a t-attf-href="/my/instances/#{instance.id}/backups/#{b.id}/download"
+                                                           class="btn btn-sm btn-outline-primary">
+                                                            <i class="fas fa-download me-1"></i>Download
+                                                        </a>
+                                                    </t>
+                                                    <button type="button"
+                                                            class="btn btn-sm btn-outline-warning"
+                                                            data-bs-toggle="modal"
+                                                            t-attf-data-bs-target="#bRestoreModal-#{b.id}">
+                                                        <i class="fas fa-undo me-1"></i>Restore
+                                                    </button>
+                                                </t>
+                                            </td>
+                                        </tr>
+                                    </t>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Confirmation modal — full-instance restores need the
+                             customer to retype the subdomain (the destruction is
+                             wider than a per-DB restore). -->
+                        <t t-foreach="full_instance_backups" t-as="b">
+                            <t t-if="b.state == 'done'">
+                                <div class="modal fade"
+                                     t-attf-id="bRestoreModal-#{b.id}"
+                                     tabindex="-1" aria-hidden="true">
+                                    <div class="modal-dialog">
+                                        <form class="modal-content"
+                                              t-attf-action="/my/instances/#{instance.id}/backup/#{b.id}/restore"
+                                              method="POST">
+                                            <input type="hidden" name="csrf_token"
+                                                   t-att-value="request.csrf_token()"/>
+                                            <input type="hidden" name="return_to" value="backups"/>
+                                            <div class="modal-header">
+                                                <h5 class="modal-title text-warning">
+                                                    Restore entire instance from
+                                                    <t t-esc="b.create_date.strftime('%Y-%m-%d %H:%M') if b.create_date else b.name"/>
+                                                </h5>
+                                                <button type="button" class="btn-close"
+                                                        data-bs-dismiss="modal"></button>
+                                            </div>
+                                            <div class="modal-body">
+                                                <p>
+                                                    This will <strong>replace</strong> every
+                                                    database, the filestore, custom code, and
+                                                    Docker configuration on
+                                                    <code t-esc="instance.subdomain"/> with
+                                                    the snapshot from
+                                                    <t t-esc="b.create_date.strftime('%Y-%m-%d %H:%M') if b.create_date else ''"/>.
+                                                </p>
+                                                <p class="small text-muted">
+                                                    A safety snapshot of the current state is
+                                                    taken before the restore. The container
+                                                    will be unavailable for several minutes.
+                                                </p>
+                                                <p>To confirm, retype the subdomain
+                                                    <code t-esc="instance.subdomain"/>:</p>
+                                                <input type="text" name="confirm"
+                                                       class="form-control"
+                                                       required="required"
+                                                       autocomplete="off"/>
+                                            </div>
+                                            <div class="modal-footer">
+                                                <button type="button" class="btn btn-secondary"
+                                                        data-bs-dismiss="modal">Cancel</button>
+                                                <button type="submit" class="btn btn-warning">
+                                                    <i class="fas fa-undo me-1"></i>Restore Instance
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </t>
+                        </t>
+                    </t>
+
+                    <t t-if="not db_groups and not full_instance_backups">
                         <div class="info-card text-center py-5">
                             <i class="fas fa-archive" style="font-size:2rem;color:var(--co-text-muted);"></i>
                             <p class="mt-3 mb-0" style="color:var(--co-text-muted);">
@@ -2360,15 +2595,28 @@
                                     </span>
                                 </h5>
                                 <t t-if="instance.is_hosting and instance.state == 'running'">
-                                    <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
-                                          method="POST" class="d-inline">
-                                        <input type="hidden" name="csrf_token"
-                                               t-att-value="request.csrf_token()"/>
-                                        <input type="hidden" name="db_name" t-att-value="db_name"/>
-                                        <button type="submit" class="btn btn-sm btn-primary">
+                                    <t t-if="active_ondemand">
+                                        <button type="button" class="btn btn-sm btn-secondary"
+                                                disabled="disabled"
+                                                t-att-title="
+                                                    'Backup of ' + active_ondemand.db_name + ' '
+                                                    + ('is running' if active_ondemand.state == 'running'
+                                                       else 'is waiting for download')
+                                                ">
                                             <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
                                         </button>
-                                    </form>
+                                    </t>
+                                    <t t-else="">
+                                        <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token"
+                                                   t-att-value="request.csrf_token()"/>
+                                            <input type="hidden" name="db_name" t-att-value="db_name"/>
+                                            <button type="submit" class="btn btn-sm btn-primary">
+                                                <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
+                                            </button>
+                                        </form>
+                                    </t>
                                 </t>
                             </div>
                             <table class="table align-middle mb-0">
