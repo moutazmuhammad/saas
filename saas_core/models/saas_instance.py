@@ -1333,6 +1333,71 @@ class SaasInstance(models.Model):
                     % (db_name, stderr)
                 )
 
+            # PG 15+ dropped the default `GRANT ALL ON SCHEMA public TO
+            # PUBLIC`, so owning the database isn't enough — we have to
+            # explicitly hand the public schema to our role or Odoo's
+            # init blows up creating `base_registry_signaling`.
+            self._pg_grant_public_schema(ssh, db_name, db_user)
+
+    def _pg_grant_public_schema(self, ssh, db_name, db_user):
+        """Give ``db_user`` full control of ``public`` in ``db_name``.
+
+        Always run as ``postgres`` superuser because only the schema
+        owner (postgres by default) can re-assign ownership or grant
+        on it. Idempotent — re-running is a no-op on PostgreSQL.
+        """
+        # Defense in depth: callers validate these but we re-check
+        # before formatting into raw SQL.
+        if not re.match(r'^[a-z][a-z0-9_-]{0,62}$', db_name or ''):
+            raise UserError(_("Invalid db name %r") % db_name)
+        if not DB_USER_RE.match(db_user or ''):
+            raise UserError(_("Invalid db user %r") % db_user)
+        sql = (
+            'ALTER SCHEMA public OWNER TO "%(u)s"; '
+            'GRANT ALL ON SCHEMA public TO "%(u)s";'
+        ) % {'u': db_user}
+        cmd = 'sudo -u postgres psql -d %s -v ON_ERROR_STOP=1 -c %s 2>&1' % (
+            shlex.quote(db_name), shlex.quote(sql),
+        )
+        exit_code, stdout, stderr = ssh.execute(cmd)
+        if exit_code != 0:
+            raise UserError(
+                _("Failed to grant public schema on '%s' to '%s':\n%s")
+                % (db_name, db_user, stderr or stdout)
+            )
+
+    def _pg_ensure_db_with_grants(self, db_name):
+        """Createdb (if needed) and hand the role full schema rights.
+
+        Used by ``hosting_db_create`` for per-DB portal creation, where
+        the Odoo CLI would otherwise let the new DB inherit PG 15+'s
+        restrictive defaults and fail at init time.
+        """
+        self.ensure_one()
+        psql_server = self.db_server_id
+        if not psql_server:
+            raise UserError(_("No database server configured on this instance."))
+        if not re.match(r'^[a-z][a-z0-9_-]{0,62}$', db_name or ''):
+            raise UserError(_("Invalid db name %r") % db_name)
+        if not DB_USER_RE.match(self.db_user or ''):
+            raise UserError(_("Invalid db user %r") % self.db_user)
+
+        db_user = self.db_user
+        create_db_cmd = (
+            "sudo -u postgres psql -tc "
+            "\"SELECT 1 FROM pg_database WHERE datname='%(db)s'\" "
+            "| grep -q 1 "
+            "|| sudo -u postgres createdb -O %(user)s %(db)s"
+        ) % {'db': db_name, 'user': db_user}
+
+        with psql_server._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = ssh.execute(create_db_cmd)
+            if exit_code != 0:
+                raise UserError(_(
+                    "Failed to create database '%s':\n%s"
+                ) % (db_name, stderr or stdout))
+            self._pg_grant_public_schema(ssh, db_name, db_user)
+
     def _ensure_can_ssh(self):
         """Validate that the instance has the necessary server config for SSH."""
         self.ensure_one()
@@ -5636,6 +5701,15 @@ class SaasInstance(models.Model):
             raise UserError(_("Database '%s' already exists.") % name)
 
         instance_path = self._get_instance_path()
+
+        # Step 0 — pre-create the database with proper public-schema
+        # grants. PostgreSQL 15+ no longer grants `PUBLIC` on the
+        # public schema by default, so a fresh DB owned by our role
+        # still can't `CREATE SEQUENCE` etc. inside it. We createdb
+        # ourselves and run an `ALTER SCHEMA ... OWNER` so Odoo's
+        # subsequent init has the privileges it needs.
+        self._pg_ensure_db_with_grants(name)
+
         with self.docker_server_id._get_ssh_connection() as ssh:
             # Step 1 — bootstrap via the Odoo CLI. `-i base` plus
             # `update_module=True` (implied) installs `base` and
