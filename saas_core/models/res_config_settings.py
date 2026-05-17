@@ -323,6 +323,19 @@ class ResConfigSettings(models.TransientModel):
     def set_values(self):
         res = super().set_values()
         ICP = self.env['ir.config_parameter'].sudo()
+        # ir.config_parameter.set_param() unlinks the row when the value
+        # is Python False, which makes "False" indistinguishable from
+        # "never set" — so default=True silently springs the toggle back
+        # on the next read. Write explicit 'True'/'False' strings to
+        # avoid that. Templates and helpers already check `!= 'False'`.
+        ICP.set_param(
+            'saas_master.show_services_section',
+            'True' if self.saas_show_services_section else 'False',
+        )
+        ICP.set_param(
+            'saas_master.show_hosting_section',
+            'True' if self.saas_show_hosting_section else 'False',
+        )
         if self.saas_backup_service_account_key_file:
             import base64
             key_json = base64.b64decode(self.saas_backup_service_account_key_file).decode('utf-8')
