@@ -5796,41 +5796,47 @@ class SaasInstance(models.Model):
             # everything flagged ``auto_install=True`` (including
             # ``web``, ``bus``, etc.). `--no-http` avoids spinning up
             # the HTTP server we don't need; `--stop-after-init` exits
-            # cleanly when init finishes.
+            # cleanly when init finishes. Force `--workers=0` so the
+            # init process doesn't fork and exit prematurely if the
+            # template odoo.conf inherits a workers>0 setting.
             init_cmd = (
                 'cd %s && docker compose run --rm -T odoo '
                 'odoo -d %s '
                 '-i base '
                 '--without-demo=all '
                 '--stop-after-init '
-                '--no-http 2>&1'
+                '--no-http '
+                '--workers=0 '
+                '--log-level=info 2>&1'
             ) % (
                 shlex.quote(instance_path),
                 shlex.quote(name),
             )
             exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=900)
+            init_output = (stdout or '') + (stderr or '')
+
             if exit_code != 0:
                 # Roll back the half-built DB so a retry can succeed
                 # cleanly. Best effort — if the cleanup itself fails we
                 # surface the original error.
-                rollback = (
-                    "from odoo.service import db\n"
-                    "try:\n"
-                    "    db.exp_drop(os.environ['SAAS_DB_NAME'])\n"
-                    "except Exception:\n"
-                    "    pass\n"
-                    "print('OK')\n"
-                )
-                try:
-                    self._docker_exec_python(
-                        ssh, rollback,
-                        env={'SAAS_DB_NAME': name}, timeout=60,
-                    )
-                except Exception:
-                    pass
+                self._hosting_db_rollback(ssh, name)
                 raise UserError(_(
-                    "Database init failed for '%s':\n%s"
-                ) % (name, stdout[-1500:]))
+                    "Database init failed for '%s' (exit %s):\n\n%s"
+                ) % (name, exit_code, init_output[-3000:]))
+
+            # Even when exit_code is 0, double-check the schema is
+            # actually live. If something fails late in module install
+            # (timeouts, broken dep, OOM) Odoo can exit cleanly with a
+            # half-built DB. The customer would then hit
+            # ``KeyError: 'ir.http'`` on first access. Verify here.
+            if not self._hosting_db_is_initialized(ssh, name):
+                self._hosting_db_rollback(ssh, name)
+                raise UserError(_(
+                    "Database '%s' was created but ``base`` did not "
+                    "finish installing — the init exited cleanly but "
+                    "left an incomplete schema. Last 3KB of init "
+                    "output:\n\n%s"
+                ) % (name, init_output[-3000:]))
 
             # Step 2 — set the admin user's credentials, language, and
             # (optionally) the company country. Done via the running
@@ -5879,6 +5885,73 @@ class SaasInstance(models.Model):
                     "could not be set:\n%s\n%s"
                 ) % (name, stdout[-1000:], stderr[-500:]))
         return name
+
+    def _hosting_db_is_initialized(self, ssh, name):
+        """Return True iff ``base`` is fully installed in ``name``.
+
+        Used as a post-init verification so we don't claim success on
+        a half-built database. We check via plain psql so the answer
+        doesn't depend on the registry's loaded state — we want the
+        ground truth from PG.
+        """
+        sql = (
+            "SELECT 1 FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname='public' AND c.relname='ir_module_module' "
+            "AND EXISTS ("
+            "  SELECT 1 FROM ir_module_module "
+            "  WHERE name='base' AND state='installed'"
+            ")"
+        )
+        # ``-d <name>`` here is the DB we just initialized, not the
+        # subdomain DB the container normally talks to.
+        instance_path = self._get_instance_path()
+        psql_server = self.db_server_id
+        env_flags = (
+            '-e PGPASSWORD=%s' % shlex.quote(self.sudo().db_password or '')
+        )
+        cmd = (
+            "cd %s && docker compose exec -T %s odoo psql "
+            "-h %s -p %s -U %s -d %s -tA -c %s 2>&1"
+        ) % (
+            shlex.quote(instance_path),
+            env_flags,
+            shlex.quote(self._get_db_host()),
+            shlex.quote(str(psql_server.psql_port or 5432)),
+            shlex.quote(self.sudo().db_user or ''),
+            shlex.quote(name),
+            shlex.quote(sql),
+        )
+        exit_code, stdout, _ = ssh.execute(cmd, timeout=60)
+        # The query returns either '1' (initialised) or empty/no rows.
+        return exit_code == 0 and stdout.strip() == '1'
+
+    def _hosting_db_rollback(self, ssh, name):
+        """Best-effort drop a half-built database after a failed init.
+
+        Runs ``docker compose exec`` against the running container so
+        we don't need a fresh ephemeral container just to clean up.
+        Errors are swallowed — the original init failure is more
+        important to surface than a cleanup hiccup.
+        """
+        script = (
+            "from odoo.service import db\n"
+            "try:\n"
+            "    db.exp_drop(os.environ['SAAS_DB_NAME'])\n"
+            "except Exception:\n"
+            "    pass\n"
+            "print('OK')\n"
+        )
+        try:
+            self._docker_exec_python(
+                ssh, script,
+                env={'SAAS_DB_NAME': name}, timeout=60,
+            )
+        except Exception:
+            _logger = __import__('logging').getLogger(__name__)
+            _logger.warning(
+                "Best-effort rollback of %s failed", name,
+            )
 
     def hosting_db_duplicate(self, source, new_name):
         """Copy an existing database under a new name."""
