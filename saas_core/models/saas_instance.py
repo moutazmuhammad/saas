@@ -5993,15 +5993,33 @@ class SaasInstance(models.Model):
         url = '%s/xmlrpc/2/db' % self.url.rstrip('/')
         return xmlrpc.client.ServerProxy(url, context=ctx, allow_none=True)
 
+    # Modules that ``db.create_database`` doesn't pull in via the
+    # auto-install graph but that we consider essential for a usable
+    # Odoo (the customer's /web/login fails without ``web`` for
+    # instance). Installed via a follow-up XML-RPC call after the
+    # database is created. Add ``web_editor``, ``mail`` etc. here if
+    # you discover something else is missing.
+    _HOSTING_ESSENTIAL_MODULES = ['web', 'base_setup']
+
     def hosting_db_create(self, name, login, password, lang='en_US',
                           country_code=None):
         """Create a new Odoo database via the instance's XML-RPC db service.
 
-        The customer's running Odoo handles the create end-to-end:
-        empty PG database, ``base`` module install + auto-install
-        dependencies, admin user with the provided credentials, the
-        per-DB filestore. We do nothing on the host but receive a
-        success or fault back.
+        Two steps:
+
+        1. ``db.create_database(master_pwd, …)`` — the customer's live
+           Odoo creates the empty PG database, installs ``base``, sets
+           the admin user, creates the filestore.
+
+        2. ``_hosting_install_essentials`` — authenticate as the new
+           admin user and install ``web`` + ``base_setup``. Odoo's
+           ``create_database`` only installs ``base`` and modules
+           flagged ``auto_install=True``; in the standard Docker
+           image ``web`` isn't auto-installed, so without this step
+           the very first ``/web/login`` request blows up with
+           ``External ID not found in the system: web.login``.
+
+        If step 2 fails we drop the DB so a retry starts clean.
         """
         self._ensure_hosting_for_db_ops()
         name = self._hosting_db_full_name(name)
@@ -6036,7 +6054,73 @@ class SaasInstance(models.Model):
             raise UserError(_(
                 "Could not reach instance at %s: %s"
             ) % (self.url, e))
+
+        # Step 2 — install essentials. Failure rolls back the DB.
+        try:
+            self._hosting_install_essentials(name, login, password)
+        except Exception as e:
+            try:
+                proxy.drop(master_pwd, name)
+            except Exception:
+                _logger.warning(
+                    "Failed to roll back '%s' after essentials install "
+                    "error", name,
+                )
+            raise UserError(_(
+                "Database '%s' created but installing essential modules "
+                "failed; rolled back. Details:\n%s"
+            ) % (name, e))
         return name
+
+    def _hosting_install_essentials(self, db_name, login, user_password):
+        """Authenticate as the new admin and install ``web`` etc.
+
+        Called from ``hosting_db_create`` straight after the live
+        Odoo's ``db.create_database`` returns. Uses ORM XML-RPC
+        (``/xmlrpc/2/common`` + ``/xmlrpc/2/object``) so the running
+        Odoo handles dependency resolution, transactions, and
+        registry refresh itself — same path the customer would take
+        if they installed a module from Apps.
+        """
+        import xmlrpc.client
+        import ssl
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        base_url = self.url.rstrip('/')
+
+        common = xmlrpc.client.ServerProxy(
+            '%s/xmlrpc/2/common' % base_url, context=ctx, allow_none=True,
+        )
+        uid = common.authenticate(db_name, login, user_password, {})
+        if not uid:
+            raise UserError(_(
+                "Authentication failed on the newly-created database — "
+                "can't install essential modules."
+            ))
+
+        obj = xmlrpc.client.ServerProxy(
+            '%s/xmlrpc/2/object' % base_url, context=ctx, allow_none=True,
+        )
+        # Look up only the modules that aren't already installed
+        # (in case a future Odoo version flips ``web.auto_install`` on
+        # and this call becomes a no-op).
+        module_ids = obj.execute_kw(
+            db_name, uid, user_password,
+            'ir.module.module', 'search',
+            [[
+                ['name', 'in', self._HOSTING_ESSENTIAL_MODULES],
+                ['state', '=', 'uninstalled'],
+            ]],
+        )
+        if not module_ids:
+            return
+        obj.execute_kw(
+            db_name, uid, user_password,
+            'ir.module.module', 'button_immediate_install',
+            [module_ids],
+        )
 
     def hosting_db_duplicate(self, source, new_name):
         """Duplicate a database via the instance's XML-RPC db service."""
