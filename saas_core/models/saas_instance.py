@@ -5695,42 +5695,56 @@ class SaasInstance(models.Model):
     def hosting_db_list(self):
         """List databases this instance's customer owns.
 
-        We restrict by the per-instance subdomain prefix so a customer
-        can never see (or operate on) another tenant's database, even
-        if the shared PG role somehow gained visibility. Owned-by-role
-        is still also enforced — defense in depth.
+        Calls ``odoo.service.db.list_dbs(force=True)`` inside the
+        container — that's the exact function ``/web/database/list``
+        backs onto, and it already filters by the PG role owner from
+        ``odoo.conf``. We additionally filter by the instance prefix
+        in Python so a customer can never see (or operate on) another
+        tenant's database, even if PG visibility somehow leaked.
+
+        Going through Odoo's own helper instead of building raw SQL
+        sidesteps three layers of quoting (Python -> shell -> psql)
+        and the ``LIKE ... ESCAPE`` parser strictness that bit us in
+        production.
 
         Returns a list of dicts: ``{'name': str}``.
         """
         self._ensure_hosting_for_db_ops()
         prefix = self._hosting_db_prefix()
-        # LIKE-escape the prefix: underscore and percent are wildcards,
-        # so a subdomain like ``acme_prod`` would over-match without
-        # quoting. Use ``!`` as the escape char — it can't appear in
-        # the prefix (subdomain is [a-z0-9-] only) and dodges the
-        # backslash/standard-conforming-strings minefield that bit us
-        # in production (`ESCAPE '\\'` is two chars to PG, which it
-        # rejects with "Escape string must be empty or one character").
-        like = (
-            prefix
-            .replace('!', '!!')   # not strictly necessary today, future-proof
-            .replace('%', '!%')
-            .replace('_', '!_')
+        # Marker prefix/suffix so we can recover the list even if Odoo
+        # logs decide to print something to stdout during init.
+        script = (
+            "from odoo.service.db import list_dbs\n"
+            "prefix = os.environ.get('SAAS_DB_PREFIX', '')\n"
+            "names = [d for d in list_dbs(force=True) if d.startswith(prefix)]\n"
+            "print('---SAAS_DB_LIST_BEGIN---')\n"
+            "for n in names:\n"
+            "    print(n)\n"
+            "print('---SAAS_DB_LIST_END---')\n"
         )
-        sql = (
-            "SELECT datname FROM pg_database "
-            "WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = current_user) "
-            "AND NOT datistemplate "
-            "AND datname LIKE '%s%%' ESCAPE '!' "
-            "ORDER BY datname"
-        ) % like
         with self.docker_server_id._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = self._docker_exec_sql(ssh, sql)
+            exit_code, stdout, stderr = self._docker_exec_python(
+                ssh, script,
+                env={'SAAS_DB_PREFIX': prefix},
+                timeout=60,
+            )
         if exit_code != 0:
             raise UserError(
                 _("Could not list databases: %s") % (stderr or stdout)
             )
-        names = [line.strip() for line in stdout.splitlines() if line.strip()]
+        # Pull the names out from between the markers; any unrelated
+        # log lines Odoo may have emitted are ignored.
+        names = []
+        capturing = False
+        for line in stdout.splitlines():
+            line = line.strip()
+            if line == '---SAAS_DB_LIST_BEGIN---':
+                capturing = True
+                continue
+            if line == '---SAAS_DB_LIST_END---':
+                break
+            if capturing and line:
+                names.append(line)
         return [{'name': n} for n in names]
 
     def hosting_db_create(self, name, login, password, lang='en_US',
