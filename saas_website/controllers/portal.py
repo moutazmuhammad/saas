@@ -254,21 +254,21 @@ class SaasPortal(CustomerPortal):
         ondemand_by_db = {}
         if active_ondemand:
             ondemand_by_db[active_ondemand.db_name] = active_ondemand
-
-        # Per-DB history: recent on-demand attempts for each database
-        # the customer currently has. The store is small (1 active +
-        # any failed/expired sitting around until cleanup), so we
-        # fetch them all and bucket by ``db_name`` in Python. Only
-        # show the last 5 per DB to keep the row compact.
-        recent_by_db = {}
-        recent = instance.backup_ids.filtered(
-            lambda b: b.ephemeral and b.db_name
-        ).sorted('create_date', reverse=True)
-        for b in recent:
-            recent_by_db.setdefault(b.db_name, []).append(b)
-        # Cap each list at 5 entries for display.
-        for k in recent_by_db:
-            recent_by_db[k] = recent_by_db[k][:5]
+            # Pre-generate the bucket presigned URL so the customer's
+            # Download button is a direct link to DigitalOcean (or
+            # whichever S3-compatible storage is configured) — no
+            # extra round-trip through Odoo. The URL is signed for
+            # 24 hours; if the page sits open longer than that, the
+            # button still falls back through our own /download route
+            # which refreshes on demand.
+            if active_ondemand.state == 'done':
+                try:
+                    active_ondemand.sudo()._refresh_download_url()
+                except Exception:
+                    _logger.exception(
+                        "Could not pre-refresh download URL for ondemand "
+                        "backup %s", active_ondemand.id,
+                    )
 
         # Pending and recently-failed DB operations. Running ones get
         # an in-progress banner; failed ones surface the error briefly
@@ -321,7 +321,6 @@ class SaasPortal(CustomerPortal):
             'default_login': request.env.user.partner_id.email or 'admin',
             'active_ondemand': active_ondemand,
             'ondemand_by_db': ondemand_by_db,
-            'recent_by_db': recent_by_db,
             'running_ops': running_ops,
             'failed_ops': failed_ops,
             'page_name': 'saas_instance_databases',
@@ -1402,11 +1401,20 @@ class SaasPortal(CustomerPortal):
         backup = instance.backup_ids.filtered(
             lambda b: b.id == backup_id and b.state == 'done'
         )
+        # On-demand backups live on the Databases page; daily snapshots
+        # (when they come back) on the Backups page. Bounce errors to
+        # whichever was the obvious source so the customer doesn't
+        # land on the wrong screen.
+        err_redirect = (
+            '/my/instances/%d/databases'
+            if backup and backup.ephemeral
+            else '/my/instances/%d/backups'
+        ) % instance_id
         if not backup:
-            return request.redirect(
-                '/my/instances/%d/backups?error=%s'
-                % (instance_id, url_quote(_("Backup not available.")))
-            )
+            err_redirect = '/my/instances/%d/databases' % instance_id
+            return request.redirect('%s?error=%s' % (
+                err_redirect, url_quote(_("Backup not available.")),
+            ))
 
         try:
             backup._refresh_download_url()
@@ -1414,10 +1422,12 @@ class SaasPortal(CustomerPortal):
             _logger.exception("Could not refresh download URL for backup %s",
                               backup.id)
         if not backup.download_url:
-            return request.redirect(
-                '/my/instances/%d/backups?error=%s'
-                % (instance_id, url_quote(_("Could not generate download link.")))
-            )
+            return request.redirect('%s?error=%s' % (
+                err_redirect, url_quote(_(
+                    "Could not generate download link. Check the SaaS "
+                    "Manager → Cloud Storage settings on the saas master."
+                )),
+            ))
 
         # NOTE: on-demand backups keep their full 8-hour window even
         # after the customer downloads — protects them if the download

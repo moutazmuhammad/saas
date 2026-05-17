@@ -10,12 +10,14 @@ _logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BACKUPS = 7
 PRESIGNED_URL_EXPIRY = 7 * 24 * 3600
-# On-demand backups time out at 8 hours as a safety net — long enough
-# for slow connections, short enough that an orphan doesn't sit in the
-# bucket forever. Once the customer actually clicks Download, the
-# expiry is shrunk to ~10 minutes (see ONDEMAND_DOWNLOAD_GRACE) so the
-# bucket object disappears shortly after they've got the file.
-ONDEMAND_URL_EXPIRY = 8 * 3600
+# On-demand backups: bucket object lives 24 hours, and the presigned
+# download URL is signed for the same 24-hour window. Beyond that the
+# cleanup cron reaps both the bucket object and the local record. We
+# render the bucket URL directly into the Databases page so the
+# customer's Download button is a one-click link to DigitalOcean
+# (or whichever S3-compatible bucket is configured) — no extra
+# round-trip through Odoo.
+ONDEMAND_URL_EXPIRY = 24 * 3600
 ONDEMAND_DOWNLOAD_GRACE = 600  # seconds the link stays alive after click
 ONDEMAND_PREFIX = 'ondemand'
 

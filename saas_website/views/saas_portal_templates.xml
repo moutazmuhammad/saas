@@ -2896,60 +2896,25 @@
                         </div>
                     </t>
 
-                    <!-- One on-demand backup at a time per instance. While
-                         it's alive (running, or done-not-expired), this
-                         banner surfaces it so the customer can grab the
-                         download — and disables Backup Now on every row. -->
+                    <!-- Slim status notice for the one in-flight or
+                         downloadable on-demand backup. Action buttons
+                         (Download / Discard / Cancel) live on the
+                         backup's own database row so the customer
+                         doesn't see them in two places. -->
                     <t t-if="active_ondemand">
                         <div class="alert-banner alert-warning mb-3">
                             <i class="fas fa-clock"></i>
                             <div>
                                 <t t-if="active_ondemand.state == 'running'">
-                                    <strong>Backup of '<t t-esc="active_ondemand.db_name"/>' in progress.</strong>
-                                    Refresh in a moment to see the download link.
-                                    <t t-if="active_ondemand.create_date">
-                                        <br/>
-                                        <small class="text-muted">
-                                            Started <t t-esc="active_ondemand.create_date.strftime('%H:%M UTC')"/>.
-                                            Stuck for more than 5 minutes? Cancel to clear and retry.
-                                        </small>
-                                    </t>
-                                    <div class="mt-2">
-                                        <form t-attf-action="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/discard"
-                                              method="POST" class="d-inline">
-                                            <input type="hidden" name="csrf_token"
-                                                   t-att-value="request.csrf_token()"/>
-                                            <input type="hidden" name="return_to" value="databases"/>
-                                            <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                <i class="fas fa-times me-1"></i>Cancel Backup
-                                            </button>
-                                        </form>
-                                    </div>
+                                    Backup of '<strong t-esc="active_ondemand.db_name"/>' is in progress.
+                                    Use the row below to cancel or refresh to see the download link.
                                 </t>
                                 <t t-else="">
-                                    <strong>A backup of '<t t-esc="active_ondemand.db_name"/>' is ready.</strong>
-                                    The link stays live for the full 8-hour window
+                                    Backup of '<strong t-esc="active_ondemand.db_name"/>' is ready
                                     <t t-if="active_ondemand.expires_at">
-                                        (expires at <t t-esc="active_ondemand.expires_at.strftime('%H:%M UTC')"/>)
-                                    </t>
-                                    so a failed download can be retried.
-                                    Only one on-demand backup exists at a time — clicking
-                                    <strong>Backup Now</strong> on any database will replace this one.
-                                    <div class="mt-2">
-                                        <a t-attf-href="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/download"
-                                           class="btn btn-sm btn-primary me-1">
-                                            <i class="fas fa-download me-1"></i>Download
-                                        </a>
-                                        <form t-attf-action="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/discard"
-                                              method="POST" class="d-inline">
-                                            <input type="hidden" name="csrf_token"
-                                                   t-att-value="request.csrf_token()"/>
-                                            <input type="hidden" name="return_to" value="databases"/>
-                                            <button type="submit" class="btn btn-sm btn-outline-secondary">
-                                                <i class="fas fa-trash me-1"></i>Discard
-                                            </button>
-                                        </form>
-                                    </div>
+                                        until <t t-esc="active_ondemand.expires_at.strftime('%H:%M UTC')"/>
+                                    </t>.
+                                    Use the buttons on its row to download or discard it.
                                 </t>
                             </div>
                         </div>
@@ -2975,96 +2940,74 @@
                                 <tbody>
                                     <t t-foreach="databases" t-as="db">
                                         <t t-set="this_ondemand" t-value="ondemand_by_db.get(db['name'])"/>
-                                        <t t-set="db_history" t-value="recent_by_db.get(db['name']) or []"/>
                                         <tr>
                                             <td>
                                                 <i class="fas fa-database me-2" style="color:var(--co-text-muted);"></i>
                                                 <strong t-esc="db['name']"/>
-                                                <t t-if="this_ondemand and this_ondemand.state == 'done'">
-                                                    <span class="badge ms-2"
-                                                          style="background:rgba(245,158,11,0.15);color:#f59e0b;">
-                                                        <i class="fas fa-clock me-1"></i>Backup ready
-                                                    </span>
-                                                </t>
                                                 <t t-if="this_ondemand and this_ondemand.state == 'running'">
                                                     <span class="badge ms-2 bg-info">
                                                         <i class="fas fa-spinner fa-spin me-1"></i>Backing up
                                                     </span>
                                                 </t>
+                                                <t t-elif="this_ondemand and this_ondemand.state == 'done'">
+                                                    <span class="badge ms-2"
+                                                          style="background:rgba(245,158,11,0.15);color:#f59e0b;"
+                                                          t-att-title="
+                                                              'Link expires at ' + active_ondemand.expires_at.strftime('%H:%M UTC')
+                                                              if active_ondemand and active_ondemand.expires_at else ''
+                                                          ">
+                                                        <i class="fas fa-check-circle me-1"></i>Backup ready
+                                                    </span>
+                                                </t>
                                             </td>
                                             <td class="text-end">
+                                                <!-- Five actions per DB row, in a fixed order so the
+                                                     UI is predictable across states:
+                                                       1. Open
+                                                       2. Backup Now (always clickable — clicking
+                                                          again on a DB that already has a backup
+                                                          REPLACES it; the controller deletes the
+                                                          old bucket object first)
+                                                       3. Download Backup — only when this DB's
+                                                          current on-demand backup is ready
+                                                       4. Duplicate
+                                                       5. Delete -->
                                                 <a t-attf-href="#{instance.url}/web?db=#{db['name']}"
                                                    target="_blank"
                                                    class="btn btn-sm btn-outline-primary">
                                                     <i class="fas fa-external-link-alt me-1"></i>Open
                                                 </a>
 
-                                                <!-- Per-DB backup actions. Three states:
-                                                       - This DB has a ready backup → Download + Discard
-                                                       - This DB has a running backup → Cancel
-                                                       - Another DB has an active backup → Backup Now disabled
-                                                       - Else → Backup Now -->
+                                                <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
+                                                      method="POST" class="d-inline">
+                                                    <input type="hidden" name="csrf_token"
+                                                           t-att-value="request.csrf_token()"/>
+                                                    <input type="hidden" name="db_name" t-att-value="db['name']"/>
+                                                    <input type="hidden" name="return_to" value="databases"/>
+                                                    <button type="submit"
+                                                            class="btn btn-sm btn-outline-primary"
+                                                            t-att-data-confirm="
+                                                                ('Taking a new backup will delete the existing one for '
+                                                                 + active_ondemand.db_name + '. Continue?')
+                                                                if active_ondemand else None
+                                                            "
+                                                            data-confirm-variant="warning"
+                                                            data-confirm-yes="Yes, replace"
+                                                            data-confirm-no="Cancel">
+                                                        <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
+                                                    </button>
+                                                </form>
+
                                                 <t t-if="this_ondemand and this_ondemand.state == 'done'">
-                                                    <a t-attf-href="/my/instances/#{instance.id}/backups/#{this_ondemand.id}/download"
+                                                    <!-- Direct presigned URL to the bucket (24-hour
+                                                         lifetime). Falls back to our /download route
+                                                         if the URL wasn't generated yet. -->
+                                                    <a t-att-href="this_ondemand.download_url or ('/my/instances/%d/backups/%d/download' % (instance.id, this_ondemand.id))"
+                                                       target="_blank"
+                                                       rel="noopener"
                                                        class="btn btn-sm btn-primary">
                                                         <i class="fas fa-download me-1"></i>Download Backup
                                                     </a>
-                                                    <form t-attf-action="/my/instances/#{instance.id}/backups/#{this_ondemand.id}/discard"
-                                                          method="POST" class="d-inline">
-                                                        <input type="hidden" name="csrf_token"
-                                                               t-att-value="request.csrf_token()"/>
-                                                        <input type="hidden" name="return_to" value="databases"/>
-                                                        <button type="submit" class="btn btn-sm btn-outline-secondary">
-                                                            <i class="fas fa-trash me-1"></i>Discard Backup
-                                                        </button>
-                                                    </form>
-                                                </t>
-                                                <t t-elif="this_ondemand and this_ondemand.state == 'running'">
-                                                    <form t-attf-action="/my/instances/#{instance.id}/backups/#{this_ondemand.id}/discard"
-                                                          method="POST" class="d-inline">
-                                                        <input type="hidden" name="csrf_token"
-                                                               t-att-value="request.csrf_token()"/>
-                                                        <input type="hidden" name="return_to" value="databases"/>
-                                                        <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                            <i class="fas fa-times me-1"></i>Cancel Backup
-                                                        </button>
-                                                    </form>
-                                                </t>
-                                                <t t-else="">
-                                                    <!-- Backup Now is always clickable. If another
-                                                         on-demand backup exists, the controller
-                                                         deletes it from the bucket first and
-                                                         replaces it with this new one. Only
-                                                         one on-demand backup exists per instance
-                                                         at any moment. -->
-                                                    <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
-                                                          method="POST" class="d-inline">
-                                                        <input type="hidden" name="csrf_token"
-                                                               t-att-value="request.csrf_token()"/>
-                                                        <input type="hidden" name="db_name" t-att-value="db['name']"/>
-                                                        <input type="hidden" name="return_to" value="databases"/>
-                                                        <button type="submit"
-                                                                class="btn btn-sm btn-outline-primary"
-                                                                t-att-data-confirm="
-                                                                    'Taking a new backup will delete the existing on-demand backup of '
-                                                                    + active_ondemand.db_name + '. Continue?'
-                                                                    if active_ondemand else None
-                                                                "
-                                                                data-confirm-variant="warning"
-                                                                data-confirm-yes="Yes, replace"
-                                                                data-confirm-no="Cancel">
-                                                            <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
-                                                        </button>
-                                                    </form>
-                                                </t>
-
-                                                <t t-if="db_history">
-                                                    <button type="button"
-                                                            class="btn btn-sm btn-outline-secondary"
-                                                            data-bs-toggle="collapse"
-                                                            t-attf-data-bs-target="#dbHistory-#{db['name']}">
-                                                        <i class="fas fa-history me-1"></i>Backups (<t t-esc="len(db_history)"/>)
-                                                    </button>
                                                 </t>
 
                                                 <button type="button"
@@ -3081,91 +3024,6 @@
                                                 </button>
                                             </td>
                                         </tr>
-                                        <!-- Per-DB backup history. Collapsed by default;
-                                             expands inline so it stays next to the DB it
-                                             belongs to. Max 5 most-recent entries. -->
-                                        <t t-if="db_history">
-                                            <tr class="collapse" t-attf-id="dbHistory-#{db['name']}">
-                                                <td colspan="2" style="background:rgba(255,255,255,0.02);">
-                                                    <div class="small text-muted mb-2">
-                                                        Last <t t-esc="len(db_history)"/> backups for
-                                                        <code t-esc="db['name']"/>:
-                                                    </div>
-                                                    <table class="table table-sm align-middle mb-0">
-                                                        <thead>
-                                                            <tr>
-                                                                <th>Date</th>
-                                                                <th>Size</th>
-                                                                <th>Status</th>
-                                                                <th class="text-end">Actions</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            <t t-foreach="db_history" t-as="b">
-                                                                <tr>
-                                                                    <td>
-                                                                        <t t-esc="b.create_date.strftime('%Y-%m-%d %H:%M') if b.create_date else ''"/>
-                                                                    </td>
-                                                                    <td>
-                                                                        <t t-if="b.size_mb">
-                                                                            <t t-esc="'%.1f MB' % b.size_mb"/>
-                                                                        </t>
-                                                                        <t t-else="">—</t>
-                                                                    </td>
-                                                                    <td>
-                                                                        <t t-if="b.state == 'done'">
-                                                                            <span class="badge bg-success">Ready</span>
-                                                                            <t t-if="b.expires_at">
-                                                                                <small class="text-muted ms-1">
-                                                                                    until <t t-esc="b.expires_at.strftime('%H:%M UTC')"/>
-                                                                                </small>
-                                                                            </t>
-                                                                        </t>
-                                                                        <t t-elif="b.state == 'running'">
-                                                                            <span class="badge bg-info">
-                                                                                <i class="fas fa-spinner fa-spin me-1"></i>Running
-                                                                            </span>
-                                                                        </t>
-                                                                        <t t-elif="b.state == 'failed'">
-                                                                            <span class="badge bg-danger"
-                                                                                  t-att-title="b.error_message or ''">Failed</span>
-                                                                        </t>
-                                                                        <t t-else="">
-                                                                            <span class="badge bg-secondary" t-esc="b.state"/>
-                                                                        </t>
-                                                                    </td>
-                                                                    <td class="text-end">
-                                                                        <t t-if="b.state == 'done'">
-                                                                            <a t-attf-href="/my/instances/#{instance.id}/backups/#{b.id}/download"
-                                                                               class="btn btn-sm btn-outline-primary">
-                                                                                <i class="fas fa-download me-1"></i>Download
-                                                                            </a>
-                                                                            <form t-attf-action="/my/instances/#{instance.id}/backups/#{b.id}/discard"
-                                                                                  method="POST" class="d-inline">
-                                                                                <input type="hidden" name="csrf_token"
-                                                                                       t-att-value="request.csrf_token()"/>
-                                                                                <input type="hidden" name="return_to" value="databases"/>
-                                                                                <button type="submit"
-                                                                                        class="btn btn-sm btn-outline-secondary">
-                                                                                    <i class="fas fa-trash me-1"></i>Discard
-                                                                                </button>
-                                                                            </form>
-                                                                        </t>
-                                                                        <t t-elif="b.state == 'failed' and b.error_message">
-                                                                            <small class="text-muted text-truncate"
-                                                                                   t-att-title="b.error_message"
-                                                                                   style="max-width:300px;display:inline-block;vertical-align:middle;">
-                                                                                <t t-esc="b.error_message[:80]"/>
-                                                                            </small>
-                                                                        </t>
-                                                                    </td>
-                                                                </tr>
-                                                            </t>
-                                                        </tbody>
-                                                    </table>
-                                                </td>
-                                            </tr>
-                                        </t>
                                     </t>
                                 </tbody>
                             </table>
