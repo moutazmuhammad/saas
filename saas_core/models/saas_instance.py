@@ -5919,34 +5919,44 @@ class SaasInstance(models.Model):
                 shlex.quote(instance_path),
                 shlex.quote(name),
             )
+            init_exit = 0
+            init_output = ''
             try:
-                exit_code, stdout, stderr = ssh.execute(init_cmd, timeout=900)
+                init_exit, stdout, stderr = ssh.execute(
+                    init_cmd, timeout=900,
+                )
                 init_output = (stdout or '') + (stderr or '')
-
-                if exit_code != 0:
-                    self._hosting_db_rollback(ssh, name)
-                    raise UserError(_(
-                        "Database init failed for '%s' (exit %s):\n\n%s"
-                    ) % (name, exit_code, init_output[-8000:]))
-
-                # Even when exit_code is 0, double-check the schema is
-                # live. ``--stop-after-init`` is supposed to bail
-                # non-zero on a broken install, but OOM-kills and
-                # other process-level deaths slip past.
-                if not self._hosting_db_is_initialized(ssh, name):
-                    self._hosting_db_rollback(ssh, name)
-                    raise UserError(_(
-                        "Database '%s' was created but ``base`` did "
-                        "not finish installing — the init exited "
-                        "cleanly but left an incomplete schema. "
-                        "Last 8KB of init output:\n\n%s"
-                    ) % (name, init_output[-8000:]))
             finally:
-                # Bring the customer's container back up no matter
-                # what — even if the init failed and we rolled back
-                # the DB. Otherwise the rest of their databases stay
-                # offline.
+                # Bring the customer's container back up before we
+                # verify or roll back — ``_hosting_db_is_initialized``
+                # and ``_hosting_db_rollback`` both use
+                # ``docker compose exec``, which fails when the
+                # container is down. Running them with the container
+                # paused would silently treat every install as
+                # "verification failed" and leave an undropped DB
+                # behind (which is exactly what we saw in production).
                 self._hosting_db_resume_container(ssh, instance_path)
+
+            # Now the container is back up. Workers come up fresh, so
+            # there's no stale empty-registry cached from before init.
+            if init_exit != 0:
+                self._hosting_db_rollback(ssh, name)
+                raise UserError(_(
+                    "Database init failed for '%s' (exit %s):\n\n%s"
+                ) % (name, init_exit, init_output[-8000:]))
+
+            # ``--stop-after-init`` is supposed to bail non-zero on a
+            # broken install, but OOM-kills and other process-level
+            # deaths can slip past. Confirm the schema is live before
+            # we tell the customer it worked.
+            if not self._hosting_db_is_initialized(ssh, name):
+                self._hosting_db_rollback(ssh, name)
+                raise UserError(_(
+                    "Database '%s' was created but ``base`` did not "
+                    "finish installing — the init exited cleanly but "
+                    "left an incomplete schema. Last 8KB of init "
+                    "output:\n\n%s"
+                ) % (name, init_output[-8000:]))
 
             # Step 2 — set the admin user's credentials, language, and
             # (optionally) the company country. Done via the running

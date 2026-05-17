@@ -270,12 +270,15 @@ class SaasPortal(CustomerPortal):
         for k in recent_by_db:
             recent_by_db[k] = recent_by_db[k][:5]
 
-        # Pending and recently-failed DB operations (create / duplicate
-        # / drop). Running ones get an in-progress banner; failed ones
-        # surface the error so the customer can act.
+        # Pending and recently-failed DB operations. Running ones get
+        # an in-progress banner; failed ones surface the error briefly
+        # so the customer can react. Shorter window now (15 min) so
+        # old failures don't linger as visual noise once they've been
+        # read and the customer has retried — they can also Dismiss
+        # an individual failure to clear it immediately.
         Op = request.env['saas.instance.db.operation'].sudo()
         recent_cutoff = (
-            fields.Datetime.now() - datetime.timedelta(hours=1)
+            fields.Datetime.now() - datetime.timedelta(minutes=15)
         )
         running_ops = Op.search([
             ('instance_id', '=', instance.id),
@@ -369,6 +372,37 @@ class SaasPortal(CustomerPortal):
                 '/my/instances/%d/databases?error=%s'
                 % (instance_id, url_quote(str(e)))
             )
+
+    @http.route(
+        '/my/instances/<int:instance_id>/databases/op/<int:op_id>/dismiss',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_instance_db_op_dismiss(self, instance_id, op_id,
+                                      access_token=None, **post):
+        """Remove a finished/failed DB-op tracking row from view.
+
+        Running ops can't be dismissed — only failed / done records,
+        which are purely informational at this point. The row is
+        deleted so it disappears from the page; the underlying DB
+        state is untouched.
+        """
+        try:
+            instance = self._hosting_instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+        op = request.env['saas.instance.db.operation'].sudo().browse(op_id)
+        redirect = '/my/instances/%d/databases' % instance_id
+        if not op.exists() or op.instance_id != instance:
+            return request.redirect(redirect)
+        if op.state == 'running':
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(_(
+                    "Can't dismiss a running operation — wait for it to finish."
+                )),
+            ))
+        op.unlink()
+        return request.redirect(redirect)
 
     @http.route(
         '/my/instances/<int:instance_id>/databases/drop',

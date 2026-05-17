@@ -2844,27 +2844,39 @@
                         </div>
                     </t>
 
-                    <!-- Recent failures (last hour). Surfaces the error so the
-                         customer can correct the input and retry, instead of
-                         silently leaving them with no DB. -->
+                    <!-- Recent failures (last 15 min). Surfaces the error so
+                         the customer can correct the input and retry. Each
+                         banner has a Dismiss button so the customer can clear
+                         it after reading. Auto-clears after 15 minutes anyway. -->
                     <t t-foreach="failed_ops" t-as="op">
-                        <div class="alert-banner alert-danger mb-2">
-                            <i class="fas fa-exclamation-circle"></i>
-                            <div>
-                                <t t-if="op.operation == 'create'">Create</t>
-                                <t t-elif="op.operation == 'duplicate'">Duplicate</t>
-                                <t t-elif="op.operation == 'drop'">Delete</t>
-                                of '<strong t-esc="op.db_name"/>' failed
-                                <t t-if="op.create_date">
-                                    at <t t-esc="op.create_date.strftime('%H:%M UTC')"/>
-                                </t>.
-                                <t t-if="op.error_message">
-                                    <br/>
-                                    <small class="text-muted">
-                                        <t t-esc="op.error_message[:300]"/>
-                                    </small>
-                                </t>
+                        <div class="alert-banner alert-danger mb-2 d-flex justify-content-between align-items-start gap-3">
+                            <div class="d-flex align-items-start gap-2">
+                                <i class="fas fa-exclamation-circle mt-1"></i>
+                                <div>
+                                    <t t-if="op.operation == 'create'">Create</t>
+                                    <t t-elif="op.operation == 'duplicate'">Duplicate</t>
+                                    <t t-elif="op.operation == 'drop'">Delete</t>
+                                    of '<strong t-esc="op.db_name"/>' failed
+                                    <t t-if="op.create_date">
+                                        at <t t-esc="op.create_date.strftime('%H:%M UTC')"/>
+                                    </t>.
+                                    <t t-if="op.error_message">
+                                        <br/>
+                                        <small class="text-muted">
+                                            <t t-esc="op.error_message[:300]"/>
+                                        </small>
+                                    </t>
+                                </div>
                             </div>
+                            <form t-attf-action="/my/instances/#{instance.id}/databases/op/#{op.id}/dismiss"
+                                  method="POST" class="ms-2">
+                                <input type="hidden" name="csrf_token"
+                                       t-att-value="request.csrf_token()"/>
+                                <button type="submit" class="btn btn-sm btn-outline-light"
+                                        title="Dismiss this notification">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </form>
                         </div>
                     </t>
 
