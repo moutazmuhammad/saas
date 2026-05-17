@@ -2984,31 +2984,65 @@
                                                     <i class="fas fa-external-link-alt me-1"></i>Open
                                                 </a>
 
-                                                <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
-                                                      method="POST" class="d-inline">
-                                                    <input type="hidden" name="csrf_token"
-                                                           t-att-value="request.csrf_token()"/>
-                                                    <input type="hidden" name="db_name" t-att-value="db['name']"/>
-                                                    <input type="hidden" name="return_to" value="databases"/>
-                                                    <button type="submit"
-                                                            class="btn btn-sm btn-outline-primary"
-                                                            t-att-data-confirm="
-                                                                ('Taking a new backup will delete the existing one for '
-                                                                 + active_ondemand.db_name + '. Continue?')
-                                                                if active_ondemand else None
-                                                            "
-                                                            data-confirm-variant="warning"
-                                                            data-confirm-yes="Yes, replace"
-                                                            data-confirm-no="Cancel">
+                                                <!-- Only one on-demand backup can run at a time
+                                                     per instance. While one is *running*, every
+                                                     Backup Now is disabled. Once it's *done*
+                                                     (ready to download), Backup Now becomes
+                                                     enabled again and a click replaces the
+                                                     existing one. -->
+                                                <t t-set="any_running_ondemand"
+                                                   t-value="active_ondemand and active_ondemand.state == 'running'"/>
+                                                <t t-if="any_running_ondemand">
+                                                    <button type="button"
+                                                            class="btn btn-sm btn-secondary"
+                                                            disabled="disabled"
+                                                            t-att-title="
+                                                                'Backup of ' + active_ondemand.db_name
+                                                                + ' is in progress. Only one on-demand backup '
+                                                                + 'is allowed at a time — wait for it to '
+                                                                + 'finish.'
+                                                            ">
                                                         <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
                                                     </button>
-                                                </form>
+                                                </t>
+                                                <t t-else="">
+                                                    <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
+                                                          method="POST" class="d-inline"
+                                                          onsubmit="
+                                                              var b = this.querySelector('button[type=submit]');
+                                                              if (b) {
+                                                                  b.disabled = true;
+                                                                  b.innerHTML = '&lt;i class=\'fas fa-spinner fa-spin me-1\'&gt;&lt;/i&gt;Starting…';
+                                                              }
+                                                              return true;
+                                                          ">
+                                                        <input type="hidden" name="csrf_token"
+                                                               t-att-value="request.csrf_token()"/>
+                                                        <input type="hidden" name="db_name" t-att-value="db['name']"/>
+                                                        <input type="hidden" name="return_to" value="databases"/>
+                                                        <button type="submit"
+                                                                class="btn btn-sm btn-outline-primary"
+                                                                t-att-data-confirm="
+                                                                    ('Taking a new backup will delete the existing one for '
+                                                                     + active_ondemand.db_name + '. Continue?')
+                                                                    if active_ondemand else None
+                                                                "
+                                                                data-confirm-variant="warning"
+                                                                data-confirm-yes="Yes, replace"
+                                                                data-confirm-no="Cancel">
+                                                            <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
+                                                        </button>
+                                                    </form>
+                                                </t>
 
-                                                <t t-if="this_ondemand and this_ondemand.state == 'done'">
-                                                    <!-- Direct presigned URL to the bucket (24-hour
-                                                         lifetime). Falls back to our /download route
-                                                         if the URL wasn't generated yet. -->
-                                                    <a t-att-href="this_ondemand.download_url or ('/my/instances/%d/backups/%d/download' % (instance.id, this_ondemand.id))"
+                                                <!-- Only render Download Backup when an actual
+                                                     presigned URL has been generated for this
+                                                     backup. We don't want a "Download" button
+                                                     that resolves to nothing — and we don't
+                                                     want it to appear before the bucket object
+                                                     actually exists. -->
+                                                <t t-if="this_ondemand and this_ondemand.state == 'done' and this_ondemand.download_url">
+                                                    <a t-att-href="this_ondemand.download_url"
                                                        target="_blank"
                                                        rel="noopener"
                                                        class="btn btn-sm btn-primary">
