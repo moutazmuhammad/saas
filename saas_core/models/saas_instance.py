@@ -5882,16 +5882,23 @@ class SaasInstance(models.Model):
         self._pg_ensure_db_with_grants(name)
 
         with self.docker_server_id._get_ssh_connection() as ssh:
-            # Step 1 — bootstrap via the Odoo CLI. `-i base` plus
-            # `update_module=True` (implied) installs `base` and
-            # everything flagged ``auto_install=True`` (including
-            # ``web``, ``bus``, etc.). `--no-http` avoids spinning up
-            # the HTTP server we don't need; `--stop-after-init` exits
-            # cleanly when init finishes. Force `--workers=0` so the
-            # init process doesn't fork and exit prematurely if the
-            # template odoo.conf inherits a workers>0 setting.
+            # Step 1 — bootstrap via the Odoo CLI run INSIDE the
+            # already-running container with ``docker compose exec``.
+            # Previously we used ``docker compose run --rm`` which
+            # spawned a SECOND container with the same memory limit —
+            # on a host where the running container is already using
+            # ~half its quota, doubling pushed the host over and the
+            # init process was OOM-killed mid-install. The killer
+            # signal got swallowed somewhere along the line and the
+            # outer command returned exit 0, fooling our check.
+            #
+            # ``exec`` shares the running container's namespace and
+            # memory pool, so init memory adds to the running process
+            # instead of duplicating it. We pass ``--workers=0`` and
+            # ``--no-http`` so the init process doesn't fight the
+            # parent for the HTTP port or fork workers.
             init_cmd = (
-                'cd %s && docker compose run --rm -T odoo '
+                'cd %s && docker compose exec -T odoo '
                 'odoo -d %s '
                 '-i base '
                 '--without-demo=all '
@@ -5913,7 +5920,7 @@ class SaasInstance(models.Model):
                 self._hosting_db_rollback(ssh, name)
                 raise UserError(_(
                     "Database init failed for '%s' (exit %s):\n\n%s"
-                ) % (name, exit_code, init_output[-3000:]))
+                ) % (name, exit_code, init_output[-8000:]))
 
             # Even when exit_code is 0, double-check the schema is
             # actually live. If something fails late in module install
@@ -5925,9 +5932,9 @@ class SaasInstance(models.Model):
                 raise UserError(_(
                     "Database '%s' was created but ``base`` did not "
                     "finish installing — the init exited cleanly but "
-                    "left an incomplete schema. Last 3KB of init "
+                    "left an incomplete schema. Last 8KB of init "
                     "output:\n\n%s"
-                ) % (name, init_output[-3000:]))
+                ) % (name, init_output[-8000:]))
 
             # Step 2 — set the admin user's credentials, language, and
             # (optionally) the company country. Done via the running
