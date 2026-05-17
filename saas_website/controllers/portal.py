@@ -1241,8 +1241,12 @@ class SaasPortal(CustomerPortal):
             'currency': invoice.currency_id,
             'partner_id': partner_sudo.id,
             'access_token': invoice_access_token,
-            'transaction_route': invoice.get_portal_url(),
+            'transaction_route': '/invoice/transaction/%d' % invoice.id,
             'landing_route': landing_route,
+            'company_mismatch': not PaymentPortal._can_partner_pay_in_company(
+                partner_sudo, invoice_company,
+            ),
+            'expected_company': invoice_company,
             'invoice_id': invoice.id,
             'transaction_type': 'online_direct',
             'availability_report': availability_report,
