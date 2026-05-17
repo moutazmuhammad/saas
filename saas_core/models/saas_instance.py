@@ -6120,7 +6120,15 @@ class SaasInstance(models.Model):
             raise UserError(_(
                 "Database management is only available for hosting instances."
             ))
-        if self.state != 'running':
+        # ``provisioning`` is normally off-limits, but a restore-in-progress
+        # legitimately needs to list databases for the pre-restore safety
+        # snapshot (the container is still up at that point — we haven't
+        # docker-compose-down'd yet). Allow only that specific transition.
+        allowed = self.state == 'running' or (
+            self.state == 'provisioning'
+            and self.pending_operation == 'restore'
+        )
+        if not allowed:
             raise UserError(_(
                 "Instance must be running to manage databases (current: %s)."
             ) % self.state)
