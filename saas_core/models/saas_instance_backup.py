@@ -127,9 +127,26 @@ class SaasInstanceBackup(models.Model):
         }
 
     def action_restore(self):
-        """Restore this backup to its instance."""
+        """Restore this backup to its instance.
+
+        Dispatches by backup shape:
+        - ``is_full_instance`` (restic) → ``action_restore_full_instance``
+          which walks the per-DB ``restic dump`` + filesystem ``restic
+          restore`` path.
+        - Otherwise (legacy zip) → ``action_restore_backup`` which
+          downloads the single zip object and replays the SQL dump
+          + filestore inside it.
+
+        Without this dispatch, clicking Restore on the backend form of
+        a restic snapshot ran the zip path, which then crashed in
+        ``_generate_presigned_url`` because restic backups have no
+        ``backup_path`` (a restic repo isn't a single S3 object).
+        """
         self.ensure_one()
-        self.instance_id.action_restore_backup(self.id)
+        if self.is_full_instance:
+            self.instance_id.action_restore_full_instance(self.id)
+        else:
+            self.instance_id.action_restore_backup(self.id)
         return True
 
     def action_delete_backup(self):

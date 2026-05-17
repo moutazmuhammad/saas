@@ -3811,6 +3811,20 @@ class SaasInstance(models.Model):
             raise UserError(_("Invalid backup."))
         if backup.state != 'done':
             raise UserError(_("Only completed backups can be restored."))
+        if backup.is_full_instance:
+            raise UserError(_(
+                "This is a full-instance restic snapshot — use "
+                "action_restore_full_instance, not action_restore_backup. "
+                "The backend Restore button now dispatches automatically; "
+                "if you're seeing this, a stale code path is still calling "
+                "the zip restore on a restic backup."
+            ))
+        if not backup.backup_path:
+            raise UserError(_(
+                "Backup record has no cloud object path — nothing to "
+                "download. This row is probably a failed or partial "
+                "backup; delete it and create a fresh one."
+            ))
 
         self._ensure_can_ssh()
         # Lock the row + refuse if another restore is already in flight.
