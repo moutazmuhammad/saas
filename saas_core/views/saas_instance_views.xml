@@ -112,6 +112,20 @@
                             type="object"
                             invisible="state != 'running'"/>
 
+                    <!-- TEST-BUTTON-REMOVE-ME — fires the daily-backup
+                         flow on demand, bypassing the 03:00 UTC cron.
+                         Visible only to managers, only when the
+                         daily-backup flag is on. Delete this block
+                         (and `action_test_run_daily_backup` in
+                         saas_instance.py) after end-to-end QA. -->
+                    <button name="action_test_run_daily_backup"
+                            string="TEST: Run Daily Snapshot Now"
+                            type="object" class="btn-warning"
+                            icon="fa-flask"
+                            groups="saas_core.group_saas_manager"
+                            invisible="not is_hosting or state != 'running' or not daily_backup_enabled"
+                            confirm="Fire a full-instance restic snapshot right now? Same code path as the 03:00 UTC cron — produces a real billable snapshot."/>
+
                     <!-- Cancel: deployed or pre-deployment states -->
                     <button name="action_cancel" string="Cancel"
                             type="object" class="btn-danger"

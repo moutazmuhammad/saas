@@ -3737,6 +3737,62 @@ class SaasInstance(models.Model):
         )
         return True
 
+    # TEST-BUTTON-REMOVE-ME — manual trigger for the daily-restic flow,
+    # so QA can exercise the cron path without waiting for 03:00 UTC.
+    # Delete this method (and the matching button in
+    # saas_instance_views.xml) once snapshot testing is signed off.
+    def action_test_run_daily_backup(self):
+        """Fire ``_perform_full_instance_backup`` synchronously inline.
+
+        Same code path the daily cron uses. Kept synchronous so the
+        operator sees a UserError straight away if anything goes wrong
+        (restic missing, bucket creds bad, SSH refused, etc.) instead
+        of a silent failure on a thread. Will block the UI worker for
+        the duration of the run — fine for testing, not for production.
+        """
+        self.ensure_one()
+        if not self.is_hosting:
+            raise UserError(_("Test button is for hosting instances only."))
+        if not self.daily_backup_enabled:
+            raise UserError(_(
+                "Daily backups must be enabled before triggering a test run."
+            ))
+        if self.state != 'running':
+            raise UserError(_("Instance must be Running to back it up."))
+
+        Backup = self.env['saas.instance.backup'].sudo()
+        # Block parallel test clicks — same guard the cron implicitly
+        # has via the row-level work it does.
+        running = Backup.search_count([
+            ('instance_id', '=', self.id),
+            ('state', '=', 'running'),
+            ('is_full_instance', '=', True),
+        ])
+        if running:
+            raise UserError(_(
+                "A full-instance backup is already running on this "
+                "instance. Wait for it to finish before triggering "
+                "another test."
+            ))
+
+        self._append_log("TEST: manual daily-snapshot trigger started.")
+        Backup._perform_full_instance_backup_in_new_cursor(self.id)
+        self._append_log("TEST: manual daily-snapshot trigger finished.")
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _("Snapshot complete"),
+                'message': _(
+                    "Full-instance snapshot finished. Check the "
+                    "Snapshots page on the portal (or the "
+                    "saas.instance.backup model) to see the new row."
+                ),
+                'type': 'success',
+                'sticky': False,
+            },
+        }
+
     def action_restore_backup(self, backup_id):
         """Restore a backup to this instance (async).
 
