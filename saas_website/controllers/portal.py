@@ -1201,30 +1201,36 @@ class SaasPortal(CustomerPortal):
                 ) % db_name),
             ))
 
-        # One on-demand backup at a time per instance. Forbid a new one
-        # while a previous backup is running, or done-but-not-yet-expired.
-        # The customer must download (which shrinks expires_at) or wait
-        # for the 8-hour fallback. Without this guard, a refresh-spam
-        # could fill the bucket with parallel dumps.
+        # Only one on-demand backup may exist at a time. If one is
+        # already there (running OR done-and-not-yet-expired), discard
+        # it before creating the new one — delete the bucket object
+        # and flip the record to ``failed`` so the slot is free. The
+        # customer is explicitly asking for a fresh dump, so losing
+        # the previous one is the intent, not a mistake.
         active = self._active_ondemand_backup(instance)
         if active:
-            if active.state == 'running':
-                msg = _(
-                    "A backup of '%s' is still being prepared. Please wait."
-                ) % (active.db_name or instance.subdomain)
-            else:
-                expires_str = (
-                    active.expires_at.strftime('%H:%M UTC')
-                    if active.expires_at else _("soon")
-                )
-                msg = _(
-                    "You already have a backup of '%s' ready to download. "
-                    "Download it, or wait until %s for the link to expire "
-                    "before requesting another."
-                ) % (active.db_name or instance.subdomain, expires_str)
-            return request.redirect('%s?error=%s' % (
-                redirect, url_quote(msg),
-            ))
+            if active.bucket_path:
+                try:
+                    active._delete_from_bucket()
+                except Exception:
+                    _logger.warning(
+                        "Failed to delete bucket object for replaced "
+                        "on-demand backup %s — proceeding anyway",
+                        active.bucket_path,
+                    )
+            active.sudo().write({
+                'state': 'failed',
+                'error_message': _(
+                    'Replaced by a newer on-demand backup request.'
+                ),
+                'expires_at': fields.Datetime.now(),
+            })
+            # Commit so the singleton check downstream (and any
+            # concurrent page render) sees the slot as free.
+            try:
+                request.env.cr.commit()
+            except Exception:
+                pass
 
         Backup = request.env['saas.instance.backup'].sudo()
         now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')

@@ -2956,58 +2956,92 @@ class SaasInstance(models.Model):
             rec.state = 'draft'
 
     def _drop_postgresql(self):
-        """Drop the PostgreSQL database and role on the database server via SSH."""
+        """Drop ALL databases owned by this instance's role + the role.
+
+        Service instances historically had exactly one DB (= subdomain),
+        but hosting instances let the customer create N databases all
+        owned by ``db_user``. Listing by owner catches both shapes —
+        legacy service single-DB and modern hosting multi-DB — so a
+        cancelled instance never leaks a database behind.
+        """
         self.ensure_one()
         psql_server = self.db_server_id
         if not psql_server:
             return
 
-        db_name = self.subdomain
         db_user = self.db_user
-
-        # Defence in depth: re-validate identifiers before passing them
-        # into shell. The fields are regex-validated on create, but if
-        # they were ever set via direct SQL/migration this would otherwise
-        # be a path to remote command execution as `postgres`.
-        if db_name and not SUBDOMAIN_RE.match(db_name):
-            _logger.error(
-                "Refusing to drop database with invalid identifier %r", db_name,
-            )
-            db_name = None
         if db_user and not DB_USER_RE.match(db_user):
             _logger.error(
                 "Refusing to drop role with invalid identifier %r", db_user,
             )
             db_user = None
+        if not db_user:
+            return  # nothing else we can do safely
+
+        # Per-DB name regex used as a defense-in-depth filter when we
+        # iterate the list of owned DBs. Anything that doesn't match is
+        # skipped with a log entry rather than passed to the shell.
+        owned_name_re = re.compile(r'^[a-z][a-z0-9_-]{0,62}$')
+        safe_user = db_user.replace("'", "''")
 
         with psql_server._get_ssh_connection() as ssh:
-            if db_name:
-                safe_db = db_name.replace("'", "''")
-                drop_db_cmd = (
-                    "sudo -u postgres psql -tc "
-                    "\"SELECT 1 FROM pg_database WHERE datname='%s'\" "
-                    "| grep -q 1 "
-                    "&& sudo -u postgres dropdb --force %s"
-                ) % (safe_db, shlex.quote(db_name))
-                exit_code, stdout, stderr = ssh.execute(drop_db_cmd)
-                if exit_code != 0:
-                    _logger.warning(
-                        "Failed to drop database %s: %s", db_name, stderr
-                    )
+            # 1. Enumerate every database currently owned by our role.
+            #    Filtering by owner means we won't accidentally drop a
+            #    catalog DB (template0, postgres) which is owned by a
+            #    different role.
+            list_sql = (
+                "SELECT datname FROM pg_database "
+                "WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname='%s') "
+                "AND NOT datistemplate ORDER BY datname"
+            ) % safe_user
+            list_cmd = "sudo -u postgres psql -tA -c %s" % shlex.quote(list_sql)
+            exit_code, stdout, stderr = ssh.execute(list_cmd)
+            if exit_code != 0:
+                _logger.warning(
+                    "Failed to list databases owned by %s: %s",
+                    db_user, stderr or stdout,
+                )
+                owned = []
+            else:
+                owned = [
+                    line.strip() for line in stdout.splitlines()
+                    if line.strip()
+                ]
 
-            if db_user:
-                safe_user = db_user.replace("'", "''")
-                drop_role_cmd = (
-                    "sudo -u postgres psql -tc "
-                    "\"SELECT 1 FROM pg_roles WHERE rolname='%s'\" "
-                    "| grep -q 1 "
-                    "&& sudo -u postgres dropuser %s"
-                ) % (safe_user, shlex.quote(db_user))
-                exit_code, stdout, stderr = ssh.execute(drop_role_cmd)
-                if exit_code != 0:
+            # 2. Drop each owned DB. ``--force`` terminates any open
+            #    sessions first; ``--if-exists`` swallows a race.
+            for db_name in owned:
+                if not owned_name_re.match(db_name):
                     _logger.warning(
-                        "Failed to drop role %s: %s", db_user, stderr
+                        "Skipping drop of suspicious-looking db name %r",
+                        db_name,
                     )
+                    continue
+                drop_cmd = (
+                    'sudo -u postgres dropdb --force --if-exists %s'
+                    % shlex.quote(db_name)
+                )
+                ec, out, err = ssh.execute(drop_cmd)
+                if ec != 0:
+                    _logger.warning(
+                        "Failed to drop database %s: %s",
+                        db_name, err or out,
+                    )
+                else:
+                    self._append_log("Dropped database '%s'." % db_name)
+
+            # 3. Drop the role last (after all its DBs are gone).
+            drop_role_cmd = (
+                "sudo -u postgres psql -tc "
+                "\"SELECT 1 FROM pg_roles WHERE rolname='%s'\" "
+                "| grep -q 1 "
+                "&& sudo -u postgres dropuser %s"
+            ) % (safe_user, shlex.quote(db_user))
+            ec, out, err = ssh.execute(drop_role_cmd)
+            if ec != 0:
+                _logger.warning(
+                    "Failed to drop role %s: %s", db_user, err or out,
+                )
 
     def action_delete_instance(self):
         """Remove container, volumes, network, database, db user, and instance folder (async)."""

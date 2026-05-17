@@ -2828,12 +2828,12 @@
                             <div>
                                 <t t-if="active_ondemand.state == 'running'">
                                     <strong>Backup of '<t t-esc="active_ondemand.db_name"/>' in progress.</strong>
-                                    Refresh in a moment — only one on-demand backup is allowed at a time per instance.
+                                    Refresh in a moment to see the download link.
                                     <t t-if="active_ondemand.create_date">
                                         <br/>
                                         <small class="text-muted">
                                             Started <t t-esc="active_ondemand.create_date.strftime('%H:%M UTC')"/>.
-                                            Stuck for more than 5 minutes? Click Cancel to release the slot.
+                                            Stuck for more than 5 minutes? Cancel to clear and retry.
                                         </small>
                                     </t>
                                     <div class="mt-2">
@@ -2854,8 +2854,9 @@
                                     <t t-if="active_ondemand.expires_at">
                                         (expires at <t t-esc="active_ondemand.expires_at.strftime('%H:%M UTC')"/>)
                                     </t>
-                                    so a failed download can be retried. Only one on-demand backup is allowed at a time —
-                                    discard this one if you need a fresh dump immediately.
+                                    so a failed download can be retried.
+                                    Only one on-demand backup exists at a time — clicking
+                                    <strong>Backup Now</strong> on any database will replace this one.
                                     <div class="mt-2">
                                         <a t-attf-href="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/download"
                                            class="btn btn-sm btn-primary me-1">
@@ -2951,24 +2952,28 @@
                                                         </button>
                                                     </form>
                                                 </t>
-                                                <t t-elif="active_ondemand">
-                                                    <button type="button" class="btn btn-sm btn-secondary"
-                                                            disabled="disabled"
-                                                            t-att-title="
-                                                                'Backup of ' + active_ondemand.db_name + ' is '
-                                                                + active_ondemand.state
-                                                                + ' — only one on-demand backup per instance at a time.'
-                                                            ">
-                                                        <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
-                                                    </button>
-                                                </t>
                                                 <t t-else="">
+                                                    <!-- Backup Now is always clickable. If another
+                                                         on-demand backup exists, the controller
+                                                         deletes it from the bucket first and
+                                                         replaces it with this new one. Only
+                                                         one on-demand backup exists per instance
+                                                         at any moment. -->
                                                     <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
                                                           method="POST" class="d-inline">
                                                         <input type="hidden" name="csrf_token"
                                                                t-att-value="request.csrf_token()"/>
                                                         <input type="hidden" name="db_name" t-att-value="db['name']"/>
-                                                        <button type="submit" class="btn btn-sm btn-outline-primary">
+                                                        <button type="submit"
+                                                                class="btn btn-sm btn-outline-primary"
+                                                                t-att-data-confirm="
+                                                                    'Taking a new backup will delete the existing on-demand backup of '
+                                                                    + active_ondemand.db_name + '. Continue?'
+                                                                    if active_ondemand else None
+                                                                "
+                                                                data-confirm-variant="warning"
+                                                                data-confirm-yes="Yes, replace"
+                                                                data-confirm-no="Cancel">
                                                             <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
                                                         </button>
                                                     </form>
