@@ -611,7 +611,12 @@ fi
 
             # Check if the zip still exists on the server (means upload
             # didn't happen or failed — need SFTP fallback)
-            check_code, _, _ = ssh.execute(
+            # Use ``__`` (not ``_``) for the throwaways: ``_`` is the
+            # translation function imported at module top, and rebinding
+            # it in the local scope shadows it for the entire function —
+            # so the earlier ``_("Backup failed…")`` blows up with
+            # UnboundLocalError.
+            check_code, __out, __err = ssh.execute(
                 'test -f %s' % shlex.quote(zip_path)
             )
             if check_code == 0:
@@ -990,7 +995,12 @@ fi
                     size_bytes = int(line)
 
             # SFTP fallback if presigned PUT didn't fly
-            check_code, _, _ = ssh.execute(
+            # Use ``__`` (not ``_``) for the throwaways: ``_`` is the
+            # translation function imported at module top, and rebinding
+            # it in the local scope shadows it for the entire function —
+            # so the earlier ``_("Backup failed…")`` blows up with
+            # UnboundLocalError.
+            check_code, __out, __err = ssh.execute(
                 'test -f %s' % shlex.quote(zip_path)
             )
             if check_code == 0:
