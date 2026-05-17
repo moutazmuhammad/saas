@@ -1348,7 +1348,10 @@ class SaasInstance(models.Model):
         """
         # Defense in depth: callers validate these but we re-check
         # before formatting into raw SQL.
-        if not re.match(r'^[a-z][a-z0-9_-]{0,62}$', db_name or ''):
+        # Allow a leading underscore so the per-instance template
+        # name (``__odoo_template_<sub>``) passes — customer-facing
+        # names go through the stricter ``_DB_NAME_RE`` regex earlier.
+        if not re.match(r'^[_a-z][a-z0-9_-]{0,62}$', db_name or ''):
             raise UserError(_("Invalid db name %r") % db_name)
         if not DB_USER_RE.match(db_user or ''):
             raise UserError(_("Invalid db user %r") % db_user)
@@ -1377,7 +1380,10 @@ class SaasInstance(models.Model):
         psql_server = self.db_server_id
         if not psql_server:
             raise UserError(_("No database server configured on this instance."))
-        if not re.match(r'^[a-z][a-z0-9_-]{0,62}$', db_name or ''):
+        # Allow a leading underscore so the per-instance template
+        # name (``__odoo_template_<sub>``) passes — customer-facing
+        # names go through the stricter ``_DB_NAME_RE`` regex earlier.
+        if not re.match(r'^[_a-z][a-z0-9_-]{0,62}$', db_name or ''):
             raise UserError(_("Invalid db name %r") % db_name)
         if not DB_USER_RE.match(self.db_user or ''):
             raise UserError(_("Invalid db user %r") % self.db_user)
@@ -3077,9 +3083,10 @@ class SaasInstance(models.Model):
             return  # nothing else we can do safely
 
         # Per-DB name regex used as a defense-in-depth filter when we
-        # iterate the list of owned DBs. Anything that doesn't match is
-        # skipped with a log entry rather than passed to the shell.
-        owned_name_re = re.compile(r'^[a-z][a-z0-9_-]{0,62}$')
+        # iterate the list of owned DBs. Allows a leading underscore
+        # so the per-instance Odoo template (``__odoo_template_<sub>``)
+        # is included — otherwise it'd leak on cancel.
+        owned_name_re = re.compile(r'^[_a-z][a-z0-9_-]{0,62}$')
         safe_user = db_user.replace("'", "''")
 
         with psql_server._get_ssh_connection() as ssh:

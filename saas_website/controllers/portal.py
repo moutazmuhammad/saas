@@ -272,14 +272,35 @@ class SaasPortal(CustomerPortal):
 
         # Pending and recently-failed DB operations. Running ones get
         # an in-progress banner; failed ones surface the error briefly
-        # so the customer can react. Shorter window now (15 min) so
-        # old failures don't linger as visual noise once they've been
-        # read and the customer has retried — they can also Dismiss
-        # an individual failure to clear it immediately.
+        # so the customer can react. Failures auto-clear after 15
+        # minutes; long-running ops auto-fail after 30 minutes
+        # (template bootstrap takes ~90s, clones a few seconds — so
+        # anything > 30 min is the saas master having restarted
+        # mid-thread, leaving a zombie tracking row).
         Op = request.env['saas.instance.db.operation'].sudo()
-        recent_cutoff = (
-            fields.Datetime.now() - datetime.timedelta(minutes=15)
-        )
+        now = fields.Datetime.now()
+        running_fuse = now - datetime.timedelta(minutes=30)
+        failure_window = now - datetime.timedelta(minutes=15)
+
+        # Zombie reaper: in-flight rows older than 30 min are flagged
+        # failed so the slot frees up. A restored thread that comes
+        # back to life will still try to write 'done'/'failed' to its
+        # op and lose the race — harmless.
+        zombies = Op.search([
+            ('instance_id', '=', instance.id),
+            ('state', '=', 'running'),
+            ('create_date', '<', running_fuse),
+        ])
+        if zombies:
+            zombies.write({
+                'state': 'failed',
+                'error_message': _(
+                    'Worker disappeared before this finished — the '
+                    'saas master likely restarted. If the database '
+                    'is still missing, dismiss this and try again.'
+                ),
+            })
+
         running_ops = Op.search([
             ('instance_id', '=', instance.id),
             ('state', '=', 'running'),
@@ -287,7 +308,7 @@ class SaasPortal(CustomerPortal):
         failed_ops = Op.search([
             ('instance_id', '=', instance.id),
             ('state', '=', 'failed'),
-            ('create_date', '>=', recent_cutoff),
+            ('create_date', '>=', failure_window),
         ])
 
         values = self._prepare_portal_layout_values()
@@ -380,12 +401,18 @@ class SaasPortal(CustomerPortal):
     )
     def portal_instance_db_op_dismiss(self, instance_id, op_id,
                                       access_token=None, **post):
-        """Remove a finished/failed DB-op tracking row from view.
+        """Remove a DB-op tracking row from view.
 
-        Running ops can't be dismissed — only failed / done records,
-        which are purely informational at this point. The row is
-        deleted so it disappears from the page; the underlying DB
-        state is untouched.
+        Works for any state — including ``running``, where it means
+        "I don't care anymore, get this banner off my screen". The
+        underlying background thread (if still alive) will keep
+        running and eventually try to write to a now-deleted row;
+        ``unlink()`` cascades cleanly so that's a no-op.
+
+        Doesn't touch the database itself: if the create succeeded
+        between the customer clicking Cancel and the row being
+        deleted, the new DB just appears on next refresh. If it
+        failed, no harm done.
         """
         try:
             instance = self._hosting_instance(instance_id, access_token)
@@ -395,12 +422,6 @@ class SaasPortal(CustomerPortal):
         redirect = '/my/instances/%d/databases' % instance_id
         if not op.exists() or op.instance_id != instance:
             return request.redirect(redirect)
-        if op.state == 'running':
-            return request.redirect('%s?error=%s' % (
-                redirect, url_quote(_(
-                    "Can't dismiss a running operation — wait for it to finish."
-                )),
-            ))
         op.unlink()
         return request.redirect(redirect)
 
