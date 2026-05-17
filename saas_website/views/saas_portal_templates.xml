@@ -2363,7 +2363,8 @@
                         <t t-if="instance.is_hosting and not instance.is_trial">
                             <t t-if="instance.daily_backup_enabled">
                                 <form t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
-                                      method="POST" class="ms-3">
+                                      method="POST" class="ms-3"
+                                      onsubmit="return confirm('Disable daily backups? You will not be refunded for the current billing period, and the add-on line will be removed from your next renewal invoice.');">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="enable" value="0"/>
@@ -2843,9 +2844,10 @@
                                     Captures every database, the filestore,
                                     custom addons, configuration, Docker layout
                                     and pip packages on each run; keeps the
-                                    last 7 days. Charged again on every
-                                    renewal of your hosting subscription
-                                    while the feature is on.
+                                    last 7 days. Charged again at your
+                                    next renewal and on every renewal
+                                    after that while the feature is on.
+                                    <strong>No refund on disable.</strong>
                                 </p>
                                 <table class="table align-middle mb-0">
                                     <thead>
@@ -2858,11 +2860,38 @@
                                         <tr>
                                             <td>
                                                 Daily Backups Add-on
-                                                <span class="badge ms-2 bg-info">Monthly</span>
+                                                <t t-if="period == 'yearly'">
+                                                    <span class="badge ms-2 bg-info">Yearly</span>
+                                                </t>
+                                                <t t-else="">
+                                                    <span class="badge ms-2 bg-info">Monthly</span>
+                                                </t>
+                                                <div class="small text-muted">
+                                                    Full
+                                                    <t t-if="period == 'yearly'">year</t>
+                                                    <t t-else="">month</t>:
+                                                    <t t-esc="full_period_price"
+                                                       t-options="{'widget': 'monetary', 'display_currency': currency}"/>
+                                                    (<t t-esc="monthly_price"
+                                                       t-options="{'widget': 'monetary', 'display_currency': currency}"/>/mo)
+                                                </div>
                                             </td>
                                             <td class="text-end">
-                                                <t t-esc="monthly_price"
+                                                <t t-esc="full_period_price"
                                                    t-options="{'widget': 'monetary', 'display_currency': currency}"/>
+                                            </td>
+                                        </tr>
+                                        <tr style="color:var(--success);">
+                                            <td>
+                                                <i class="fas fa-receipt me-1"></i>
+                                                Prorated to next renewal
+                                                — <t t-esc="remaining_days"/> of
+                                                <t t-esc="cycle_days"/> days
+                                                (through <t t-esc="cycle_end.strftime('%Y-%m-%d')"/>)
+                                            </td>
+                                            <td class="text-end">
+                                                -<t t-esc="full_period_price - amount"
+                                                    t-options="{'widget': 'monetary', 'display_currency': currency}"/>
                                             </td>
                                         </tr>
                                     </tbody>

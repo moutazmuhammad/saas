@@ -953,26 +953,54 @@ class SaasInstance(models.Model):
             # cleared this), or cancelled. Clear and re-issue.
             self.daily_backup_pending_invoice_id = False
 
-        price = self._get_daily_backup_price()
-        if price <= 0:
+        monthly_price = self._get_daily_backup_price()
+        if monthly_price <= 0:
             raise UserError(_(
                 "Daily backup pricing isn't configured. Ask the "
                 "platform operator to set the monthly add-on price "
                 "in SaaS settings."
             ))
 
+        # Prorate the first charge so the customer pays only for the
+        # days remaining in the current billing cycle. The next renewal
+        # invoice then carries the full cycle price (see
+        # ``_generate_renewal_invoice``). No refund on disable.
+        period = self.billing_period or 'monthly'
+        full_period_price = monthly_price * 12 if period == 'yearly' else monthly_price
+        period_label = _('yearly') if period == 'yearly' else _('monthly')
+
+        today = fields.Date.today()
+        cycle_days, remaining_days, cycle_end = self._daily_backup_cycle_window(
+            today, period,
+        )
+        # Guard the math: never bill more than a full cycle, and never
+        # less than 1 day so a same-day enable still produces a non-zero
+        # invoice the payment widget can process.
+        remaining_days = max(1, min(remaining_days, cycle_days))
+        prorated_price = round(
+            full_period_price * remaining_days / cycle_days, 2,
+        )
+
         product = self._get_daily_backup_product()
         pricelist = self.partner_id.property_product_pricelist
+        line_name = _(
+            'Daily Backups Add-on (%(period)s, prorated %(days)s/%(total)s '
+            'days through %(end)s) — %(instance)s'
+        ) % {
+            'period': period_label,
+            'days': remaining_days,
+            'total': cycle_days,
+            'end': cycle_end.strftime('%Y-%m-%d'),
+            'instance': self.name or self.subdomain,
+        }
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': 'SAAS:BACKUP-ADDON:%s' % (self.name or self.subdomain),
             'order_line': [(0, 0, {
                 'product_id': product.id,
-                'name': _(
-                    'Daily Backups Add-on (monthly) — %s'
-                ) % (self.name or self.subdomain),
+                'name': line_name,
                 'product_uom_qty': 1,
-                'price_unit': price,
+                'price_unit': prorated_price,
             })],
         }
         if pricelist:
@@ -983,10 +1011,40 @@ class SaasInstance(models.Model):
         invoice.action_post()
         self.daily_backup_pending_invoice_id = invoice.id
         self._append_log(
-            "Daily-backup add-on invoice %s created (%s)."
-            % (invoice.name, price)
+            "Daily-backup add-on invoice %s created — %s/%s days, "
+            "prorated %.2f (full %s price %.2f)."
+            % (
+                invoice.name, remaining_days, cycle_days,
+                prorated_price, period, full_period_price,
+            )
         )
         return invoice
+
+    def _daily_backup_cycle_window(self, today, period):
+        """Return ``(cycle_days, remaining_days, cycle_end_date)``.
+
+        Anchored on ``next_invoice_date`` when set (the standard case for
+        a paid running instance) so the prorated charge ends exactly
+        when the next renewal kicks in. Falls back to a calendar window
+        (end of month / +1 year) for instances that don't yet have a
+        renewal date.
+        """
+        self.ensure_one()
+        if self.next_invoice_date and self.next_invoice_date > today:
+            cycle_end = self.next_invoice_date
+            if self.last_invoice_date and self.last_invoice_date < cycle_end:
+                cycle_days = (cycle_end - self.last_invoice_date).days
+            else:
+                interval = (relativedelta(years=1) if period == 'yearly'
+                            else relativedelta(months=1))
+                cycle_days = (cycle_end - (cycle_end - interval)).days
+        else:
+            interval = (relativedelta(years=1) if period == 'yearly'
+                        else relativedelta(months=1))
+            cycle_end = today + interval
+            cycle_days = (cycle_end - today).days
+        remaining_days = (cycle_end - today).days
+        return cycle_days or 1, remaining_days, cycle_end
 
     def _get_billing_product(self):
         """Return the default product.product used on SaaS sale order lines.

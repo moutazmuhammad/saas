@@ -1139,8 +1139,9 @@ class SaasPortal(CustomerPortal):
         return request.redirect(
             '/my/instances/%d/backups?notice=%s'
             % (instance_id, url_quote(_(
-                "Daily backups disabled. Existing snapshots remain "
-                "available until their 7-day retention expires."
+                "Daily backups disabled. No refund for the current "
+                "billing period — existing snapshots remain available "
+                "until their 7-day retention expires."
             )))
         )
 
@@ -1207,11 +1208,25 @@ class SaasPortal(CustomerPortal):
         )
         invoice_access_token = invoice._portal_ensure_token()
 
+        # Proration breakdown for the order-summary table.
+        period = instance.billing_period or 'monthly'
+        monthly_price = instance.sudo()._get_daily_backup_price()
+        full_period_price = monthly_price * 12 if period == 'yearly' else monthly_price
+        cycle_days, remaining_days, cycle_end = instance.sudo()._daily_backup_cycle_window(
+            fields.Date.today(), period,
+        )
+        remaining_days = max(1, min(remaining_days, cycle_days))
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance,
             'invoice': invoice,
-            'monthly_price': instance.sudo()._get_daily_backup_price(),
+            'monthly_price': monthly_price,
+            'period': period,
+            'full_period_price': full_period_price,
+            'cycle_days': cycle_days,
+            'remaining_days': remaining_days,
+            'cycle_end': cycle_end,
             'page_name': 'saas_daily_backup_checkout',
             # Same shape as portal_checkout uses, so the same
             # ``payment.form`` macro renders.
