@@ -11,6 +11,20 @@
             <xpath expr="//form" position="inside">
                 <app data-string="SaaS Manager" string="SaaS Manager" name="saas_core">
 
+                    <!-- ==================== Website Sections ==================== -->
+                    <block title="Website Sections" name="saas_website_sections_container">
+                        <setting id="saas_show_services_section_setting"
+                                 string="Show Services Section"
+                                 help="When off, the Services nav link, footer link, home-page card and /services routes are hidden. Data is preserved.">
+                            <field name="saas_show_services_section"/>
+                        </setting>
+                        <setting id="saas_show_hosting_section_setting"
+                                 string="Show Hosting Section"
+                                 help="When off, the Hosting nav link, footer link, home-page card and /hosting routes are hidden. Data is preserved.">
+                            <field name="saas_show_hosting_section"/>
+                        </setting>
+                    </block>
+
                     <!-- ==================== General ==================== -->
                     <block title="General" name="saas_general_container">
                         <setting id="saas_trial_days_setting"

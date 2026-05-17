@@ -159,6 +159,23 @@ class SshTerminal extends Component {
             this.sessionId = result.session_id;
             this.state.connected = true;
             this.state.connecting = false;
+            this._inputErrorCount = 0;
+
+            // Display the SSH banner the server captured inline. The pump
+            // starts reading the channel after this, so anything between
+            // here and the SSE subscribe below is the only at-risk window
+            // for output loss — typically nothing.
+            if (result.initial_output) {
+                try {
+                    const bytes = Uint8Array.from(
+                        atob(result.initial_output),
+                        c => c.charCodeAt(0),
+                    );
+                    this.terminal.write(new TextDecoder().decode(bytes));
+                } catch (e) {
+                    console.error("[terminal] failed to render banner", e);
+                }
+            }
 
             // Start output stream
             this._startOutputStream();
@@ -255,13 +272,10 @@ class SshTerminal extends Component {
             // If the stream fails repeatedly, give up
             if (this._streamErrorCount >= 3) {
                 this.state.connected = false;
-                this.state.error =
-                    "Connection lost. If Odoo uses multiple workers (--workers > 0), " +
-                    "terminal requires single-process mode (--workers=0).";
+                this.state.error = "Connection lost after multiple retries.";
                 if (this.terminal) {
                     this.terminal.write(
-                        "\r\n\x1b[31mConnection lost after multiple retries.\x1b[0m\r\n" +
-                        "\x1b[33mHint: Make sure Odoo is running with --workers=0\x1b[0m\r\n"
+                        "\r\n\x1b[31mConnection lost after multiple retries.\x1b[0m\r\n"
                     );
                 }
                 this._stopOutputStream();
@@ -287,12 +301,24 @@ class SshTerminal extends Component {
                 session_id: this.sessionId,
                 data: data,
             });
+            this._inputErrorCount = 0;
             if (result.status === "closed") {
                 this.state.connected = false;
                 this.terminal.write("\r\n\x1b[33mSession closed.\x1b[0m\r\n");
             }
-        } catch {
-            // Silently ignore transient input errors to avoid flooding
+        } catch (e) {
+            // The first failure of a session is usually how we learn about
+            // routing / auth issues — surface it instead of silently
+            // dropping keystrokes. Throttle so a broken backend doesn't
+            // flood the terminal.
+            this._inputErrorCount = (this._inputErrorCount || 0) + 1;
+            console.warn("[terminal] input RPC failed", e);
+            if (this._inputErrorCount === 1 && this.terminal) {
+                const msg = (e && e.data && e.data.message) || (e && e.message) || String(e);
+                this.terminal.write(
+                    "\r\n\x1b[31m[terminal] failed to send input: " + msg + "\x1b[0m\r\n"
+                );
+            }
         }
     }
 

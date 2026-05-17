@@ -19,6 +19,17 @@ class SaasWebsite(http.Controller):
     #  Helpers
     # ------------------------------------------------------------------
 
+    def _section_enabled(self, name):
+        """Return True if the ``Services`` / ``Hosting`` section is enabled
+        in settings. Default-on so a fresh install behaves like before.
+
+        ``name`` is ``'services'`` or ``'hosting'``.
+        """
+        key = 'saas_master.show_%s_section' % name
+        return request.env['ir.config_parameter'].sudo().get_param(
+            key, 'True',
+        ) != 'False'
+
     def _get_trial_info(self, hosting=False):
         """Return (trial_available, trial_days) for the current user.
 
@@ -43,6 +54,8 @@ class SaasWebsite(http.Controller):
     @http.route('/services', type='http', auth='public', website=True, sitemap=True)
     def services_page(self, **kw):
         """Browse all published SaaS service products."""
+        if not self._section_enabled('services'):
+            return request.redirect('/')
         products = request.env['saas.product'].sudo().search([
             ('is_published', '=', True),
             ('is_hosting', '=', False),
@@ -60,6 +73,8 @@ class SaasWebsite(http.Controller):
                 website=True, sitemap=True)
     def service_plans(self, product_id, **kw):
         """Show available plans for the selected service."""
+        if not self._section_enabled('services'):
+            return request.redirect('/')
         product = request.env['saas.product'].sudo().browse(product_id)
         if not product.exists() or not product.is_published:
             return request.redirect('/services')
@@ -86,6 +101,8 @@ class SaasWebsite(http.Controller):
     @http.route('/services/<int:product_id>/plans/<int:plan_id>/configure',
                 type='http', auth='public', website=True)
     def service_configure(self, product_id, plan_id, error=None, **kw):
+        if not self._section_enabled('services'):
+            return request.redirect('/')
         # Public users must register/login first
         if request.env.user._is_public():
             is_trial = kw.get('trial') == '1'
@@ -124,6 +141,8 @@ class SaasWebsite(http.Controller):
     @http.route('/services/order', type='http', auth='user', website=True,
                 methods=['POST'], csrf=True)
     def service_order(self, **post):
+        if not self._section_enabled('services'):
+            return request.redirect('/')
         product_id = int(post.pop('product_id', 0))
         plan_id = int(post.pop('plan_id', 0))
         subdomain = (post.get('subdomain') or '').strip().lower()
@@ -351,6 +370,8 @@ class SaasWebsite(http.Controller):
     def service_custom_configure(self, product_id, workers=4, storage=20,
                                  billing='monthly', error=None, **kw):
         """Configure instance page for a custom plan."""
+        if not self._section_enabled('services'):
+            return request.redirect('/')
         if request.env.user._is_public():
             params = 'product_id=%d&custom=1&workers=%s&storage=%s&billing=%s' % (
                 product_id, workers, storage, billing,
@@ -404,6 +425,8 @@ class SaasWebsite(http.Controller):
                 methods=['POST'], csrf=True)
     def service_custom_order(self, **post):
         """Process a custom plan order."""
+        if not self._section_enabled('services'):
+            return request.redirect('/')
         product_id = int(post.pop('product_id', 0))
         workers = int(post.get('workers', 4))
         storage = int(post.get('storage', 20))
@@ -577,6 +600,8 @@ class SaasWebsite(http.Controller):
 
     @http.route('/plans', type='http', auth='public', website=True, sitemap=False)
     def plans_page_redirect(self, **kw):
+        if not self._section_enabled('services'):
+            return request.redirect('/')
         return request.redirect('/services', code=301)
 
     # ==================================================================
@@ -690,6 +715,8 @@ class SaasWebsite(http.Controller):
     @http.route('/hosting', type='http', auth='public', website=True, sitemap=True)
     def hosting_page(self, **kw):
         """Hosting landing page with plan builder and version selection."""
+        if not self._section_enabled('hosting'):
+            return request.redirect('/')
         hosting_config = self._get_hosting_plan_config()
         versions = request.env['saas.odoo.version'].sudo().search(
             [('is_hosting_version', '=', True)], order='name desc',
@@ -707,6 +734,8 @@ class SaasWebsite(http.Controller):
     def hosting_configure(self, workers=0, storage=0, billing='monthly',
                           odoo_version_id='0', error=None, **kw):
         """Configure hosting instance: subdomain, repo, version."""
+        if not self._section_enabled('hosting'):
+            return request.redirect('/')
         if request.env.user._is_public():
             params = 'hosting=1&workers=%s&storage=%s&billing=%s&odoo_version_id=%s' % (
                 workers, storage, billing, odoo_version_id,
@@ -760,6 +789,8 @@ class SaasWebsite(http.Controller):
                 methods=['POST'], csrf=True)
     def hosting_order(self, **post):
         """Process a hosting order."""
+        if not self._section_enabled('hosting'):
+            return request.redirect('/')
         workers = int(post.get('workers', 4))
         storage = int(post.get('storage', 20))
         subdomain = (post.get('subdomain') or '').strip().lower()

@@ -204,6 +204,29 @@ class ResConfigSettings(models.TransientModel):
              'Set to 0 for no charge.',
     )
 
+    # ========== Website Sections ==========
+    # Toggle visibility of the public Services / Hosting sections.
+    # When False, the nav link, footer link, home-page card, and CTA are
+    # hidden, and the corresponding routes redirect to /. The underlying
+    # data (products, plans, hosting versions) is untouched, so flipping
+    # the toggle back on instantly restores the section.
+    saas_show_services_section = fields.Boolean(
+        string='Show Services Section',
+        config_parameter='saas_master.show_services_section',
+        default=True,
+        help='Show the "Services" section (catalog and detail pages) on '
+             'the public website. Turn off if you only want to sell '
+             'Hosting at this stage. The data is preserved.',
+    )
+    saas_show_hosting_section = fields.Boolean(
+        string='Show Hosting Section',
+        config_parameter='saas_master.show_hosting_section',
+        default=True,
+        help='Show the "Hosting" section (landing page and configurator) '
+             'on the public website. Turn off to hide hosting offerings '
+             'temporarily. The data is preserved.',
+    )
+
     # ========== Rate Limiting ==========
     saas_max_instances_per_user = fields.Integer(
         string='Max Instances Per User',

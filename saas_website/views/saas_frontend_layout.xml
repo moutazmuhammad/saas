@@ -31,6 +31,12 @@
     <template id="cloudodoo_header" name="CloudOdoo Header"
               inherit_id="website.layout" customize_show="False">
         <xpath expr="//header" position="replace">
+            <!-- Section visibility flags. Unset / 'True' => shown.
+                 Default-on so a fresh install behaves like before. -->
+            <t t-set="show_services_section"
+               t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_services_section', 'True') != 'False'"/>
+            <t t-set="show_hosting_section"
+               t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_hosting_section', 'True') != 'False'"/>
             <header id="top" data-anchor="true">
                 <nav class="navbar navbar-expand-lg fixed-top co-navbar">
                     <div class="container">
@@ -43,10 +49,10 @@
                         </button>
                         <div class="collapse navbar-collapse" id="coNavbar">
                             <ul class="navbar-nav ms-auto align-items-center">
-                                <li class="nav-item">
+                                <li t-if="show_services_section" class="nav-item">
                                     <a class="nav-link" href="/services">Services</a>
                                 </li>
-                                <li class="nav-item">
+                                <li t-if="show_hosting_section" class="nav-item">
                                     <a class="nav-link" href="/hosting">Hosting</a>
                                 </li>
 
@@ -111,6 +117,10 @@
     <template id="cloudodoo_footer" name="CloudOdoo Footer"
               inherit_id="website.layout" customize_show="False">
         <xpath expr="//footer" position="replace">
+            <t t-set="show_services_section"
+               t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_services_section', 'True') != 'False'"/>
+            <t t-set="show_hosting_section"
+               t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_hosting_section', 'True') != 'False'"/>
             <footer id="bottom" data-anchor="true" class="co-footer">
                 <div class="container">
                     <div class="row g-4 py-4">
@@ -124,8 +134,8 @@
                         <div class="col-6 col-lg-2">
                             <h6 class="fw-bold mb-3">Product</h6>
                             <ul class="list-unstyled">
-                                <li><a href="/services" class="co-footer-link">Services</a></li>
-                                <li><a href="/hosting" class="co-footer-link">Hosting</a></li>
+                                <li t-if="show_services_section"><a href="/services" class="co-footer-link">Services</a></li>
+                                <li t-if="show_hosting_section"><a href="/hosting" class="co-footer-link">Hosting</a></li>
                                 <li><a href="#" class="co-footer-link">Pricing</a></li>
                                 <li><a href="#" class="co-footer-link">Features</a></li>
                             </ul>
@@ -320,6 +330,11 @@
     <template id="cloudodoo_home" name="CloudOdoo Home">
         <t t-call="saas_website.cloudodoo_layout">
 
+            <t t-set="show_services_section"
+               t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_services_section', 'True') != 'False'"/>
+            <t t-set="show_hosting_section"
+               t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_hosting_section', 'True') != 'False'"/>
+
             <!-- ===== HERO ===== -->
             <section class="hero-section">
                 <div class="hero-bg"></div>
@@ -340,10 +355,10 @@
                                 Managed infrastructure, automatic backups, and instant scaling.
                             </p>
                             <div class="d-flex flex-wrap gap-3 mb-4">
-                                <a href="/services" class="btn btn-primary btn-lg px-4">
+                                <a t-if="show_services_section" href="/services" class="btn btn-primary btn-lg px-4">
                                     <i class="fas fa-cubes me-2"></i>Ready-Made Services
                                 </a>
-                                <a href="/hosting" class="btn btn-success btn-lg px-4">
+                                <a t-if="show_hosting_section" href="/hosting" class="btn btn-success btn-lg px-4">
                                     <i class="fas fa-server me-2"></i>Host Your Project
                                 </a>
                             </div>
@@ -401,7 +416,7 @@
             </section>
 
             <!-- ===== TWO OFFERINGS ===== -->
-            <section class="py-6" id="offerings">
+            <section t-if="show_services_section or show_hosting_section" class="py-6" id="offerings">
                 <div class="container">
                     <div class="text-center mb-5">
                         <h2 class="display-5 fw-bold">Launch Your Business Today</h2>
@@ -409,7 +424,7 @@
                     </div>
                     <div class="row g-4">
                         <!-- Ready-Made Services -->
-                        <div class="col-lg-6">
+                        <div t-if="show_services_section" class="col-lg-6">
                             <div class="info-card h-100" style="border-left:3px solid var(--primary);padding:2rem;">
                                 <div class="d-flex align-items-center gap-3 mb-3">
                                     <div style="width:56px;height:56px;background:var(--primary-light);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:var(--primary);flex-shrink:0;">
@@ -437,7 +452,7 @@
                         </div>
 
                         <!-- Cloud Hosting -->
-                        <div class="col-lg-6">
+                        <div t-if="show_hosting_section" class="col-lg-6">
                             <div class="info-card h-100" style="border-left:3px solid #10B981;padding:2rem;">
                                 <div class="d-flex align-items-center gap-3 mb-3">
                                     <div style="width:56px;height:56px;background:rgba(16,185,129,0.1);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:var(--success);flex-shrink:0;">
@@ -472,7 +487,7 @@
             </section>
 
             <!-- ===== SERVICES SHOWCASE ===== -->
-            <t t-if="services">
+            <t t-if="services and show_services_section">
                 <section class="py-6" style="background:var(--bg-elevated);">
                     <div class="container">
                         <div class="text-center mb-5">
@@ -633,10 +648,10 @@
                             Join businesses already running on our cloud. Get started in minutes.
                         </p>
                         <div class="d-flex flex-wrap gap-3 justify-content-center mb-3">
-                            <a href="/services" class="btn btn-primary btn-lg px-4">
+                            <a t-if="show_services_section" href="/services" class="btn btn-primary btn-lg px-4">
                                 <i class="fas fa-cubes me-2"></i>Explore Services
                             </a>
-                            <a href="/hosting" class="btn btn-success btn-lg px-4">
+                            <a t-if="show_hosting_section" href="/hosting" class="btn btn-success btn-lg px-4">
                                 <i class="fas fa-server me-2"></i>Setup Hosting
                             </a>
                         </div>

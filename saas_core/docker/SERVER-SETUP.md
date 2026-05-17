@@ -461,11 +461,7 @@ Without this, workers get killed mid-deployment, leaving instances stuck in "pro
 
 ### 12.2 Worker mode
 
-The SSH terminal feature requires `--workers=0` (threaded mode) because it stores SSH sessions in-memory. If you need multi-worker mode, the terminal will not work but all other features (provisioning, billing, webhooks) will.
-
-```ini
-workers = 0
-```
+Any worker count works. The SSH terminal forwards input/output across workers via PostgreSQL `LISTEN`/`NOTIFY`, so `--workers > 0` is supported.
 
 ### 12.3 Set web.base.url
 
@@ -575,8 +571,7 @@ sudo ufw allow from 10.135.0.0/16 to any port 5432
 
 ### Terminal always disconnects
 
-1. Requires `--workers=0` (threaded mode) — multi-worker breaks in-memory SSH sessions
-2. If behind Nginx, add to the SaaS Manager proxy config:
+1. If behind Nginx, add to the SaaS Manager proxy config:
    ```nginx
    location /saas/terminal/ {
        proxy_buffering off;
