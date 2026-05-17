@@ -1107,6 +1107,23 @@ class SaasPortal(CustomerPortal):
                 '/my/instances/%d/backups?error=%s'
                 % (instance_id, url_quote(_("Could not generate download link.")))
             )
+
+        # For on-demand backups, shrink the lifetime on the click. The
+        # customer is in the act of downloading; once they have the
+        # file we want the bucket object gone. The 5-minute cleanup
+        # cron will reap it during the next sweep. We deliberately
+        # don't unlink synchronously — that would 404 a paused or
+        # resumed download.
+        if backup.ephemeral:
+            from odoo.addons.saas_core.models.saas_instance_backup import (
+                ONDEMAND_DOWNLOAD_GRACE,
+            )
+            new_expiry = fields.Datetime.now() + datetime.timedelta(
+                seconds=ONDEMAND_DOWNLOAD_GRACE,
+            )
+            if not backup.expires_at or backup.expires_at > new_expiry:
+                backup.sudo().expires_at = new_expiry
+
         return werkzeug.utils.redirect(backup.download_url)
 
     # ==================== Restore Backup ====================

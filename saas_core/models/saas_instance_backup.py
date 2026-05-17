@@ -9,10 +9,13 @@ _logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BACKUPS = 7
 PRESIGNED_URL_EXPIRY = 7 * 24 * 3600
-# On-demand backups are deliberately short-lived. The customer gets a
-# 1-hour window to download; afterwards the file is reaped from the
-# bucket so we don't accumulate orphaned ondemand/ objects.
-ONDEMAND_URL_EXPIRY = 3600
+# On-demand backups time out at 8 hours as a safety net — long enough
+# for slow connections, short enough that an orphan doesn't sit in the
+# bucket forever. Once the customer actually clicks Download, the
+# expiry is shrunk to ~10 minutes (see ONDEMAND_DOWNLOAD_GRACE) so the
+# bucket object disappears shortly after they've got the file.
+ONDEMAND_URL_EXPIRY = 8 * 3600
+ONDEMAND_DOWNLOAD_GRACE = 600  # seconds the link stays alive after click
 ONDEMAND_PREFIX = 'ondemand'
 
 
