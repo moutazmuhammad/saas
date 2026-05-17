@@ -4329,12 +4329,22 @@ class SaasInstance(models.Model):
                 "createdb %s failed:\n%s\n%s"
             ) % (db, stdout, stderr))
 
-        # Pipe restic dump → psql on the docker host (it has the
+        # Pipe restic dump → sed → psql on the docker host (it has the
         # network path to the db server already).
+        #
+        # The sed filter strips ``SET`` statements that the newer
+        # pg_dump (PG 17+) shipped in our containers emits but older
+        # PG servers don't understand. ``transaction_timeout`` is the
+        # one that bit us in the field; we keep the pattern open-ended
+        # so future PG-17/18-only knobs in the dump prologue won't
+        # break restores against PG 15/16 servers. Real data lines
+        # (``COPY``, ``INSERT``) are unaffected — the offending
+        # statements are always single ``SET <name> = <value>;`` lines.
         dump_cmd = Backup._restic_cmd(
             env,
             ['dump', snap_id, shlex.quote('/%s.sql' % db)],
         )
+        sed_filter = "sed -E '/^SET (transaction_timeout)\\s*=/d'"
         psql_cmd = (
             'PGPASSWORD=%s psql -h %s -p %d -U %s -d %s -q -v ON_ERROR_STOP=1'
         ) % (
@@ -4344,7 +4354,9 @@ class SaasInstance(models.Model):
             shlex.quote(self.db_user),
             shlex.quote(db),
         )
-        pipeline = 'set -o pipefail; %s | %s' % (dump_cmd, psql_cmd)
+        pipeline = 'set -o pipefail; %s | %s | %s' % (
+            dump_cmd, sed_filter, psql_cmd,
+        )
         exit_code, stdout, stderr = ssh.execute(pipeline, timeout=7200)
         if exit_code != 0:
             self._append_log(
@@ -4397,16 +4409,20 @@ class SaasInstance(models.Model):
             ) % (db, stdout, stderr))
 
         # Apply the dump from the docker host (it has psql + network
-        # to the db server already).
+        # to the db server already). Same PG-17→older-server filter as
+        # the restic path; ``cat | sed | psql`` instead of ``psql -f``
+        # so we can drop the offending SET line in-stream.
         restore_cmd = (
-            'PGPASSWORD=%s psql -h %s -p %d -U %s -d %s -f %s 2>&1'
+            "set -o pipefail; cat %s "
+            "| sed -E '/^SET (transaction_timeout)\\s*=/d' "
+            "| PGPASSWORD=%s psql -h %s -p %d -U %s -d %s 2>&1"
         ) % (
+            shlex.quote(dump_path),
             shlex.quote(self.db_password),
             shlex.quote(db_host),
             db_port,
             shlex.quote(self.db_user),
             shlex.quote(db),
-            shlex.quote(dump_path),
         )
         exit_code, stdout, stderr = ssh.execute(restore_cmd, timeout=3600)
         if exit_code != 0:
