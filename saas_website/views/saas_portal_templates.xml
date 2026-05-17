@@ -2887,11 +2887,19 @@
                                 <div class="modal-body">
                                     <div class="mb-3">
                                         <label class="form-label">Database name</label>
-                                        <input type="text" name="name" class="form-control"
-                                               placeholder="my-erp" required="required"
-                                               pattern="[a-z][a-z0-9_\-]{0,62}"/>
+                                        <div class="input-group">
+                                            <span class="input-group-text" id="db-prefix-create">
+                                                <t t-esc="instance.subdomain"/>_
+                                            </span>
+                                            <input type="text" name="name" class="form-control"
+                                                   placeholder="my-erp" required="required"
+                                                   pattern="[a-z][a-z0-9_\-]{0,62}"/>
+                                        </div>
                                         <div class="form-text">
-                                            Lowercase letters, digits, hyphens and underscores. Starts with a letter. Max 63 chars.
+                                            Lowercase letters, digits, hyphens and underscores.
+                                            Starts with a letter. The full database name will be
+                                            <code><t t-esc="instance.subdomain"/>_</code> followed by
+                                            what you type.
                                         </div>
                                     </div>
                                     <div class="mb-3">
@@ -2945,11 +2953,18 @@
                                             Copies the database (data and filestore) under a new name.
                                             The original stays untouched.
                                         </p>
+                                        <t t-set="src_suffix" t-value="db['name'][len(instance.subdomain)+1:] if db['name'].startswith(instance.subdomain + '_') else db['name']"/>
                                         <div class="mb-3">
                                             <label class="form-label">New database name</label>
-                                            <input type="text" name="new_name" class="form-control"
-                                                   t-attf-value="#{db['name']}-copy" required="required"
-                                                   pattern="[a-z][a-z0-9_\-]{0,62}"/>
+                                            <div class="input-group">
+                                                <span class="input-group-text">
+                                                    <t t-esc="instance.subdomain"/>_
+                                                </span>
+                                                <input type="text" name="new_name" class="form-control"
+                                                       t-attf-value="#{src_suffix}-copy"
+                                                       required="required"
+                                                       pattern="[a-z][a-z0-9_\-]{0,62}"/>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="modal-footer">

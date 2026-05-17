@@ -5567,7 +5567,30 @@ class SaasInstance(models.Model):
     _DB_NAME_RE = re.compile(r'^[a-z][a-z0-9_-]{0,62}$')
     _DB_RESERVED = frozenset(['postgres', 'template0', 'template1'])
 
+    def _hosting_db_prefix(self):
+        """Prefix every customer-created DB with the instance subdomain.
+
+        Two reasons:
+        * Tenant safety — two customers can both pick "prod"; only
+          ``acme_prod`` and ``zen_prod`` ever exist on the cluster.
+        * Listing — the portal can show only DBs that match the
+          prefix, so the cron / drop / duplicate paths never see a
+          stranger's data.
+        """
+        sub = (self.subdomain or '').strip().lower()
+        # Underscore is the natural separator; subdomains use hyphens
+        # so the boundary is unambiguous (``acme-prod`` + `_` + name).
+        return '%s_' % sub if sub else ''
+
     def _validate_db_name(self, name):
+        """Validate a raw customer-typed DB name.
+
+        ``name`` is the bare value the customer entered, **without**
+        the subdomain prefix. The full DB name is built by the caller
+        via ``_hosting_db_full_name``. Validating after prefix-prepend
+        elsewhere means there's a single check, and we get to surface
+        clean error messages for naming-rule violations.
+        """
         name = (name or '').strip().lower()
         if not self._DB_NAME_RE.match(name):
             raise UserError(_(
@@ -5578,6 +5601,28 @@ class SaasInstance(models.Model):
         if name in self._DB_RESERVED:
             raise UserError(_("'%s' is reserved by PostgreSQL.") % name)
         return name
+
+    def _hosting_db_full_name(self, name):
+        """Combine the instance prefix and the customer-typed suffix.
+
+        Strips an already-applied prefix if the customer pastes the
+        full name back (so re-entering ``acme_test`` doesn't produce
+        ``acme_acme_test``). Enforces the 63-byte PG identifier limit
+        on the FINAL name.
+        """
+        self.ensure_one()
+        prefix = self._hosting_db_prefix()
+        raw = (name or '').strip().lower()
+        if prefix and raw.startswith(prefix):
+            raw = raw[len(prefix):]
+        suffix = self._validate_db_name(raw)
+        full = '%s%s' % (prefix, suffix)
+        if len(full) > 63:
+            raise UserError(_(
+                "Database name '%s' is too long (max 63 characters, "
+                "including the '%s' prefix)."
+            ) % (full, prefix))
+        return full
 
     def _ensure_hosting_for_db_ops(self):
         self.ensure_one()
@@ -5648,18 +5693,30 @@ class SaasInstance(models.Model):
         return ssh.execute(cmd, timeout=timeout)
 
     def hosting_db_list(self):
-        """List databases owned by this instance's PG role.
+        """List databases this instance's customer owns.
 
-        Returns a list of dicts: ``{'name': str}``. The shape stays
-        extensible — phase 4 will add size and created_at fields once
-        backups land.
+        We restrict by the per-instance subdomain prefix so a customer
+        can never see (or operate on) another tenant's database, even
+        if the shared PG role somehow gained visibility. Owned-by-role
+        is still also enforced — defense in depth.
+
+        Returns a list of dicts: ``{'name': str}``.
         """
         self._ensure_hosting_for_db_ops()
+        prefix = self._hosting_db_prefix()
+        # We use psql LIKE matching with the literal prefix. SQL
+        # injection risk is bounded because subdomain has already
+        # passed SUBDOMAIN_RE; even so, defense in depth: percent and
+        # underscore in LIKE are wildcards, so we escape with the
+        # `ESCAPE '\'` clause + quote the prefix in Python.
+        like = prefix.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
         sql = (
             "SELECT datname FROM pg_database "
             "WHERE datdba = (SELECT oid FROM pg_roles WHERE rolname = current_user) "
-            "AND NOT datistemplate ORDER BY datname"
-        )
+            "AND NOT datistemplate "
+            "AND datname LIKE '%s%%' ESCAPE '\\\\' "
+            "ORDER BY datname"
+        ) % like
         with self.docker_server_id._get_ssh_connection() as ssh:
             exit_code, stdout, stderr = self._docker_exec_sql(ssh, sql)
         if exit_code != 0:
@@ -5689,7 +5746,9 @@ class SaasInstance(models.Model):
         ``_do_deploy`` does for service instances, which is known good.
         """
         self._ensure_hosting_for_db_ops()
-        name = self._validate_db_name(name)
+        # Always namespace under the instance subdomain so two
+        # customers can't collide and our list query stays sound.
+        name = self._hosting_db_full_name(name)
         login = (login or 'admin').strip()
         if not password:
             raise UserError(_("Initial admin password is required."))
@@ -5803,8 +5862,11 @@ class SaasInstance(models.Model):
     def hosting_db_duplicate(self, source, new_name):
         """Copy an existing database under a new name."""
         self._ensure_hosting_for_db_ops()
-        source = self._validate_db_name(source)
-        new_name = self._validate_db_name(new_name)
+        # Both source and target live under the instance prefix.
+        # _hosting_db_full_name strips a re-pasted prefix so the
+        # customer can hand us either the bare name or the full one.
+        source = self._hosting_db_full_name(source)
+        new_name = self._hosting_db_full_name(new_name)
         existing = {r['name'] for r in self.hosting_db_list()}
         if source not in existing:
             raise UserError(
@@ -5834,9 +5896,20 @@ class SaasInstance(models.Model):
         return new_name
 
     def hosting_db_drop(self, name):
-        """Drop a database. Irreversible — caller must confirm."""
+        """Drop a database. Irreversible — caller must confirm.
+
+        The customer can only target DBs that already belong to the
+        instance prefix — ``_hosting_db_full_name`` enforces that even
+        if a crafted POST tried to drop e.g. ``postgres``.
+        """
         self._ensure_hosting_for_db_ops()
-        name = self._validate_db_name(name)
+        name = self._hosting_db_full_name(name)
+        # Belt and braces: confirm the DB really is one of ours before
+        # talking to PG. ``hosting_db_list`` already filters by prefix.
+        if name not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % name
+            )
         script = (
             "from odoo.service import db\n"
             "db.exp_drop(os.environ['SAAS_DB_NAME'])\n"
