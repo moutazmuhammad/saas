@@ -206,13 +206,16 @@ class ResConfigSettings(models.TransientModel):
 
     # ========== Website Sections ==========
     # Toggle visibility of the public Services / Hosting sections.
-    # When False, the nav link, footer link, home-page card, and CTA are
-    # hidden, and the corresponding routes redirect to /. The underlying
-    # data (products, plans, hosting versions) is untouched, so flipping
-    # the toggle back on instantly restores the section.
+    # These intentionally don't use ``config_parameter=`` — that path
+    # routes through Odoo's set_param() which unlinks the row on False,
+    # and through a Boolean coercion that reads ``bool('False')`` (True!)
+    # — so the toggle always springs back on. We read/write the
+    # underlying ir.config_parameter rows by hand in get_values /
+    # set_values below, storing the literal strings ``'True'`` and
+    # ``'False'``. The templates check ``!= 'False'`` so an unset row
+    # (fresh install) defaults to shown.
     saas_show_services_section = fields.Boolean(
         string='Show Services Section',
-        config_parameter='saas_master.show_services_section',
         default=True,
         help='Show the "Services" section (catalog and detail pages) on '
              'the public website. Turn off if you only want to sell '
@@ -220,7 +223,6 @@ class ResConfigSettings(models.TransientModel):
     )
     saas_show_hosting_section = fields.Boolean(
         string='Show Hosting Section',
-        config_parameter='saas_master.show_hosting_section',
         default=True,
         help='Show the "Hosting" section (landing page and configurator) '
              'on the public website. Turn off to hide hosting offerings '
@@ -323,11 +325,6 @@ class ResConfigSettings(models.TransientModel):
     def set_values(self):
         res = super().set_values()
         ICP = self.env['ir.config_parameter'].sudo()
-        # ir.config_parameter.set_param() unlinks the row when the value
-        # is Python False, which makes "False" indistinguishable from
-        # "never set" — so default=True silently springs the toggle back
-        # on the next read. Write explicit 'True'/'False' strings to
-        # avoid that. Templates and helpers already check `!= 'False'`.
         ICP.set_param(
             'saas_master.show_services_section',
             'True' if self.saas_show_services_section else 'False',
@@ -360,6 +357,12 @@ class ResConfigSettings(models.TransientModel):
     def get_values(self):
         res = super().get_values()
         ICP = self.env['ir.config_parameter'].sudo()
+        res['saas_show_services_section'] = ICP.get_param(
+            'saas_master.show_services_section', 'True',
+        ) != 'False'
+        res['saas_show_hosting_section'] = ICP.get_param(
+            'saas_master.show_hosting_section', 'True',
+        ) != 'False'
         sa_key = ICP.get_param('saas_backup.service_account_key', '')
         if sa_key:
             import base64
