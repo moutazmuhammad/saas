@@ -3742,13 +3742,12 @@ class SaasInstance(models.Model):
     # Delete this method (and the matching button in
     # saas_instance_views.xml) once snapshot testing is signed off.
     def action_test_run_daily_backup(self):
-        """Fire ``_perform_full_instance_backup`` synchronously inline.
+        """Fire ``_perform_full_instance_backup`` in a background thread.
 
-        Same code path the daily cron uses. Kept synchronous so the
-        operator sees a UserError straight away if anything goes wrong
-        (restic missing, bucket creds bad, SSH refused, etc.) instead
-        of a silent failure on a thread. Will block the UI worker for
-        the duration of the run — fine for testing, not for production.
+        Same code path the daily cron uses. Returns immediately so the
+        HTTP transaction doesn't hold a row-level write while restic is
+        uploading — the cron itself runs in a fresh cursor for the same
+        reason. Watch progress in the instance log stream.
         """
         self.ensure_one()
         if not self.is_hosting:
@@ -3761,8 +3760,6 @@ class SaasInstance(models.Model):
             raise UserError(_("Instance must be Running to back it up."))
 
         Backup = self.env['saas.instance.backup'].sudo()
-        # Block parallel test clicks — same guard the cron implicitly
-        # has via the row-level work it does.
         running = Backup.search_count([
             ('instance_id', '=', self.id),
             ('state', '=', 'running'),
@@ -3775,18 +3772,22 @@ class SaasInstance(models.Model):
                 "another test."
             ))
 
-        self._append_log("TEST: manual daily-snapshot trigger started.")
-        Backup._perform_full_instance_backup_in_new_cursor(self.id)
-        self._append_log("TEST: manual daily-snapshot trigger finished.")
+        self._append_log("TEST: manual daily-snapshot trigger queued.")
+        run_in_background(
+            Backup, '_perform_full_instance_backup_in_new_cursor',
+            method_args=(self.id,),
+            thread_name='saas_test_snapshot_%s' % self.subdomain,
+        )
         return {
             'type': 'ir.actions.client',
             'tag': 'display_notification',
             'params': {
-                'title': _("Snapshot complete"),
+                'title': _("Snapshot started"),
                 'message': _(
-                    "Full-instance snapshot finished. Check the "
-                    "Snapshots page on the portal (or the "
-                    "saas.instance.backup model) to see the new row."
+                    "Full-instance snapshot is running in the "
+                    "background. Watch the instance log or the "
+                    "Snapshots page — the new saas.instance.backup "
+                    "row will flip to 'done' when restic finishes."
                 ),
                 'type': 'success',
                 'sticky': False,
