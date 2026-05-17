@@ -2817,6 +2817,45 @@
                         </div>
                     </t>
 
+                    <!-- One on-demand backup at a time per instance. While
+                         it's alive (running, or done-not-expired), this
+                         banner surfaces it so the customer can grab the
+                         download — and disables Backup Now on every row. -->
+                    <t t-if="active_ondemand">
+                        <div class="alert-banner alert-warning mb-3">
+                            <i class="fas fa-clock"></i>
+                            <div>
+                                <t t-if="active_ondemand.state == 'running'">
+                                    <strong>Backup of '<t t-esc="active_ondemand.db_name"/>' in progress.</strong>
+                                    Refresh in a moment — only one on-demand backup is allowed at a time per instance.
+                                </t>
+                                <t t-else="">
+                                    <strong>A backup of '<t t-esc="active_ondemand.db_name"/>' is ready.</strong>
+                                    The link stays live for the full 8-hour window
+                                    <t t-if="active_ondemand.expires_at">
+                                        (expires at <t t-esc="active_ondemand.expires_at.strftime('%H:%M UTC')"/>)
+                                    </t>
+                                    so a failed download can be retried. Only one on-demand backup is allowed at a time —
+                                    discard this one if you need a fresh dump immediately.
+                                    <div class="mt-2">
+                                        <a t-attf-href="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/download"
+                                           class="btn btn-sm btn-primary me-1">
+                                            <i class="fas fa-download me-1"></i>Download
+                                        </a>
+                                        <form t-attf-action="/my/instances/#{instance.id}/backups/#{active_ondemand.id}/discard"
+                                              method="POST" class="d-inline">
+                                            <input type="hidden" name="csrf_token"
+                                                   t-att-value="request.csrf_token()"/>
+                                            <button type="submit" class="btn btn-sm btn-outline-secondary">
+                                                <i class="fas fa-trash me-1"></i>Discard
+                                            </button>
+                                        </form>
+                                    </div>
+                                </t>
+                            </div>
+                        </div>
+                    </t>
+
                     <div class="info-card">
                         <t t-if="not databases and not list_error">
                             <div class="text-center py-5">
@@ -2836,10 +2875,22 @@
                                 </thead>
                                 <tbody>
                                     <t t-foreach="databases" t-as="db">
+                                        <t t-set="this_ondemand" t-value="ondemand_by_db.get(db['name'])"/>
                                         <tr>
                                             <td>
                                                 <i class="fas fa-database me-2" style="color:var(--co-text-muted);"></i>
                                                 <strong t-esc="db['name']"/>
+                                                <t t-if="this_ondemand and this_ondemand.state == 'done'">
+                                                    <span class="badge ms-2"
+                                                          style="background:rgba(245,158,11,0.15);color:#f59e0b;">
+                                                        <i class="fas fa-clock me-1"></i>Backup ready
+                                                    </span>
+                                                </t>
+                                                <t t-if="this_ondemand and this_ondemand.state == 'running'">
+                                                    <span class="badge ms-2 bg-info">
+                                                        <i class="fas fa-spinner fa-spin me-1"></i>Backing up
+                                                    </span>
+                                                </t>
                                             </td>
                                             <td class="text-end">
                                                 <a t-attf-href="#{instance.url}/web?db=#{db['name']}"
@@ -2847,6 +2898,38 @@
                                                    class="btn btn-sm btn-outline-primary">
                                                     <i class="fas fa-external-link-alt me-1"></i>Open
                                                 </a>
+
+                                                <!-- Per-DB Backup Now. Disabled while ANY
+                                                     on-demand backup is in flight for this
+                                                     instance — see banner above. -->
+                                                <t t-if="this_ondemand and this_ondemand.state == 'done'">
+                                                    <a t-attf-href="/my/instances/#{instance.id}/backups/#{this_ondemand.id}/download"
+                                                       class="btn btn-sm btn-primary">
+                                                        <i class="fas fa-download me-1"></i>Download
+                                                    </a>
+                                                </t>
+                                                <t t-elif="active_ondemand">
+                                                    <button type="button" class="btn btn-sm btn-secondary"
+                                                            disabled="disabled"
+                                                            t-att-title="
+                                                                'Backup of ' + active_ondemand.db_name + ' is '
+                                                                + active_ondemand.state
+                                                            ">
+                                                        <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
+                                                    </button>
+                                                </t>
+                                                <t t-else="">
+                                                    <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
+                                                          method="POST" class="d-inline">
+                                                        <input type="hidden" name="csrf_token"
+                                                               t-att-value="request.csrf_token()"/>
+                                                        <input type="hidden" name="db_name" t-att-value="db['name']"/>
+                                                        <button type="submit" class="btn btn-sm btn-outline-primary">
+                                                            <i class="fas fa-cloud-download-alt me-1"></i>Backup Now
+                                                        </button>
+                                                    </form>
+                                                </t>
+
                                                 <button type="button"
                                                         class="btn btn-sm btn-outline-secondary"
                                                         data-bs-toggle="modal"

@@ -246,6 +246,15 @@ class SaasPortal(CustomerPortal):
                 "Instance is %s — start it to manage databases."
             ) % instance.state
 
+        # On-demand backups live here (per database). Find the in-flight
+        # one so the template can render the banner + disable buttons,
+        # and build a quick lookup so the matching DB row can surface a
+        # Download / Discard inline.
+        active_ondemand = self._active_ondemand_backup(instance)
+        ondemand_by_db = {}
+        if active_ondemand:
+            ondemand_by_db[active_ondemand.db_name] = active_ondemand
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance,
@@ -254,6 +263,8 @@ class SaasPortal(CustomerPortal):
             'error': error,
             'notice': notice,
             'default_login': request.env.user.partner_id.email or 'admin',
+            'active_ondemand': active_ondemand,
+            'ondemand_by_db': ondemand_by_db,
             'page_name': 'saas_instance_databases',
         })
         return request.render(
@@ -1030,46 +1041,38 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        # All non-deleted backups, newest first. We include ``running``
-        # so an on-demand backup the customer just kicked off shows up
-        # immediately as "running" and they know it's in flight.
+        # The /backups page now shows ONLY full-instance daily restore
+        # points. On-demand per-DB backups live on the /databases page
+        # (next to the DB they belong to) — see portal_instance_databases.
+        # Service-instance legacy zip backups stay here so they remain
+        # downloadable until they age out.
         backups = instance.backup_ids.filtered(
             lambda b: b.state in ('done', 'running', 'failed')
+            and not b.ephemeral
         ).sorted('create_date', reverse=True)
 
-        # Split full-instance backups (daily restore points) from
-        # per-DB backups (on-demand downloads). They render in
-        # different sections — different semantics: a full-instance
-        # row is a whole-system snapshot you Restore; a per-DB row is
-        # a download artifact.
-        full_instance_backups = [b for b in backups if b.is_full_instance]
-        per_db_backups = [b for b in backups if not b.is_full_instance]
-
-        # Group per-DB by db_name. Legacy records (no db_name) fall
-        # under the subdomain so the table still reads naturally for
-        # service instances that pre-date the column.
-        grouped = {}
-        for b in per_db_backups:
-            key = b.db_name or instance.subdomain
-            grouped.setdefault(key, []).append(b)
-
-        # For hosting, also show empty groups for any current DBs so
-        # the customer can click "Backup Now" before they have history.
-        if instance.is_hosting and instance.state == 'running':
-            try:
-                for entry in instance.hosting_db_list():
-                    grouped.setdefault(entry['name'], [])
-            except Exception:
-                pass  # listing failure shouldn't break the page
-
-        db_groups = sorted(grouped.items())
+        if instance.is_hosting:
+            full_instance_backups = [b for b in backups if b.is_full_instance]
+            # No per-DB section on this page anymore.
+            db_groups = []
+        else:
+            full_instance_backups = []
+            # Service instances: keep the legacy per-DB layout.
+            grouped = {}
+            for b in backups:
+                key = b.db_name or instance.subdomain
+                grouped.setdefault(key, []).append(b)
+            db_groups = sorted(grouped.items())
 
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance,
             'db_groups': db_groups,
             'full_instance_backups': full_instance_backups,
-            'active_ondemand': self._active_ondemand_backup(instance),
+            # active_ondemand is still passed so the legacy banner
+            # path doesn't crash, but it's effectively a no-op now —
+            # the Databases page surfaces this state instead.
+            'active_ondemand': None,
             'error': error,
             'notice': notice,
             'retention_days': 7 if instance.is_hosting else None,
