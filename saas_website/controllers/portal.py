@@ -1266,14 +1266,26 @@ class SaasPortal(CustomerPortal):
                 ) % db_name),
             ))
 
-        # Only one on-demand backup may exist at a time. If one is
-        # already there (running OR done-and-not-yet-expired), discard
-        # it before creating the new one — delete the bucket object
-        # and flip the record to ``failed`` so the slot is free. The
-        # customer is explicitly asking for a fresh dump, so losing
-        # the previous one is the intent, not a mistake.
+        # Only one on-demand backup may exist at a time per instance.
+        #
+        # - If one is **running**: reject the new request so two
+        #   parallel dumps can't fight for the SSH connection,
+        #   memory, and bucket slot. The disabled button on the
+        #   server-rendered page is the primary guard; this is the
+        #   belt-and-braces against a stale form submission or a
+        #   double-click that beat the disable-all JS.
+        # - If one is **done** (ready to download): the customer is
+        #   explicitly asking for a fresh dump, so delete the bucket
+        #   object first and proceed with the new one.
         active = self._active_ondemand_backup(instance)
-        if active:
+        if active and active.state == 'running':
+            return request.redirect('%s?error=%s' % (
+                redirect, url_quote(_(
+                    "A backup of '%s' is still in progress. Wait for it "
+                    "to finish before starting another."
+                ) % (active.db_name or '')),
+            ))
+        if active and active.state == 'done':
             if active.bucket_path:
                 try:
                     active._delete_from_bucket()

@@ -3007,21 +3007,14 @@
                                                 </t>
                                                 <t t-else="">
                                                     <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
-                                                          method="POST" class="d-inline"
-                                                          onsubmit="
-                                                              var b = this.querySelector('button[type=submit]');
-                                                              if (b) {
-                                                                  b.disabled = true;
-                                                                  b.innerHTML = '&lt;i class=\'fas fa-spinner fa-spin me-1\'&gt;&lt;/i&gt;Starting…';
-                                                              }
-                                                              return true;
-                                                          ">
+                                                          method="POST"
+                                                          class="d-inline saas-ondemand-form">
                                                         <input type="hidden" name="csrf_token"
                                                                t-att-value="request.csrf_token()"/>
                                                         <input type="hidden" name="db_name" t-att-value="db['name']"/>
                                                         <input type="hidden" name="return_to" value="databases"/>
                                                         <button type="submit"
-                                                                class="btn btn-sm btn-outline-primary"
+                                                                class="btn btn-sm btn-outline-primary saas-ondemand-btn"
                                                                 t-att-data-confirm="
                                                                     ('Taking a new backup will delete the existing one for '
                                                                      + active_ondemand.db_name + '. Continue?')
@@ -3137,6 +3130,41 @@
                             </form>
                         </div>
                     </div>
+
+                    <!-- Disable every Backup Now button across the page
+                         as soon as the customer submits any one of them.
+                         Prevents the gap between click and page-reload
+                         from accepting a second click (or a click on a
+                         different DB's button) and starting two parallel
+                         dumps. The server-side guard in
+                         portal_backup_ondemand will still reject the
+                         second one even if this JS doesn't fire — this
+                         is purely for UX. -->
+                    <script>
+                        (function() {
+                            var forms = document.querySelectorAll('.saas-ondemand-form');
+                            if (!forms.length) return;
+                            var locked = false;
+                            forms.forEach(function(form) {
+                                form.addEventListener('submit', function(ev) {
+                                    if (locked) {
+                                        ev.preventDefault();
+                                        return false;
+                                    }
+                                    locked = true;
+                                    // Mark the clicked button with a spinner,
+                                    // disable every Backup Now on the page.
+                                    var clicked = form.querySelector('.saas-ondemand-btn');
+                                    document.querySelectorAll('.saas-ondemand-btn').forEach(function(b) {
+                                        b.disabled = true;
+                                        if (b === clicked) {
+                                            b.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Starting…';
+                                        }
+                                    });
+                                });
+                            });
+                        })();
+                    </script>
 
                     <!-- Per-DB Duplicate / Drop modals -->
                     <t t-foreach="databases" t-as="db">
