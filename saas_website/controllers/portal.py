@@ -1222,7 +1222,16 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        redirect = '/my/instances/%d/backups' % instance_id
+        # The form may indicate where to land after the redirect.
+        # We host the Backup Now button on the Databases page now, so
+        # bouncing the customer back to /backups is the wrong default.
+        # Whitelist the two known destinations so this can't be
+        # turned into an open-redirect.
+        return_to = (post.get('return_to') or '').strip()
+        if return_to == 'backups':
+            redirect = '/my/instances/%d/backups' % instance_id
+        else:
+            redirect = '/my/instances/%d/databases' % instance_id
 
         if not instance.is_hosting:
             return request.redirect('%s?error=%s' % (
@@ -2108,13 +2117,14 @@ class SaasPortal(CustomerPortal):
 
     # ==================== Backup Download Regeneration ====================
 
-    @http.route(
-        '/my/instances/<int:instance_id>/backup/<int:backup_id>/download',
-        type='http', auth='user',
-    )
-    def portal_backup_download(self, instance_id, backup_id, access_token=None, **kw):
-        """Backup download is not available from the portal."""
-        return request.redirect('/my/instances/%s' % instance_id)
+    # NOTE: the legacy ``/backup/<id>/download`` route used to live
+    # here as a no-op stub redirecting to the instance page. It was
+    # named ``portal_backup_download`` — the same method name as the
+    # real download route a few hundred lines up, which Python class
+    # body evaluation silently overwrote. That meant every click on
+    # the Download button went through the stub and did nothing.
+    # Removed entirely so the working ``portal_backup_download``
+    # (route ``/backups/<id>/download``) is the only definition.
 
     # ==================== Reactivate Cancelled Instance ====================
 
