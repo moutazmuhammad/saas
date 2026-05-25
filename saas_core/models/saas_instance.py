@@ -4292,6 +4292,41 @@ class SaasInstance(models.Model):
                         "Restic run %s has no filesystem snapshot."
                     ) % backup.restic_run_tag)
 
+                # 1.5 Enumerate CURRENT databases on the instance so we
+                # can later drop the ones that exist now but weren't in
+                # the snapshot. Restoring is a full state replacement —
+                # if a database was created AFTER the snapshot was taken
+                # it shouldn't survive the restore. Must run while the
+                # container is still up (``hosting_db_list`` shells into
+                # the Odoo container).
+                snap_db_set = {db for db, _sid in db_snaps}
+                try:
+                    current_dbs = [
+                        r['name'] for r in self.hosting_db_list()
+                    ]
+                except Exception as e:
+                    # Don't abort the restore over a listing hiccup —
+                    # log loudly so the operator knows extras weren't
+                    # pruned. The user's data still gets restored.
+                    self._restore_log(
+                        "Could not enumerate current DBs to find extras "
+                        "(restore will proceed, but DBs created since "
+                        "the snapshot may survive): %r" % e,
+                        level='warning',
+                    )
+                    current_dbs = []
+                extras_to_drop = [
+                    db for db in current_dbs
+                    if db not in snap_db_set
+                    and re.match(r'^[a-z][a-z0-9_-]{0,62}$', db)
+                ]
+                self._restore_log(
+                    "Pre-restore DB diff: current=%s, in_snapshot=%s, "
+                    "to_drop=%s" % (
+                        current_dbs, sorted(snap_db_set), extras_to_drop,
+                    )
+                )
+
                 # 2. Stop container before mutating files.
                 self._restore_log("Step 2/5: stopping container...")
                 t_stop = _time.time()
@@ -4415,6 +4450,95 @@ class SaasInstance(models.Model):
                         % (db, _time.time() - t_db)
                     )
                 self._restore_log("Step 4/5 OK: all databases restored.")
+
+                # 4b. Drop databases that exist NOW but weren't in the
+                # snapshot. Restoring is a full state replacement, so a
+                # DB the customer created after the snapshot was taken
+                # has no reason to survive — leaving it would surprise
+                # the customer ("I restored from a snapshot that had
+                # only db_a, why is db_b still there?"). Bucket-side
+                # ondemand backups for these DBs are reaped through the
+                # backup ``unlink`` override below; restic full-instance
+                # snapshots don't carry per-DB rows so there's nothing
+                # to clean on that side.
+                if extras_to_drop:
+                    self._restore_log(
+                        "Step 4b/5: dropping %d database(s) that exist "
+                        "now but weren't in the snapshot: %s"
+                        % (len(extras_to_drop), extras_to_drop)
+                    )
+
+                    def _drop_extra_db(db_name):
+                        # Same drop dance as ``_restic_restore_one_db``
+                        # but without the create+pipe-dump steps.
+                        if psql_server == self.docker_server_id:
+                            run = ssh.execute
+                            close = lambda: None  # noqa: E731
+                        else:
+                            db_ssh_cm = psql_server._get_ssh_connection()
+                            db_ssh = db_ssh_cm.__enter__()
+                            run = db_ssh.execute
+                            close = lambda: db_ssh_cm.__exit__(None, None, None)
+                        try:
+                            run(
+                                "sudo -u postgres psql -c "
+                                "\"SELECT pg_terminate_backend(pid) "
+                                "FROM pg_stat_activity WHERE datname='%s' "
+                                "AND pid <> pg_backend_pid();\" 2>&1"
+                                % db_name.replace("'", "''")
+                            )
+                            ec, out, err = run(
+                                'sudo -u postgres dropdb --force '
+                                '--if-exists %s 2>&1'
+                                % shlex.quote(db_name)
+                            )
+                            return ec, out, err
+                        finally:
+                            close()
+
+                    for db in extras_to_drop:
+                        try:
+                            ec, out, err = _drop_extra_db(db)
+                            if ec != 0:
+                                self._restore_log(
+                                    "WARN: dropdb extra %r exit=%s out=%r"
+                                    % (db, ec, (out + err)[-300:]),
+                                    level='warning',
+                                )
+                            else:
+                                self._restore_log(
+                                    "  -> dropped extra database %r" % db
+                                )
+                        except Exception as e:
+                            # Best-effort: don't fail the restore over
+                            # a stuck dropdb. Customer can manually
+                            # drop the leftover from the Databases page.
+                            self._restore_log(
+                                "WARN: failed to drop extra %r: %r"
+                                % (db, e), level='warning',
+                            )
+                        # Also reap any on-demand backup rows + bucket
+                        # objects pointing at this DB — the row is now
+                        # orphaned. ``unlink`` cascades to the bucket.
+                        related = self.env['saas.instance.backup'].sudo().search([
+                            ('instance_id', '=', self.id),
+                            ('db_name', '=', db),
+                            ('is_full_instance', '=', False),
+                        ])
+                        if related:
+                            try:
+                                related.unlink()
+                                self._restore_log(
+                                    "  -> reaped %d backup row(s) for %r"
+                                    % (len(related), db)
+                                )
+                            except Exception as e:
+                                self._restore_log(
+                                    "WARN: failed to unlink backup rows "
+                                    "for dropped %r: %r" % (db, e),
+                                    level='warning',
+                                )
+                    self._restore_log("Step 4b/5 OK: extra DBs dropped.")
 
                 # 5. Bring container back up. ``docker compose up -d``
                 # is idempotent over container existence:
