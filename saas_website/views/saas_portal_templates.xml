@@ -1083,8 +1083,15 @@
                                     </a>
                                 </t>
 
-                                <!-- Backups page (any instance with backups or daily backups enabled) -->
-                                <t t-if="instance.daily_backup_enabled or instance.backup_ids">
+                                <!-- Snapshots page entry point. For hosting
+                                     instances it doubles as the path to enable
+                                     daily backups, so the link is always shown
+                                     (a customer who skipped the add-on at
+                                     checkout needs *some* way back in). For
+                                     non-hosting service instances we only
+                                     surface it when there's actually something
+                                     to look at. -->
+                                <t t-if="instance.is_hosting or instance.daily_backup_enabled or instance.backup_ids">
                                     <a t-attf-href="/my/instances/#{instance.id}/backups"
                                        class="action-btn action-logs">
                                         <i class="fas fa-archive"></i>View Snapshots
