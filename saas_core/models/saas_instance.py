@@ -6984,6 +6984,161 @@ class SaasInstance(models.Model):
     # weaker password through the reset flow.
     _ADMIN_PASSWORD_MIN_LENGTH = 6
 
+    # Module names accepted by ``hosting_db_upgrade_module``. Matches
+    # Odoo's own technical-name rules plus the special ``all`` keyword.
+    # Validated server-side; the input is interpolated into a shell
+    # command on the docker host so a permissive pattern is a real
+    # risk (``base; rm -rf /`` etc.). ``shlex.quote`` wraps it on top
+    # of this check as defense in depth.
+    _UPGRADE_MODULE_RE = re.compile(r'^[a-z_][a-z0-9_]{0,63}$')
+
+    def hosting_db_upgrade_module(self, name, module):
+        """Run ``odoo -u <module> -d <db>`` against the customer's container.
+
+        Recovery tool: useful when the live Odoo is broken (500 every
+        request), where XML-RPC into a running worker isn't available.
+
+        Sequence:
+        1. Stop the running container so it doesn't fight the one-shot
+           CLI process for the registry/cursor.
+        2. ``docker compose run --rm -T odoo odoo -d <db> -u <module>
+           --stop-after-init --no-http --workers=0 --log-level=info``.
+           The ``run`` (vs ``exec``) sub-command spins up a *separate*
+           one-shot container with the same image and mounts, so it
+           still works when the long-lived odoo service is stopped.
+        3. Restart the container with ``docker compose up -d``.
+
+        Returns the captured stdout+stderr. Raises ``UserError`` on
+        any failure; the exception carries a ``_saas_upgrade_output``
+        attribute with the partial output so the portal can render it
+        even on a failed run.
+        """
+        self._ensure_hosting_for_db_ops()
+        name = self._hosting_db_full_name(name)
+        if name not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % name
+            )
+        module = (module or '').strip().lower()
+        if not module:
+            raise UserError(_("Pick a module name to upgrade."))
+        if module != 'all' and not self._UPGRADE_MODULE_RE.match(module):
+            raise UserError(_(
+                "Module name '%s' is not valid. Use lowercase letters, "
+                "digits and underscores; or the special keyword 'all'."
+            ) % module)
+
+        instance_path = self._get_instance_path()
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            captured = []
+
+            def _err(msg):
+                # Attach the captured output to the exception so the
+                # bg worker can persist it on the op record.
+                exc = UserError(msg)
+                exc._saas_upgrade_output = '\n'.join(captured)
+                raise exc
+
+            self._append_log(
+                "Module upgrade: stopping container for '%s' "
+                "(target db=%s, module=%s)..."
+                % (self.subdomain, name, module)
+            )
+            ec, sout, serr = ssh.execute(
+                'cd %s && docker compose stop odoo 2>&1'
+                % shlex.quote(instance_path),
+                timeout=120,
+            )
+            captured.append(
+                '$ docker compose stop odoo (exit %s)\n%s' % (ec, sout + serr)
+            )
+            # ``stop`` exits 0 when nothing was running too, so we only
+            # bail on hard SSH errors.
+            if ec not in (0,):
+                _err(_(
+                    "Could not stop the running container before upgrade.\n"
+                    "exit=%s output=%s"
+                ) % (ec, (sout + serr)[-500:]))
+
+            self._append_log(
+                "Running 'odoo -d %s -u %s' on a one-shot container..."
+                % (name, module)
+            )
+            run_cmd = (
+                'cd %s && docker compose run --rm -T odoo '
+                'odoo -d %s -u %s --stop-after-init --no-http '
+                '--workers=0 --log-level=info 2>&1'
+            ) % (
+                shlex.quote(instance_path),
+                shlex.quote(name),
+                shlex.quote(module),
+            )
+            ec, sout, serr = ssh.execute(run_cmd, timeout=1800)
+            captured.append(
+                '$ %s\n%s' % (run_cmd, sout + serr)
+            )
+            upgrade_failed = ec != 0
+
+            # Always try to bring the container back up, even if the
+            # upgrade failed — otherwise the customer's site stays
+            # offline indefinitely.
+            self._append_log("Bringing container back up...")
+            up_ec, up_out, up_err = ssh.execute(
+                'cd %s && docker compose up -d 2>&1'
+                % shlex.quote(instance_path),
+                timeout=300,
+            )
+            captured.append(
+                '$ docker compose up -d (exit %s)\n%s'
+                % (up_ec, up_out + up_err)
+            )
+
+            if upgrade_failed:
+                _err(_(
+                    "Module upgrade failed (exit %s). See output for "
+                    "details."
+                ) % ec)
+            if up_ec != 0:
+                _err(_(
+                    "Module upgrade succeeded but the container failed "
+                    "to start back up (exit %s). See output."
+                ) % up_ec)
+
+        return '\n'.join(captured)
+
+    def hosting_db_upgrade_module_async(self, name, module):
+        """Queue an ``odoo -u <module>`` recovery upgrade and return the op."""
+        self._ensure_hosting_for_db_ops()
+        full_name = self._hosting_db_full_name(name)
+        module_norm = (module or '').strip().lower()
+        if not module_norm:
+            raise UserError(_("Pick a module name to upgrade."))
+        if module_norm != 'all' and not self._UPGRADE_MODULE_RE.match(module_norm):
+            raise UserError(_(
+                "Module name '%s' is not valid. Use lowercase letters, "
+                "digits and underscores; or the special keyword 'all'."
+            ) % module_norm)
+        Op = self.env['saas.instance.db.operation']
+        if Op.search_count([
+            ('instance_id', '=', self.id),
+            ('db_name', '=', full_name),
+            ('state', '=', 'running'),
+        ]):
+            raise UserError(_(
+                "Another operation is already in progress on '%s'."
+            ) % full_name)
+        op = Op.create({
+            'instance_id': self.id,
+            'db_name': full_name,
+            'operation': 'upgrade',
+            'module_name': module_norm,
+        })
+        run_in_background(
+            op, '_run_upgrade',
+            thread_name='saas_db_upgrade_%s_%s' % (full_name, module_norm),
+        )
+        return op
+
     def hosting_db_reset_admin_password(self, name, new_password):
         """Reset the ``base.user_admin`` password on a customer database.
 

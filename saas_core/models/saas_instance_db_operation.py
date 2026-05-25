@@ -35,16 +35,33 @@ class SaasInstanceDbOperation(models.Model):
         help='Full (prefixed) database name the operation targets.',
     )
     operation = fields.Selection(
-        [('create', 'Create'), ('duplicate', 'Duplicate'), ('drop', 'Drop')],
+        [
+            ('create', 'Create'),
+            ('duplicate', 'Duplicate'),
+            ('drop', 'Drop'),
+            ('upgrade', 'Upgrade Module'),
+        ],
         required=True,
     )
     # For ``duplicate`` ops, the source DB name. ``False`` for create / drop.
     source_db = fields.Char()
+    # For ``upgrade`` ops, the module name passed to ``odoo -u``. Pre-
+    # validated by the controller against ``_UPGRADE_MODULE_RE`` so an
+    # arbitrary string can't smuggle shell or CLI flags into the
+    # docker-compose-run command.
+    module_name = fields.Char()
     state = fields.Selection(
         [('running', 'Running'), ('done', 'Done'), ('failed', 'Failed')],
         default='running', required=True, index=True,
     )
     error_message = fields.Text(readonly=True)
+    output_log = fields.Text(
+        readonly=True,
+        help='Captured stdout/stderr of the underlying CLI invocation '
+             '(currently used for ``upgrade`` ops so the customer sees '
+             'why the upgrade failed — or that it succeeded — without '
+             'having to dig in the docker host).',
+    )
 
     def _run_create(self, login, password, lang, country_code):
         """Background worker: run the sync create, update state.
@@ -128,6 +145,45 @@ class SaasInstanceDbOperation(models.Model):
                 pass
         except Exception as e:
             self.write({'state': 'failed', 'error_message': str(e)})
+            try:
+                self.env.cr.commit()
+            except Exception:
+                pass
+            raise
+
+    def _run_upgrade(self):
+        """Background worker: ``odoo -u <module> -d <db>`` on the container.
+
+        Recovery tool for when the customer's live Odoo is broken
+        (500 Internal Server Error on every page). XML-RPC into the
+        live worker won't work in that state, so we bypass it: stop
+        the container, run ``docker compose run --rm odoo odoo -u``
+        with ``--stop-after-init`` (one-shot, no HTTP), then start the
+        container back up. The full stdout/stderr is captured on the
+        op record so the portal can show it.
+        """
+        self.ensure_one()
+        try:
+            output = self.instance_id.hosting_db_upgrade_module(
+                name=self.db_name,
+                module=self.module_name or '',
+            )
+            self.write({'state': 'done', 'output_log': output or ''})
+            try:
+                self.env.cr.commit()
+            except Exception:
+                pass
+        except Exception as e:
+            # Pull the output off the exception when our helper raised
+            # a ``UserError`` carrying the captured CLI output (so the
+            # portal can render it). Plain exceptions just go to
+            # error_message.
+            output = getattr(e, '_saas_upgrade_output', None) or ''
+            self.write({
+                'state': 'failed',
+                'error_message': str(e),
+                'output_log': output,
+            })
             try:
                 self.env.cr.commit()
             except Exception:

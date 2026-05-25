@@ -314,6 +314,16 @@ class SaasPortal(CustomerPortal):
             ('state', '=', 'failed'),
             ('create_date', '>=', failure_window),
         ])
+        # Recent successful upgrades — surface the captured terminal
+        # output so the customer can confirm the upgrade actually ran
+        # cleanly (not just "the site is back"). Same 15-minute window
+        # as failed ops; the customer can dismiss earlier.
+        done_upgrades = Op.search([
+            ('instance_id', '=', instance.id),
+            ('operation', '=', 'upgrade'),
+            ('state', '=', 'done'),
+            ('create_date', '>=', failure_window),
+        ])
 
         values = self._prepare_portal_layout_values()
         values.update({
@@ -327,6 +337,7 @@ class SaasPortal(CustomerPortal):
             'ondemand_by_db': ondemand_by_db,
             'running_ops': running_ops,
             'failed_ops': failed_ops,
+            'done_upgrades': done_upgrades,
             'page_name': 'saas_instance_databases',
         })
         return request.render(
@@ -462,6 +473,51 @@ class SaasPortal(CustomerPortal):
                 '/my/instances/%d/databases?error=%s'
                 % (instance_id, url_quote(str(e)))
             )
+
+    @http.route(
+        '/my/instances/<int:instance_id>/databases/upgrade-module',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_instance_db_upgrade_module(
+        self, instance_id, access_token=None, **post,
+    ):
+        """Queue an ``odoo -u <module>`` recovery upgrade.
+
+        Surfaces via the running-ops banner like create/duplicate/drop;
+        when finished, the op record carries the captured stdout/stderr
+        on ``output_log`` so the customer can read what happened.
+        """
+        try:
+            instance = self._hosting_instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+        name = (post.get('name') or '').strip()
+        module = (post.get('module') or '').strip().lower()
+        if not name or not module:
+            return request.redirect(
+                '/my/instances/%d/databases?error=%s'
+                % (instance_id, url_quote(_(
+                    "Both database and module are required."
+                )))
+            )
+        try:
+            op = instance.hosting_db_upgrade_module_async(
+                name=name, module=module,
+            )
+        except UserError as e:
+            return request.redirect(
+                '/my/instances/%d/databases?error=%s'
+                % (instance_id, url_quote(str(e)))
+            )
+        notice = _(
+            "Upgrading '%(module)s' on '%(db)s'… the container will "
+            "restart automatically; this page auto-refreshes."
+        ) % {'module': op.module_name, 'db': op.db_name}
+        return request.redirect(
+            '/my/instances/%d/databases?notice=%s'
+            % (instance_id, url_quote(notice))
+        )
 
     @http.route(
         '/my/instances/<int:instance_id>/databases/reset-admin-password',
