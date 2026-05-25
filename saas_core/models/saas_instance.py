@@ -7103,7 +7103,69 @@ class SaasInstance(models.Model):
             'pending_plan_id': self.pending_plan_id.id if self.pending_plan_id else False,
             'backup_running': bool(self.backup_ids.filtered(lambda b: b.state == 'running')),
             'restoration_pending': bool(self.restoration_invoice_id),
+            'db_ops_running': bool(self._hosting_reconcile_db_ops()),
         }
+
+    # Skip the expensive ``hosting_db_list`` reconcile for the first
+    # ~90 s of an op's lifetime — that's the normal completion window
+    # for create (clone + bootstrap) and duplicate. Reconciling sooner
+    # would SSH into the docker host on every 5-second poll for no
+    # reason; the happy path is just ``search_count`` on the state.
+    _DB_OP_RECONCILE_GRACE_SECONDS = 90
+
+    def _hosting_reconcile_db_ops(self):
+        """Self-heal stuck DB-op tracking rows and return the live set.
+
+        The background worker normally flips ``state`` to ``done`` /
+        ``failed`` itself — but that flip can be missed when the
+        XML-RPC call to the customer's instance hangs (no socket
+        timeout in ``xmlrpc.client``), when the HTTP worker is
+        recycled by ``--limit-time-real`` mid-thread, or when a
+        registry reload after module install severs the connection.
+        Reality (the actual list of databases) is the source of
+        truth, so we reconcile against it whenever an op has been
+        running longer than the typical completion window. Returns
+        the recordset of ops still running so callers can decide
+        whether to keep polling.
+        """
+        self.ensure_one()
+        Op = self.env['saas.instance.db.operation'].sudo()
+        stuck = Op.search([
+            ('instance_id', '=', self.id),
+            ('state', '=', 'running'),
+        ])
+        if not stuck:
+            return stuck
+        # Listing requires a reachable hosting instance with a docker
+        # server — otherwise we'd surface the listing error as a
+        # "stuck" status check.
+        if not (self.is_hosting and self.state in ('running', 'provisioning')
+                and self.docker_server_id):
+            return stuck
+        # Only reconcile against the live DB list once the youngest op
+        # is past the typical completion window. Keeps the happy-path
+        # poll a cheap ``search_count`` instead of an SSH round trip.
+        cutoff = fields.Datetime.now() - datetime.timedelta(
+            seconds=self._DB_OP_RECONCILE_GRACE_SECONDS,
+        )
+        if not any(op.create_date and op.create_date < cutoff for op in stuck):
+            return stuck
+        try:
+            db_names = {r['name'] for r in self.hosting_db_list()}
+        except Exception:
+            return stuck
+        still_running = self.env['saas.instance.db.operation']
+        for op in stuck:
+            if op.operation in ('create', 'duplicate'):
+                if op.db_name in db_names:
+                    op.state = 'done'
+                    continue
+            elif op.operation == 'drop':
+                if op.db_name not in db_names:
+                    op.state = 'done'
+                    continue
+            still_running |= op
+        return still_running
 
     # ========== Portal Self-Service Actions ==========
 

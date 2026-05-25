@@ -1,4 +1,8 @@
+import logging
+
 from odoo import fields, models
+
+_logger = logging.getLogger(__name__)
 
 
 class SaasInstanceDbOperation(models.Model):
@@ -97,6 +101,33 @@ class SaasInstanceDbOperation(models.Model):
         self.ensure_one()
         try:
             self.instance_id.hosting_db_drop(name=self.db_name)
+            # The PG database is gone — its on-demand zip backups are
+            # now orphaned (no DB to restore them into), so reap them
+            # from the bucket too. ``unlink()`` on saas.instance.backup
+            # deletes the bucket object via its override. Skips
+            # ``is_full_instance`` restic snapshots: those span every
+            # DB on the instance, so we can't selectively prune one
+            # database's slice without rewriting restic state, and
+            # their normal retention policy will age them out.
+            related = self.env['saas.instance.backup'].sudo().search([
+                ('instance_id', '=', self.instance_id.id),
+                ('db_name', '=', self.db_name),
+                ('is_full_instance', '=', False),
+            ])
+            if related:
+                try:
+                    related.unlink()
+                except Exception:
+                    # Don't fail the drop because of a bucket hiccup —
+                    # the customer's PG database is already gone.
+                    # Orphaned bucket objects get logged and the
+                    # ephemeral cleanup cron eventually catches the
+                    # records that survived.
+                    _logger.exception(
+                        "Failed to unlink backups for dropped DB '%s' "
+                        "on instance %s",
+                        self.db_name, self.instance_id.id,
+                    )
             self.write({'state': 'done'})
             try:
                 self.env.cr.commit()

@@ -301,10 +301,13 @@ class SaasPortal(CustomerPortal):
                 ),
             })
 
-        running_ops = Op.search([
-            ('instance_id', '=', instance.id),
-            ('state', '=', 'running'),
-        ])
+        # Self-heal: reconcile running ops against the actual DB list.
+        # See ``_hosting_reconcile_db_ops`` for the failure modes that
+        # leave ops stuck at ``running`` after the underlying work has
+        # already finished. The same method is called from the status
+        # polling endpoint so a hung op doesn't make the page poll
+        # forever.
+        running_ops = instance.sudo()._hosting_reconcile_db_ops()
         failed_ops = Op.search([
             ('instance_id', '=', instance.id),
             ('state', '=', 'failed'),

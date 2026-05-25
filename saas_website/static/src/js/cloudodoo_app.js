@@ -522,8 +522,10 @@ function initStatusPolling() {
     var backupEl = document.getElementById('backup-poll');
     // Poll for restore completion
     var restoreEl = document.getElementById('restore-progress-poll');
+    // Poll for DB operation completion (create / duplicate / drop)
+    var dbopEl = document.getElementById('dbop-poll');
 
-    var el = provEl || payEl || upgradeEl || backupEl || restoreEl;
+    var el = provEl || payEl || upgradeEl || backupEl || restoreEl || dbopEl;
     if (!el) return;
 
     var instanceId = el.dataset.instanceId;
@@ -571,6 +573,11 @@ function initStatusPolling() {
                 } else if (restoreEl) {
                     // Polling for restore completion — reload when restoration_invoice_id is cleared
                     if (!result.restoration_pending) {
+                        shouldReload = true;
+                    }
+                } else if (dbopEl) {
+                    // Polling for DB op completion — reload when no create/duplicate/drop is in flight
+                    if (!result.db_ops_running) {
                         shouldReload = true;
                     }
                 }
