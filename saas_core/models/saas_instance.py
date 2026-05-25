@@ -6355,21 +6355,22 @@ class SaasInstance(models.Model):
                 "Could not reach instance at %s: %s"
             ) % (self.url, e))
 
-        # Step 2 — install essentials. Failure rolls back the DB.
+        # Step 2 — install essentials. Best-effort: the DB itself is
+        # already complete and login-capable, so a failure here
+        # (commonly the registry-reload after install severing the
+        # XML-RPC connection mid-response) shouldn't trash the DB the
+        # customer just paid the bootstrap time for. We log loudly so
+        # it's still visible; in practice ``web`` is ``auto_install``
+        # in upstream Odoo and gets pulled in by ``base`` anyway.
         try:
             self._hosting_install_essentials(name, login, password)
         except Exception as e:
-            try:
-                proxy.drop(master_pwd, name)
-            except Exception:
-                _logger.warning(
-                    "Failed to roll back '%s' after essentials install "
-                    "error", name,
-                )
-            raise UserError(_(
-                "Database '%s' created but installing essential modules "
-                "failed; rolled back. Details:\n%s"
-            ) % (name, e))
+            _logger.warning(
+                "Essentials install on '%s' did not complete cleanly: "
+                "%s. DB is kept — customer can log in and finish any "
+                "module install via /web.",
+                name, e,
+            )
         return name
 
     def _hosting_install_essentials(self, db_name, login, user_password):
@@ -6381,9 +6382,18 @@ class SaasInstance(models.Model):
         Odoo handles dependency resolution, transactions, and
         registry refresh itself — same path the customer would take
         if they installed a module from Apps.
+
+        Authentication is retried with backoff: ``create_database``
+        and the follow-up ``authenticate`` may land on different
+        workers in a multi-worker deployment, and the worker handling
+        the auth call sometimes hasn't yet seen the freshly-committed
+        ``res_users`` row (registry / connection-pool caching). A
+        couple of seconds is usually enough for the new row to become
+        visible.
         """
         import xmlrpc.client
         import ssl
+        import time
 
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
@@ -6393,12 +6403,32 @@ class SaasInstance(models.Model):
         common = xmlrpc.client.ServerProxy(
             '%s/xmlrpc/2/common' % base_url, context=ctx, allow_none=True,
         )
-        uid = common.authenticate(db_name, login, user_password, {})
+        uid = None
+        last_error = None
+        for attempt in range(5):
+            try:
+                uid = common.authenticate(
+                    db_name, login, user_password, {},
+                )
+            except Exception as e:
+                last_error = e
+                uid = None
+            if uid:
+                break
+            time.sleep(2)
         if not uid:
-            raise UserError(_(
-                "Authentication failed on the newly-created database — "
-                "can't install essential modules."
-            ))
+            # Don't roll back the DB — it's perfectly usable, the
+            # customer can log in via /web/login and Odoo will resolve
+            # the auto-install graph (web is normally auto_install=True
+            # in upstream). Surface a warning so we still notice if
+            # this becomes systemic.
+            _logger.warning(
+                "Could not authenticate as '%s' on freshly-created DB "
+                "'%s' after retries (last error: %s). Skipping the "
+                "essentials install step — DB is otherwise ready.",
+                login, db_name, last_error,
+            )
+            return
 
         obj = xmlrpc.client.ServerProxy(
             '%s/xmlrpc/2/object' % base_url, context=ctx, allow_none=True,

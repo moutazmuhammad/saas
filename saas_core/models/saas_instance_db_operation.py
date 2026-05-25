@@ -64,6 +64,13 @@ class SaasInstanceDbOperation(models.Model):
                 lang=lang,
                 country_code=country_code,
             )
+            # A freshly-created DB can't have meaningful prior backups —
+            # any matching backup record is from a previous incarnation
+            # of the same name (e.g. drop happened before the cleanup in
+            # ``_run_drop`` was deployed, or the customer dropped the DB
+            # directly outside the portal). Reap so a stale "Backup
+            # ready" badge doesn't follow the new database around.
+            self._reap_stale_backups()
             self.write({'state': 'done'})
             try:
                 self.env.cr.commit()
@@ -77,6 +84,32 @@ class SaasInstanceDbOperation(models.Model):
                 pass
             raise
 
+    def _reap_stale_backups(self):
+        """Unlink ephemeral / per-DB backup records pointing at ``self.db_name``.
+
+        The :meth:`saas.instance.backup.unlink` override drops the
+        bucket object before removing the row, so this cleans both
+        sides. ``is_full_instance`` restic snapshots are skipped —
+        they span every DB on the instance and can't be selectively
+        carved up.
+        """
+        self.ensure_one()
+        related = self.env['saas.instance.backup'].sudo().search([
+            ('instance_id', '=', self.instance_id.id),
+            ('db_name', '=', self.db_name),
+            ('is_full_instance', '=', False),
+        ])
+        if not related:
+            return
+        try:
+            related.unlink()
+        except Exception:
+            _logger.exception(
+                "Failed to unlink backups for DB '%s' on instance %s "
+                "during op %s",
+                self.db_name, self.instance_id.id, self.operation,
+            )
+
     def _run_duplicate(self):
         self.ensure_one()
         try:
@@ -84,6 +117,10 @@ class SaasInstanceDbOperation(models.Model):
                 source=self.source_db,
                 new_name=self.db_name,
             )
+            # Same rationale as ``_run_create`` — the target name just
+            # came into existence, so any pre-existing backup for it is
+            # an orphan from a previous incarnation.
+            self._reap_stale_backups()
             self.write({'state': 'done'})
             try:
                 self.env.cr.commit()
@@ -102,32 +139,8 @@ class SaasInstanceDbOperation(models.Model):
         try:
             self.instance_id.hosting_db_drop(name=self.db_name)
             # The PG database is gone — its on-demand zip backups are
-            # now orphaned (no DB to restore them into), so reap them
-            # from the bucket too. ``unlink()`` on saas.instance.backup
-            # deletes the bucket object via its override. Skips
-            # ``is_full_instance`` restic snapshots: those span every
-            # DB on the instance, so we can't selectively prune one
-            # database's slice without rewriting restic state, and
-            # their normal retention policy will age them out.
-            related = self.env['saas.instance.backup'].sudo().search([
-                ('instance_id', '=', self.instance_id.id),
-                ('db_name', '=', self.db_name),
-                ('is_full_instance', '=', False),
-            ])
-            if related:
-                try:
-                    related.unlink()
-                except Exception:
-                    # Don't fail the drop because of a bucket hiccup —
-                    # the customer's PG database is already gone.
-                    # Orphaned bucket objects get logged and the
-                    # ephemeral cleanup cron eventually catches the
-                    # records that survived.
-                    _logger.exception(
-                        "Failed to unlink backups for dropped DB '%s' "
-                        "on instance %s",
-                        self.db_name, self.instance_id.id,
-                    )
+            # now orphaned, so reap them from the bucket too.
+            self._reap_stale_backups()
             self.write({'state': 'done'})
             try:
                 self.env.cr.commit()
