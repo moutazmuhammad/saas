@@ -1124,8 +1124,14 @@ class SaasPortal(CustomerPortal):
 
         # Disable — instant, no refund. Cancel any pending invoice so a
         # stale "pay now" link doesn't activate a feature the customer
-        # has explicitly turned off.
-        vals = {'daily_backup_enabled': False}
+        # has explicitly turned off. Always clear the pointer field —
+        # leaving it set traps the customer at "Complete Payment" with
+        # no path back to Enable next time, regardless of whether the
+        # invoice was already cancelled, drafted, or refunded elsewhere.
+        vals = {
+            'daily_backup_enabled': False,
+            'daily_backup_pending_invoice_id': False,
+        }
         pending = instance.sudo().daily_backup_pending_invoice_id
         if pending and pending.state == 'posted' and pending.payment_state not in (
             'paid', 'in_payment',
@@ -1137,7 +1143,6 @@ class SaasPortal(CustomerPortal):
                     "Failed to cancel pending backup invoice %s",
                     pending.name,
                 )
-            vals['daily_backup_pending_invoice_id'] = False
         instance.sudo().write(vals)
         return request.redirect(
             '/my/instances/%d/backups?notice=%s'
@@ -1313,6 +1318,21 @@ class SaasPortal(CustomerPortal):
             )
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
+
+        # Self-heal a stuck ``daily_backup_pending_invoice_id``. If the
+        # pointer references an invoice that's no longer payable
+        # (cancelled, draft, refunded, missing, or already paid without
+        # the hook clearing the field), the template would otherwise
+        # keep showing "Complete Payment" and trap the customer with no
+        # path back to Enable. Clear the pointer so the toggle returns
+        # to a clean state.
+        pending = instance.sudo().daily_backup_pending_invoice_id
+        if pending and (
+            not pending.exists()
+            or pending.state != 'posted'
+            or pending.payment_state in ('paid', 'in_payment', 'reversed')
+        ):
+            instance.sudo().daily_backup_pending_invoice_id = False
 
         # The /backups page now shows ONLY full-instance daily restore
         # points. On-demand per-DB backups live on the /databases page
