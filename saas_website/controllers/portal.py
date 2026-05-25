@@ -1,5 +1,6 @@
 import datetime
 import logging
+from dateutil.relativedelta import relativedelta
 from urllib.parse import quote as url_quote
 
 import werkzeug.utils
@@ -1101,56 +1102,62 @@ class SaasPortal(CustomerPortal):
 
         want_enabled = (post.get('enable') == '1')
 
-        if want_enabled:
-            # Already on, or a pending invoice exists — bounce to the
-            # checkout page (handles both cases cleanly).
-            if instance.daily_backup_enabled:
+        if not want_enabled:
+            # Self-service disable is intentionally not available — the
+            # add-on is irreversible from the portal so customers don't
+            # accidentally lose ongoing snapshot protection. Operators
+            # can still flip the flag from the backend if required.
+            # We do, however, allow Cancel on a still-pending (unpaid)
+            # activation invoice — that's not really a "disable", just
+            # backing out of an unfinished purchase.
+            pending = instance.sudo().daily_backup_pending_invoice_id
+            if (
+                not instance.daily_backup_enabled
+                and pending
+                and pending.state == 'posted'
+                and pending.payment_state not in ('paid', 'in_payment')
+            ):
+                try:
+                    pending.button_cancel()
+                except Exception:
+                    _logger.exception(
+                        "Failed to cancel pending backup invoice %s",
+                        pending.name,
+                    )
+                instance.sudo().daily_backup_pending_invoice_id = False
                 return request.redirect(
                     '/my/instances/%d/backups?notice=%s'
                     % (instance_id, url_quote(_(
-                        "Daily backups are already enabled."
+                        "Pending payment cancelled. You can re-enable "
+                        "daily backups any time."
                     )))
                 )
-            try:
-                instance.sudo().action_purchase_daily_backup()
-            except UserError as e:
-                return request.redirect(
-                    '/my/instances/%d/backups?error=%s'
-                    % (instance_id, url_quote(str(e)))
-                )
             return request.redirect(
-                '/my/instances/%d/daily-backup/checkout' % instance_id
+                '/my/instances/%d/backups?error=%s'
+                % (instance_id, url_quote(_(
+                    "Daily backups can't be disabled from the portal. "
+                    "Contact support if you need to make a change."
+                )))
             )
 
-        # Disable — instant, no refund. Cancel any pending invoice so a
-        # stale "pay now" link doesn't activate a feature the customer
-        # has explicitly turned off. Always clear the pointer field —
-        # leaving it set traps the customer at "Complete Payment" with
-        # no path back to Enable next time, regardless of whether the
-        # invoice was already cancelled, drafted, or refunded elsewhere.
-        vals = {
-            'daily_backup_enabled': False,
-            'daily_backup_pending_invoice_id': False,
-        }
-        pending = instance.sudo().daily_backup_pending_invoice_id
-        if pending and pending.state == 'posted' and pending.payment_state not in (
-            'paid', 'in_payment',
-        ):
-            try:
-                pending.button_cancel()
-            except Exception:
-                _logger.exception(
-                    "Failed to cancel pending backup invoice %s",
-                    pending.name,
-                )
-        instance.sudo().write(vals)
+        # Enable path — already on, or a pending invoice exists, send
+        # the customer to the right place.
+        if instance.daily_backup_enabled:
+            return request.redirect(
+                '/my/instances/%d/backups?notice=%s'
+                % (instance_id, url_quote(_(
+                    "Daily backups are already enabled."
+                )))
+            )
+        try:
+            instance.sudo().action_purchase_daily_backup()
+        except UserError as e:
+            return request.redirect(
+                '/my/instances/%d/backups?error=%s'
+                % (instance_id, url_quote(str(e)))
+            )
         return request.redirect(
-            '/my/instances/%d/backups?notice=%s'
-            % (instance_id, url_quote(_(
-                "Daily backups disabled. No refund for the current "
-                "billing period — existing snapshots remain available "
-                "until their 7-day retention expires."
-            )))
+            '/my/instances/%d/daily-backup/checkout' % instance_id
         )
 
     @http.route(
@@ -1216,21 +1223,24 @@ class SaasPortal(CustomerPortal):
         )
         invoice_access_token = invoice._portal_ensure_token()
 
-        # Proration breakdown for the order-summary table.
-        period = instance.billing_period or 'monthly'
+        # Proration breakdown for the order-summary table. Daily backups
+        # are billed monthly regardless of the main plan's period, so
+        # the cycle here is always the current calendar month and the
+        # remaining window is today → first of next month.
         monthly_price = instance.sudo()._get_daily_backup_price()
-        full_period_price = monthly_price * 12 if period == 'yearly' else monthly_price
-        cycle_days, remaining_days, cycle_end = instance.sudo()._daily_backup_cycle_window(
-            fields.Date.today(), period,
-        )
-        remaining_days = max(1, min(remaining_days, cycle_days))
+        full_period_price = monthly_price
+        today = fields.Date.today()
+        cycle_end = (today + relativedelta(months=1)).replace(day=1)
+        month_start = today.replace(day=1)
+        cycle_days = (month_start + relativedelta(months=1) - month_start).days
+        remaining_days = max(1, min((cycle_end - today).days, cycle_days))
 
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance,
             'invoice': invoice,
             'monthly_price': monthly_price,
-            'period': period,
+            'period': 'monthly',
             'full_period_price': full_period_price,
             'cycle_days': cycle_days,
             'remaining_days': remaining_days,

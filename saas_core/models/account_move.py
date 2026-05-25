@@ -1,6 +1,7 @@
 import logging
+from dateutil.relativedelta import relativedelta
 
-from odoo import models, _
+from odoo import fields, models, _
 
 from ..utils import run_in_background
 
@@ -58,16 +59,25 @@ class AccountMove(models.Model):
                 instance.subdomain,
                 instance.daily_backup_pending_invoice_id.name,
             )
+            # Activation payment covers today → first of next month.
+            # Anchor the monthly billing cycle there so the renewal
+            # cron starts charging the customer on day 1 of next month.
+            today = fields.Date.today()
+            next_invoice = (today + relativedelta(months=1)).replace(day=1)
             instance.write({
                 'daily_backup_enabled': True,
                 'daily_backup_pending_invoice_id': False,
+                'daily_backup_last_invoice_date': today,
+                'daily_backup_next_invoice_date': next_invoice,
             })
             instance._append_log(
-                "Daily backups enabled — add-on payment received."
+                "Daily backups enabled — add-on payment received. "
+                "Next monthly invoice: %s." % next_invoice
             )
             instance.message_post(body=_(
                 "Daily Backups add-on paid. The next 03:00 UTC backup "
-                "cron will create the first snapshot."
+                "cron will create the first snapshot, and renewal "
+                "invoices will be issued monthly."
             ))
 
         # --- Handle restoration fee payments ---

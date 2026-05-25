@@ -37,8 +37,13 @@ ORIGIN_RENEWAL = 'SAAS:RENEWAL:%s'
 ORIGIN_SUBSCRIPTION = 'SAAS:SUBSCRIPTION:%s'
 ORIGIN_PLAN_UPGRADE = 'SAAS:UPGRADE:%s'
 ORIGIN_DATA_RESTORATION = 'SAAS:RESTORATION:%s'
+ORIGIN_BACKUP_ADDON = 'SAAS:BACKUP-ADDON:%s'
 # Origins considered "optional" for dunning purposes (won't trigger suspension).
-OPTIONAL_INVOICE_ORIGIN_PREFIXES = ('SAAS:SUBSCRIPTION:', 'SAAS:UPGRADE:')
+# Daily-backup add-on is opt-in — a missed payment for it shouldn't take down
+# the whole instance the customer still uses every day.
+OPTIONAL_INVOICE_ORIGIN_PREFIXES = (
+    'SAAS:SUBSCRIPTION:', 'SAAS:UPGRADE:', 'SAAS:BACKUP-ADDON:',
+)
 
 
 class SaasInstance(models.Model):
@@ -327,6 +332,21 @@ class SaasInstance(models.Model):
         compute='_compute_daily_backup_monthly_price',
         help='Monthly add-on price charged for this instance when daily '
              'backups are enabled. Pulled from SaaS settings at compute time.',
+    )
+    # Backup billing runs on its own monthly cycle, independent of the
+    # main subscription's billing_period. This way a customer on a
+    # yearly plan still pays the backup add-on once a month.
+    daily_backup_next_invoice_date = fields.Date(
+        string='Daily Backup Next Invoice',
+        copy=False,
+        help='When the next monthly daily-backup invoice is due. Set '
+             'on activation payment to first day of next month, then '
+             'advanced by one month each renewal.',
+    )
+    daily_backup_last_invoice_date = fields.Date(
+        string='Daily Backup Last Invoice',
+        copy=False,
+        help='Most recent month the daily-backup add-on was billed for.',
     )
 
     @api.depends('daily_backup_enabled')
@@ -842,6 +862,7 @@ class SaasInstance(models.Model):
             ORIGIN_SUBSCRIPTION % ref,
             ORIGIN_PLAN_UPGRADE % ref,
             ORIGIN_DATA_RESTORATION % ref,
+            ORIGIN_BACKUP_ADDON % ref,
         ]
 
     def _get_all_invoices(self):
@@ -961,33 +982,27 @@ class SaasInstance(models.Model):
                 "in SaaS settings."
             ))
 
-        # Prorate the first charge so the customer pays only for the
-        # days remaining in the current billing cycle. The next renewal
-        # invoice then carries the full cycle price (see
-        # ``_generate_renewal_invoice``). No refund on disable.
-        period = self.billing_period or 'monthly'
-        full_period_price = monthly_price * 12 if period == 'yearly' else monthly_price
-        period_label = _('yearly') if period == 'yearly' else _('monthly')
-
+        # Daily-backup billing is ALWAYS monthly, independent of the
+        # main subscription's period. Prorate the activation invoice
+        # from today to the first day of next month, denominated in
+        # this calendar month's length so a same-day enable on (say)
+        # Jan 5 charges (days remaining in Jan) / 31. The monthly
+        # renewal cron then takes over from that anchor date.
         today = fields.Date.today()
-        cycle_days, remaining_days, cycle_end = self._daily_backup_cycle_window(
-            today, period,
-        )
-        # Guard the math: never bill more than a full cycle, and never
-        # less than 1 day so a same-day enable still produces a non-zero
-        # invoice the payment widget can process.
-        remaining_days = max(1, min(remaining_days, cycle_days))
+        cycle_end = (today + relativedelta(months=1)).replace(day=1)
+        month_start = today.replace(day=1)
+        cycle_days = (month_start + relativedelta(months=1) - month_start).days
+        remaining_days = max(1, min((cycle_end - today).days, cycle_days))
         prorated_price = round(
-            full_period_price * remaining_days / cycle_days, 2,
+            monthly_price * remaining_days / cycle_days, 2,
         )
 
         product = self._get_daily_backup_product()
         pricelist = self.partner_id.property_product_pricelist
         line_name = _(
-            'Daily Backups Add-on (%(period)s, prorated %(days)s/%(total)s '
+            'Daily Backups Add-on (monthly, prorated %(days)s/%(total)s '
             'days through %(end)s) — %(instance)s'
         ) % {
-            'period': period_label,
             'days': remaining_days,
             'total': cycle_days,
             'end': cycle_end.strftime('%Y-%m-%d'),
@@ -995,7 +1010,7 @@ class SaasInstance(models.Model):
         }
         order_vals = {
             'partner_id': self.partner_id.id,
-            'origin': 'SAAS:BACKUP-ADDON:%s' % (self.name or self.subdomain),
+            'origin': ORIGIN_BACKUP_ADDON % (self.name or self.subdomain),
             'order_line': [(0, 0, {
                 'product_id': product.id,
                 'name': line_name,
@@ -1011,40 +1026,14 @@ class SaasInstance(models.Model):
         invoice.action_post()
         self.daily_backup_pending_invoice_id = invoice.id
         self._append_log(
-            "Daily-backup add-on invoice %s created — %s/%s days, "
-            "prorated %.2f (full %s price %.2f)."
+            "Daily-backup add-on activation invoice %s created — "
+            "%s/%s days, prorated %.2f (full monthly price %.2f)."
             % (
                 invoice.name, remaining_days, cycle_days,
-                prorated_price, period, full_period_price,
+                prorated_price, monthly_price,
             )
         )
         return invoice
-
-    def _daily_backup_cycle_window(self, today, period):
-        """Return ``(cycle_days, remaining_days, cycle_end_date)``.
-
-        Anchored on ``next_invoice_date`` when set (the standard case for
-        a paid running instance) so the prorated charge ends exactly
-        when the next renewal kicks in. Falls back to a calendar window
-        (end of month / +1 year) for instances that don't yet have a
-        renewal date.
-        """
-        self.ensure_one()
-        if self.next_invoice_date and self.next_invoice_date > today:
-            cycle_end = self.next_invoice_date
-            if self.last_invoice_date and self.last_invoice_date < cycle_end:
-                cycle_days = (cycle_end - self.last_invoice_date).days
-            else:
-                interval = (relativedelta(years=1) if period == 'yearly'
-                            else relativedelta(months=1))
-                cycle_days = (cycle_end - (cycle_end - interval)).days
-        else:
-            interval = (relativedelta(years=1) if period == 'yearly'
-                        else relativedelta(months=1))
-            cycle_end = today + interval
-            cycle_days = (cycle_end - today).days
-        remaining_days = (cycle_end - today).days
-        return cycle_days or 1, remaining_days, cycle_end
 
     def _get_billing_product(self):
         """Return the default product.product used on SaaS sale order lines.
@@ -5173,6 +5162,96 @@ class SaasInstance(models.Model):
                     instance.subdomain,
                 )
 
+    @api.model
+    def _cron_renew_daily_backup_addons(self):
+        """Generate monthly renewal invoices for the daily-backup add-on.
+
+        Independent of the main subscription cycle so a customer on a
+        yearly plan still pays for the backup add-on once a month at
+        the monthly rate. Skips trials and instances whose backup flag
+        was turned off (which only happens via admin since the portal
+        disable path is blocked).
+        """
+        today = fields.Date.today()
+        instances = self.search([
+            ('state', '=', 'running'),
+            ('is_trial', '=', False),
+            ('daily_backup_enabled', '=', True),
+            ('daily_backup_next_invoice_date', '!=', False),
+            ('daily_backup_next_invoice_date', '<=', today),
+        ])
+        for instance in instances:
+            try:
+                instance._generate_daily_backup_renewal_invoice()
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Failed to generate daily-backup renewal invoice for %s",
+                    instance.subdomain,
+                )
+
+    def _generate_daily_backup_renewal_invoice(self):
+        """Issue a single monthly invoice for the daily-backup add-on.
+
+        Advances ``daily_backup_next_invoice_date`` by one month BEFORE
+        posting the invoice so a failure later in the post step doesn't
+        leave the cron re-issuing the same charge tomorrow.
+        """
+        self.ensure_one()
+        if not (self.is_hosting and self.daily_backup_enabled):
+            return
+        monthly_price = self._get_daily_backup_price()
+        if monthly_price <= 0:
+            _logger.warning(
+                "Skipping daily-backup renewal for %s: monthly price is "
+                "not configured (saas_master.hosting_daily_backup_price).",
+                self.subdomain,
+            )
+            return
+
+        today = fields.Date.today()
+        line_name = _(
+            'Daily Backups Add-on (monthly) — %s'
+        ) % (self.name or self.subdomain)
+        product = self._get_daily_backup_product()
+        pricelist = self.partner_id.property_product_pricelist
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': ORIGIN_BACKUP_ADDON % (self.name or self.subdomain),
+            'order_line': [(0, 0, {
+                'product_id': product.id,
+                'name': line_name,
+                'product_uom_qty': 1,
+                'price_unit': monthly_price,
+            })],
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].sudo().create(order_vals)
+        order.action_confirm()
+        invoice = order._create_invoices()
+
+        # Advance the cycle BEFORE posting (see ``_generate_renewal_invoice``
+        # for the same pattern + reasoning).
+        self.write({
+            'daily_backup_last_invoice_date': today,
+            'daily_backup_next_invoice_date': (
+                self.daily_backup_next_invoice_date + relativedelta(months=1)
+                if self.daily_backup_next_invoice_date
+                else (today + relativedelta(months=1)).replace(day=1)
+            ),
+        })
+        invoice.action_post()
+        self._append_log(
+            "Daily-backup monthly renewal invoice %s issued (%.2f). "
+            "Next invoice: %s." % (
+                invoice.name, monthly_price,
+                self.daily_backup_next_invoice_date,
+            )
+        )
+        return invoice
+
     def _generate_renewal_invoice(self):
         """Create a new sale order + invoice for the next billing period.
 
@@ -5247,28 +5326,10 @@ class SaasInstance(models.Model):
             'price_unit': price,
         })]
 
-        # Daily-backup add-on line: charge each renewal cycle while
-        # the flag is on. The amount comes from settings so an
-        # operator-side price change applies on the next renewal.
-        if self.is_hosting and self.daily_backup_enabled:
-            backup_price = self._get_daily_backup_price()
-            if backup_price > 0:
-                if period == 'yearly':
-                    backup_total = backup_price * 12
-                    backup_label = _('Daily Backups Add-on (yearly) — %s') % (
-                        self.name or self.subdomain,
-                    )
-                else:
-                    backup_total = backup_price
-                    backup_label = _('Daily Backups Add-on (monthly) — %s') % (
-                        self.name or self.subdomain,
-                    )
-                order_lines.append((0, 0, {
-                    'product_id': self._get_daily_backup_product().id,
-                    'name': backup_label,
-                    'product_uom_qty': 1,
-                    'price_unit': backup_total,
-                }))
+        # NB: the daily-backup add-on is NOT billed here. It has its
+        # own monthly cycle driven by ``_cron_renew_daily_backup_addons``
+        # so a customer on a yearly plan still pays for backups once a
+        # month — see ``_generate_daily_backup_renewal_invoice``.
 
         # Add extra storage charge if usage exceeds plan limit
         extra_storage_price = float(
