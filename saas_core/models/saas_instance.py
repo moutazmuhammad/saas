@@ -4370,6 +4370,21 @@ class SaasInstance(models.Model):
                     timeout=300,
                 )
 
+                # Overwrite the snapshot's docker-compose.yml and
+                # config/odoo.conf with freshly-rendered versions from
+                # the CURRENT plan/instance state. The snapshot's
+                # versions are whatever was on disk when the backup ran
+                # — possibly a smaller plan, an old worker count, an
+                # outdated DB host, etc. Re-rendering here guarantees
+                # the customer ends up on the plan they actually own
+                # right now, not the one they had a week ago.
+                self._restore_log(
+                    "Re-rendering docker-compose.yml + odoo.conf from "
+                    "current plan/instance settings..."
+                )
+                self._render_and_write_configs(ssh)
+                self._restore_log("Configs refreshed.")
+
                 # 4. Per-DB restore: dump from restic stdin into psql.
                 self._restore_log(
                     "Step 4/5: restoring %d database(s)..." % len(db_snaps)
@@ -4391,8 +4406,18 @@ class SaasInstance(models.Model):
                     )
                 self._restore_log("Step 4/5 OK: all databases restored.")
 
-                # 5. Bring container back up.
-                self._restore_log("Step 5/5: starting container...")
+                # 5. Bring container back up. ``docker compose up -d``
+                # is idempotent over container existence:
+                #   - missing container → creates fresh
+                #   - existing container with config drift → recreates
+                #   - already-correct container (stopped) → starts
+                # Combined with the docker-compose.yml we just
+                # re-rendered, this guarantees the running container
+                # matches the customer's CURRENT plan settings.
+                self._restore_log(
+                    "Step 5/5: 'docker compose up -d' (creates if "
+                    "missing, recreates if config drifted)..."
+                )
                 t_up = _time.time()
                 exit_code, stdout, stderr = ssh.execute(
                     'cd %s && docker compose up -d 2>&1'
@@ -4409,8 +4434,9 @@ class SaasInstance(models.Model):
                         "Failed to start container:\n%s"
                     ) % stderr)
                 self._restore_log(
-                    "Step 5/5 OK: container up in %.1fs."
-                    % (_time.time() - t_up)
+                    "Step 5/5 OK: container up in %.1fs. Compose "
+                    "output: %r"
+                    % (_time.time() - t_up, (stdout + stderr)[-400:])
                 )
         finally:
             if gcs_path:
@@ -4423,6 +4449,28 @@ class SaasInstance(models.Model):
                         "Failed to clean up staged GCS credentials.",
                         level='warning',
                     )
+
+        # Refresh nginx so any vhost / backend-ip / port change
+        # captured on the saas.instance record is in effect. This is a
+        # config-write + ``nginx -s reload`` only — certbot is skipped,
+        # the cert is already on disk from the initial deploy.
+        try:
+            self._restore_log(
+                "Post-restore: refreshing nginx config + reload..."
+            )
+            t_ng = _time.time()
+            self._refresh_nginx_on_correct_host()
+            self._restore_log(
+                "Nginx refreshed in %.1fs." % (_time.time() - t_ng)
+            )
+        except Exception as e:
+            # Don't fail the restore over an nginx hiccup — the
+            # container is up, the data is restored, the customer can
+            # reach the instance. Just surface the warning loudly.
+            self._restore_log(
+                "Nginx refresh FAILED (restore otherwise OK): %r" % e,
+                level='error',
+            )
 
         self.state = 'running'
         self.pending_operation = False
@@ -5031,6 +5079,61 @@ class SaasInstance(models.Model):
                 _("Failed to reload Nginx:\n%s\n%s") % (stdout, stderr)
             )
         self._append_log("Nginx reloaded successfully.")
+
+    def _refresh_nginx_config(self, ssh, backend_ip=None):
+        """Re-render the nginx vhost and reload — no certbot step.
+
+        Used by the restore flow to apply any topology / port / plan
+        change captured on the saas.instance record without paying the
+        ~10–60 s cost of certbot (the cert is already there from the
+        initial deploy and certbot is its own slow round trip).
+        """
+        self.ensure_one()
+        domain = self.name
+        if not domain:
+            raise UserError(_("Instance domain name is not set."))
+        template_name = self._get_nginx_template_name()
+        nginx_context = {
+            'subdomain': self.subdomain,
+            'subdomainchat': '%s-chat' % self.subdomain,
+            'http_port': self.xmlrpc_port,
+            'longpolling_port': self.longpolling_port,
+            'domain': domain,
+        }
+        if backend_ip:
+            nginx_context['backend_ip'] = backend_ip
+        nginx_content = self._render_template(template_name, nginx_context)
+        nginx_path = '/etc/nginx/sites-enabled/%s' % self.subdomain
+        ssh.write_file(nginx_path, nginx_content)
+        exit_code, stdout, stderr = ssh.execute('nginx -t 2>&1')
+        if exit_code != 0:
+            raise UserError(
+                _("Nginx config test failed after refresh:\n%s\n%s")
+                % (stdout, stderr)
+            )
+        exit_code, stdout, stderr = ssh.execute(
+            'systemctl reload nginx 2>&1',
+        )
+        if exit_code != 0:
+            raise UserError(
+                _("Failed to reload Nginx:\n%s\n%s") % (stdout, stderr)
+            )
+
+    def _refresh_nginx_on_correct_host(self):
+        """Pick the right server (proxy vs docker host) and call
+        ``_refresh_nginx_config``. Mirrors the topology dispatch in
+        ``_do_deploy`` so initial deploy and restore stay in sync.
+        """
+        self.ensure_one()
+        proxy_server = self.domain_id.proxy_server_id
+        if proxy_server and proxy_server != self.docker_server_id:
+            with proxy_server._get_ssh_connection() as proxy_ssh:
+                self._refresh_nginx_config(
+                    proxy_ssh, backend_ip=self.docker_server_id.ip_v4,
+                )
+        else:
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                self._refresh_nginx_config(ssh)
 
     def _remove_nginx(self, ssh):
         """Remove Nginx config and SSL certificate from the given server."""
