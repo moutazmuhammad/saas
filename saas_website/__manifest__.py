@@ -1,6 +1,6 @@
 {
     'name': 'SaaS Website',
-    'version': '18.0.5.0.0',
+    'version': '18.0.5.1.0',
     'category': 'SaaS',
     'summary': 'Customer-facing website for SaaS plan selection, ordering, and instance management',
     'author': 'SaaS Platform',
@@ -10,7 +10,6 @@
         'security/saas_website_security.xml',
         'security/ir.model.access.csv',
         'data/mail_templates.xml',
-        'data/website_languages.xml',
         'views/saas_frontend_layout.xml',
         'views/saas_login_templates.xml',
         'views/saas_services_templates.xml',
@@ -32,4 +31,9 @@
     },
     'installable': True,
     'auto_install': False,
+    # Activate Arabic on FIRST install. For existing installations
+    # being upgraded to this version, ``migrations/18.0.5.1.0/post-update.py``
+    # does the same work. Both call into ``_activate_arabic`` in
+    # __init__.py so behaviour stays in one place.
+    'post_init_hook': '_activate_arabic',
 }
