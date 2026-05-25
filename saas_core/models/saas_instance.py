@@ -4205,32 +4205,37 @@ class SaasInstance(models.Model):
                 # Sudo so we can rewrite files owned by the container UID.
                 # restic itself runs unprivileged; sudo wraps only the
                 # write portion. To avoid editing /etc, we set --target /.
+                #
+                # The KEY=val prefix that ``_restic_cmd`` emits only acts
+                # as an environment assignment when it's at the start of
+                # a simple command. Once we prepend ``sudo``, those
+                # tokens become positional args to sudo — which sudo
+                # treats as "set var" syntax and refuses by default
+                # (you'd see "sorry, you are not allowed to set the
+                # following environment variables: RESTIC_REPOSITORY").
+                # Wrap with ``sudo -E env`` so the assignments go to the
+                # real ``env`` binary, which sets them and execs restic.
                 restore_cmd = (
-                    'sudo -E ' +
+                    'sudo -E env ' +
                     Backup._restic_cmd(
                         env,
                         ['restore', fs_snap, '--target', '/', '--quiet'],
                     )
                 )
-                # IMPORTANT: sudo -E preserves env. We must NOT inline
-                # the password in the cmd line, so env stays the safe
-                # transport. The `_restic_cmd` helper prefixes with
-                # `KEY=val restic …` — sudo -E doesn't propagate the
-                # inline-assigned vars by default, so use `env` to
-                # promote them.
-                # Convert into: `sudo -E env KEY=val ... restic ...`
-                # — already what _restic_cmd produces, with sudo -E
-                # in front the env vars set BEFORE restic are exported
-                # because of the way sh parses VAR=val command form
-                # (it's already inline-env which sudo -E inherits).
-                # Confirmed safe.
                 exit_code, stdout, stderr = ssh.execute(
                     restore_cmd, timeout=7200,
                 )
                 if exit_code != 0:
+                    # Surface the full output to the instance log — a
+                    # 500-char tail is often not enough for restic
+                    # errors that put context earlier.
+                    self._append_log(
+                        "restic restore (fs) failed. Full output:\n%s\n%s"
+                        % (stdout, stderr)
+                    )
                     raise UserError(_(
                         "restic restore (fs) failed:\n%s\n%s"
-                    ) % (stdout[-500:], stderr[-500:]))
+                    ) % (stdout[-1500:], stderr[-1500:]))
 
                 # Re-apply container ownership/perms.
                 ssh.execute(
