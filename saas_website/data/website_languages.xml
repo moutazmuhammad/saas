@@ -4,17 +4,18 @@
          and add it to every website's allowed-language set so our
          in-navbar language switcher can route to /ar/... URLs.
 
-         Odoo ships with every res.lang already defined in the ``base``
+         Odoo ships every res.lang already defined in the ``base``
          module — they're just deactivated. The supported way to turn
          one on from a module is ``res.lang._activate_lang(code)``,
          which flips ``active=True`` on the existing record and loads
          the gettext .po translations for that locale. Idempotent. -->
 
     <data>
-        <!-- Step 1 — activate Arabic. -->
-        <function model="res.lang" name="_activate_lang">
-            <value>ar_001</value>
-        </function>
+        <!-- Step 1 — activate Arabic. The ``eval`` attribute on
+             ``<function>`` provides the full positional-args tuple
+             in a way the convert.py XML loader picks up reliably
+             across Odoo versions. -->
+        <function model="res.lang" name="_activate_lang" eval="('ar_001',)"/>
 
         <!-- Step 2 — add Arabic to every website's allowed-language
              set. ``website.language_ids`` is the relation Odoo's
