@@ -1052,7 +1052,7 @@ fi
 
         return size_bytes
 
-    def _perform_full_instance_backup(self, instance):
+    def _perform_full_instance_backup(self, instance, keep_target_run_tag=None):
         """Create a restic-based full-instance snapshot.
 
         Each backup run produces N+1 restic snapshots (N = number of
@@ -1064,8 +1064,14 @@ fi
         Retention is handled by ``restic forget --keep-last 7 --prune``
         after a successful run — at most 7 snapshots per instance,
         oldest dropped. The tracking-row side
-        (``_cleanup_old_backups``) enforces the same cap on
+        (``_trim_hosting_snapshots``) enforces the same cap on
         ``saas.instance.backup`` records.
+
+        ``keep_target_run_tag`` pins a specific run tag so neither the
+        restic ``forget`` nor the tracking-row trim drops it. The
+        restore flow passes the target backup's run tag so a pre-
+        restore safety snapshot taken at the cap can't accidentally
+        delete the snapshot we're about to restore from.
         """
         instance._ensure_can_ssh()
         docker_server = instance.docker_server_id
@@ -1197,16 +1203,21 @@ fi
                 # daily ones out of the day-bucket and the customer's
                 # visible total stays at the documented maximum of 7.
                 # Group by host so we don't accidentally trim across
-                # instances if a repo gets reused.
-                forget_cmd = self._restic_cmd(
-                    env_vars,
-                    [
-                        'forget', '--prune',
-                        '--keep-last', '7',
-                        '--group-by', 'host,tags',
-                        '--quiet',
-                    ],
-                )
+                # instances if a repo gets reused. ``--keep-tag`` pins
+                # an explicit run tag (the restore target) so it's
+                # protected from this round of pruning regardless of
+                # its age.
+                forget_args = [
+                    'forget', '--prune',
+                    '--keep-last', '7',
+                    '--group-by', 'host,tags',
+                    '--quiet',
+                ]
+                if keep_target_run_tag:
+                    forget_args.extend(
+                        ['--keep-tag', 'run=' + keep_target_run_tag],
+                    )
+                forget_cmd = self._restic_cmd(env_vars, forget_args)
                 # Forget is best-effort. Failing here shouldn't fail
                 # the backup as a whole — surface but continue.
                 ec, fout, ferr = ssh.execute(forget_cmd, timeout=600)
@@ -1239,6 +1250,16 @@ fi
                 'state': 'done',
                 'size_mb': size_mb or 0.0,
             })
+            # Enforce the per-instance cap inline. The daily cleanup
+            # cron also enforces this, but pre-restore safety snapshots
+            # call this method directly (outside that cron), so without
+            # an inline trim a customer who restores a few times in a
+            # day can accumulate past ``HOSTING_MAX_SNAPSHOTS``. The
+            # restic-side ``forget --keep-last`` ran a moment ago, so
+            # restic and the tracking rows stay in sync.
+            self._trim_hosting_snapshots(
+                instance, keep_target_run_tag=keep_target_run_tag,
+            )
         except Exception as e:
             backup.write({
                 'state': 'failed',
@@ -1252,6 +1273,52 @@ fi
                         self._unstage_gcs_credentials(ssh2, gcs_path)
                 except Exception:
                     pass
+
+    def _trim_hosting_snapshots(self, instance, keep_target_run_tag=None):
+        """Drop the oldest ``done`` full-instance tracking rows on
+        ``instance`` so at most ``HOSTING_MAX_SNAPSHOTS`` remain.
+
+        ``keep_target_run_tag`` pins a specific run tag (the restore
+        target) so it's never deleted, even if it's the oldest row.
+        Without this, restoring from the oldest snapshot at the cap
+        would race the inline trim and lose the target.
+
+        Best-effort: a row that fails to unlink (e.g. transient bucket
+        error) is logged and skipped — the next call will retry.
+        """
+        if not instance.is_hosting:
+            return
+        backups = self.search([
+            ('instance_id', '=', instance.id),
+            ('state', '=', 'done'),
+            ('ephemeral', '=', False),
+            ('is_full_instance', '=', True),
+        ], order='create_date desc')
+        if len(backups) <= self.HOSTING_MAX_SNAPSHOTS:
+            return
+        excess = backups[self.HOSTING_MAX_SNAPSHOTS:]
+        if keep_target_run_tag:
+            excess = excess.filtered(
+                lambda b: b.restic_run_tag != keep_target_run_tag
+            )
+            if not excess:
+                return
+        _logger.info(
+            "Trimming %d excess full-instance snapshot row(s) for %s "
+            "(keeping %d most recent%s).",
+            len(excess), instance.subdomain, self.HOSTING_MAX_SNAPSHOTS,
+            ' + restore target' if keep_target_run_tag else '',
+        )
+        for backup in excess:
+            try:
+                if backup.bucket_path:
+                    backup._delete_from_bucket()
+                backup.unlink()
+            except Exception as e:
+                _logger.warning(
+                    "Failed to trim snapshot row %s on %s: %s",
+                    backup.name, instance.subdomain, e,
+                )
 
     # ------------------------------------------------------------------
     # Cron entry point
@@ -1537,40 +1604,16 @@ fi
                 _logger.error("Failed to cleanup stale backup %s: %s", backup.name, e)
 
         # --- Hosting: keep the ``HOSTING_MAX_SNAPSHOTS`` most recent
-        # full-instance snapshots per instance, drop the rest. Switched
-        # from a 7-day cutoff to a count cap so pre-restore safety
-        # snapshots taken in quick succession can't push the customer's
-        # visible total past the documented maximum. Ephemeral on-demand
-        # backups are handled by a separate cron so they don't
-        # double-fire on the same record.
-        data = self._read_group(
-            [
-                ('state', '=', 'done'),
-                ('ephemeral', '=', False),
-                ('instance_id.is_hosting', '=', True),
-            ],
-            ['instance_id'],
-            ['__count'],
-        )
-        for instance, count in data:
-            if count <= self.HOSTING_MAX_SNAPSHOTS:
-                continue
-            backups = self.search([
-                ('instance_id', '=', instance.id),
-                ('state', '=', 'done'),
-                ('ephemeral', '=', False),
-            ], order='create_date desc')
-            excess = backups[self.HOSTING_MAX_SNAPSHOTS:]
-            for backup in excess:
-                try:
-                    if backup.bucket_path:
-                        backup._delete_from_bucket()
-                    backup.unlink()
-                except Exception as e:
-                    _logger.error(
-                        "Failed to cleanup hosting backup %s: %s",
-                        backup.name, e,
-                    )
+        # full-instance snapshots per instance, drop the rest. Backup
+        # creation calls ``_trim_hosting_snapshots`` inline so the cap
+        # is also enforced between cron runs; this sweep catches any
+        # rows the inline path missed (e.g. instances that haven't
+        # taken a new snapshot since the cap changed).
+        instances = self.env['saas.instance'].search([
+            ('is_hosting', '=', True),
+        ])
+        for instance in instances:
+            self._trim_hosting_snapshots(instance)
 
         # --- Service instances: keep at most plan.max_backups per instance.
         # Ephemeral excluded for the same reason as hosting above.

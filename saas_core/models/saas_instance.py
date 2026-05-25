@@ -4162,10 +4162,20 @@ class SaasInstance(models.Model):
             raise UserError(_("Backup has no restic_run_tag — cannot restore."))
 
         # 0. Pre-restore safety snapshot in the same restic repo.
+        # Pin the restore target's run tag so the retention sweep that
+        # runs at the end of the backup can't drop the snapshot we're
+        # about to restore from (would happen if the customer restores
+        # from the oldest of 7 — the new snapshot pushes count to 8,
+        # ``--keep-last 7`` drops the oldest, which is the target).
         try:
-            self._restore_log("Step 0/5: pre-restore safety snapshot...")
+            self._restore_log(
+                "Step 0/5: pre-restore safety snapshot (pinning target "
+                "run_tag=%s against retention)..." % backup.restic_run_tag
+            )
             t_pre = _time.time()
-            Backup._perform_full_instance_backup(self)
+            Backup._perform_full_instance_backup(
+                self, keep_target_run_tag=backup.restic_run_tag,
+            )
             self._restore_log(
                 "Step 0/5 OK: pre-restore snapshot complete in %.1fs."
                 % (_time.time() - t_pre)
