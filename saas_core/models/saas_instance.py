@@ -3895,6 +3895,32 @@ class SaasInstance(models.Model):
         )
         return True
 
+    def _restore_log(self, message, level='info', commit=True):
+        """Tagged log for the restore flow.
+
+        Writes to ``self.provisioning_log`` (visible from the backend
+        form view and from the customer portal) AND to the Odoo
+        server log under ``odoo.addons.saas_core.restore`` so the
+        operator can ``grep RESTORE`` and follow the whole flow.
+
+        ``commit=True`` flushes the cursor after writing so the
+        provisioning_log is visible to other workers in real time —
+        important when the customer is watching the portal mid-restore.
+        """
+        self.ensure_one()
+        tagged = '[RESTORE %s] %s' % (self.subdomain or self.id, message)
+        try:
+            self._append_log('[RESTORE] %s' % message)
+        except Exception:
+            _logger.exception("Failed to append restore log line")
+        log_fn = getattr(_logger, level, _logger.info)
+        log_fn(tagged)
+        if commit:
+            try:
+                self.env.cr.commit()
+            except Exception:
+                pass
+
     def _do_restore_full_instance(self, backup_id):
         """Background worker: replace the entire instance from a snapshot.
 
@@ -3908,8 +3934,19 @@ class SaasInstance(models.Model):
         """
         self.ensure_one()
         backup = self.env['saas.instance.backup'].browse(backup_id)
+        self._restore_log(
+            "Dispatcher entered. backup_id=%s name=%r format=%r "
+            "is_full_instance=%s state=%r restic_run_tag=%r "
+            "restic_db_names=%r" % (
+                backup_id, backup.name, backup.format,
+                backup.is_full_instance, backup.state,
+                backup.restic_run_tag, backup.restic_db_names,
+            )
+        )
         if backup.format == 'restic':
+            self._restore_log("Dispatching to restic restore path.")
             return self._do_restore_full_instance_restic(backup_id)
+        self._restore_log("Dispatching to legacy zip restore path.")
         return self._do_restore_full_instance_zip(backup_id)
 
     def _do_restore_full_instance_zip(self, backup_id):
@@ -4090,7 +4127,9 @@ class SaasInstance(models.Model):
         dump`` into ``psql``.
         """
         import json as _json
+        import time as _time
         self.ensure_one()
+        t0 = _time.time()
         Backup = self.env['saas.instance.backup'].sudo()
         backup = Backup.browse(backup_id)
         server = self.docker_server_id
@@ -4100,32 +4139,72 @@ class SaasInstance(models.Model):
         db_host = self._get_db_host_for_ssh()
         db_port = psql_server.psql_port or 5432
 
+        self._restore_log(
+            "Restic restore starting. docker_server=%r db_server=%r "
+            "db_host=%r db_port=%s instance_path=%r container=%r "
+            "db_user=%r" % (
+                server.name, psql_server.name, db_host, db_port,
+                instance_path, container_name, self.db_user,
+            )
+        )
+
         if not DB_USER_RE.match(self.db_user or ''):
+            self._restore_log(
+                "ABORT: invalid db_user %r" % self.db_user, level='error',
+            )
             raise UserError(
                 _("Refusing to restore: invalid db user %r") % self.db_user
             )
         if not backup.restic_run_tag:
+            self._restore_log(
+                "ABORT: backup has no restic_run_tag.", level='error',
+            )
             raise UserError(_("Backup has no restic_run_tag — cannot restore."))
 
         # 0. Pre-restore safety snapshot in the same restic repo.
         try:
-            self._append_log("Taking pre-restore safety snapshot...")
+            self._restore_log("Step 0/5: pre-restore safety snapshot...")
+            t_pre = _time.time()
             Backup._perform_full_instance_backup(self)
-            self._append_log("Pre-restore snapshot complete.")
+            self._restore_log(
+                "Step 0/5 OK: pre-restore snapshot complete in %.1fs."
+                % (_time.time() - t_pre)
+            )
         except Exception as e:
+            self._restore_log(
+                "Step 0/5 FAILED: pre-restore snapshot raised: %r"
+                % e, level='error',
+            )
             raise UserError(_(
                 "Pre-restore snapshot failed — aborting:\n%s"
             ) % e)
 
         gcs_path = None
         try:
+            self._restore_log("Opening SSH to docker host %s..." % server.name)
             with server._get_ssh_connection() as ssh:
+                self._restore_log("SSH connected.")
                 Backup._ensure_restic_installed(ssh, server.name)
+                self._restore_log("restic binary present on docker host.")
                 gcs_path = Backup._stage_gcs_credentials(ssh, self)
+                if gcs_path:
+                    self._restore_log(
+                        "Staged GCS credentials at %s." % gcs_path
+                    )
                 env = Backup._restic_env_vars(self, gcs_path)
+                self._restore_log(
+                    "restic env prepared: repo=%r keys=%r" % (
+                        env.get('RESTIC_REPOSITORY'),
+                        sorted(env.keys()),
+                    )
+                )
 
                 # 1. Look up snapshot IDs by tag. JSON output is the
                 # stable interface — text format changes across versions.
+                self._restore_log(
+                    "Step 1/5: listing snapshots tagged run=%s host=%s..."
+                    % (backup.restic_run_tag, self.subdomain)
+                )
                 list_cmd = Backup._restic_cmd(
                     env,
                     ['snapshots', '--tag', 'run=' + backup.restic_run_tag,
@@ -4134,16 +4213,35 @@ class SaasInstance(models.Model):
                 )
                 exit_code, stdout, stderr = ssh.execute(list_cmd, timeout=120)
                 if exit_code != 0:
+                    self._restore_log(
+                        "restic snapshots FAILED exit=%s stdout=%r stderr=%r"
+                        % (exit_code, stdout[-500:], stderr[-500:]),
+                        level='error',
+                    )
                     raise UserError(_(
                         "Could not list restic snapshots:\n%s"
-                    ) % stderr or stdout)
+                    ) % (stderr or stdout))
                 try:
                     snapshots = _json.loads(stdout.strip() or '[]')
                 except Exception:
+                    self._restore_log(
+                        "restic returned non-JSON: %r" % stdout[:500],
+                        level='error',
+                    )
                     raise UserError(_(
                         "restic returned non-JSON snapshot list:\n%s"
                     ) % stdout[:500])
+                self._restore_log(
+                    "Found %d snapshot(s) in repo for this run."
+                    % len(snapshots)
+                )
                 if not snapshots:
+                    self._restore_log(
+                        "ABORT: no snapshots match run=%s — has the "
+                        "retention policy pruned them?"
+                        % backup.restic_run_tag,
+                        level='error',
+                    )
                     raise UserError(_(
                         "No restic snapshots found for run %s."
                     ) % backup.restic_run_tag)
@@ -4172,49 +4270,67 @@ class SaasInstance(models.Model):
                             r'^[a-z][a-z0-9_-]{0,62}$', db_name,
                         ):
                             db_snaps.append((db_name, s['id']))
+                self._restore_log(
+                    "Snapshot mapping: fs_snap=%s db_snaps=%s"
+                    % (fs_snap, db_snaps)
+                )
                 if not fs_snap:
+                    self._restore_log(
+                        "ABORT: no fs snapshot in run.", level='error',
+                    )
                     raise UserError(_(
                         "Restic run %s has no filesystem snapshot."
                     ) % backup.restic_run_tag)
 
                 # 2. Stop container before mutating files.
-                self._append_log("Stopping container...")
+                self._restore_log("Step 2/5: stopping container...")
+                t_stop = _time.time()
                 exit_code, stdout, stderr = ssh.execute(
                     'cd %s && docker compose down 2>&1'
                     % shlex.quote(instance_path),
                 )
                 if exit_code != 0 and 'No such' not in (stdout + stderr):
+                    self._restore_log(
+                        "docker compose down FAILED exit=%s out=%r"
+                        % (exit_code, (stdout + stderr)[-500:]),
+                        level='error',
+                    )
                     raise UserError(_(
                         "Failed to stop container:\n%s"
-                    ) % stderr or stdout)
+                    ) % (stderr or stdout))
+                self._restore_log(
+                    "Step 2/5 OK: container stopped in %.1fs."
+                    % (_time.time() - t_stop)
+                )
 
                 # 3. Wipe the targets and restore the filesystem snapshot.
                 # restic restore writes paths back to their original
                 # absolute locations when --target /. We delete first to
                 # avoid stale files left from the current state.
                 container_uid = self._get_container_uid(ssh)
-                self._append_log("Wiping current instance files...")
+                self._restore_log(
+                    "Step 3/5: wiping current files (container_uid=%s)..."
+                    % container_uid
+                )
                 wipe_cmd = (
                     'sudo rm -rf %(ip)s/data %(ip)s/addons %(ip)s/config '
                     '%(ip)s/docker-compose.yml %(ip)s/requirements.txt '
                     '%(ip)s/pip_install.sh'
                 ) % {'ip': shlex.quote(instance_path)}
-                ssh.execute(wipe_cmd, timeout=600)
+                w_exit, w_out, w_err = ssh.execute(wipe_cmd, timeout=600)
+                self._restore_log(
+                    "Wipe exit=%s out=%r err=%r"
+                    % (w_exit, w_out[-200:], w_err[-200:])
+                )
 
-                self._append_log("Restoring filesystem from restic...")
-                # Sudo so we can rewrite files owned by the container UID.
-                # restic itself runs unprivileged; sudo wraps only the
-                # write portion. To avoid editing /etc, we set --target /.
-                #
-                # The KEY=val prefix that ``_restic_cmd`` emits only acts
-                # as an environment assignment when it's at the start of
-                # a simple command. Once we prepend ``sudo``, those
-                # tokens become positional args to sudo — which sudo
-                # treats as "set var" syntax and refuses by default
-                # (you'd see "sorry, you are not allowed to set the
-                # following environment variables: RESTIC_REPOSITORY").
-                # Wrap with ``sudo -E env`` so the assignments go to the
-                # real ``env`` binary, which sets them and execs restic.
+                self._restore_log(
+                    "Step 3/5: invoking 'sudo -E env … restic restore %s "
+                    "--target /' (this may take minutes)..." % fs_snap
+                )
+                # See earlier comment block (moved to the helper): we
+                # must wrap with ``sudo -E env`` so the KEY=val tokens
+                # go to the ``env`` binary, not to sudo (which refuses
+                # them under default sudoers policy).
                 restore_cmd = (
                     'sudo -E env ' +
                     Backup._restic_cmd(
@@ -4222,22 +4338,27 @@ class SaasInstance(models.Model):
                         ['restore', fs_snap, '--target', '/', '--quiet'],
                     )
                 )
+                t_fs = _time.time()
                 exit_code, stdout, stderr = ssh.execute(
                     restore_cmd, timeout=7200,
                 )
                 if exit_code != 0:
-                    # Surface the full output to the instance log — a
-                    # 500-char tail is often not enough for restic
-                    # errors that put context earlier.
-                    self._append_log(
-                        "restic restore (fs) failed. Full output:\n%s\n%s"
-                        % (stdout, stderr)
+                    self._restore_log(
+                        "Step 3/5 FAILED: restic restore (fs) exit=%s\n"
+                        "STDOUT:\n%s\nSTDERR:\n%s"
+                        % (exit_code, stdout, stderr),
+                        level='error',
                     )
                     raise UserError(_(
                         "restic restore (fs) failed:\n%s\n%s"
                     ) % (stdout[-1500:], stderr[-1500:]))
+                self._restore_log(
+                    "Step 3/5 OK: filesystem restored in %.1fs."
+                    % (_time.time() - t_fs)
+                )
 
                 # Re-apply container ownership/perms.
+                self._restore_log("Re-applying container ownership/perms...")
                 ssh.execute(
                     'sudo chown -R %(uid)s:%(uid)s %(ip)s/data %(ip)s/config '
                     '%(ip)s/addons 2>/dev/null || true && '
@@ -4250,36 +4371,65 @@ class SaasInstance(models.Model):
                 )
 
                 # 4. Per-DB restore: dump from restic stdin into psql.
+                self._restore_log(
+                    "Step 4/5: restoring %d database(s)..." % len(db_snaps)
+                )
                 for db, snap_id in db_snaps:
-                    self._append_log("Restoring database '%s'..." % db)
+                    t_db = _time.time()
+                    self._restore_log(
+                        "Restoring database %r from snap %s..."
+                        % (db, snap_id)
+                    )
                     self._restic_restore_one_db(
                         ssh, Backup, env, snap_id, db,
                         db_host=db_host, db_port=db_port,
                         psql_server=psql_server,
                     )
+                    self._restore_log(
+                        "Database %r restored in %.1fs."
+                        % (db, _time.time() - t_db)
+                    )
+                self._restore_log("Step 4/5 OK: all databases restored.")
 
                 # 5. Bring container back up.
-                self._append_log("Starting container...")
+                self._restore_log("Step 5/5: starting container...")
+                t_up = _time.time()
                 exit_code, stdout, stderr = ssh.execute(
                     'cd %s && docker compose up -d 2>&1'
                     % shlex.quote(instance_path),
                     timeout=300,
                 )
                 if exit_code != 0:
+                    self._restore_log(
+                        "Step 5/5 FAILED: docker compose up exit=%s "
+                        "stderr=%r" % (exit_code, stderr[-500:]),
+                        level='error',
+                    )
                     raise UserError(_(
                         "Failed to start container:\n%s"
                     ) % stderr)
+                self._restore_log(
+                    "Step 5/5 OK: container up in %.1fs."
+                    % (_time.time() - t_up)
+                )
         finally:
             if gcs_path:
                 try:
                     with server._get_ssh_connection() as ssh2:
                         Backup._unstage_gcs_credentials(ssh2, gcs_path)
+                    self._restore_log("Cleaned up staged GCS credentials.")
                 except Exception:
-                    pass
+                    self._restore_log(
+                        "Failed to clean up staged GCS credentials.",
+                        level='warning',
+                    )
 
         self.state = 'running'
         self.pending_operation = False
-        self._append_log("Restic restore from '%s' complete." % backup.name)
+        self._restore_log(
+            "Restore COMPLETE from backup %r (run_tag=%s) in %.1fs total."
+            % (backup.name, backup.restic_run_tag, _time.time() - t0)
+        )
         self._safe_refresh_usage()
 
     def _restic_restore_one_db(self, ssh, Backup, env, snap_id, db,
@@ -4300,25 +4450,42 @@ class SaasInstance(models.Model):
             with psql_server._get_ssh_connection() as db_ssh:
                 return db_ssh.execute(cmd)
 
+        self._restore_log(
+            "  -> terminating active sessions on %r" % db, commit=False,
+        )
         _run_on_db_server(
             "sudo -u postgres psql -c "
             "\"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
             "WHERE datname='%s' AND pid <> pg_backend_pid();\" 2>&1"
             % db.replace("'", "''")
         )
+        self._restore_log("  -> dropdb %r" % db, commit=False)
         exit_code, stdout, stderr = _run_on_db_server(
             'sudo -u postgres dropdb --force --if-exists %s 2>&1'
             % shlex.quote(db)
         )
         if exit_code != 0:
+            self._restore_log(
+                "dropdb FAILED for %r exit=%s out=%r"
+                % (db, exit_code, (stdout + stderr)[-500:]),
+                level='error',
+            )
             raise UserError(_(
                 "dropdb %s failed:\n%s\n%s"
             ) % (db, stdout, stderr))
+        self._restore_log(
+            "  -> createdb %r owner=%r" % (db, self.db_user), commit=False,
+        )
         exit_code, stdout, stderr = _run_on_db_server(
             'sudo -u postgres createdb -O %s %s 2>&1'
             % (shlex.quote(self.db_user), shlex.quote(db))
         )
         if exit_code != 0:
+            self._restore_log(
+                "createdb FAILED for %r exit=%s out=%r"
+                % (db, exit_code, (stdout + stderr)[-500:]),
+                level='error',
+            )
             raise UserError(_(
                 "createdb %s failed:\n%s\n%s"
             ) % (db, stdout, stderr))
@@ -4351,11 +4518,16 @@ class SaasInstance(models.Model):
         pipeline = 'set -o pipefail; %s | %s | %s' % (
             dump_cmd, sed_filter, psql_cmd,
         )
+        self._restore_log(
+            "  -> piping restic dump → sed → psql for %r..." % db,
+            commit=False,
+        )
         exit_code, stdout, stderr = ssh.execute(pipeline, timeout=7200)
         if exit_code != 0:
-            self._append_log(
-                "restic dump | psql last 1k chars for %s:\n%s"
-                % (db, (stdout + stderr)[-1000:])
+            self._restore_log(
+                "DB restore pipeline FAILED for %r exit=%s. Tail:\n%s"
+                % (db, exit_code, (stdout + stderr)[-1500:]),
+                level='error',
             )
             raise UserError(_(
                 "Restore of '%s' failed:\n%s"
