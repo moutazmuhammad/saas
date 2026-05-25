@@ -6958,6 +6958,88 @@ class SaasInstance(models.Model):
             ) % e)
         return new_name
 
+    # Minimum length for a reset password — same floor we enforce on
+    # database creation so a customer can't downgrade themselves to a
+    # weaker password through the reset flow.
+    _ADMIN_PASSWORD_MIN_LENGTH = 6
+
+    def hosting_db_reset_admin_password(self, name, new_password):
+        """Reset the ``base.user_admin`` password on a customer database.
+
+        Self-service for "I forgot my admin password". We don't have
+        the customer's current password (that's the whole point), so
+        we can't go through XML-RPC ``authenticate``. Instead we
+        docker-exec a short Python script inside the customer's Odoo
+        container — same path ``hosting_db_list`` uses — and let the
+        ORM set the password directly via the inverse setter (so the
+        proper pbkdf2 hashing pipeline runs, not raw column writes).
+
+        Only resets the password of ``base.user_admin`` (the user
+        created during initial DB bootstrap). Other users' passwords
+        are untouched.
+        """
+        self._ensure_hosting_for_db_ops()
+        name = self._hosting_db_full_name(name)
+        if name not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % name
+            )
+        if not new_password:
+            raise UserError(_("New password is required."))
+        if len(new_password) < self._ADMIN_PASSWORD_MIN_LENGTH:
+            raise UserError(_(
+                "Password must be at least %d characters."
+            ) % self._ADMIN_PASSWORD_MIN_LENGTH)
+
+        # The script runs inside the Odoo container with ``os`` and
+        # ``odoo.tools.config`` already imported by
+        # ``_docker_exec_python``. Markers (BEGIN/END) so we can tell
+        # success apart from a stdout that happens to contain "OK".
+        script = (
+            "from odoo.modules.registry import Registry\n"
+            "from odoo import api, SUPERUSER_ID\n"
+            "registry = Registry(os.environ['SAAS_DB'])\n"
+            "with registry.cursor() as cr:\n"
+            "    env = api.Environment(cr, SUPERUSER_ID, {})\n"
+            "    user = env.ref('base.user_admin', raise_if_not_found=False)\n"
+            "    if not user:\n"
+            "        # Older databases didn't carry the xmlid; fall\n"
+            "        # back to uid 2 which is the conventional admin.\n"
+            "        user = env['res.users'].browse(2).exists()\n"
+            "    if not user:\n"
+            "        raise SystemExit('NO_ADMIN_USER')\n"
+            "    user.password = os.environ['SAAS_NEW_PW']\n"
+            "    cr.commit()\n"
+            "    print('---SAAS_PW_RESET_BEGIN---')\n"
+            "    print('login=%s' % user.login)\n"
+            "    print('---SAAS_PW_RESET_END---')\n"
+        )
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = self._docker_exec_python(
+                ssh, script,
+                env={'SAAS_DB': name, 'SAAS_NEW_PW': new_password},
+                timeout=120,
+            )
+        if exit_code != 0 or '---SAAS_PW_RESET_BEGIN---' not in stdout:
+            # Strip the password from the env before logging in case
+            # the helper echoed it — it never does, but defense in depth.
+            raise UserError(_(
+                "Admin password reset failed on '%s':\n%s\n%s"
+            ) % (name, stdout[-500:], stderr[-500:]))
+        # Pull out the login that was reset so the caller can confirm it.
+        login = ''
+        capturing = False
+        for line in stdout.splitlines():
+            line = line.strip()
+            if line == '---SAAS_PW_RESET_BEGIN---':
+                capturing = True
+                continue
+            if line == '---SAAS_PW_RESET_END---':
+                break
+            if capturing and line.startswith('login='):
+                login = line[len('login='):]
+        return login or 'admin'
+
     def hosting_db_drop(self, name):
         """Drop a database via the instance's XML-RPC db service.
 

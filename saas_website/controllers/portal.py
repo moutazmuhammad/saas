@@ -463,6 +463,56 @@ class SaasPortal(CustomerPortal):
                 % (instance_id, url_quote(str(e)))
             )
 
+    @http.route(
+        '/my/instances/<int:instance_id>/databases/reset-admin-password',
+        type='http', auth='user', website=True,
+        methods=['POST'], csrf=True,
+    )
+    def portal_instance_db_reset_admin_password(
+        self, instance_id, access_token=None, **post,
+    ):
+        """Reset the admin password on one of this instance's databases.
+
+        Customer self-service for "I forgot my admin password". The
+        actual work happens inside the customer's container via
+        ``hosting_db_reset_admin_password``; we just validate the form
+        and surface success / error as a portal banner.
+        """
+        try:
+            instance = self._hosting_instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return request.redirect('/my/instances')
+        name = (post.get('name') or '').strip()
+        new_password = post.get('new_password') or ''
+        confirm = post.get('confirm_password') or ''
+        err_redirect = '/my/instances/%d/databases?error=%s'
+        if not name:
+            return request.redirect(err_redirect % (
+                instance_id, url_quote(_("Pick a database to reset.")),
+            ))
+        if not new_password or new_password != confirm:
+            return request.redirect(err_redirect % (
+                instance_id, url_quote(_(
+                    "New password and confirmation don't match."
+                )),
+            ))
+        try:
+            login = instance.hosting_db_reset_admin_password(
+                name=name, new_password=new_password,
+            )
+        except UserError as e:
+            return request.redirect(err_redirect % (
+                instance_id, url_quote(str(e)),
+            ))
+        notice = _(
+            "Admin password reset for '%(db)s'. Sign in as "
+            "'%(login)s' with your new password."
+        ) % {'db': name, 'login': login}
+        return request.redirect(
+            '/my/instances/%d/databases?notice=%s'
+            % (instance_id, url_quote(notice))
+        )
+
     # ==================== Deployment Status Polling ====================
 
     @http.route(
