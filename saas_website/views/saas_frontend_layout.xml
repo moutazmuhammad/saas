@@ -59,6 +59,53 @@
                                     <a class="nav-link" href="/docs">Docs</a>
                                 </li>
 
+                                <!-- Language switcher. Odoo's website
+                                     module exposes /<lang_url>/...
+                                     prefixes for non-default languages
+                                     (``/ar/`` for Arabic). The
+                                     ``website.lang_ids`` set (populated
+                                     by data/website_languages.xml)
+                                     controls which languages are
+                                     legal here. We render the active
+                                     language's short label on the
+                                     trigger and let the customer
+                                     pick from the rest. -->
+                                <li class="nav-item dropdown">
+                                    <a class="nav-link dropdown-toggle d-flex align-items-center"
+                                       href="#" role="button"
+                                       data-bs-toggle="dropdown" aria-expanded="false"
+                                       t-att-aria-label="'Language: ' + (request.env.lang or 'en_US')">
+                                        <i class="fas fa-globe me-1"></i>
+                                        <t t-set="_cur_lang" t-value="request.env.lang or 'en_US'"/>
+                                        <span t-if="_cur_lang == 'ar_001'">العربية</span>
+                                        <span t-else="">EN</span>
+                                    </a>
+                                    <ul class="dropdown-menu dropdown-menu-end">
+                                        <!-- English -->
+                                        <li>
+                                            <a class="dropdown-item d-flex align-items-center"
+                                               t-att-href="'/website/lang/en_US?r=' + (request.httprequest.full_path or '/')">
+                                                <span class="me-2" style="display:inline-block;width:22px;">🇬🇧</span>
+                                                English
+                                                <t t-if="_cur_lang == 'en_US'">
+                                                    <i class="fas fa-check ms-auto text-success"></i>
+                                                </t>
+                                            </a>
+                                        </li>
+                                        <!-- Arabic -->
+                                        <li>
+                                            <a class="dropdown-item d-flex align-items-center"
+                                               t-att-href="'/website/lang/ar_001?r=' + (request.httprequest.full_path or '/')">
+                                                <span class="me-2" style="display:inline-block;width:22px;">🇸🇦</span>
+                                                العربية
+                                                <t t-if="_cur_lang == 'ar_001'">
+                                                    <i class="fas fa-check ms-auto text-success"></i>
+                                                </t>
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </li>
+
                                 <!-- Logged-in user nav. The standalone
                                      "My Instances" link is intentionally
                                      not in the top bar — it lives inside

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Bilingual support: enable Arabic (Modern Standard Arabic) as a
+         res.lang record and register it on the default website so the
+         language switcher in our custom navbar can target it.
+
+         English (en_US) is already active out of the box on every Odoo
+         installation, so we only need to surface Arabic. -->
+
+    <!-- Activate Modern Standard Arabic. ``noupdate="0"`` so it's
+         re-applied on every module update — a careless deactivation
+         in the backend gets reversed at the next ``-u saas_website``. -->
+    <record id="lang_ar" model="res.lang" noupdate="0">
+        <field name="code">ar_001</field>
+        <field name="active">True</field>
+        <field name="direction">rtl</field>
+    </record>
+
+    <!-- Add Arabic to the default website's allowed-language set so
+         Odoo's URL-prefix language routing (``/ar/...``) accepts it.
+         The website module records the link in website.lang_ids. -->
+    <function model="website" name="write">
+        <function model="website" name="search">
+            <value eval="[]"/>
+        </function>
+        <value eval="{
+            'language_ids': [(4, ref('lang_ar'))],
+        }"/>
+    </function>
+</odoo>

@@ -1,0 +1,1170 @@
+# Translation of SaaS Website module into Arabic (Modern Standard Arabic).
+# This file translates every customer-visible string in the saas_website
+# module from English (en_US) into Arabic (ar_001). Strings are grouped by
+# section in the order they appear to a customer, not alphabetically, so
+# a translator updating this file can follow the user journey end-to-end.
+#
+# Format: GNU gettext (.po). Loaded automatically by Odoo when the active
+# language is ar_001 and saas_website is installed/updated.
+msgid ""
+msgstr ""
+"Project-Id-Version: saas_website\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-05-26 00:00+0000\n"
+"PO-Revision-Date: 2026-05-26 00:00+0000\n"
+"Last-Translator: SUDUD <support@sudud.com>\n"
+"Language-Team: Arabic\n"
+"Language: ar_001\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=6; plural=(n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 ? 4 : 5);\n"
+
+# ============================================================
+# Header / Navigation
+# ============================================================
+msgid "Services"
+msgstr "الخدمات"
+
+msgid "Hosting"
+msgstr "الاستضافة"
+
+msgid "Docs"
+msgstr "التوثيق"
+
+msgid "Documentation"
+msgstr "التوثيق"
+
+msgid "Sign Up"
+msgstr "إنشاء حساب"
+
+msgid "Sign In"
+msgstr "تسجيل الدخول"
+
+msgid "Sign Out"
+msgstr "تسجيل الخروج"
+
+msgid "Profile"
+msgstr "الملف الشخصي"
+
+msgid "My Instances"
+msgstr "حساباتي"
+
+msgid "Backend"
+msgstr "لوحة الإدارة"
+
+# ============================================================
+# Hero / Home page
+# ============================================================
+msgid "SUDUD: The Logic of Stability. Deploy, manage, and scale your business applications on the cloud with ease."
+msgstr "صدود: منطق الاستقرار. انشر تطبيقات أعمالك على السحابة، أدِرها وأوسعها بكل سهولة."
+
+msgid "Launch Your Business Today"
+msgstr "أطلق نشاطك اليوم"
+
+msgid "Choose a ready-made solution or deploy your own project"
+msgstr "اختر حلًا جاهزًا أو انشر مشروعك الخاص"
+
+msgid "Scale Anytime"
+msgstr "وسّع متى شئت"
+
+msgid "99.9% Uptime"
+msgstr "تشغيل بنسبة ٩٩٫٩٪"
+
+msgid "Your Odoo instance"
+msgstr "حسابك من Odoo"
+
+msgid "Running"
+msgstr "قيد التشغيل"
+
+msgid "Databases"
+msgstr "قواعد البيانات"
+
+msgid "Daily snapshots"
+msgstr "النسخ اليومية"
+
+msgid "Uptime"
+msgstr "وقت التشغيل"
+
+msgid "Get Started"
+msgstr "ابدأ الآن"
+
+# ============================================================
+# Footer
+# ============================================================
+msgid "Product"
+msgstr "المنتج"
+
+msgid "Pricing"
+msgstr "الأسعار"
+
+msgid "Features"
+msgstr "المميزات"
+
+msgid "Company"
+msgstr "الشركة"
+
+msgid "About"
+msgstr "من نحن"
+
+msgid "Blog"
+msgstr "المدوّنة"
+
+msgid "Careers"
+msgstr "الوظائف"
+
+msgid "Support"
+msgstr "الدعم"
+
+msgid "Help Center"
+msgstr "مركز المساعدة"
+
+msgid "Contact"
+msgstr "اتصل بنا"
+
+msgid "Legal"
+msgstr "قانوني"
+
+msgid "Privacy"
+msgstr "الخصوصية"
+
+msgid "Terms"
+msgstr "الشروط"
+
+msgid "Security"
+msgstr "الأمان"
+
+msgid "© 2026 SUDUD. All rights reserved."
+msgstr "© ٢٠٢٦ صدود. جميع الحقوق محفوظة."
+
+# ============================================================
+# Sign Up / Sign In
+# ============================================================
+msgid "Create account"
+msgstr "إنشاء الحساب"
+
+msgid "Full name"
+msgstr "الاسم الكامل"
+
+msgid "Work email"
+msgstr "البريد الإلكتروني للعمل"
+
+msgid "Email"
+msgstr "البريد الإلكتروني"
+
+msgid "Password"
+msgstr "كلمة المرور"
+
+msgid "Confirm password"
+msgstr "تأكيد كلمة المرور"
+
+msgid "Forgot password?"
+msgstr "نسيت كلمة المرور؟"
+
+msgid "Send reset link"
+msgstr "إرسال رابط الاستعادة"
+
+msgid "Already have an account?"
+msgstr "لديك حساب بالفعل؟"
+
+msgid "Don't have an account?"
+msgstr "ليس لديك حساب؟"
+
+msgid "99.9% uptime SLA"
+msgstr "اتفاقية مستوى خدمة بنسبة تشغيل ٩٩٫٩٪"
+
+# ============================================================
+# Trial
+# ============================================================
+msgid "Try hosting for %s days free. No credit card required."
+msgstr "جرّب الاستضافة مجانًا لمدة %s يومًا. لا حاجة لبطاقة ائتمان."
+
+msgid "Start free trial"
+msgstr "ابدأ التجربة المجانية"
+
+msgid "Free Trial Active"
+msgstr "التجربة المجانية مفعّلة"
+
+msgid "Free Trial"
+msgstr "تجربة مجانية"
+
+msgid "Upgrade Plan"
+msgstr "ترقية الخطة"
+
+msgid "Upgrade Now"
+msgstr "رقّي الآن"
+
+# ============================================================
+# Hosting purchase / plan builder
+# ============================================================
+msgid "Workers"
+msgstr "العمال"
+
+msgid "Storage"
+msgstr "السعة التخزينية"
+
+msgid "Monthly"
+msgstr "شهريًا"
+
+msgid "Yearly"
+msgstr "سنويًا"
+
+msgid "Billing Period"
+msgstr "دورة الفوترة"
+
+msgid "Order Summary"
+msgstr "ملخّص الطلب"
+
+msgid "Total Due Today"
+msgstr "المبلغ المستحق اليوم"
+
+msgid "Continue to payment"
+msgstr "المتابعة إلى الدفع"
+
+msgid "Choose a subdomain"
+msgstr "اختر النطاق الفرعي"
+
+msgid "Subdomain"
+msgstr "النطاق الفرعي"
+
+msgid "Add daily snapshots"
+msgstr "أضف النسخ اليومية"
+
+msgid "Daily Backups Add-on"
+msgstr "خدمة النسخ اليومية الإضافية"
+
+msgid "/mo"
+msgstr "/شهريًا"
+
+# ============================================================
+# Provisioning
+# ============================================================
+msgid "Setting Up Your Instance"
+msgstr "جاري تجهيز حسابك"
+
+msgid "This usually takes a few minutes. The page will refresh automatically."
+msgstr "تستغرق هذه العملية بضع دقائق عادةً، وستُحدَّث الصفحة تلقائيًا عند الانتهاء."
+
+msgid "Payment Received — Preparing Deployment"
+msgstr "تم استلام الدفع — جاري إعداد النشر"
+
+msgid "Your payment was confirmed. Your instance is being set up now. This page will refresh automatically."
+msgstr "تم تأكيد الدفع وجاري إعداد حسابك. ستُحدَّث الصفحة تلقائيًا عند الانتهاء."
+
+msgid "Payment Submitted"
+msgstr "تم إرسال الدفع"
+
+msgid "Your payment is being processed. Your instance will start provisioning once confirmed."
+msgstr "نُعالج دفعتك حاليًا. سيبدأ تجهيز حسابك بمجرّد تأكيد الدفع."
+
+# ============================================================
+# Instance dashboard
+# ============================================================
+msgid "Open Instance"
+msgstr "افتح الحساب"
+
+msgid "Open"
+msgstr "افتح"
+
+msgid "Manage Databases"
+msgstr "إدارة قواعد البيانات"
+
+msgid "View Snapshots"
+msgstr "عرض النسخ"
+
+msgid "View Activity"
+msgstr "عرض النشاط"
+
+msgid "Start"
+msgstr "تشغيل"
+
+msgid "Stop"
+msgstr "إيقاف"
+
+msgid "Restart"
+msgstr "إعادة التشغيل"
+
+msgid "Change Plan"
+msgstr "تغيير الخطة"
+
+msgid "Reactivate Instance"
+msgstr "إعادة تفعيل الحساب"
+
+msgid "Plan"
+msgstr "الخطة"
+
+msgid "Service"
+msgstr "الخدمة"
+
+msgid "Domain"
+msgstr "النطاق"
+
+msgid "Status"
+msgstr "الحالة"
+
+msgid "Stopped"
+msgstr "متوقف"
+
+msgid "Suspended"
+msgstr "موقوف"
+
+msgid "Provisioning"
+msgstr "قيد التجهيز"
+
+msgid "Pending Payment"
+msgstr "بانتظار الدفع"
+
+msgid "Failed"
+msgstr "فشل"
+
+msgid "Cancelled"
+msgstr "ملغى"
+
+msgid "Cancelled by Client"
+msgstr "ملغى من قبل العميل"
+
+msgid "Draft"
+msgstr "مسودة"
+
+# ============================================================
+# Databases page
+# ============================================================
+msgid "Create Database"
+msgstr "إنشاء قاعدة بيانات"
+
+msgid "Database name"
+msgstr "اسم قاعدة البيانات"
+
+msgid "Admin login"
+msgstr "بريد المسؤول"
+
+msgid "Admin password"
+msgstr "كلمة مرور المسؤول"
+
+msgid "Language"
+msgstr "اللغة"
+
+msgid "Create"
+msgstr "إنشاء"
+
+msgid "Cancel"
+msgstr "إلغاء"
+
+msgid "Duplicate"
+msgstr "نسخ"
+
+msgid "Delete"
+msgstr "حذف"
+
+msgid "Delete permanently"
+msgstr "حذف نهائي"
+
+msgid "Reset Password"
+msgstr "إعادة تعيين كلمة المرور"
+
+msgid "Reset password"
+msgstr "إعادة تعيين كلمة المرور"
+
+msgid "Repair Feature"
+msgstr "إصلاح خاصية"
+
+msgid "Backup Now"
+msgstr "أنشئ نسخة الآن"
+
+msgid "Download Backup"
+msgstr "تحميل النسخة"
+
+msgid "Backing up"
+msgstr "جاري النسخ"
+
+msgid "Backup ready"
+msgstr "النسخة جاهزة"
+
+msgid "Discard"
+msgstr "تجاهل"
+
+msgid "Creating database…"
+msgstr "جاري إنشاء قاعدة البيانات…"
+
+msgid "Creating…"
+msgstr "جاري الإنشاء…"
+
+msgid "Duplicating…"
+msgstr "جاري النسخ…"
+
+msgid "Deleting…"
+msgstr "جاري الحذف…"
+
+msgid "Resetting…"
+msgstr "جاري إعادة التعيين…"
+
+msgid "Backing up…"
+msgstr "جاري إنشاء النسخة…"
+
+msgid "Repairing your database…"
+msgstr "جاري إصلاح قاعدة البيانات…"
+
+msgid "Working on it…"
+msgstr "جاري العمل…"
+
+msgid "This page will refresh automatically when it's done. Please don't close the tab."
+msgstr "ستُحدَّث الصفحة تلقائيًا عند الانتهاء. الرجاء عدم إغلاق التبويب."
+
+msgid "This usually takes about a minute. Please don't close the tab — the page will refresh automatically."
+msgstr "تستغرق هذه العملية حوالي دقيقة. لا تغلق التبويب، وستُحدَّث الصفحة تلقائيًا."
+
+msgid "Please don't close the tab — the page will refresh when it's done."
+msgstr "لا تغلق التبويب، وستُحدَّث الصفحة عند الانتهاء."
+
+msgid "Please don't close the tab — the page will refresh when the database is gone."
+msgstr "لا تغلق التبويب، وستُحدَّث الصفحة عند انتهاء عملية الحذف."
+
+msgid "Please don't close the tab — the page will refresh when your download link is ready."
+msgstr "لا تغلق التبويب، وستُحدَّث الصفحة بمجرّد أن يصبح رابط التحميل جاهزًا."
+
+msgid "Your instance will be briefly unavailable. The page will refresh automatically when it's done."
+msgstr "سيتوقّف حسابك مؤقتًا. ستُحدَّث الصفحة تلقائيًا عند الانتهاء."
+
+msgid "Run upgrade"
+msgstr "تشغيل الإصلاح"
+
+msgid "Feature to repair"
+msgstr "الخاصية المراد إصلاحها"
+
+msgid "Minimum 6 characters."
+msgstr "٦ أحرف على الأقل."
+
+msgid "New admin password"
+msgstr "كلمة المرور الجديدة للمسؤول"
+
+msgid "Confirm new password"
+msgstr "تأكيد كلمة المرور الجديدة"
+
+msgid "Type the database name exactly to confirm deletion."
+msgstr "اكتب اسم قاعدة البيانات بالضبط لتأكيد الحذف."
+
+msgid "This cannot be undone."
+msgstr "لا يمكن التراجع عن هذه العملية."
+
+msgid "The database and every file uploaded to it will be deleted permanently."
+msgstr "ستُحذف قاعدة البيانات وجميع الملفات المرفوعة إليها نهائيًا."
+
+msgid "To confirm, retype the database name"
+msgstr "للتأكيد، أعد كتابة اسم قاعدة البيانات"
+
+msgid "New database name"
+msgstr "اسم قاعدة البيانات الجديدة"
+
+# ============================================================
+# Reset password modal
+# ============================================================
+msgid "Admin login for this database:"
+msgstr "اسم مسؤول قاعدة البيانات هذه:"
+
+msgid "Sign in with this login and the new password once the reset completes."
+msgstr "سجّل الدخول باستخدام هذا الاسم وكلمة المرور الجديدة فور انتهاء إعادة التعيين."
+
+# ============================================================
+# Snapshots / backups page
+# ============================================================
+msgid "Snapshots"
+msgstr "النسخ الاحتياطية"
+
+msgid "Snapshots for"
+msgstr "نسخ"
+
+msgid "Daily Backups"
+msgstr "النسخ اليومية"
+
+msgid "Enable Daily Backups"
+msgstr "تفعيل النسخ اليومية"
+
+msgid "Disable Daily Backups"
+msgstr "إيقاف النسخ اليومية"
+
+msgid "Daily Backups Active"
+msgstr "النسخ اليومية مفعّلة"
+
+msgid "Daily Snapshots"
+msgstr "النسخ اليومية"
+
+msgid "Up to 7 snapshots, oldest rolled off"
+msgstr "حتى ٧ نسخ، تُحذف الأقدم تلقائيًا"
+
+msgid "Protect this instance with daily snapshots"
+msgstr "احمِ حسابك بنسخ يومية"
+
+msgid "Restore"
+msgstr "استعادة"
+
+msgid "Yes, restore"
+msgstr "نعم، استعد"
+
+msgid "Date"
+msgstr "التاريخ"
+
+msgid "Size"
+msgstr "الحجم"
+
+msgid "Actions"
+msgstr "إجراءات"
+
+# ============================================================
+# Confirmation modals & callouts
+# ============================================================
+msgid "Yes, replace"
+msgstr "نعم، استبدل"
+
+msgid "Yes, disable"
+msgstr "نعم، أوقف"
+
+msgid "Yes, confirm"
+msgstr "نعم، أكّد"
+
+msgid "No, keep it"
+msgstr "لا، أبقِها"
+
+msgid "Keep backups on"
+msgstr "ابقَ نسخ الاحتياطي مفعّلة"
+
+msgid "Activate Daily Backups"
+msgstr "تفعيل النسخ اليومية"
+
+msgid "Complete Payment"
+msgstr "أكمل الدفع"
+
+msgid "Pay now"
+msgstr "ادفع الآن"
+
+msgid "Already enabled."
+msgstr "مفعّلة بالفعل."
+
+msgid "Daily backups are already enabled."
+msgstr "النسخ اليومية مفعّلة بالفعل."
+
+# ============================================================
+# Errors / notices
+# ============================================================
+msgid "Backup not available."
+msgstr "النسخة الاحتياطية غير متاحة."
+
+msgid "Backup not found."
+msgstr "لم يُعثر على النسخة الاحتياطية."
+
+msgid "Backup cancelled."
+msgstr "تم إلغاء النسخة الاحتياطية."
+
+msgid "Restore started. Refresh in a moment."
+msgstr "بدأت عملية الاستعادة. حدّث الصفحة بعد لحظات."
+
+msgid "Restore could not be started. Please try again or contact support if the problem continues."
+msgstr "تعذّر بدء الاستعادة. حاول مرة أخرى أو تواصل مع الدعم إن استمرّت المشكلة."
+
+msgid "Instance must be Running or Stopped to restore."
+msgstr "يجب أن يكون الحساب قيد التشغيل أو متوقفًا للاستعادة."
+
+msgid "Type the database name exactly to confirm restore."
+msgstr "اكتب اسم قاعدة البيانات بالضبط لتأكيد الاستعادة."
+
+msgid "Pick a database to back up."
+msgstr "اختر قاعدة البيانات المراد نسخها."
+
+msgid "Pick a database to reset."
+msgstr "اختر قاعدة البيانات المراد إعادة تعيين كلمة مرورها."
+
+msgid "Both database and module are required."
+msgstr "قاعدة البيانات والخاصية كلاهما مطلوبان."
+
+msgid "New password and confirmation don't match."
+msgstr "كلمة المرور الجديدة وتأكيدها غير متطابقتين."
+
+msgid "Storage cannot be reduced. Current storage: %d GB."
+msgstr "لا يمكن تقليل السعة التخزينية. السعة الحالية: %d جيجابايت."
+
+msgid "Please configure your plan."
+msgstr "الرجاء إعداد خطتك."
+
+msgid "No changes selected."
+msgstr "لا توجد تغييرات محددة."
+
+msgid "Daily backups are not available on trial plans."
+msgstr "النسخ اليومية غير متاحة في خطط التجربة."
+
+msgid "Daily backups can't be disabled from the portal. Contact support if you need to make a change."
+msgstr "لا يمكن إيقاف النسخ اليومية من بوابة العميل. تواصل مع الدعم إن احتجت إلى تغيير."
+
+msgid "Pending payment cancelled. You can re-enable daily backups any time."
+msgstr "تم إلغاء الدفع المعلّق. يمكنك تفعيل النسخ اليومية مجددًا في أي وقت."
+
+msgid "Restore failed — see instance logs."
+msgstr "فشلت الاستعادة — راجع سجل النشاط."
+
+msgid "We couldn't generate the download link right now. Please try again in a moment, or contact support."
+msgstr "تعذّر توليد رابط التحميل الآن. أعد المحاولة لاحقًا أو تواصل مع الدعم."
+
+msgid "This operation didn't finish in time. If the database isn't there yet, dismiss this and try again."
+msgstr "لم تنتهِ العملية في الوقت المتوقّع. إن لم تظهر قاعدة البيانات بعد، أغلق هذا الإشعار وأعد المحاولة."
+
+# ============================================================
+# Notice messages (controller)
+# ============================================================
+msgid "Database '%s' does not exist on this instance."
+msgstr "قاعدة البيانات «%s» غير موجودة في هذا الحساب."
+
+msgid "Database '%s' does not belong to this instance."
+msgstr "قاعدة البيانات «%s» لا تنتمي إلى هذا الحساب."
+
+msgid "A backup of '%s' is still in progress. Wait for it to finish before starting another."
+msgstr "نسخة احتياطية لـ«%s» قيد التنفيذ. انتظر انتهاءها قبل بدء أخرى."
+
+msgid "Backup of '%(db)s' started. Refresh in a minute — a download link valid for 24 hours will appear once ready."
+msgstr "بدأت نسخة «%(db)s». حدّث الصفحة بعد دقيقة — سيظهر رابط تحميل صالح لمدة ٢٤ ساعة عند الجهوزية."
+
+msgid "Replaced by a newer on-demand backup request."
+msgstr "تم استبدالها بطلب نسخة فورية أحدث."
+
+msgid "Pick a database to back up."
+msgstr "اختر قاعدة البيانات المراد نسخها."
+
+msgid "Instance must be running to create a backup."
+msgstr "يجب أن يكون الحساب قيد التشغيل لإنشاء نسخة احتياطية."
+
+msgid "On-demand backups are available for hosting instances only."
+msgstr "النسخ الاحتياطية الفورية متاحة لحسابات الاستضافة فقط."
+
+msgid "Admin password reset for '%(db)s'. Sign in as '%(login)s' with your new password."
+msgstr "تم إعادة تعيين كلمة مرور المسؤول لـ«%(db)s». سجّل الدخول باسم «%(login)s» بكلمة المرور الجديدة."
+
+msgid "Repairing '%(module)s' on '%(db)s'… your instance will come back up automatically. This page auto-refreshes."
+msgstr "جاري إصلاح «%(module)s» في «%(db)s»… سيعود حسابك تلقائيًا. ستُحدَّث الصفحة تلقائيًا."
+
+msgid "Deleting database '%s'…"
+msgstr "جاري حذف قاعدة البيانات «%s»…"
+
+msgid "Duplicating to '%s'… refresh to see progress."
+msgstr "جاري النسخ إلى «%s»… حدّث الصفحة لمتابعة التقدّم."
+
+msgid "Creating database '%s'… this takes about a minute. Refresh the page to see its progress."
+msgstr "جاري إنشاء قاعدة البيانات «%s»… تستغرق حوالي دقيقة. حدّث الصفحة لمتابعة التقدّم."
+
+# ============================================================
+# Invoices
+# ============================================================
+msgid "Invoices"
+msgstr "الفواتير"
+
+msgid "Recent invoices"
+msgstr "أحدث الفواتير"
+
+msgid "Paid"
+msgstr "مدفوعة"
+
+msgid "Unpaid"
+msgstr "غير مدفوعة"
+
+msgid "Download"
+msgstr "تحميل"
+
+# ============================================================
+# Common UI words
+# ============================================================
+msgid "Back"
+msgstr "رجوع"
+
+msgid "Next"
+msgstr "التالي"
+
+msgid "Save"
+msgstr "حفظ"
+
+msgid "Edit"
+msgstr "تعديل"
+
+msgid "Yes"
+msgstr "نعم"
+
+msgid "No"
+msgstr "لا"
+
+msgid "OK"
+msgstr "حسنًا"
+
+msgid "Close"
+msgstr "إغلاق"
+
+msgid "Confirm"
+msgstr "تأكيد"
+
+msgid "Submit"
+msgstr "إرسال"
+
+msgid "Loading…"
+msgstr "جاري التحميل…"
+
+msgid "Refresh"
+msgstr "تحديث"
+
+msgid "Back to Instance"
+msgstr "العودة إلى الحساب"
+
+msgid "Back to top"
+msgstr "العودة إلى الأعلى"
+
+msgid "Other"
+msgstr "أخرى"
+
+# ============================================================
+# /docs — Customer documentation
+# ============================================================
+msgid "SUDUD Hosting — Customer Manual"
+msgstr "استضافة صدود — دليل العميل"
+
+msgid "A complete, step-by-step guide to every screen, every button and every situation you'll encounter as a SUDUD Hosting customer. Nothing assumed — if it's a click you'll make, it's in here."
+msgstr "دليل شامل خطوة بخطوة لكلّ شاشة وكلّ زرّ وكلّ حالة قد تواجهك كعميل لاستضافة صدود. لا شيء مفترض — إن كانت نقرة ستضغطها، فهي هنا."
+
+msgid "How to use this manual."
+msgstr "كيفية استخدام هذا الدليل."
+
+msgid "The table of contents on the left is sticky — it follows you as you scroll. Click any entry to jump straight to that step. Every section is self-contained, so you can read only the part you need."
+msgstr "قائمة المحتويات على اليسار ثابتة — تتبعك أثناء التمرير. اضغط أيّ بند للقفز مباشرةً إلى الخطوة المعنيّة. كلّ قسم مكتفٍ بذاته، فيمكنك قراءة الجزء الذي تحتاجه فقط."
+
+msgid "On this page"
+msgstr "في هذه الصفحة"
+
+# Docs — Part headings
+msgid "Part 1 — Getting started"
+msgstr "الجزء ١ — البداية"
+
+msgid "Part 2 — Buying a hosting instance"
+msgstr "الجزء ٢ — شراء حساب استضافة"
+
+msgid "Part 3 — Your instance dashboard"
+msgstr "الجزء ٣ — لوحة تحكّم حسابك"
+
+msgid "Part 4 — Managing databases"
+msgstr "الجزء ٤ — إدارة قواعد البيانات"
+
+msgid "Part 5 — Backups & snapshots"
+msgstr "الجزء ٥ — النسخ الاحتياطية"
+
+msgid "Part 6 — Subscription & plan"
+msgstr "الجزء ٦ — الاشتراك والخطة"
+
+msgid "Part 7 — Stop / start"
+msgstr "الجزء ٧ — الإيقاف والتشغيل"
+
+msgid "Part 8 — Cancellation & reactivation"
+msgstr "الجزء ٨ — الإلغاء وإعادة التفعيل"
+
+msgid "Part 9 — Invoices & payments"
+msgstr "الجزء ٩ — الفواتير والمدفوعات"
+
+msgid "Part 10 — Activity logs"
+msgstr "الجزء ١٠ — سجلّات النشاط"
+
+msgid "Part 11 — Troubleshooting"
+msgstr "الجزء ١١ — حلّ المشكلات"
+
+msgid "Part 12 — FAQ"
+msgstr "الجزء ١٢ — الأسئلة الشائعة"
+
+msgid "Part 13 — Glossary"
+msgstr "الجزء ١٣ — مسرد المصطلحات"
+
+# Docs — Section titles
+msgid "1.1 What is SUDUD Hosting?"
+msgstr "١٫١ ما هي استضافة صدود؟"
+
+msgid "1.2 Signing up for an account"
+msgstr "١٫٢ إنشاء حساب"
+
+msgid "1.3 Signing in"
+msgstr "١٫٣ تسجيل الدخول"
+
+msgid "1.4 Forgot your password"
+msgstr "١٫٤ نسيت كلمة المرور"
+
+msgid "1.5 Free trial overview"
+msgstr "١٫٥ نظرة على التجربة المجانية"
+
+msgid "2.1 Choosing your subdomain"
+msgstr "٢٫١ اختيار النطاق الفرعي"
+
+msgid "2.2 The plan builder"
+msgstr "٢٫٢ منشئ الخطة"
+
+msgid "2.3 Daily snapshots add-on"
+msgstr "٢٫٣ خدمة النسخ اليومية الإضافية"
+
+msgid "2.4 Custom Python packages (advanced, optional)"
+msgstr "٢٫٤ حزم Python مخصّصة (متقدّم، اختياري)"
+
+msgid "2.5 GitHub repositories (advanced, optional)"
+msgstr "٢٫٥ مستودعات GitHub (متقدّم، اختياري)"
+
+msgid "2.6 Checkout and payment"
+msgstr "٢٫٦ الدفع وإتمام الطلب"
+
+msgid "2.7 What happens after payment"
+msgstr "٢٫٧ ما يحدث بعد الدفع"
+
+msgid "3.1 Layout tour"
+msgstr "٣٫١ جولة في تصميم الصفحة"
+
+msgid "3.2 Status pill reference"
+msgstr "٣٫٢ مرجع شارات الحالة"
+
+msgid "3.3 Quick-action buttons"
+msgstr "٣٫٣ أزرار الإجراءات السريعة"
+
+msgid "3.4 In-flight banners"
+msgstr "٣٫٤ إشعارات التشغيل الفوري"
+
+msgid "4.1 Instance vs database — what's the difference?"
+msgstr "٤٫١ الحساب مقابل قاعدة البيانات — ما الفرق؟"
+
+msgid "4.2 Getting to the Databases page"
+msgstr "٤٫٢ الوصول إلى صفحة قواعد البيانات"
+
+msgid "4.3 Database naming rules"
+msgstr "٤٫٣ قواعد تسمية قواعد البيانات"
+
+msgid "4.4 Create a database"
+msgstr "٤٫٤ إنشاء قاعدة بيانات"
+
+msgid "4.5 Open a database / sign in"
+msgstr "٤٫٥ فتح قاعدة بيانات / تسجيل الدخول"
+
+msgid "4.6 Duplicate a database"
+msgstr "٤٫٦ نسخ قاعدة بيانات"
+
+msgid "4.7 Reset the admin password"
+msgstr "٤٫٧ إعادة تعيين كلمة مرور المسؤول"
+
+msgid "4.8 Repair Feature (error-page recovery)"
+msgstr "٤٫٨ إصلاح خاصية (التعافي من صفحات الخطأ)"
+
+msgid "4.9 Delete a database"
+msgstr "٤٫٩ حذف قاعدة بيانات"
+
+msgid "5.1 The two kinds of backup"
+msgstr "٥٫١ نوعا النسخ الاحتياطية"
+
+msgid "5.2 Backup Now — on-demand per-database backup"
+msgstr "٥٫٢ «أنشئ نسخة الآن» — نسخة فورية لقاعدة بيانات واحدة"
+
+msgid "5.3 Daily snapshots — overview"
+msgstr "٥٫٣ النسخ اليومية — نظرة عامة"
+
+msgid "5.4 Enabling daily snapshots"
+msgstr "٥٫٤ تفعيل النسخ اليومية"
+
+msgid "5.5 Viewing your snapshots"
+msgstr "٥٫٥ عرض النسخ المتوفّرة"
+
+msgid "5.6 Restoring from a snapshot"
+msgstr "٥٫٦ الاستعادة من نسخة"
+
+msgid "6.1 Viewing your plan"
+msgstr "٦٫١ عرض خطتك"
+
+msgid "6.2 Upgrading (more resources)"
+msgstr "٦٫٢ الترقية (موارد أكبر)"
+
+msgid "6.3 Downgrading (fewer resources)"
+msgstr "٦٫٣ التخفيض (موارد أقل)"
+
+msgid "6.4 Renewals & billing cycles"
+msgstr "٦٫٤ التجديد ودورات الفوترة"
+
+msgid "6.5 Failed payments"
+msgstr "٦٫٥ المدفوعات الفاشلة"
+
+msgid "8.1 How cancellation works"
+msgstr "٨٫١ كيف يعمل الإلغاء"
+
+msgid "8.2 What gets deleted vs retained"
+msgstr "٨٫٢ ما الذي يُحذف وما الذي يُحفظ"
+
+msgid "8.3 Reactivating a cancelled instance"
+msgstr "٨٫٣ إعادة تفعيل حساب ملغى"
+
+msgid "8.4 Restoring your retained snapshot"
+msgstr "٨٫٤ استعادة النسخة المحفوظة"
+
+# Docs — Part 1.1
+msgid "SUDUD Hosting gives you a private Odoo instance on your own subdomain (e.g."
+msgstr "تمنحك استضافة صدود حسابًا خاصًا من Odoo على نطاقك الفرعي (مثل"
+
+msgid ") with full admin access. Think of it as renting a ready-to-use Odoo environment that we keep running 24/7 on cloud infrastructure — you get the keys, we handle the hosting."
+msgstr ") بصلاحيات مسؤول كاملة. تخيّله كأنّك تستأجر بيئة Odoo جاهزة للاستخدام نُبقيها قيد التشغيل ٢٤/٧ على بنية تحتية سحابية — أنت تحصل على المفاتيح ونحن نتولّى الاستضافة."
+
+msgid "What's included with every hosting instance:"
+msgstr "ما يتضمّنه كلّ حساب استضافة:"
+
+msgid "A private subdomain"
+msgstr "نطاق فرعي خاص"
+
+msgid "like"
+msgstr "مثل"
+
+msgid "secured with a Let's Encrypt SSL certificate (the green padlock in the browser)."
+msgstr "مؤمَّن بشهادة SSL من Let's Encrypt (القفل الأخضر في المتصفّح)."
+
+msgid "One or more Odoo databases"
+msgstr "قاعدة بيانات Odoo واحدة أو أكثر"
+
+msgid "you create on demand. You decide how many (within your plan's storage limits) and what they're called."
+msgstr "تُنشئها عند الطلب. أنت من يقرّر عددها (ضمن سعة خطّتك) وأسماءها."
+
+msgid "Full admin rights"
+msgstr "صلاحيات مسؤول كاملة"
+
+msgid "inside every database — install apps, configure users, customize fields, the works."
+msgstr "داخل كلّ قاعدة بيانات — ثبّت التطبيقات، أعدّ المستخدمين، خصّص الحقول، وكلّ شيء."
+
+msgid "Your custom modules"
+msgstr "وحداتك المخصّصة"
+
+msgid "can be deployed via a GitHub repository link — we pull and install them for you."
+msgstr "يمكن نشرها عبر رابط مستودع GitHub — نقوم بسحبها وتثبيتها نيابةً عنك."
+
+msgid "Optional daily snapshots"
+msgstr "نسخ يومية اختيارية"
+
+msgid "of everything on the instance, plus the ability to take ad-hoc backups of any single database on demand."
+msgstr "لكلّ ما في الحساب، بالإضافة إلى إمكانية إنشاء نسخ فورية لأيّ قاعدة بيانات عند الحاجة."
+
+msgid "What we manage so you don't have to:"
+msgstr "ما نتولّى إدارته نيابةً عنك:"
+
+msgid "Server provisioning and patching."
+msgstr "تجهيز الخوادم وتحديثها."
+
+msgid "The web server / proxy and SSL certificate renewal."
+msgstr "خادم الويب / البروكسي وتجديد شهادة SSL."
+
+msgid "The Odoo Docker image and Python dependencies."
+msgstr "صورة Odoo والاعتماديات."
+
+msgid "The PostgreSQL database server."
+msgstr "خادم قاعدة بيانات PostgreSQL."
+
+msgid "Backup storage in encrypted cloud storage."
+msgstr "تخزين النسخ الاحتياطية في تخزين سحابي مشفَّر."
+
+# Docs — Part 1.2
+msgid "You need a free account before you can buy anything or start a trial. Sign-up takes about a minute."
+msgstr "تحتاج إلى حساب مجاني قبل شراء أيّ شيء أو بدء التجربة. التسجيل يستغرق دقيقة تقريبًا."
+
+msgid "From any public page, click"
+msgstr "من أيّ صفحة عامّة، اضغط"
+
+msgid "in the top right of the navigation bar."
+msgstr "في أعلى يمين شريط التنقّل."
+
+msgid "On the sign-up form, enter:"
+msgstr "في نموذج التسجيل، أدخل:"
+
+msgid "— used on your invoices, so put your real name or company name."
+msgstr "— يُستخدم على فواتيرك، فضع اسمك أو اسم شركتك الحقيقي."
+
+msgid "— where every notification (sign-in links, invoices, snapshot status, password resets) is delivered. Use a real address you'll actually read."
+msgstr "— حيث تصل كلّ الإشعارات (روابط الدخول، الفواتير، حالة النسخ، إعادة تعيين كلمات المرور). استخدم عنوانًا حقيقيًّا ستقرأه فعلًا."
+
+msgid "— at least 8 characters. The strength meter below the field turns from red to green as you type; aim for at least \"Strong\"."
+msgstr "— ٨ أحرف على الأقل. يتحوّل مؤشّر القوّة أسفل الحقل من الأحمر إلى الأخضر أثناء الكتابة؛ استهدف على الأقل «قوي»."
+
+# Docs — Status pill table
+msgid "Pill"
+msgstr "الشارة"
+
+msgid "What it means"
+msgstr "ما تعنيه"
+
+msgid "What you can do"
+msgstr "ما يمكنك فعله"
+
+msgid "Your instance is up and serving traffic."
+msgstr "حسابك يعمل ويستقبل الطلبات."
+
+msgid "Open it, manage databases, take backups, change plan, stop it."
+msgstr "افتحه، أدِر قواعد البيانات، أنشئ نسخًا، غيّر الخطة، أوقفه."
+
+msgid "We're setting up infrastructure (deploy, restore or repair)."
+msgstr "نقوم بإعداد البنية التحتية (نشر أو استعادة أو إصلاح)."
+
+msgid "Wait — the page auto-refreshes when it's done."
+msgstr "انتظر — ستُحدَّث الصفحة تلقائيًا عند الانتهاء."
+
+msgid "You stopped the instance manually. No traffic served."
+msgstr "أوقفت الحساب يدويًا. لا يستقبل أيّ طلبات."
+
+msgid "Start it back up. Databases stay intact."
+msgstr "أعد تشغيله. تبقى قواعد البيانات سليمة."
+
+msgid "Auto-suspended due to an overdue payment or expired trial."
+msgstr "موقوف تلقائيًا بسبب دفعة متأخّرة أو انتهاء التجربة."
+
+msgid "Pay the outstanding invoice (or upgrade from trial) to reactivate."
+msgstr "ادفع الفاتورة المستحقّة (أو رقِّ من التجربة) لإعادة التفعيل."
+
+msgid "Order placed, payment not yet confirmed."
+msgstr "تم وضع الطلب، ولم يتأكّد الدفع بعد."
+
+msgid "Wait for payment confirmation, or pay the invoice manually."
+msgstr "انتظر تأكيد الدفع، أو ادفع الفاتورة يدويًا."
+
+msgid "Deployment failed after several auto-retries."
+msgstr "فشل النشر بعد عدّة محاولات تلقائية."
+
+msgid "Contact support — we'll investigate."
+msgstr "تواصل مع الدعم — سنحقّق في الأمر."
+
+msgid "Cancelled. Most data deleted; the most recent snapshot is retained."
+msgstr "ملغى. حُذف معظم البيانات؛ تُحفظ أحدث نسخة."
+
+# Common docs glue words
+msgid "Where to find them"
+msgstr "أين تجدها"
+
+msgid "Paying an unpaid invoice"
+msgstr "دفع فاتورة غير مدفوعة"
+
+msgid "Downloading a PDF"
+msgstr "تحميل PDF"
+
+msgid "What each charge means"
+msgstr "ماذا تعني كلّ رسوم"
+
+msgid "Frequently asked questions"
+msgstr "الأسئلة الشائعة"
+
+# Docs — Troubleshooting headings
+msgid "My Odoo shows an error page on every URL"
+msgstr "يُظهر حسابي صفحة خطأ على كلّ رابط"
+
+msgid "I can't sign in to my Odoo"
+msgstr "لا أستطيع تسجيل الدخول إلى Odoo"
+
+msgid "My instance is suspended"
+msgstr "حسابي موقوف"
+
+msgid "My page didn't refresh on its own"
+msgstr "لم تتحدّث صفحتي تلقائيًا"
+
+msgid "My download link doesn't work"
+msgstr "رابط التحميل لا يعمل"
+
+msgid "A snapshot is \"missing\""
+msgstr "إحدى النسخ «مفقودة»"
+
+msgid "I created a database with the wrong name"
+msgstr "أنشأت قاعدة بيانات باسم خاطئ"
+
+msgid "I want to move data between instances"
+msgstr "أريد نقل البيانات بين الحسابات"
+
+msgid "How do I report a bug or get help?"
+msgstr "كيف أبلغ عن خلل أو أطلب المساعدة؟"
+
+# Docs — FAQ headings
+msgid "How many databases can I have on one instance?"
+msgstr "كم قاعدة بيانات يمكنني وضعها في حساب واحد؟"
+
+msgid "Can I install any Odoo app I want?"
+msgstr "هل أستطيع تثبيت أيّ تطبيق Odoo أريده؟"
+
+msgid "Can I use a custom domain instead of the subdomain?"
+msgstr "هل يمكنني استخدام نطاق مخصّص بدلًا من النطاق الفرعي؟"
+
+msgid "Where is my data physically stored?"
+msgstr "أين تُخزَّن بياناتي فعليًا؟"
+
+msgid "Are my backups encrypted?"
+msgstr "هل نُسخي الاحتياطية مشفّرة؟"
+
+msgid "Can someone else access my Odoo with my subdomain?"
+msgstr "هل يستطيع شخص آخر الوصول إلى Odoo الخاص بي عبر نطاقي؟"
+
+msgid "What's the difference between Backup Now and a snapshot?"
+msgstr "ما الفرق بين «أنشئ نسخة الآن» والنسخة؟"
+
+msgid "How do I get a refund?"
+msgstr "كيف أحصل على استرداد؟"
+
+msgid "Can I have more than one instance?"
+msgstr "هل يمكنني الحصول على أكثر من حساب؟"
+
+# Docs — Glossary terms
+msgid "Instance"
+msgstr "الحساب"
+
+msgid "Database"
+msgstr "قاعدة البيانات"
+
+msgid "Worker"
+msgstr "عامل"
+
+msgid "Snapshot"
+msgstr "نسخة"
+
+msgid "Backup Now"
+msgstr "أنشئ نسخة الآن"
+
+# ============================================================
+# Catch-all common phrases used across views (auto-pickable)
+# ============================================================
+msgid "Required"
+msgstr "مطلوب"
+
+msgid "Optional"
+msgstr "اختياري"
+
+msgid "Recommended"
+msgstr "موصى به"
+
+msgid "Free"
+msgstr "مجاني"
+
+msgid "Per month"
+msgstr "شهريًا"
+
+msgid "Per year"
+msgstr "سنويًا"
+
+msgid "Total"
+msgstr "الإجمالي"
+
+msgid "Subtotal"
+msgstr "المجموع الفرعي"
+
+msgid "Tax"
+msgstr "الضريبة"
+
+msgid "Discount"
+msgstr "الخصم"
+
+msgid "Save %s%%"
+msgstr "وفّر %s٪"
+
+msgid "Welcome"
+msgstr "مرحبًا"
+
+msgid "Name"
+msgstr "الاسم"
+
+msgid "Settings"
+msgstr "الإعدادات"
+
+msgid "Account"
+msgstr "الحساب"
+
+msgid "Logout"
+msgstr "تسجيل الخروج"
+
+msgid "Sign in"
+msgstr "تسجيل الدخول"
+
+msgid "Sign up"
+msgstr "إنشاء حساب"

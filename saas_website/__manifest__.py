@@ -10,6 +10,7 @@
         'security/saas_website_security.xml',
         'security/ir.model.access.csv',
         'data/mail_templates.xml',
+        'data/website_languages.xml',
         'views/saas_frontend_layout.xml',
         'views/saas_login_templates.xml',
         'views/saas_services_templates.xml',
@@ -22,6 +23,7 @@
     'assets': {
         'web.assets_frontend': [
             'saas_website/static/src/css/cloudodoo.css',
+            'saas_website/static/src/css/cloudodoo_rtl.css',
             'saas_website/static/src/js/cloudodoo_app.js',
             'saas_website/static/src/js/subdomain_check.js',
             'saas_website/static/src/js/portal_actions.js',
