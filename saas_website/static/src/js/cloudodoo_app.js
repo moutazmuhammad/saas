@@ -508,6 +508,84 @@ function initUsageRefresh() {
 }
 
 // ============================================
+// Loading overlay
+// ============================================
+// Blocking spinner that covers the screen while a long-running portal
+// action (create DB, duplicate, drop, repair feature, reset password,
+// Backup Now, restore snapshot, …) is in flight. Two triggers:
+//   1. ``initLoadingOverlay`` — on every page load, if there's a
+//      ``[data-loading-overlay]`` element on the page (rendered by
+//      the template when an op is in flight), show the overlay until
+//      the polling reloads the page.
+//   2. ``initOverlayOnSubmit`` — when a form with ``data-loading-text``
+//      is submitted, show the overlay immediately so the user can't
+//      double-click before the redirect lands.
+
+function showLoadingOverlay(text, subtitle) {
+    var existing = document.getElementById('saas-loading-overlay');
+    if (existing) {
+        // Already showing — just refresh the main text if requested.
+        if (text) {
+            var t = existing.querySelector('.saas-loading-overlay-text-main');
+            if (t) t.textContent = text;
+        }
+        return existing;
+    }
+    var overlay = document.createElement('div');
+    overlay.id = 'saas-loading-overlay';
+    overlay.className = 'saas-loading-overlay';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+    overlay.innerHTML = (
+        '<div class="spinner-border text-light" role="status">' +
+        '<span class="visually-hidden">Loading…</span></div>' +
+        '<div class="saas-loading-overlay-text">' +
+        '<div class="saas-loading-overlay-text-main"></div>' +
+        '<div class="saas-loading-overlay-subtitle"></div>' +
+        '</div>'
+    );
+    overlay.querySelector('.saas-loading-overlay-text-main').textContent =
+        text || 'Working on it…';
+    overlay.querySelector('.saas-loading-overlay-subtitle').textContent =
+        subtitle || 'This page will refresh automatically when it\'s done.';
+    document.body.appendChild(overlay);
+    document.body.classList.add('saas-overlay-locked');
+    return overlay;
+}
+
+function hideLoadingOverlay() {
+    var el = document.getElementById('saas-loading-overlay');
+    if (el) el.remove();
+    document.body.classList.remove('saas-overlay-locked');
+}
+
+function initLoadingOverlay() {
+    var marker = document.querySelector('[data-loading-overlay]');
+    if (marker) {
+        showLoadingOverlay(
+            marker.getAttribute('data-loading-text'),
+            marker.getAttribute('data-loading-subtitle'),
+        );
+    }
+}
+
+function initOverlayOnSubmit() {
+    document.addEventListener('submit', function(e) {
+        var form = e.target;
+        if (!form || !form.matches || !form.matches('form[data-loading-text]')) {
+            return;
+        }
+        // Don't block forms that explicitly opt out (e.g. dismiss
+        // buttons that should never trigger the overlay).
+        if (form.dataset.loadingSkip === '1') return;
+        showLoadingOverlay(
+            form.getAttribute('data-loading-text'),
+            form.getAttribute('data-loading-subtitle'),
+        );
+    }, true);
+}
+
+// ============================================
 // Provisioning Status Polling
 // ============================================
 
@@ -1778,6 +1856,8 @@ function initAll() {
     initInstanceActions();
     initUsageRefresh();
     initStatusPolling();
+    initLoadingOverlay();
+    initOverlayOnSubmit();
     initBackupActions();
     initInstanceSort();
     initLoginForm();
@@ -1940,7 +2020,18 @@ function initConfirmModals() {
             function() {
                 if (trigger.type === 'submit' || trigger.tagName === 'BUTTON') {
                     var form = trigger.closest('form');
-                    if (form) form.submit();
+                    if (form) {
+                        // ``requestSubmit`` (vs ``submit``) fires the
+                        // submit event, which our loading-overlay
+                        // handler listens for. Without it, confirmed
+                        // long-running actions would slip through
+                        // without freezing the screen.
+                        if (typeof form.requestSubmit === 'function') {
+                            form.requestSubmit();
+                        } else {
+                            form.submit();
+                        }
+                    }
                 } else if (trigger.href) {
                     window.location.href = trigger.href;
                 }

@@ -3189,6 +3189,50 @@ h1, h2, h3, h4, h5, h6 {
     to { transform: rotate(360deg); }
 }
 
+/* Full-screen blocking overlay used while a long-running portal
+   action is in flight (create / duplicate / drop / repair feature /
+   reset password / Backup Now / Restore Snapshot, etc.). Mounted
+   programmatically by ``showLoadingOverlay`` in cloudodoo_app.js. */
+.saas-loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 15, 23, 0.78);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 99999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 1.25rem;
+    color: #f4f6fb;
+    padding: 1rem;
+    text-align: center;
+    /* Block scroll on the page beneath. */
+    overflow: hidden;
+}
+.saas-loading-overlay .spinner-border {
+    width: 3.25rem;
+    height: 3.25rem;
+    border-width: 0.3rem;
+}
+.saas-loading-overlay-text {
+    max-width: 520px;
+    line-height: 1.5;
+}
+.saas-loading-overlay-text-main {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+}
+.saas-loading-overlay-subtitle {
+    font-size: 0.85rem;
+    opacity: 0.75;
+}
+body.saas-overlay-locked {
+    overflow: hidden;
+}
+
 /* Modal Customization */
 .modal-content {
     background: var(--bg-card);

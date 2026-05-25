@@ -1038,7 +1038,9 @@
                                                             <td>
                                                                 <t t-if="backup.state == 'done' and instance.state == 'running'">
                                                                     <form t-attf-action="/my/instances/#{instance.id}/backup/#{backup.id}/restore"
-                                                                          method="post" style="display:inline;">
+                                                                          method="post" style="display:inline;"
+                                                                          data-loading-text="Restoring your instance from the snapshot…"
+                                                                          data-loading-subtitle="This can take several minutes. Please don't close the tab — the page will refresh when it's done.">
                                                                         <input type="hidden" name="csrf_token"
                                                                                t-att-value="request.csrf_token()"/>
                                                                         <button type="submit"
@@ -1046,8 +1048,7 @@
                                                                                 data-confirm="Restore your instance from this backup? Current data will be replaced."
                                                                                 data-confirm-variant="warning"
                                                                                 data-confirm-yes="Yes, restore"
-                                                                                data-confirm-no="Cancel"
-                                                                                data-loading-text="Restoring...">
+                                                                                data-confirm-no="Cancel">
                                                                             <i class="fas fa-undo"></i> Restore
                                                                         </button>
                                                                     </form>
@@ -2508,6 +2509,21 @@
                         </div>
                     </t>
 
+                    <!-- Restore-in-flight indicator. When a snapshot
+                         restore is running, the instance enters the
+                         ``provisioning`` state. The existing
+                         ``provisioning-poll`` handler auto-reloads the
+                         page once it transitions back to ``running``;
+                         ``data-loading-overlay`` keeps the blocking
+                         overlay up the whole time so the customer can't
+                         accidentally re-trigger the restore. -->
+                    <t t-if="instance.state == 'provisioning' and instance.pending_operation == 'restore'">
+                        <div id="provisioning-poll" t-att-data-instance-id="instance.id" style="display:none"
+                             data-loading-overlay="1"
+                             data-loading-text="Restoring your instance from the snapshot…"
+                             data-loading-subtitle="This can take several minutes. The page will refresh automatically when your instance is back online."/>
+                    </t>
+
                     <!-- ===== Daily full-instance restore points ===== -->
                     <t t-if="full_instance_backups">
                         <div class="info-card mb-3">
@@ -2612,7 +2628,9 @@
                                     <div class="modal-dialog">
                                         <form class="modal-content"
                                               t-attf-action="/my/instances/#{instance.id}/backup/#{b.id}/restore"
-                                              method="POST">
+                                              method="POST"
+                                              data-loading-text="Restoring your instance from the snapshot…"
+                                              data-loading-subtitle="This can take several minutes. Please don't close the tab — the page will refresh automatically when your instance is back online.">
                                             <input type="hidden" name="csrf_token"
                                                    t-att-value="request.csrf_token()"/>
                                             <input type="hidden" name="return_to" value="backups"/>
@@ -2803,7 +2821,9 @@
                                     <div class="modal-dialog">
                                         <form class="modal-content"
                                               t-attf-action="/my/instances/#{instance.id}/backup/#{b.id}/restore"
-                                              method="POST">
+                                              method="POST"
+                                              data-loading-text="Restoring your database from the snapshot…"
+                                              data-loading-subtitle="This can take several minutes. Please don't close the tab — the page will refresh automatically when your instance is back online.">
                                             <input type="hidden" name="csrf_token"
                                                    t-att-value="request.csrf_token()"/>
                                             <input type="hidden" name="return_to" value="backups"/>
@@ -3113,8 +3133,21 @@
                         <!-- Hidden poll trigger. ``initStatusPolling`` in
                              cloudodoo_app.js picks this up, hits the
                              /status endpoint every 5 s, and reloads when
-                             ``db_ops_running`` flips to false. -->
-                        <div id="dbop-poll" t-att-data-instance-id="instance.id" style="display:none"/>
+                             ``db_ops_running`` flips to false.
+                             ``data-loading-overlay`` makes the JS also
+                             throw up the blocking overlay so the page
+                             can't be interacted with while the op runs. -->
+                        <div id="dbop-poll" t-att-data-instance-id="instance.id" style="display:none"
+                             data-loading-overlay="1"
+                             t-att-data-loading-text="
+                                {'create': 'Creating database…',
+                                 'duplicate': 'Duplicating database…',
+                                 'drop': 'Deleting database…',
+                                 'upgrade': 'Repairing your database…'}.get(
+                                    running_ops[0].operation, 'Working on it…'
+                                )
+                             "
+                             data-loading-subtitle="This page will refresh automatically when it's done. Please don't close the tab."/>
                     </t>
                     <t t-foreach="running_ops" t-as="op">
                         <div class="alert-banner alert-info mb-2 d-flex justify-content-between align-items-start gap-3">
@@ -3273,7 +3306,10 @@
                                                 <t t-if="this_ondemand and this_ondemand.state == 'running'">
                                                     <span class="badge ms-2 bg-info"
                                                           id="backup-poll"
-                                                          t-att-data-instance-id="instance.id">
+                                                          t-att-data-instance-id="instance.id"
+                                                          data-loading-overlay="1"
+                                                          t-attf-data-loading-text="Backing up '#{this_ondemand.db_name}'…"
+                                                          data-loading-subtitle="This page will refresh automatically when the download link is ready.">
                                                         <i class="fas fa-spinner fa-spin me-1"></i>Backing up
                                                     </span>
                                                 </t>
@@ -3330,7 +3366,9 @@
                                                 <t t-else="">
                                                     <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
                                                           method="POST"
-                                                          class="d-inline saas-ondemand-form">
+                                                          class="d-inline saas-ondemand-form"
+                                                          data-loading-text="Preparing a backup…"
+                                                          data-loading-subtitle="Please don't close the tab — the page will refresh when your download link is ready.">
                                                         <input type="hidden" name="csrf_token"
                                                                t-att-value="request.csrf_token()"/>
                                                         <input type="hidden" name="db_name" t-att-value="db['name']"/>
@@ -3410,7 +3448,9 @@
                         <div class="modal-dialog">
                             <form class="modal-content"
                                   t-attf-action="/my/instances/#{instance.id}/databases/create"
-                                  method="POST">
+                                  method="POST"
+                                  data-loading-text="Creating database…"
+                                  data-loading-subtitle="This usually takes about a minute. Please don't close the tab — the page will refresh automatically.">
                                 <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
                                 <div class="modal-header">
                                     <h5 class="modal-title">Create Database</h5>
@@ -3509,7 +3549,9 @@
                             <div class="modal-dialog">
                                 <form class="modal-content"
                                       t-attf-action="/my/instances/#{instance.id}/databases/duplicate"
-                                      method="POST">
+                                      method="POST"
+                                      data-loading-text="Duplicating database…"
+                                      data-loading-subtitle="This usually takes about a minute. Please don't close the tab — the page will refresh automatically.">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="source" t-att-value="db['name']"/>
@@ -3554,7 +3596,9 @@
                             <div class="modal-dialog">
                                 <form class="modal-content"
                                       t-attf-action="/my/instances/#{instance.id}/databases/reset-admin-password"
-                                      method="POST">
+                                      method="POST"
+                                      data-loading-text="Resetting admin password…"
+                                      data-loading-subtitle="Please don't close the tab — the page will refresh when it's done.">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="name" t-att-value="db['name']"/>
@@ -3622,7 +3666,9 @@
                             <div class="modal-dialog modal-lg">
                                 <form class="modal-content"
                                       t-attf-action="/my/instances/#{instance.id}/databases/upgrade-module"
-                                      method="POST">
+                                      method="POST"
+                                      data-loading-text="Repairing your database…"
+                                      data-loading-subtitle="Your instance will be briefly unavailable. The page will refresh automatically when it's done.">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="name" t-att-value="db['name']"/>
@@ -3683,7 +3729,9 @@
                             <div class="modal-dialog">
                                 <form class="modal-content"
                                       t-attf-action="/my/instances/#{instance.id}/databases/drop"
-                                      method="POST">
+                                      method="POST"
+                                      data-loading-text="Deleting database…"
+                                      data-loading-subtitle="Please don't close the tab — the page will refresh when the database is gone.">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="name" t-att-value="db['name']"/>
