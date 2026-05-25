@@ -17,6 +17,7 @@
         'views/saas_registration_templates.xml',
         'views/saas_invoice_templates.xml',
         'views/saas_portal_templates.xml',
+        'views/saas_docs_templates.xml',
     ],
     'assets': {
         'web.assets_frontend': [

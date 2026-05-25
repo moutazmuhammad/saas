@@ -1,0 +1,1019 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ============================================================
+         Customer documentation
+         Route: /docs (controller in main.py → docs_page)
+         Layout: reuses the cloudodoo_layout shell so the page lives
+                 inside the existing header / footer chrome.
+         Screenshots: referenced under
+             /saas_website/static/src/img/docs/<name>.png
+         An operator drops real PNGs there; missing files just render
+         a broken-image icon which a small inline script swaps for a
+         soft placeholder so the page still looks tidy on day 1.
+         ============================================================ -->
+    <template id="portal_docs_page" name="Customer Docs">
+        <t t-call="saas_website.cloudodoo_layout">
+            <section class="py-6" style="padding-top:120px;">
+                <div class="container">
+                    <div class="row g-4">
+                        <!-- ============== Sticky TOC ============== -->
+                        <aside class="col-lg-3 d-none d-lg-block">
+                            <nav class="docs-toc">
+                                <h6 class="text-uppercase small fw-bold mb-3"
+                                    style="color:var(--co-text-muted, #71717A);letter-spacing:0.05em;">
+                                    On this page
+                                </h6>
+                                <ol class="list-unstyled small docs-toc-list">
+                                    <li><a href="#sec-welcome">Welcome</a></li>
+                                    <li><a href="#sec-account">Creating an account</a></li>
+                                    <li><a href="#sec-trial">Starting a free trial</a></li>
+                                    <li><a href="#sec-purchase">Choosing and purchasing a plan</a></li>
+                                    <li><a href="#sec-dashboard">Your instance dashboard</a></li>
+                                    <li>
+                                        <a href="#sec-databases">Managing databases</a>
+                                        <ol class="list-unstyled ms-3 mt-1">
+                                            <li><a href="#sec-db-create">Create a database</a></li>
+                                            <li><a href="#sec-db-duplicate">Duplicate a database</a></li>
+                                            <li><a href="#sec-db-reset-password">Reset the admin password</a></li>
+                                            <li><a href="#sec-db-repair">Repair a feature (error page recovery)</a></li>
+                                            <li><a href="#sec-db-delete">Delete a database</a></li>
+                                        </ol>
+                                    </li>
+                                    <li><a href="#sec-ondemand">On-demand backups (Backup Now)</a></li>
+                                    <li>
+                                        <a href="#sec-snapshots">Daily snapshots</a>
+                                        <ol class="list-unstyled ms-3 mt-1">
+                                            <li><a href="#sec-snapshots-enable">Enabling snapshots</a></li>
+                                            <li><a href="#sec-snapshots-restore">Restoring from a snapshot</a></li>
+                                        </ol>
+                                    </li>
+                                    <li><a href="#sec-plan-change">Changing your plan</a></li>
+                                    <li><a href="#sec-cancel">Cancelling and reactivating</a></li>
+                                    <li><a href="#sec-invoices">Invoices and payments</a></li>
+                                    <li><a href="#sec-troubleshoot">Troubleshooting &amp; FAQ</a></li>
+                                </ol>
+                            </nav>
+                        </aside>
+
+                        <!-- ============== Main content ============== -->
+                        <main class="col-lg-9">
+                            <!-- Welcome -->
+                            <section id="sec-welcome" class="docs-section">
+                                <h1 class="mb-3">Customer Documentation</h1>
+                                <p class="lead text-muted">
+                                    A practical walk-through of every screen in the
+                                    customer portal — what each button does, what
+                                    you'll see, and what to expect.
+                                </p>
+                                <div class="docs-callout docs-callout-info mb-3">
+                                    <i class="fas fa-compass me-2"></i>
+                                    <span>
+                                        Use the table of contents on the left to jump
+                                        to any section. Every section is self-contained,
+                                        so you can read just the part you need.
+                                    </span>
+                                </div>
+                                <h2 class="h4 mt-4">What you can do with SUDUD</h2>
+                                <p>
+                                    SUDUD offers two product lines you can mix and
+                                    match depending on what you need:
+                                </p>
+                                <div class="row g-3 mt-2 mb-3">
+                                    <div class="col-md-6">
+                                        <div class="docs-product-card">
+                                            <h6 class="fw-bold mb-2">
+                                                <i class="fas fa-server me-2 text-primary"></i>Hosting
+                                            </h6>
+                                            <p class="small text-muted mb-0">
+                                                You get a private Odoo instance on
+                                                your own subdomain. You decide how
+                                                many databases to put on it, install
+                                                whichever apps you need, and have
+                                                full admin access from inside the
+                                                instance.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="docs-product-card">
+                                            <h6 class="fw-bold mb-2">
+                                                <i class="fas fa-cube me-2 text-success"></i>Services
+                                            </h6>
+                                            <p class="small text-muted mb-0">
+                                                Ready-made business apps we deploy
+                                                for you on shared infrastructure.
+                                                Pick one, pay, and start using it
+                                                in minutes — no setup on your end.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/01-home.png"
+                                         alt="The SUDUD home page showing the Services and Hosting offerings"/>
+                                    <figcaption>The home page — entry points for both product lines.</figcaption>
+                                </figure>
+                            </section>
+
+                            <!-- Account -->
+                            <section id="sec-account" class="docs-section">
+                                <h2>1. Creating an account</h2>
+                                <p>
+                                    Before you can purchase anything you need a free
+                                    account. Sign-up takes about a minute.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        From the top right of any page, click
+                                        <strong>Sign Up</strong>. (If you already
+                                        have an account, click <strong>Sign In</strong>
+                                        instead.)
+                                    </li>
+                                    <li>
+                                        Enter your name, work email and a password.
+                                        The password must be at least 8 characters
+                                        — the strength meter under the field tells
+                                        you how strong it is.
+                                    </li>
+                                    <li>
+                                        Check the email we send you and click the
+                                        confirmation link. Your account is active
+                                        from that moment.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/02-signup.png"
+                                         alt="Sign-up form with name, email and password fields"/>
+                                    <figcaption>Sign-up form. The password strength meter updates as you type.</figcaption>
+                                </figure>
+                                <div class="docs-callout docs-callout-tip">
+                                    <i class="fas fa-lightbulb me-2"></i>
+                                    <span>
+                                        Use a real email — every invoice, snapshot
+                                        notification and password reset goes there.
+                                    </span>
+                                </div>
+                            </section>
+
+                            <!-- Trial -->
+                            <section id="sec-trial" class="docs-section">
+                                <h2>2. Starting a free trial</h2>
+                                <p>
+                                    Want to try before you buy? You can spin up a
+                                    14-day trial instance without entering payment
+                                    details.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        On the home page, look for the green
+                                        <strong>Try hosting for X days free</strong>
+                                        banner at the top.
+                                    </li>
+                                    <li>
+                                        Click <strong>Start free trial</strong>.
+                                        You'll be taken to the plan-builder with
+                                        trial mode pre-selected.
+                                    </li>
+                                    <li>
+                                        Choose your subdomain (e.g.
+                                        <code>my-company</code> →
+                                        <code>my-company.sudud.com</code>) and pick
+                                        the resources you want. The trial uses a
+                                        modest default — you can change it once
+                                        you upgrade to a paid plan.
+                                    </li>
+                                    <li>
+                                        Click <strong>Start trial</strong>. Your
+                                        instance starts deploying immediately — no
+                                        credit card needed.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/03-trial-banner.png"
+                                         alt="Green free-trial banner at the top of the home page"/>
+                                    <figcaption>The trial banner appears at the top of every public page during your eligibility window.</figcaption>
+                                </figure>
+                                <div class="docs-callout docs-callout-warning">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <span>
+                                        Trial instances don't include daily
+                                        snapshots — that's a paid add-on. Make
+                                        sure you upgrade before the trial ends
+                                        if you want your data to keep running.
+                                    </span>
+                                </div>
+                            </section>
+
+                            <!-- Purchase -->
+                            <section id="sec-purchase" class="docs-section">
+                                <h2>3. Choosing and purchasing a plan</h2>
+                                <p>
+                                    Whether you're a new customer or an existing
+                                    one upgrading from a trial, the flow is the same.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        Click <strong>Hosting</strong> in the top
+                                        navigation (or <strong>Services</strong>
+                                        for a ready-made app).
+                                    </li>
+                                    <li>
+                                        Pick your subdomain. We'll check
+                                        availability as you type — a green check
+                                        means it's free, red means it's already
+                                        taken.
+                                    </li>
+                                    <li>
+                                        Adjust the resource sliders:
+                                        <ul class="mt-2">
+                                            <li>
+                                                <strong>Workers</strong> — how many
+                                                concurrent users your instance can
+                                                handle smoothly.
+                                            </li>
+                                            <li>
+                                                <strong>Storage</strong> — how much
+                                                disk space your databases and
+                                                attachments get.
+                                            </li>
+                                            <li>
+                                                <strong>Billing period</strong> —
+                                                monthly or yearly. Yearly saves
+                                                you about 20% off the monthly rate.
+                                            </li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        (Optional but recommended) Tick
+                                        <strong>Add daily snapshots</strong> —
+                                        nightly snapshots of every database plus
+                                        your files and configuration, kept for up
+                                        to 7 days. You can also add this later
+                                        from your instance page.
+                                    </li>
+                                    <li>
+                                        Click <strong>Continue to payment</strong>.
+                                        Enter your card details on the secure
+                                        payment widget; we don't see the card
+                                        number ourselves — it goes straight to
+                                        the payment provider.
+                                    </li>
+                                    <li>
+                                        Once payment confirms, your instance
+                                        starts provisioning. The page
+                                        auto-refreshes when it's ready — usually
+                                        2-5 minutes for a fresh instance.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/04-plan-builder.png"
+                                         alt="Plan builder with sliders for workers and storage plus daily-backup checkbox"/>
+                                    <figcaption>The plan builder. The order summary on the right updates live as you change the sliders.</figcaption>
+                                </figure>
+                            </section>
+
+                            <!-- Dashboard -->
+                            <section id="sec-dashboard" class="docs-section">
+                                <h2>4. Your instance dashboard</h2>
+                                <p>
+                                    After purchase you land on the instance detail
+                                    page. This is your home base for everything
+                                    related to one instance.
+                                </p>
+                                <p>The page shows you at a glance:</p>
+                                <ul>
+                                    <li>
+                                        <strong>Status</strong> — Running, Stopped,
+                                        Suspended, etc. The status pill at the top
+                                        is colour-coded.
+                                    </li>
+                                    <li>
+                                        <strong>Plan and billing period</strong>.
+                                    </li>
+                                    <li>
+                                        <strong>Quick action buttons</strong> for
+                                        the most common operations: Open the
+                                        instance, Manage databases, View snapshots,
+                                        Stop / Start, Change plan, etc.
+                                    </li>
+                                    <li>
+                                        <strong>Recent invoices</strong> on the
+                                        right column.
+                                    </li>
+                                </ul>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/05-instance-detail.png"
+                                         alt="Instance detail page showing status, quick actions, and recent invoices"/>
+                                    <figcaption>The instance detail page. Action buttons appear/disappear based on the instance state.</figcaption>
+                                </figure>
+                                <div class="docs-callout docs-callout-info">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <span>
+                                        If your instance is hosting and you haven't
+                                        enabled daily snapshots yet, you'll see a
+                                        blue prompt on this page asking you to turn
+                                        them on — see
+                                        <a href="#sec-snapshots-enable">Enabling snapshots</a>
+                                        below.
+                                    </span>
+                                </div>
+                            </section>
+
+                            <!-- Databases -->
+                            <section id="sec-databases" class="docs-section">
+                                <h2>5. Managing databases</h2>
+                                <p>
+                                    On a hosting instance you can host many
+                                    databases under the same subdomain. Click
+                                    <strong>Manage Databases</strong> from the
+                                    instance page to open the database manager.
+                                </p>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/06-databases.png"
+                                         alt="Databases page listing each database with action buttons"/>
+                                    <figcaption>Every database gets a row with five actions: Open, Backup Now, Repair Feature, Reset Password, Duplicate, Delete.</figcaption>
+                                </figure>
+
+                                <h3 id="sec-db-create" class="h5 mt-4">5.1 Create a database</h3>
+                                <ol class="docs-steps">
+                                    <li>
+                                        At the top of the Databases page, click
+                                        <strong>Create Database</strong>.
+                                    </li>
+                                    <li>
+                                        Fill in:
+                                        <ul class="mt-2">
+                                            <li>
+                                                <strong>Name</strong> — lowercase
+                                                letters, digits, single hyphens or
+                                                underscores. The full name will be
+                                                prefixed with your subdomain.
+                                            </li>
+                                            <li>
+                                                <strong>Admin login</strong> — your
+                                                email by default. This is the user
+                                                you'll sign in as.
+                                            </li>
+                                            <li>
+                                                <strong>Admin password</strong> —
+                                                at least 6 characters.
+                                            </li>
+                                            <li>
+                                                <strong>Language</strong> — the
+                                                interface language for that
+                                                database.
+                                            </li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        Click <strong>Create</strong>. The page
+                                        freezes briefly with a "Creating database…"
+                                        overlay, then refreshes automatically when
+                                        the database is ready (usually about a
+                                        minute).
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/07-create-db.png"
+                                         alt="Create database modal with name, admin login, password and language fields"/>
+                                    <figcaption>Create-database modal. The "subdomain_" prefix is added automatically.</figcaption>
+                                </figure>
+
+                                <h3 id="sec-db-duplicate" class="h5 mt-4">5.2 Duplicate a database</h3>
+                                <p>
+                                    Useful when you want a sandbox copy of a
+                                    production database to test something risky on.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        Find the database row you want to copy,
+                                        then click
+                                        <strong>
+                                            <i class="fas fa-copy"></i> Duplicate
+                                        </strong>.
+                                    </li>
+                                    <li>
+                                        Type a new name (the original keeps its
+                                        name; this one gets a fresh one).
+                                    </li>
+                                    <li>
+                                        Click <strong>Duplicate</strong>. The
+                                        button spins until the copy is ready,
+                                        then the page refreshes.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/08-duplicate.png"
+                                         alt="Duplicate database modal asking for a new name"/>
+                                </figure>
+
+                                <h3 id="sec-db-reset-password" class="h5 mt-4">5.3 Reset the admin password</h3>
+                                <p>
+                                    Forgot your admin password? You can reset it
+                                    yourself — no support ticket needed.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        Find the database row and click
+                                        <strong>
+                                            <i class="fas fa-key"></i> Reset Password
+                                        </strong>.
+                                    </li>
+                                    <li>
+                                        Inside the modal, a blue banner shows you
+                                        which admin login this reset is for — make
+                                        a note of it if you forgot the username
+                                        too.
+                                    </li>
+                                    <li>
+                                        Type the new password twice (at least 6
+                                        characters) and click
+                                        <strong>Reset password</strong>.
+                                    </li>
+                                    <li>
+                                        When the page reloads you'll see a green
+                                        banner confirming the reset along with the
+                                        login to use. Sign in to that database with
+                                        the new password.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/09-reset-password.png"
+                                         alt="Reset password modal showing the admin login and two password fields"/>
+                                </figure>
+
+                                <h3 id="sec-db-repair" class="h5 mt-4">5.4 Repair a feature (error-page recovery)</h3>
+                                <p>
+                                    If one of your databases starts showing an
+                                    error page after a module change, or you can't
+                                    reach the in-app Apps menu, the Repair Feature
+                                    tool can fix it without losing data.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        Click
+                                        <strong>
+                                            <i class="fas fa-wrench"></i> Repair Feature
+                                        </strong>
+                                        on the affected database row.
+                                    </li>
+                                    <li>
+                                        Type the name of the feature to re-install.
+                                        Common picks:
+                                        <ul class="mt-2">
+                                            <li>
+                                                <code>base</code> — rebuild the core
+                                                (safe, usually quick)
+                                            </li>
+                                            <li>
+                                                <code>web</code> — rebuild the
+                                                interface shell
+                                            </li>
+                                            <li>
+                                                <code>all</code> — repair every
+                                                installed feature (slowest but
+                                                the broadest fix)
+                                            </li>
+                                            <li>
+                                                Or a specific feature name like
+                                                <code>account</code> or
+                                                <code>sale</code> if you know which
+                                                one started failing.
+                                            </li>
+                                        </ul>
+                                    </li>
+                                    <li>
+                                        Click <strong>Run upgrade</strong>. A
+                                        full-screen overlay appears while your
+                                        instance is briefly paused, the feature
+                                        is re-installed, and the instance comes
+                                        back up. The page reloads automatically.
+                                    </li>
+                                    <li>
+                                        After the reload, you'll see a green
+                                        banner with a collapsible
+                                        <em>Show full report</em> — open it if
+                                        you want the technical detail.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/10-repair-feature.png"
+                                         alt="Repair-feature modal with the feature name input field and common picks list"/>
+                                </figure>
+                                <div class="docs-callout docs-callout-warning">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <span>
+                                        Your instance will be unavailable for
+                                        30 seconds to a few minutes while the
+                                        repair runs. Don't close the tab.
+                                    </span>
+                                </div>
+
+                                <h3 id="sec-db-delete" class="h5 mt-4">5.5 Delete a database</h3>
+                                <p>
+                                    Permanent and irreversible — make sure you
+                                    have a backup if there's anything you want
+                                    to keep.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        Click <strong>
+                                            <i class="fas fa-trash"></i> Delete
+                                        </strong> on the database row.
+                                    </li>
+                                    <li>
+                                        To confirm, retype the full database name
+                                        exactly. This is on purpose — to make sure
+                                        you don't delete the wrong one by mistake.
+                                    </li>
+                                    <li>
+                                        Click <strong>Delete permanently</strong>.
+                                        The button spins until the database (and
+                                        any on-demand backups for it) is gone,
+                                        then the page refreshes.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/11-delete.png"
+                                         alt="Delete database confirmation modal asking to retype the database name"/>
+                                </figure>
+                            </section>
+
+                            <!-- On-demand backups -->
+                            <section id="sec-ondemand" class="docs-section">
+                                <h2>6. On-demand backups (Backup Now)</h2>
+                                <p>
+                                    Need a one-off, downloadable copy of a single
+                                    database — say, before doing a big import, or
+                                    to migrate data elsewhere? Use Backup Now.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        On the Databases page, click
+                                        <strong>
+                                            <i class="fas fa-cloud-download-alt"></i> Backup Now
+                                        </strong>
+                                        on the database row.
+                                    </li>
+                                    <li>
+                                        The button spins while we prepare the
+                                        backup. The page also shows a
+                                        <em>Backing up</em> badge next to the
+                                        database name. This takes anywhere from
+                                        a few seconds to a few minutes depending
+                                        on the database size.
+                                    </li>
+                                    <li>
+                                        When the page refreshes automatically,
+                                        the database row gets a
+                                        <strong>Backup ready</strong> badge and a
+                                        <strong>Download Backup</strong> button.
+                                        Click it to download the zip file.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/12-backup-now.png"
+                                         alt="Database row with Backup Now button, in-progress badge, and Download Backup link"/>
+                                </figure>
+                                <div class="docs-callout docs-callout-info">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <span>
+                                        Only one on-demand backup per instance can
+                                        be active at a time. While one is "Backup
+                                        ready", the Backup Now button is
+                                        disabled — clicking it again replaces the
+                                        existing one with a fresh backup of the
+                                        same database. The download link expires
+                                        after 24 hours.
+                                    </span>
+                                </div>
+                            </section>
+
+                            <!-- Daily snapshots -->
+                            <section id="sec-snapshots" class="docs-section">
+                                <h2>7. Daily snapshots</h2>
+                                <p>
+                                    Daily snapshots capture every database on your
+                                    instance plus your uploaded files, your custom
+                                    modules and your instance settings — all in a
+                                    single restorable snapshot. Up to 7 snapshots
+                                    are kept (the oldest is dropped automatically).
+                                </p>
+
+                                <h3 id="sec-snapshots-enable" class="h5 mt-4">7.1 Enabling snapshots</h3>
+                                <p>
+                                    Snapshots are an opt-in paid add-on. Billed
+                                    monthly, independent of your main subscription
+                                    cycle — even on a yearly plan you only pay one
+                                    month at a time for the snapshot feature.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        On your instance page, look for the blue
+                                        <em>Protect this instance with daily
+                                        snapshots</em> prompt. Click
+                                        <strong>Enable Daily Backups</strong>.
+                                    </li>
+                                    <li>
+                                        You land on the activation checkout page.
+                                        The price is pre-rated for the remaining
+                                        days of the current calendar month, so you
+                                        only pay for what you actually use.
+                                    </li>
+                                    <li>
+                                        Enter your card details and submit. As
+                                        soon as the payment confirms, snapshots
+                                        are active and the next nightly cron
+                                        (at 03:00 UTC) will create your first one.
+                                    </li>
+                                    <li>
+                                        From there on, your instance page shows a
+                                        green <strong>Daily Backups Active</strong>
+                                        badge.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/13-enable-snapshots.png"
+                                         alt="Enable Daily Backups prompt with the green call-to-action"/>
+                                </figure>
+                                <div class="docs-callout docs-callout-warning">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>
+                                    <span>
+                                        Once enabled, snapshots can't be disabled
+                                        from the portal — please contact support
+                                        if you genuinely need to turn them off.
+                                        We made this irreversible on purpose so
+                                        nobody accidentally loses their nightly
+                                        protection.
+                                    </span>
+                                </div>
+
+                                <h3 id="sec-snapshots-restore" class="h5 mt-4">7.2 Restoring from a snapshot</h3>
+                                <p>
+                                    Restoring rolls your instance back in place
+                                    to the exact state captured in the snapshot —
+                                    same databases, same data, same files. It
+                                    doesn't create a new snapshot, so your list
+                                    stays exactly as you see it.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        From your instance page, click
+                                        <strong>View Snapshots</strong>.
+                                    </li>
+                                    <li>
+                                        Pick the snapshot you want to roll back to
+                                        and click <strong>Restore</strong>.
+                                    </li>
+                                    <li>
+                                        Confirm by retyping your subdomain — same
+                                        idea as the delete-database guard: makes
+                                        sure you don't restore by accident.
+                                    </li>
+                                    <li>
+                                        A full-screen overlay appears while we
+                                        roll your instance back. This usually
+                                        takes a few minutes. The page reloads
+                                        automatically when your instance is back
+                                        online.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/14-snapshots-list.png"
+                                         alt="Snapshots page listing 7 dated entries with restore buttons"/>
+                                    <figcaption>The snapshots page. Each row shows when the snapshot was taken and its size.</figcaption>
+                                </figure>
+                                <div class="docs-callout docs-callout-info">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <span>
+                                        Anything that exists on your instance now
+                                        but wasn't in the snapshot (e.g. a database
+                                        you created after the snapshot was taken)
+                                        is removed on restore. The snapshot's
+                                        version of the world fully replaces the
+                                        current one.
+                                    </span>
+                                </div>
+                            </section>
+
+                            <!-- Plan change -->
+                            <section id="sec-plan-change" class="docs-section">
+                                <h2>8. Changing your plan</h2>
+                                <p>
+                                    Need more workers or storage? Or downsizing?
+                                    You can change plan at any time.
+                                </p>
+                                <ol class="docs-steps">
+                                    <li>
+                                        On your instance page, click
+                                        <strong>Change Plan</strong>.
+                                    </li>
+                                    <li>
+                                        Adjust the resource sliders to the new
+                                        size. The order summary on the right shows
+                                        you the price difference, prorated for the
+                                        remaining days of your current billing
+                                        cycle.
+                                    </li>
+                                    <li>
+                                        For <em>upgrades</em> (more resources):
+                                        we issue a prorated upgrade invoice — pay
+                                        it and the new plan applies immediately.
+                                    </li>
+                                    <li>
+                                        For <em>downgrades</em> (less resources):
+                                        the change is scheduled to take effect at
+                                        the start of your next billing cycle.
+                                        Until then your instance keeps the
+                                        current plan with no service interruption.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/15-change-plan.png"
+                                         alt="Change-plan builder with current and new plan side by side"/>
+                                </figure>
+                            </section>
+
+                            <!-- Cancel -->
+                            <section id="sec-cancel" class="docs-section">
+                                <h2>9. Cancelling and reactivating</h2>
+                                <p>
+                                    Decisions change — you can cancel an instance
+                                    and reactivate it later.
+                                </p>
+                                <h3 class="h5 mt-3">9.1 Cancelling</h3>
+                                <p>
+                                    Cancellation is initiated by our support team.
+                                    Once it runs, here's what happens to your
+                                    data:
+                                </p>
+                                <ul>
+                                    <li>
+                                        Your databases, files and custom modules
+                                        are deleted.
+                                    </li>
+                                    <li>
+                                        Your subdomain is released.
+                                    </li>
+                                    <li>
+                                        <strong>
+                                            The most recent snapshot is retained
+                                        </strong>
+                                        — every other snapshot is dropped. The
+                                        retained snapshot is the one you'll be
+                                        able to restore from if you reactivate.
+                                    </li>
+                                </ul>
+
+                                <h3 class="h5 mt-3">9.2 Reactivating</h3>
+                                <ol class="docs-steps">
+                                    <li>
+                                        Sign in. Cancelled instances show up on
+                                        your instances list with a "Cancelled"
+                                        badge.
+                                    </li>
+                                    <li>
+                                        Click <strong>Reactivate Instance</strong>
+                                        on the cancelled instance and pick a new
+                                        plan + billing period.
+                                    </li>
+                                    <li>
+                                        Pay the new subscription invoice. Your
+                                        instance redeploys fresh.
+                                    </li>
+                                    <li>
+                                        Once it's running, click
+                                        <strong>View Snapshots</strong> from the
+                                        instance page. The retained snapshot is
+                                        listed there — click
+                                        <strong>Restore</strong> to bring your
+                                        data back.
+                                    </li>
+                                </ol>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/16-reactivate.png"
+                                         alt="Cancelled instance card with the Reactivate button"/>
+                                </figure>
+                            </section>
+
+                            <!-- Invoices -->
+                            <section id="sec-invoices" class="docs-section">
+                                <h2>10. Invoices and payments</h2>
+                                <p>
+                                    Every charge produces an invoice. You can
+                                    view, pay and download all of them from your
+                                    portal.
+                                </p>
+                                <ul>
+                                    <li>
+                                        Find <strong>Recent invoices</strong> on
+                                        your instance detail page, or click
+                                        <strong>Profile → Invoices</strong> in the
+                                        top right to see all of them.
+                                    </li>
+                                    <li>
+                                        Unpaid invoices show a yellow "Complete
+                                        payment" link.
+                                    </li>
+                                    <li>
+                                        Paid invoices have a download button —
+                                        click it to grab the PDF.
+                                    </li>
+                                </ul>
+                                <figure class="docs-figure">
+                                    <img src="/saas_website/static/src/img/docs/17-invoices.png"
+                                         alt="Invoice list showing paid and unpaid invoices with action buttons"/>
+                                </figure>
+                            </section>
+
+                            <!-- Troubleshoot -->
+                            <section id="sec-troubleshoot" class="docs-section">
+                                <h2>11. Troubleshooting &amp; FAQ</h2>
+
+                                <h3 class="h5 mt-3">My instance is showing an error page — what do I do?</h3>
+                                <p>
+                                    Use the <a href="#sec-db-repair">Repair Feature</a>
+                                    tool on the affected database. Start with
+                                    <code>base</code>; if that doesn't fix it, try
+                                    <code>all</code>. If you're still stuck after
+                                    that, contact support and we'll take a look.
+                                </p>
+
+                                <h3 class="h5 mt-3">I forgot my admin password.</h3>
+                                <p>
+                                    Use <a href="#sec-db-reset-password">Reset
+                                    Password</a>. The modal also tells you which
+                                    admin login it's resetting, in case you forgot
+                                    that too.
+                                </p>
+
+                                <h3 class="h5 mt-3">I created a database with the wrong name.</h3>
+                                <p>
+                                    Use <a href="#sec-db-delete">Delete</a> to
+                                    remove it, then create a new one with the
+                                    correct name. There's no rename action — Odoo
+                                    database renaming has too many side effects.
+                                </p>
+
+                                <h3 class="h5 mt-3">How much do daily snapshots cost?</h3>
+                                <p>
+                                    The price is set by the platform operator
+                                    and shown on the activation checkout page.
+                                    Always billed monthly — even on a yearly
+                                    plan.
+                                </p>
+
+                                <h3 class="h5 mt-3">Can I download a snapshot?</h3>
+                                <p>
+                                    Not directly. Daily snapshots are restore-only
+                                    on-platform. For a portable, downloadable copy
+                                    of one database, use
+                                    <a href="#sec-ondemand">Backup Now</a>.
+                                </p>
+
+                                <h3 class="h5 mt-3">Can I restore a snapshot taken on a different instance?</h3>
+                                <p>
+                                    No — snapshots are tied to the instance that
+                                    created them. To move data between instances,
+                                    use Backup Now on the source, then upload the
+                                    resulting zip on the destination using the
+                                    in-Odoo database manager.
+                                </p>
+
+                                <h3 class="h5 mt-3">My page didn't refresh on its own after an action.</h3>
+                                <p>
+                                    Most actions auto-refresh within 5 seconds of
+                                    completing. If the page is stuck on the
+                                    in-progress overlay for more than a few
+                                    minutes, refresh the browser manually — your
+                                    action has likely already finished. If the
+                                    in-progress banner is still there after that
+                                    refresh, contact support.
+                                </p>
+
+                                <h3 class="h5 mt-3">I need help that isn't covered here.</h3>
+                                <p>
+                                    Reach us via the
+                                    <a href="/contactus">Contact</a> page — we
+                                    aim to respond within one business day.
+                                </p>
+                            </section>
+
+                            <div class="text-center mt-5 mb-3">
+                                <a href="#sec-welcome" class="btn btn-outline-secondary">
+                                    <i class="fas fa-arrow-up me-2"></i>Back to top
+                                </a>
+                            </div>
+                        </main>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Inline styles + screenshot graceful-degradation script.
+                 Scoped to this template so the docs page can be
+                 restyled freely without affecting the rest of the
+                 portal. -->
+            <style>
+                .docs-toc { position: sticky; top: 90px; }
+                .docs-toc-list a {
+                    color: var(--co-text-muted, #71717A);
+                    text-decoration: none;
+                    display: block;
+                    padding: 0.2rem 0;
+                }
+                .docs-toc-list a:hover { color: var(--co-primary, #203c86); }
+                .docs-section {
+                    padding: 1rem 0 2.25rem;
+                    border-bottom: 1px solid var(--border-color, #e5e7eb);
+                }
+                .docs-section:last-of-type { border-bottom: 0; }
+                .docs-section h2 { margin-bottom: 0.75rem; }
+                .docs-section h3 { margin-top: 1.5rem; }
+                .docs-section p, .docs-section li { line-height: 1.65; }
+                .docs-steps { padding-left: 1.25rem; }
+                .docs-steps li { margin-bottom: 0.55rem; }
+                .docs-callout {
+                    border-radius: 10px;
+                    padding: 0.85rem 1rem;
+                    display: flex;
+                    align-items: flex-start;
+                    margin: 1rem 0 1.25rem;
+                    line-height: 1.55;
+                }
+                .docs-callout-info { background: rgba(32, 60, 134, 0.08); color: #1d3a82; }
+                .docs-callout-tip { background: rgba(16, 185, 129, 0.1); color: #047857; }
+                .docs-callout-warning { background: rgba(245, 158, 11, 0.12); color: #92400e; }
+                .docs-product-card {
+                    border: 1px solid var(--border-color, #e5e7eb);
+                    border-radius: 12px;
+                    padding: 1rem 1.1rem;
+                    height: 100%;
+                    background: var(--bg-card, #fff);
+                }
+                .docs-figure {
+                    margin: 1.25rem 0 0.5rem;
+                    padding: 0;
+                }
+                .docs-figure img {
+                    max-width: 100%;
+                    border-radius: 10px;
+                    border: 1px solid var(--border-color, #e5e7eb);
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+                    background: var(--bg-card, #fff);
+                    display: block;
+                }
+                .docs-figure figcaption {
+                    font-size: 0.85rem;
+                    color: var(--co-text-muted, #71717A);
+                    margin-top: 0.5rem;
+                    font-style: italic;
+                }
+                /* Placeholder shown when the screenshot file isn't
+                   on disk yet — keeps the page from looking broken
+                   on day 1, replaced by the JS below at runtime. */
+                .docs-figure-placeholder {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-direction: column;
+                    min-height: 180px;
+                    border: 2px dashed var(--border-color, #d1d5db);
+                    border-radius: 10px;
+                    color: var(--co-text-muted, #71717A);
+                    background: rgba(125, 125, 125, 0.04);
+                    text-align: center;
+                    padding: 1rem;
+                }
+                .docs-figure-placeholder i {
+                    font-size: 1.6rem;
+                    margin-bottom: 0.5rem;
+                    opacity: 0.5;
+                }
+            </style>
+            <script>
+                // If a screenshot file is missing, swap the broken
+                // image with a soft placeholder so the page still
+                // looks tidy until real screenshots are dropped in.
+                (function() {
+                    document.addEventListener('DOMContentLoaded', function() {
+                        document.querySelectorAll('.docs-figure img').forEach(function(img) {
+                            img.addEventListener('error', function() {
+                                var placeholder = document.createElement('div');
+                                placeholder.className = 'docs-figure-placeholder';
+                                placeholder.innerHTML = (
+                                    '<i class="fas fa-image"></i>' +
+                                    '<small>Screenshot will appear here</small>' +
+                                    '<small class="mt-1" style="opacity:0.7;">' +
+                                    (img.alt || '') + '</small>'
+                                );
+                                img.replaceWith(placeholder);
+                            });
+                        });
+                    });
+                })();
+            </script>
+        </t>
+    </template>
+
+</odoo>

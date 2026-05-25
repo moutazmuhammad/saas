@@ -55,6 +55,9 @@
                                 <li t-if="show_hosting_section" class="nav-item">
                                     <a class="nav-link" href="/hosting">Hosting</a>
                                 </li>
+                                <li class="nav-item">
+                                    <a class="nav-link" href="/docs">Docs</a>
+                                </li>
 
                                 <!-- Logged-in user nav. The standalone
                                      "My Instances" link is intentionally
@@ -152,8 +155,8 @@
                         <div class="col-6 col-lg-2">
                             <h6 class="fw-bold mb-3">Support</h6>
                             <ul class="list-unstyled">
-                                <li><a href="#" class="co-footer-link">Documentation</a></li>
-                                <li><a href="#" class="co-footer-link">Help Center</a></li>
+                                <li><a href="/docs" class="co-footer-link">Documentation</a></li>
+                                <li><a href="/docs#sec-troubleshoot" class="co-footer-link">Help Center</a></li>
                                 <li><a href="/contactus" class="co-footer-link">Contact</a></li>
                             </ul>
                         </div>

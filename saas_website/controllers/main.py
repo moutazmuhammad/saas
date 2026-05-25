@@ -605,6 +605,14 @@ class SaasWebsite(http.Controller):
         return request.redirect('/services', code=301)
 
     # ==================================================================
+    #  Customer Documentation  –  /docs
+    # ==================================================================
+    @http.route('/docs', type='http', auth='public', website=True, sitemap=True)
+    def docs_page(self, **kw):
+        """Render the customer-facing how-to documentation."""
+        return request.render('saas_website.portal_docs_page', {})
+
+    # ==================================================================
     #  6. Hosting  –  /hosting
     # ==================================================================
 
