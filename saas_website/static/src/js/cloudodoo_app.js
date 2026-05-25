@@ -569,19 +569,51 @@ function initLoadingOverlay() {
     }
 }
 
+function _setButtonLoading(btn, text) {
+    if (btn.dataset.saasOriginalContent === undefined) {
+        btn.dataset.saasOriginalContent = btn.innerHTML;
+    }
+    btn.innerHTML = (
+        '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>' +
+        (text || 'Working…')
+    );
+    btn.disabled = true;
+}
+
+function _lockFormButtons(form) {
+    // Disable every other interactive button in the form so the
+    // customer can't double-click or trigger another action while
+    // this one is in flight.
+    var buttons = form.querySelectorAll('button, input[type="submit"]');
+    buttons.forEach(function(b) { b.disabled = true; });
+}
+
 function initOverlayOnSubmit() {
     document.addEventListener('submit', function(e) {
         var form = e.target;
         if (!form || !form.matches || !form.matches('form[data-loading-text]')) {
             return;
         }
-        // Don't block forms that explicitly opt out (e.g. dismiss
-        // buttons that should never trigger the overlay).
+        // Forms that explicitly opt out (e.g. dismiss buttons) get
+        // neither the overlay nor the per-button loading state.
         if (form.dataset.loadingSkip === '1') return;
-        showLoadingOverlay(
-            form.getAttribute('data-loading-text'),
-            form.getAttribute('data-loading-subtitle'),
-        );
+        var text = form.getAttribute('data-loading-text');
+        var subtitle = form.getAttribute('data-loading-subtitle');
+        // Button-only mode for the quick / per-row actions where a
+        // full-screen freeze would feel heavy-handed. The submit
+        // button shows the spinner, the rest of the form is disabled,
+        // and the existing inline banner / polling on the next page
+        // load handles the "still working" state.
+        if (form.dataset.loadingButtonOnly === '1') {
+            var submitter = e.submitter
+                || form.querySelector('button[type="submit"], input[type="submit"]');
+            if (submitter) _setButtonLoading(submitter, text);
+            _lockFormButtons(form);
+            return;
+        }
+        // Full-screen overlay for the heavier flows (create database,
+        // repair feature, restore snapshot, …).
+        showLoadingOverlay(text, subtitle);
     }, true);
 }
 

@@ -56,11 +56,12 @@
                                     <a class="nav-link" href="/hosting">Hosting</a>
                                 </li>
 
-                                <!-- Logged-in user nav -->
+                                <!-- Logged-in user nav. The standalone
+                                     "My Instances" link is intentionally
+                                     not in the top bar — it lives inside
+                                     the profile dropdown below so the
+                                     header stays uncluttered. -->
                                 <t t-if="not request.env.user._is_public()">
-                                    <li class="nav-item">
-                                        <a class="nav-link" href="/my/instances">My Instances</a>
-                                    </li>
                                     <li class="nav-item dropdown ms-lg-3">
                                         <a class="nav-link dropdown-toggle d-flex align-items-center" href="#"
                                            role="button" data-bs-toggle="dropdown" aria-expanded="false">
@@ -379,28 +380,56 @@
                         </div>
                         <div class="col-lg-5 d-none d-lg-block">
                             <div class="hero-visual">
+                                <!-- Hero mockup is meant to read as
+                                     "Odoo running on managed hosting"
+                                     at a glance: customer-shaped URL +
+                                     Odoo wordmark in the address bar,
+                                     Odoo-app icons in the sidebar, and
+                                     hosting-relevant stats (version,
+                                     status, snapshots) the way they'd
+                                     appear inside the SaaS portal. -->
                                 <div class="dashboard-preview">
                                     <div class="preview-header">
                                         <div class="preview-dots">
                                             <span></span><span></span><span></span>
                                         </div>
-                                        <span class="preview-title">my-company.sudud.com</span>
+                                        <span class="preview-title d-inline-flex align-items-center gap-2">
+                                            <i class="fas fa-lock" style="color:#10B981;font-size:0.7rem;"></i>
+                                            my-company.sudud.com
+                                            <span class="preview-odoo-badge">Odoo</span>
+                                        </span>
                                     </div>
                                     <div class="preview-body">
                                         <div class="preview-sidebar">
-                                            <div class="sidebar-item active"><i class="fas fa-home"></i></div>
-                                            <div class="sidebar-item"><i class="fas fa-users"></i></div>
-                                            <div class="sidebar-item"><i class="fas fa-chart-bar"></i></div>
-                                            <div class="sidebar-item"><i class="fas fa-cog"></i></div>
+                                            <div class="sidebar-item active" title="CRM"><i class="fas fa-handshake"></i></div>
+                                            <div class="sidebar-item" title="Sales"><i class="fas fa-shopping-cart"></i></div>
+                                            <div class="sidebar-item" title="Inventory"><i class="fas fa-boxes"></i></div>
+                                            <div class="sidebar-item" title="Accounting"><i class="fas fa-file-invoice-dollar"></i></div>
+                                            <div class="sidebar-item" title="Website"><i class="fas fa-globe"></i></div>
                                         </div>
                                         <div class="preview-content">
-                                            <div class="stat-card">
-                                                <span class="stat-value">$124,500</span>
-                                                <span class="stat-label">Revenue</span>
+                                            <!-- Top banner: Odoo version + live status.
+                                                 Spans the full grid so it's the first
+                                                 thing the eye hits. -->
+                                            <div class="stat-card preview-status-card">
+                                                <div class="d-flex align-items-center justify-content-between">
+                                                    <div>
+                                                        <span class="stat-label">Your Odoo instance</span>
+                                                        <span class="stat-value">Odoo 18.0 Enterprise</span>
+                                                    </div>
+                                                    <span class="preview-status-pill">
+                                                        <span class="preview-status-dot"></span>
+                                                        Running
+                                                    </span>
+                                                </div>
                                             </div>
                                             <div class="stat-card">
-                                                <span class="stat-value">1,247</span>
-                                                <span class="stat-label">Customers</span>
+                                                <span class="stat-value">3</span>
+                                                <span class="stat-label">Databases</span>
+                                            </div>
+                                            <div class="stat-card">
+                                                <span class="stat-value">7</span>
+                                                <span class="stat-label">Daily snapshots</span>
                                             </div>
                                             <div class="stat-card">
                                                 <span class="stat-value">99.9%</span>

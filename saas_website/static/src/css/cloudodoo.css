@@ -1523,6 +1523,68 @@ h1, h2, h3, h4, h5, h6 {
     color: var(--text-muted);
 }
 
+/* "Odoo" pill next to the URL in the hero mockup — Odoo's brand
+   purple so the viewer recognises what kind of app is hosted. */
+.preview-odoo-badge {
+    display: inline-flex;
+    align-items: center;
+    background: linear-gradient(135deg, #875A7B 0%, #714B67 100%);
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 0.12rem 0.5rem;
+    border-radius: 9999px;
+    text-transform: uppercase;
+    box-shadow: 0 0 0 1px rgba(135, 90, 123, 0.35);
+}
+
+/* Wide status banner at the top of the mockup's content grid: spans
+   every column, makes "Odoo X — Running" the focal point. */
+.preview-status-card {
+    grid-column: 1 / -1;
+    background: linear-gradient(135deg,
+        rgba(135, 90, 123, 0.08) 0%,
+        rgba(113, 75, 103, 0.04) 100%);
+    border-color: rgba(135, 90, 123, 0.25);
+}
+.preview-status-card .stat-label {
+    display: block;
+    margin-bottom: 0.15rem;
+}
+.preview-status-card .stat-value {
+    color: #875A7B;
+    font-size: 1.1rem;
+}
+
+.preview-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: rgba(16, 185, 129, 0.12);
+    color: #10B981;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.25rem 0.65rem;
+    border-radius: 9999px;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.preview-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #10B981;
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+    animation: preview-status-pulse 2s infinite;
+}
+
+@keyframes preview-status-pulse {
+    0%   { box-shadow: 0 0 0 0   rgba(16, 185, 129, 0.55); }
+    70%  { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+    100% { box-shadow: 0 0 0 0   rgba(16, 185, 129, 0); }
+}
+
 /* Feature Cards */
 .feature-card {
     background: var(--bg-card);

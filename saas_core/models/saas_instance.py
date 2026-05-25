@@ -3993,8 +3993,8 @@ class SaasInstance(models.Model):
         - ``zip``    → legacy single-zip flow, kept for backups taken
           before the restic switch.
 
-        In both cases a pre-restore safety snapshot is taken first so a
-        failed restore can be rolled forward.
+        Restore is in-place — no new snapshot is created. The
+        snapshot list the customer sees stays exactly as it was.
         """
         self.ensure_one()
         backup = self.env['saas.instance.backup'].browse(backup_id)
@@ -4029,19 +4029,8 @@ class SaasInstance(models.Model):
                 _("Refusing to restore: invalid db user %r") % self.db_user
             )
 
-        # 0. Pre-restore safety snapshot. Anything that's currently on
-        # the instance gets captured under a `pre_restore_<ts>` name so
-        # an operator can roll forward again if this restore goes wrong.
-        try:
-            self._append_log("Taking pre-restore safety snapshot...")
-            self.env['saas.instance.backup'].sudo()\
-                ._perform_full_instance_backup(self)
-            self._append_log("Pre-restore snapshot complete.")
-        except Exception as e:
-            raise UserError(_(
-                "Pre-restore snapshot failed — aborting before destroying "
-                "anything:\n%s"
-            ) % e)
+        # NB: no pre-restore safety snapshot — restore is in-place and
+        # doesn't mint a new entry on the customer's snapshot list.
 
         # Compatibility check — refuse to restore across Odoo major
         # versions, otherwise schema migrations corrupt silently.
@@ -4230,35 +4219,12 @@ class SaasInstance(models.Model):
                 "support."
             ))
 
-        # 0. Pre-restore safety snapshot in the same restic repo.
-        # Pin the restore target's run tag so the retention sweep that
-        # runs at the end of the backup can't drop the snapshot we're
-        # about to restore from (would happen if the customer restores
-        # from the oldest of 7 — the new snapshot pushes count to 8,
-        # ``--keep-last 7`` drops the oldest, which is the target).
-        try:
-            self._restore_log(
-                "Step 0/5: pre-restore safety snapshot (pinning target "
-                "run_tag=%s against retention)..." % backup.restic_run_tag
-            )
-            t_pre = _time.time()
-            Backup._perform_full_instance_backup(
-                self, keep_target_run_tag=backup.restic_run_tag,
-            )
-            self._restore_log(
-                "Step 0/5 OK: pre-restore snapshot complete in %.1fs."
-                % (_time.time() - t_pre)
-            )
-        except Exception as e:
-            self._restore_log(
-                "Step 0/5 FAILED: pre-restore snapshot raised: %r"
-                % e, level='error',
-            )
-            raise UserError(_(
-                "We couldn't take a safety snapshot of your current "
-                "state, so the restore was cancelled to protect your "
-                "data. Please try again in a moment."
-            ))
+        # NB: no pre-restore safety snapshot. The customer doesn't want
+        # the restore action to mint a new snapshot — it should restore
+        # in place and leave the snapshot list untouched. The trade-off
+        # is that there's no automatic roll-forward path if the restore
+        # turns out to have been the wrong choice; the existing earlier
+        # snapshots remain available, just nothing newly captured.
 
         gcs_path = None
         try:

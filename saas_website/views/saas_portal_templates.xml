@@ -2543,9 +2543,8 @@
                                 uploaded files and attachments, your custom modules and your
                                 instance settings — stored encrypted in our cloud storage.
                                 Restoring rolls the entire instance back to that point in
-                                time. A safety snapshot of the current state is taken
-                                automatically before any restore, so you can roll forward
-                                again if needed.
+                                time without creating a new snapshot, so your list stays
+                                exactly as you see it.
                                 <br/>
                                 <em>
                                     Snapshots aren't directly downloadable. For a portable
@@ -2653,11 +2652,11 @@
                                                     <t t-esc="b.create_date.strftime('%Y-%m-%d %H:%M') if b.create_date else ''"/>.
                                                 </p>
                                                 <p class="small text-muted">
-                                                    A safety snapshot of the current state is
-                                                    taken before the restore — you can roll
-                                                    forward again if needed. Your instance
-                                                    will be unavailable for several minutes
-                                                    while the restore runs.
+                                                    Restoring rolls your instance back in
+                                                    place — no new snapshot is created and
+                                                    your snapshot list stays as you see it.
+                                                    Your instance will be unavailable for
+                                                    several minutes while the restore runs.
                                                 </p>
                                                 <p>To confirm, retype the subdomain
                                                     <code t-esc="instance.subdomain"/>:</p>
@@ -3133,19 +3132,20 @@
                         <!-- Hidden poll trigger. ``initStatusPolling`` in
                              cloudodoo_app.js picks this up, hits the
                              /status endpoint every 5 s, and reloads when
-                             ``db_ops_running`` flips to false.
-                             ``data-loading-overlay`` makes the JS also
-                             throw up the blocking overlay so the page
-                             can't be interacted with while the op runs. -->
+                             ``db_ops_running`` flips to false. The
+                             page-locking overlay only triggers for the
+                             heavier flows (create / repair feature) —
+                             delete / duplicate use the per-button
+                             spinner instead and let the inline banner
+                             communicate "still working". -->
+                        <t t-set="op0" t-value="running_ops[0]"/>
                         <div id="dbop-poll" t-att-data-instance-id="instance.id" style="display:none"
-                             data-loading-overlay="1"
+                             t-att-data-loading-overlay="
+                                '1' if op0.operation in ('create', 'upgrade') else None
+                             "
                              t-att-data-loading-text="
                                 {'create': 'Creating database…',
-                                 'duplicate': 'Duplicating database…',
-                                 'drop': 'Deleting database…',
-                                 'upgrade': 'Repairing your database…'}.get(
-                                    running_ops[0].operation, 'Working on it…'
-                                )
+                                 'upgrade': 'Repairing your database…'}.get(op0.operation)
                              "
                              data-loading-subtitle="This page will refresh automatically when it's done. Please don't close the tab."/>
                     </t>
@@ -3306,10 +3306,7 @@
                                                 <t t-if="this_ondemand and this_ondemand.state == 'running'">
                                                     <span class="badge ms-2 bg-info"
                                                           id="backup-poll"
-                                                          t-att-data-instance-id="instance.id"
-                                                          data-loading-overlay="1"
-                                                          t-attf-data-loading-text="Backing up '#{this_ondemand.db_name}'…"
-                                                          data-loading-subtitle="This page will refresh automatically when the download link is ready.">
+                                                          t-att-data-instance-id="instance.id">
                                                         <i class="fas fa-spinner fa-spin me-1"></i>Backing up
                                                     </span>
                                                 </t>
@@ -3367,8 +3364,8 @@
                                                     <form t-attf-action="/my/instances/#{instance.id}/backups/ondemand"
                                                           method="POST"
                                                           class="d-inline saas-ondemand-form"
-                                                          data-loading-text="Preparing a backup…"
-                                                          data-loading-subtitle="Please don't close the tab — the page will refresh when your download link is ready.">
+                                                          data-loading-text="Backing up…"
+                                                          data-loading-button-only="1">
                                                         <input type="hidden" name="csrf_token"
                                                                t-att-value="request.csrf_token()"/>
                                                         <input type="hidden" name="db_name" t-att-value="db['name']"/>
@@ -3550,8 +3547,8 @@
                                 <form class="modal-content"
                                       t-attf-action="/my/instances/#{instance.id}/databases/duplicate"
                                       method="POST"
-                                      data-loading-text="Duplicating database…"
-                                      data-loading-subtitle="This usually takes about a minute. Please don't close the tab — the page will refresh automatically.">
+                                      data-loading-text="Duplicating…"
+                                      data-loading-button-only="1">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="source" t-att-value="db['name']"/>
@@ -3597,8 +3594,8 @@
                                 <form class="modal-content"
                                       t-attf-action="/my/instances/#{instance.id}/databases/reset-admin-password"
                                       method="POST"
-                                      data-loading-text="Resetting admin password…"
-                                      data-loading-subtitle="Please don't close the tab — the page will refresh when it's done.">
+                                      data-loading-text="Resetting…"
+                                      data-loading-button-only="1">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="name" t-att-value="db['name']"/>
@@ -3730,8 +3727,8 @@
                                 <form class="modal-content"
                                       t-attf-action="/my/instances/#{instance.id}/databases/drop"
                                       method="POST"
-                                      data-loading-text="Deleting database…"
-                                      data-loading-subtitle="Please don't close the tab — the page will refresh when the database is gone.">
+                                      data-loading-text="Deleting…"
+                                      data-loading-button-only="1">
                                     <input type="hidden" name="csrf_token"
                                            t-att-value="request.csrf_token()"/>
                                     <input type="hidden" name="name" t-att-value="db['name']"/>
