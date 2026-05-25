@@ -318,8 +318,8 @@
                                                     </span>
                                                     <div class="small mt-1" style="color:var(--co-text-muted,#71717A);">
                                                         Every database on this instance is dumped daily to encrypted
-                                                        cloud storage. The last 7 days per database are kept; older
-                                                        backups roll off automatically. Restore any backup with one
+                                                        cloud storage. Up to 7 most recent snapshots are kept; older
+                                                        ones roll off automatically. Restore any snapshot with one
                                                         click from your portal.
                                                     </div>
                                                 </label>

@@ -1378,7 +1378,10 @@ class SaasPortal(CustomerPortal):
             'active_ondemand': None,
             'error': error,
             'notice': notice,
-            'retention_days': 7 if instance.is_hosting else None,
+            'max_snapshots': (
+                request.env['saas.instance.backup'].HOSTING_MAX_SNAPSHOTS
+                if instance.is_hosting else None
+            ),
             'page_name': 'saas_instance_backups',
         })
         return request.render(

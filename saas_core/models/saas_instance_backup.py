@@ -1061,8 +1061,11 @@ fi
         the run tag, the list of DB snapshot names, and total size
         info from ``restic stats`` for display.
 
-        Retention is handled by ``restic forget --keep-daily 7 --prune``
-        after a successful run.
+        Retention is handled by ``restic forget --keep-last 7 --prune``
+        after a successful run — at most 7 snapshots per instance,
+        oldest dropped. The tracking-row side
+        (``_cleanup_old_backups``) enforces the same cap on
+        ``saas.instance.backup`` records.
         """
         instance._ensure_can_ssh()
         docker_server = instance.docker_server_id
@@ -1187,14 +1190,19 @@ fi
                         "snapshot still created", instance.name,
                     )
 
-                # 4) Retention: keep last 7 daily runs, prune.
+                # 4) Retention: keep the 7 most recent runs, prune.
+                # ``--keep-last`` (count-based) rather than
+                # ``--keep-daily`` (date-based) so pre-restore safety
+                # snapshots taken in quick succession can't push older
+                # daily ones out of the day-bucket and the customer's
+                # visible total stays at the documented maximum of 7.
                 # Group by host so we don't accidentally trim across
                 # instances if a repo gets reused.
                 forget_cmd = self._restic_cmd(
                     env_vars,
                     [
                         'forget', '--prune',
-                        '--keep-daily', '7',
+                        '--keep-last', '7',
                         '--group-by', 'host,tags',
                         '--quiet',
                     ],
@@ -1254,9 +1262,10 @@ fi
 
         Service instances: one backup per instance (DB name = subdomain).
         Hosting instances: skipped unless ``daily_backup_enabled``; then
-        one backup per database owned by the instance's PG role. Hosting
-        retention is fixed at 7 days per database (see _cleanup_old_backups).
-        Trial-plan instances are skipped on both sides.
+        one full-instance snapshot per run, capped at
+        ``HOSTING_MAX_SNAPSHOTS`` per instance (oldest dropped — see
+        ``_cleanup_old_backups``). Trial-plan instances are skipped on
+        both sides.
         """
         instances = self.env['saas.instance'].search([
             ('state', '=', 'running'),
@@ -1442,8 +1451,17 @@ fi
                 pass
             raise
 
-    # Fixed retention for hosting backups, per the product spec. 7 days
-    # per database — exactly what the customer sees in the portal.
+    # Fixed retention for hosting full-instance snapshots, per product
+    # spec: keep the N most recent snapshots, drop older ones. Switched
+    # away from a day-based cutoff because pre-restore safety snapshots
+    # (taken on every restore) could push the customer's daily snapshot
+    # out of its bucket and we'd retain only the most recent restore-
+    # adjacent ones. Count-based retention is what the portal copy
+    # documents.
+    HOSTING_MAX_SNAPSHOTS = 7
+    # Legacy alias — some older callers still reference this name. The
+    # value is meaningless now (we don't cull by age anymore) but kept
+    # to avoid attribute-error surprises in field code.
     HOSTING_RETENTION_DAYS = 7
 
     @api.model
@@ -1502,7 +1520,8 @@ fi
 
         - Service instances: keep at most ``plan.max_backups`` per
           instance (legacy behavior).
-        - Hosting instances: keep 7 days per (instance, db_name).
+        - Hosting instances: keep at most ``HOSTING_MAX_SNAPSHOTS``
+          full-instance snapshots per instance, drop the oldest.
         - Stale ``running`` backups older than 1 day are dropped.
         """
         # Clean up stale 'running' backups older than 1 day (stuck records)
@@ -1517,28 +1536,41 @@ fi
             except Exception as e:
                 _logger.error("Failed to cleanup stale backup %s: %s", backup.name, e)
 
-        # --- Hosting: 7-day retention per (instance, db_name).
-        # Ephemeral on-demand backups are handled by a separate cron
-        # so they don't double-fire on the same record.
-        hosting_cutoff = (
-            fields.Datetime.now()
-            - datetime.timedelta(days=self.HOSTING_RETENTION_DAYS)
+        # --- Hosting: keep the ``HOSTING_MAX_SNAPSHOTS`` most recent
+        # full-instance snapshots per instance, drop the rest. Switched
+        # from a 7-day cutoff to a count cap so pre-restore safety
+        # snapshots taken in quick succession can't push the customer's
+        # visible total past the documented maximum. Ephemeral on-demand
+        # backups are handled by a separate cron so they don't
+        # double-fire on the same record.
+        data = self._read_group(
+            [
+                ('state', '=', 'done'),
+                ('ephemeral', '=', False),
+                ('instance_id.is_hosting', '=', True),
+            ],
+            ['instance_id'],
+            ['__count'],
         )
-        hosting_old = self.search([
-            ('state', '=', 'done'),
-            ('ephemeral', '=', False),
-            ('instance_id.is_hosting', '=', True),
-            ('create_date', '<', hosting_cutoff),
-        ])
-        for backup in hosting_old:
-            try:
-                if backup.bucket_path:
-                    backup._delete_from_bucket()
-                backup.unlink()
-            except Exception as e:
-                _logger.error(
-                    "Failed to cleanup hosting backup %s: %s", backup.name, e,
-                )
+        for instance, count in data:
+            if count <= self.HOSTING_MAX_SNAPSHOTS:
+                continue
+            backups = self.search([
+                ('instance_id', '=', instance.id),
+                ('state', '=', 'done'),
+                ('ephemeral', '=', False),
+            ], order='create_date desc')
+            excess = backups[self.HOSTING_MAX_SNAPSHOTS:]
+            for backup in excess:
+                try:
+                    if backup.bucket_path:
+                        backup._delete_from_bucket()
+                    backup.unlink()
+                except Exception as e:
+                    _logger.error(
+                        "Failed to cleanup hosting backup %s: %s",
+                        backup.name, e,
+                    )
 
         # --- Service instances: keep at most plan.max_backups per instance.
         # Ephemeral excluded for the same reason as hosting above.

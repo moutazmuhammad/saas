@@ -592,8 +592,8 @@
                                         <p class="mb-2">
                                             Daily backups capture every database, the filestore,
                                             custom addons and configuration in a single
-                                            restorable snapshot. Retention is 7 days. Billed
-                                            monthly as an add-on.
+                                            restorable snapshot. Up to 7 snapshots kept
+                                            (oldest rolled off). Billed monthly as an add-on.
                                         </p>
                                         <a t-attf-href="/my/instances/#{instance.id}/backups"
                                            class="btn btn-sm btn-primary">
@@ -1257,12 +1257,13 @@
                                 <ul class="plan-specs mb-0">
                                     <li><i class="fas fa-cogs"></i><t t-esc="instance.plan_id.workers"/> Workers</li>
                                     <li><i class="fas fa-hdd"></i><t t-esc="int(instance.plan_id.storage_limit)"/>GB Storage</li>
-                                    <!-- Hosting: daily backups are opt-in with fixed 7-day
-                                         retention; the legacy plan.max_backups is meaningless.
-                                         Service plans still show the cap as before. -->
+                                    <!-- Hosting: daily backups are opt-in, capped at 7
+                                         snapshots (oldest rolled off); the legacy
+                                         plan.max_backups is meaningless. Service plans
+                                         still show the cap as before. -->
                                     <t t-if="is_hosting">
                                         <t t-if="instance.daily_backup_enabled">
-                                            <li><i class="fas fa-shield-alt"></i>Daily backups · 7-day retention</li>
+                                            <li><i class="fas fa-shield-alt"></i>Daily backups · up to 7 snapshots</li>
                                         </t>
                                         <t t-else="">
                                             <li><i class="fas fa-shield-alt"></i>On-demand backups</li>
@@ -2385,8 +2386,9 @@
                                 <p class="text-muted mb-0">
                                     <i class="fas fa-info-circle me-1"></i>
                                     <t t-if="instance.daily_backup_enabled">
-                                        Daily full-instance snapshots are enabled. Restore points are kept for
-                                        <t t-esc="retention_days"/> days. The cron fires at 03:00 UTC.
+                                        Daily full-instance snapshots are enabled. Up to
+                                        <t t-esc="max_snapshots"/> most recent snapshots are
+                                        kept (oldest rolled off). The cron fires at 03:00 UTC.
                                     </t>
                                     <t t-elif="instance.daily_backup_pending_invoice_id">
                                         Daily snapshots are <strong>pending payment</strong>.
@@ -2516,7 +2518,7 @@
                                         <t t-esc="len(full_instance_backups)"/> snapshots
                                     </span>
                                 </h5>
-                                <small class="text-muted">7-day rolling retention</small>
+                                <small class="text-muted">Up to 7 snapshots, oldest rolled off</small>
                             </div>
                             <p class="small text-muted mb-3">
                                 Each snapshot captures every database, the filestore, custom addons,
@@ -2889,10 +2891,11 @@
                                     <strong t-esc="instance.subdomain"/>.
                                     Captures every database, the filestore,
                                     custom addons, configuration, Docker layout
-                                    and pip packages on each run; keeps the
-                                    last 7 days. Charged again at your
-                                    next renewal and on every renewal
-                                    after that while the feature is on.
+                                    and pip packages on each run; keeps up to
+                                    7 most recent snapshots (oldest rolled
+                                    off). Charged again at your next renewal
+                                    and on every renewal after that while the
+                                    feature is on.
                                     <strong>No refund on disable.</strong>
                                 </p>
                                 <table class="table align-middle mb-0">
