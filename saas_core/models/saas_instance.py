@@ -6704,11 +6704,26 @@ class SaasInstance(models.Model):
         # logs decide to print something to stdout during init.
         script = (
             "from odoo.service.db import list_dbs\n"
+            "from odoo.sql_db import db_connect\n"
             "prefix = os.environ.get('SAAS_DB_PREFIX', '')\n"
             "names = [d for d in list_dbs(force=True) if d.startswith(prefix)]\n"
             "print('---SAAS_DB_LIST_BEGIN---')\n"
             "for n in names:\n"
-            "    print(n)\n"
+            "    login = ''\n"
+            "    try:\n"
+            "        with db_connect(n).cursor() as cr:\n"
+            "            cr.execute(\n"
+            "                \"SELECT u.login FROM res_users u \"\n"
+            "                \"JOIN ir_model_data m ON m.res_id = u.id \"\n"
+            "                \"AND m.model = 'res.users' \"\n"
+            "                \"WHERE m.module = 'base' \"\n"
+            "                \"AND m.name = 'user_admin' LIMIT 1\")\n"
+            "            row = cr.fetchone()\n"
+            "            if row:\n"
+            "                login = row[0] or ''\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "    print('%s|%s' % (n, login))\n"
             "print('---SAAS_DB_LIST_END---')\n"
         )
         with self.docker_server_id._get_ssh_connection() as ssh:
@@ -6721,9 +6736,11 @@ class SaasInstance(models.Model):
             raise UserError(
                 _("Could not list databases: %s") % (stderr or stdout)
             )
-        # Pull the names out from between the markers; any unrelated
-        # log lines Odoo may have emitted are ignored.
-        names = []
+        # Pull `<name>|<admin_login>` pairs out from between the markers;
+        # any unrelated log lines Odoo may have emitted are ignored.
+        # ``_DB_NAME_RE`` rules out `|` in DB names, so a simple split
+        # on the first `|` is safe.
+        rows = []
         capturing = False
         for line in stdout.splitlines():
             line = line.strip()
@@ -6733,8 +6750,12 @@ class SaasInstance(models.Model):
             if line == '---SAAS_DB_LIST_END---':
                 break
             if capturing and line:
-                names.append(line)
-        return [{'name': n} for n in names]
+                if '|' in line:
+                    name, login = line.split('|', 1)
+                else:
+                    name, login = line, ''
+                rows.append({'name': name, 'admin_login': login})
+        return rows
 
     # ------------------------------------------------------------------
     # Customer DB management via XML-RPC to the instance's own ``db``

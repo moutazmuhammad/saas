@@ -3497,13 +3497,31 @@
                                                 data-bs-dismiss="modal"></button>
                                     </div>
                                     <div class="modal-body">
-                                        <p class="text-muted small mb-3">
+                                        <p class="text-muted small mb-2">
                                             Replaces the password of the database's admin
                                             user (the one created when the database was
                                             initialised). Use this when you've forgotten
                                             it — no current-password proof is required.
                                             Other users on the database are not affected.
                                         </p>
+                                        <t t-if="db.get('admin_login')">
+                                            <div class="alert alert-info py-2 mb-3 small">
+                                                <i class="fas fa-user-shield me-1"></i>
+                                                Admin login for this database:
+                                                <strong t-esc="db['admin_login']"/>
+                                                — sign in with this login and the new
+                                                password once the reset completes.
+                                            </div>
+                                        </t>
+                                        <t t-else="">
+                                            <div class="alert alert-warning py-2 mb-3 small">
+                                                <i class="fas fa-exclamation-triangle me-1"></i>
+                                                Couldn't determine the admin login for this
+                                                database. The reset will still work — the
+                                                actual login will be shown in the success
+                                                banner.
+                                            </div>
+                                        </t>
                                         <div class="mb-3">
                                             <label class="form-label">New admin password</label>
                                             <input type="password" name="new_password"
