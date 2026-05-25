@@ -590,10 +590,12 @@
                                     <div class="flex-grow-1">
                                         <strong>Protect this instance with daily snapshots</strong>
                                         <p class="mb-2">
-                                            Daily backups capture every database, the filestore,
-                                            custom addons and configuration in a single
-                                            restorable snapshot. Up to 7 snapshots kept
-                                            (oldest rolled off). Billed monthly as an add-on.
+                                            Daily snapshots capture every database, your
+                                            uploaded files, your custom modules and your
+                                            instance settings — one click to roll back
+                                            to any earlier point. Up to 7 snapshots kept
+                                            (the oldest is dropped automatically).
+                                            Billed monthly as an add-on.
                                         </p>
                                         <a t-attf-href="/my/instances/#{instance.id}/backups"
                                            class="btn btn-sm btn-primary">
@@ -1109,11 +1111,11 @@
                                     </button>
                                 </t>
 
-                                <!-- View Logs (hosting instances) -->
+                                <!-- View Activity (hosting instances) -->
                                 <t t-if="is_hosting and instance.state == 'running'">
                                     <a t-attf-href="/my/instances/#{instance.id}/logs"
                                        class="action-btn action-logs">
-                                        <i class="fas fa-terminal"></i>View Logs
+                                        <i class="fas fa-clipboard-list"></i>View Activity
                                     </a>
                                 </t>
 
@@ -2521,15 +2523,18 @@
                                 <small class="text-muted">Up to 7 snapshots, oldest rolled off</small>
                             </div>
                             <p class="small text-muted mb-3">
-                                Each snapshot captures every database, the filestore, custom addons,
-                                Odoo configuration, Docker layout and pip requirements — stored as
-                                a deduplicated, encrypted restic repository. Restoring rolls the
-                                entire instance back to that point in time. A safety snapshot of
-                                the current state is taken automatically before any restore.
+                                Each snapshot captures every database on your instance, the
+                                uploaded files and attachments, your custom modules and your
+                                instance settings — stored encrypted in our cloud storage.
+                                Restoring rolls the entire instance back to that point in
+                                time. A safety snapshot of the current state is taken
+                                automatically before any restore, so you can roll forward
+                                again if needed.
                                 <br/>
                                 <em>
-                                    Snapshots are not directly downloadable. For a portable copy
-                                    of a single database, use <strong>Backup Now</strong> on the
+                                    Snapshots aren't directly downloadable. For a portable
+                                    copy of a single database, use <strong>Backup Now</strong>
+                                    on the
                                     <a t-attf-href="/my/instances/#{instance.id}/databases">Databases</a> page.
                                 </em>
                             </p>
@@ -2622,16 +2627,19 @@
                                             <div class="modal-body">
                                                 <p>
                                                     This will <strong>replace</strong> every
-                                                    database, the filestore, custom code, and
-                                                    Docker configuration on
+                                                    database, every uploaded file, your
+                                                    custom modules and your instance settings
+                                                    on
                                                     <code t-esc="instance.subdomain"/> with
                                                     the snapshot from
                                                     <t t-esc="b.create_date.strftime('%Y-%m-%d %H:%M') if b.create_date else ''"/>.
                                                 </p>
                                                 <p class="small text-muted">
                                                     A safety snapshot of the current state is
-                                                    taken before the restore. The container
-                                                    will be unavailable for several minutes.
+                                                    taken before the restore — you can roll
+                                                    forward again if needed. Your instance
+                                                    will be unavailable for several minutes
+                                                    while the restore runs.
                                                 </p>
                                                 <p>To confirm, retype the subdomain
                                                     <code t-esc="instance.subdomain"/>:</p>
@@ -2887,15 +2895,14 @@
                             <div class="info-card">
                                 <h5>Order Summary</h5>
                                 <p class="text-muted small">
-                                    Daily full-instance snapshots for
+                                    Daily snapshots of your full instance for
                                     <strong t-esc="instance.subdomain"/>.
-                                    Captures every database, the filestore,
-                                    custom addons, configuration, Docker layout
-                                    and pip packages on each run; keeps up to
-                                    7 most recent snapshots (oldest rolled
-                                    off). Charged again at your next renewal
-                                    and on every renewal after that while the
-                                    feature is on.
+                                    Captures every database, your uploaded
+                                    files, your custom modules and your
+                                    instance settings on each run; keeps up to
+                                    7 most recent snapshots (the oldest is
+                                    dropped automatically). Charged again on
+                                    every renewal while the feature is on.
                                     <strong>No refund on disable.</strong>
                                 </p>
                                 <table class="table align-middle mb-0">
@@ -3125,9 +3132,9 @@
                                         Deleting database '<strong t-esc="op.db_name"/>'…
                                     </t>
                                     <t t-elif="op.operation == 'upgrade'">
-                                        Running <code>odoo -u <t t-esc="op.module_name"/></code>
-                                        on '<strong t-esc="op.db_name"/>'… the container
-                                        is offline for the duration.
+                                        Repairing <code t-esc="op.module_name"/>
+                                        on '<strong t-esc="op.db_name"/>'… the database
+                                        is briefly unavailable while this runs.
                                     </t>
                                     <small class="text-muted ms-2">
                                         Started <t t-esc="op.create_date.strftime('%H:%M UTC') if op.create_date else ''"/>.
@@ -3159,7 +3166,7 @@
                                     <t t-elif="op.operation == 'duplicate'">Duplicate</t>
                                     <t t-elif="op.operation == 'drop'">Delete</t>
                                     <t t-elif="op.operation == 'upgrade'">
-                                        Upgrade of <code t-esc="op.module_name"/> on
+                                        Repair of <code t-esc="op.module_name"/> on
                                     </t>
                                     of '<strong t-esc="op.db_name"/>' failed
                                     <t t-if="op.create_date">
@@ -3174,7 +3181,7 @@
                                     <t t-if="op.operation == 'upgrade' and op.output_log">
                                         <details class="mt-2">
                                             <summary class="text-muted small">
-                                                Terminal output (click to expand)
+                                                Show full report
                                             </summary>
                                             <pre class="mt-2 mb-0 p-2"
                                                  style="background:#0b0f17;color:#e6edf3;border-radius:6px;max-height:400px;overflow:auto;font-size:0.78rem;"><t t-esc="op.output_log"/></pre>
@@ -3204,7 +3211,7 @@
                             <div class="d-flex align-items-start gap-2 flex-grow-1">
                                 <i class="fas fa-check-circle mt-1"></i>
                                 <div class="flex-grow-1">
-                                    Upgrade of <code t-esc="op.module_name"/>
+                                    Repair of <code t-esc="op.module_name"/>
                                     on '<strong t-esc="op.db_name"/>' completed
                                     <t t-if="op.create_date">
                                         at <t t-esc="op.create_date.strftime('%H:%M UTC')"/>
@@ -3212,7 +3219,7 @@
                                     <t t-if="op.output_log">
                                         <details class="mt-2">
                                             <summary class="text-muted small">
-                                                Terminal output (click to expand)
+                                                Show full report
                                             </summary>
                                             <pre class="mt-2 mb-0 p-2"
                                                  style="background:#0b0f17;color:#e6edf3;border-radius:6px;max-height:400px;overflow:auto;font-size:0.78rem;"><t t-esc="op.output_log"/></pre>
@@ -3369,8 +3376,8 @@
                                                         class="btn btn-sm btn-outline-info"
                                                         data-bs-toggle="modal"
                                                         t-attf-data-bs-target="#dbUpgradeModal-#{db['name']}"
-                                                        title="Run odoo -u &lt;module&gt; against this database (recovery tool for when /web returns Internal Server Error)">
-                                                    <i class="fas fa-terminal me-1"></i>Upgrade Module
+                                                        title="Repair a feature on this database — use this if the database is showing an error page and the in-app Apps update is unavailable.">
+                                                    <i class="fas fa-wrench me-1"></i>Repair Feature
                                                 </button>
                                                 <button type="button"
                                                         class="btn btn-sm btn-outline-secondary"
@@ -3513,8 +3520,9 @@
                                     </div>
                                     <div class="modal-body">
                                         <p class="text-muted">
-                                            Copies the database (data and filestore) under a new name.
-                                            The original stays untouched.
+                                            Copies this database — along with all uploaded
+                                            files and attachments — under a new name. The
+                                            original stays untouched.
                                         </p>
                                         <t t-set="src_suffix" t-value="db['name'][len(instance.subdomain)+1:] if db['name'].startswith(instance.subdomain + '_') else db['name']"/>
                                         <div class="mb-3">
@@ -3629,34 +3637,33 @@
                                     <div class="modal-body">
                                         <div class="alert alert-warning small py-2 mb-3">
                                             <i class="fas fa-exclamation-triangle me-1"></i>
-                                            Recovery tool — use this when the live Odoo
-                                            returns <strong>Internal Server Error</strong>
-                                            and the standard Apps update flow is
-                                            unavailable. The container will be stopped,
-                                            <code>odoo -u &lt;module&gt;</code> will run
-                                            once with <code>--stop-after-init</code>,
-                                            then the container is restarted. The instance
-                                            is offline for the duration (usually 30s–3m).
+                                            Recovery tool — use this when your instance
+                                            shows an error page and you can't reach the
+                                            Apps update from inside the database. We will
+                                            re-install the chosen feature and bring the
+                                            instance back up. Your instance will be
+                                            briefly unavailable while this runs (usually
+                                            30 seconds to a few minutes).
                                         </div>
                                         <div class="mb-3">
-                                            <label class="form-label">Module name</label>
+                                            <label class="form-label">Feature to repair</label>
                                             <input type="text" name="module"
                                                    class="form-control font-monospace"
                                                    required="required"
                                                    pattern="^([a-z_][a-z0-9_]*|all)$"
-                                                   title="Lowercase letters, digits and underscores. Use 'all' to upgrade every installed module."
+                                                   title="Lowercase letters, digits and underscores. Use 'all' to repair every installed feature."
                                                    placeholder="base"
                                                    autocomplete="off"/>
                                             <div class="form-text">
-                                                Common values:
-                                                <code>base</code> (rebuild base assets),
-                                                <code>web</code> (UI shell),
-                                                <code>all</code> (upgrade every installed
-                                                module — slower but the broadest fix),
-                                                or a specific module like
+                                                Common picks:
+                                                <code>base</code> (rebuild the core),
+                                                <code>web</code> (rebuild the interface),
+                                                <code>all</code> (repair every installed
+                                                feature — slower but the broadest fix),
+                                                or the name of a specific feature like
                                                 <code>account</code> /
                                                 <code>sale</code> if you know which one
-                                                broke.
+                                                started failing.
                                             </div>
                                         </div>
                                     </div>
@@ -3690,7 +3697,8 @@
                                     <div class="modal-body">
                                         <p>
                                             <strong>This cannot be undone.</strong>
-                                            The database and its filestore will be deleted permanently.
+                                            The database and every file uploaded to it
+                                            will be deleted permanently.
                                         </p>
                                         <p>
                                             To confirm, retype the database name

@@ -296,9 +296,8 @@ class SaasPortal(CustomerPortal):
             zombies.write({
                 'state': 'failed',
                 'error_message': _(
-                    'Worker disappeared before this finished — the '
-                    'saas master likely restarted. If the database '
-                    'is still missing, dismiss this and try again.'
+                    "This operation didn't finish in time. If the "
+                    "database isn't there yet, dismiss this and try again."
                 ),
             })
 
@@ -511,8 +510,8 @@ class SaasPortal(CustomerPortal):
                 % (instance_id, url_quote(str(e)))
             )
         notice = _(
-            "Upgrading '%(module)s' on '%(db)s'… the container will "
-            "restart automatically; this page auto-refreshes."
+            "Repairing '%(module)s' on '%(db)s'… your instance will "
+            "come back up automatically. This page auto-refreshes."
         ) % {'module': op.module_name, 'db': op.db_name}
         return request.redirect(
             '/my/instances/%d/databases?notice=%s'
@@ -1728,8 +1727,8 @@ class SaasPortal(CustomerPortal):
         if not backup.download_url:
             return request.redirect('%s?error=%s' % (
                 err_redirect, url_quote(_(
-                    "Could not generate download link. Check the SaaS "
-                    "Manager → Cloud Storage settings on the saas master."
+                    "We couldn't generate the download link right now. "
+                    "Please try again in a moment, or contact support."
                 )),
             ))
 
@@ -1805,7 +1804,10 @@ class SaasPortal(CustomerPortal):
                 instance_sudo.state = 'running'
             return request.redirect('%s?error=%s' % (
                 redirect_path,
-                url_quote(_("Restore failed — see instance logs.")),
+                url_quote(_(
+                    "Restore could not be started. Please try again or "
+                    "contact support if the problem continues."
+                )),
             ))
 
         return request.redirect('%s?notice=%s' % (

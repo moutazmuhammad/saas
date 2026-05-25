@@ -119,7 +119,10 @@ class SaasInstanceBackup(models.Model):
         self.ensure_one()
         self._refresh_download_url()
         if not self.download_url:
-            raise UserError(_("Could not generate download link."))
+            raise UserError(_(
+                "We couldn't generate the download link right now. "
+                "Please try again in a moment."
+            ))
         return {
             'type': 'ir.actions.act_url',
             'url': self.download_url,
@@ -186,8 +189,8 @@ class SaasInstanceBackup(models.Model):
         bucket = ICP.get_param('saas_backup.bucket_name', '')
         if not provider or not bucket:
             raise UserError(_(
-                "Cloud backup is not configured. Go to SaaS Manager > Configuration > Settings "
-                "and fill in the Backup Storage section."
+                "Backups aren't available right now. Please contact "
+                "support so we can get them turned on for your account."
             ))
         return {
             'provider': provider,
@@ -656,7 +659,10 @@ fi
                 finally:
                     ssh.execute('rm -f %s' % shlex.quote(zip_path))
                 if not zip_data:
-                    raise UserError(_("Backup produced empty file."))
+                    raise UserError(_(
+                        "The backup came back empty. Please try again, "
+                        "or contact support if this keeps happening."
+                    ))
                 self._upload_to_bucket(object_key, zip_data)
 
         return size_bytes
@@ -1047,7 +1053,10 @@ fi
                 finally:
                     ssh.execute('rm -f %s' % shlex.quote(zip_path))
                 if not zip_data:
-                    raise UserError(_("Full-instance backup produced empty file."))
+                    raise UserError(_(
+                        "The snapshot came back empty. Please try again, "
+                        "or contact support if this keeps happening."
+                    ))
                 self._upload_to_bucket(object_key, zip_data)
 
         return size_bytes
@@ -1089,9 +1098,10 @@ fi
         # before we touch restic.
         try:
             db_names = [r['name'] for r in instance.hosting_db_list()]
-        except Exception as e:
+        except Exception:
             raise UserError(
-                _("Could not list databases on %s: %s") % (instance.name, e)
+                _("We couldn't get the list of databases for %s right "
+                  "now. Please try again in a moment.") % instance.name
             )
 
         backup = self.create({

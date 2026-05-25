@@ -4109,7 +4109,8 @@ class SaasInstance(models.Model):
             exit_code, stdout, stderr = ssh.execute(start_cmd, timeout=300)
             if exit_code != 0:
                 raise UserError(
-                    _("Failed to start container after restore:\n%s") % stderr
+                    _("Your data was restored, but the instance didn't "
+                      "come back up automatically. Please contact support.")
                 )
 
         self.state = 'running'
@@ -4159,7 +4160,11 @@ class SaasInstance(models.Model):
             self._restore_log(
                 "ABORT: backup has no restic_run_tag.", level='error',
             )
-            raise UserError(_("Backup has no restic_run_tag — cannot restore."))
+            raise UserError(_(
+                "This snapshot is missing its reference data and can't "
+                "be restored. Please pick another snapshot or contact "
+                "support."
+            ))
 
         # 0. Pre-restore safety snapshot in the same restic repo.
         # Pin the restore target's run tag so the retention sweep that
@@ -4186,8 +4191,10 @@ class SaasInstance(models.Model):
                 % e, level='error',
             )
             raise UserError(_(
-                "Pre-restore snapshot failed — aborting:\n%s"
-            ) % e)
+                "We couldn't take a safety snapshot of your current "
+                "state, so the restore was cancelled to protect your "
+                "data. Please try again in a moment."
+            ))
 
         gcs_path = None
         try:
@@ -4229,8 +4236,9 @@ class SaasInstance(models.Model):
                         level='error',
                     )
                     raise UserError(_(
-                        "Could not list restic snapshots:\n%s"
-                    ) % (stderr or stdout))
+                        "We couldn't open your snapshot storage. Please "
+                        "try again in a moment."
+                    ))
                 try:
                     snapshots = _json.loads(stdout.strip() or '[]')
                 except Exception:
@@ -4239,8 +4247,9 @@ class SaasInstance(models.Model):
                         level='error',
                     )
                     raise UserError(_(
-                        "restic returned non-JSON snapshot list:\n%s"
-                    ) % stdout[:500])
+                        "We couldn't read your snapshot details. Please "
+                        "contact support."
+                    ))
                 self._restore_log(
                     "Found %d snapshot(s) in repo for this run."
                     % len(snapshots)
@@ -4253,8 +4262,10 @@ class SaasInstance(models.Model):
                         level='error',
                     )
                     raise UserError(_(
-                        "No restic snapshots found for run %s."
-                    ) % backup.restic_run_tag)
+                        "This snapshot is no longer available — it may "
+                        "have rolled off as newer snapshots were taken. "
+                        "Please pick a more recent one."
+                    ))
 
                 fs_snap = None
                 db_snaps = []  # list of (db_name, snapshot_id)
@@ -4289,8 +4300,10 @@ class SaasInstance(models.Model):
                         "ABORT: no fs snapshot in run.", level='error',
                     )
                     raise UserError(_(
-                        "Restic run %s has no filesystem snapshot."
-                    ) % backup.restic_run_tag)
+                        "This snapshot is incomplete — it doesn't "
+                        "contain the file data we need. Please pick "
+                        "another snapshot."
+                    ))
 
                 # 1.5 Enumerate CURRENT databases on the instance so we
                 # can later drop the ones that exist now but weren't in
@@ -4341,8 +4354,9 @@ class SaasInstance(models.Model):
                         level='error',
                     )
                     raise UserError(_(
-                        "Failed to stop container:\n%s"
-                    ) % (stderr or stdout))
+                        "We couldn't pause your instance to start the "
+                        "restore. Please try again in a moment."
+                    ))
                 self._restore_log(
                     "Step 2/5 OK: container stopped in %.1fs."
                     % (_time.time() - t_stop)
@@ -4395,8 +4409,9 @@ class SaasInstance(models.Model):
                         level='error',
                     )
                     raise UserError(_(
-                        "restic restore (fs) failed:\n%s\n%s"
-                    ) % (stdout[-1500:], stderr[-1500:]))
+                        "We couldn't restore your files from this "
+                        "snapshot. Please contact support."
+                    ))
                 self._restore_log(
                     "Step 3/5 OK: filesystem restored in %.1fs."
                     % (_time.time() - t_fs)
@@ -4565,8 +4580,10 @@ class SaasInstance(models.Model):
                         level='error',
                     )
                     raise UserError(_(
-                        "Failed to start container:\n%s"
-                    ) % stderr)
+                        "Your data was restored, but the instance didn't "
+                        "come back up automatically. Please contact "
+                        "support so we can bring it online."
+                    ))
                 self._restore_log(
                     "Step 5/5 OK: container up in %.1fs. Compose "
                     "output: %r"
@@ -6621,10 +6638,14 @@ class SaasInstance(models.Model):
         )
         if not allowed:
             raise UserError(_(
-                "Instance must be running to manage databases (current: %s)."
+                "Your instance needs to be running before you can manage "
+                "databases. Current status: %s."
             ) % self.state)
         if not self.docker_server_id:
-            raise UserError(_("No Docker server assigned to this instance."))
+            raise UserError(_(
+                "This instance isn't fully set up yet. Please contact "
+                "support."
+            ))
 
     def _docker_exec_python(self, ssh, py_script, env=None, timeout=600):
         """Run ``py_script`` inside the instance's Odoo container.
@@ -6734,7 +6755,9 @@ class SaasInstance(models.Model):
             )
         if exit_code != 0:
             raise UserError(
-                _("Could not list databases: %s") % (stderr or stdout)
+                _("We couldn't load your list of databases right now. "
+                  "Please try again in a moment, or contact support if "
+                  "the problem continues.")
             )
         # Pull `<name>|<admin_login>` pairs out from between the markers;
         # any unrelated log lines Odoo may have emitted are ignored.
@@ -6844,12 +6867,13 @@ class SaasInstance(models.Model):
         except xmlrpc.client.Fault as e:
             msg = (e.faultString or '').strip() or str(e)
             raise UserError(_(
-                "Database create failed: %s"
+                "We couldn't create the database: %s"
             ) % msg)
-        except Exception as e:
+        except Exception:
             raise UserError(_(
-                "Could not reach instance at %s: %s"
-            ) % (self.url, e))
+                "We couldn't reach your instance just now. Please make "
+                "sure it's running and try again."
+            ))
 
         # Step 2 — install essentials. Best-effort: the DB itself is
         # already complete and login-capable, so a failure here
@@ -6971,12 +6995,13 @@ class SaasInstance(models.Model):
         except xmlrpc.client.Fault as e:
             msg = (e.faultString or '').strip() or str(e)
             raise UserError(_(
-                "Database duplicate failed: %s"
+                "We couldn't duplicate the database: %s"
             ) % msg)
-        except Exception as e:
+        except Exception:
             raise UserError(_(
-                "Could not reach instance: %s"
-            ) % e)
+                "We couldn't reach your instance just now. Please make "
+                "sure it's running and try again."
+            ))
         return new_name
 
     # Minimum length for a reset password — same floor we enforce on
@@ -7021,11 +7046,11 @@ class SaasInstance(models.Model):
             )
         module = (module or '').strip().lower()
         if not module:
-            raise UserError(_("Pick a module name to upgrade."))
+            raise UserError(_("Please type the feature you want to repair."))
         if module != 'all' and not self._UPGRADE_MODULE_RE.match(module):
             raise UserError(_(
-                "Module name '%s' is not valid. Use lowercase letters, "
-                "digits and underscores; or the special keyword 'all'."
+                "'%s' isn't a valid feature name. Use lowercase letters, "
+                "digits and underscores, or 'all' to repair everything."
             ) % module)
 
         instance_path = self._get_instance_path()
@@ -7056,9 +7081,9 @@ class SaasInstance(models.Model):
             # bail on hard SSH errors.
             if ec not in (0,):
                 _err(_(
-                    "Could not stop the running container before upgrade.\n"
-                    "exit=%s output=%s"
-                ) % (ec, (sout + serr)[-500:]))
+                    "Couldn't pause your instance before starting the "
+                    "repair. Please try again in a moment."
+                ))
 
             self._append_log(
                 "Running 'odoo -d %s -u %s' on a one-shot container..."
@@ -7095,14 +7120,15 @@ class SaasInstance(models.Model):
 
             if upgrade_failed:
                 _err(_(
-                    "Module upgrade failed (exit %s). See output for "
-                    "details."
-                ) % ec)
+                    "The repair didn't complete successfully. See the "
+                    "report for details."
+                ))
             if up_ec != 0:
                 _err(_(
-                    "Module upgrade succeeded but the container failed "
-                    "to start back up (exit %s). See output."
-                ) % up_ec)
+                    "The repair finished, but your instance didn't come "
+                    "back up automatically. See the report for details, "
+                    "or contact support."
+                ))
 
         return '\n'.join(captured)
 
@@ -7112,11 +7138,11 @@ class SaasInstance(models.Model):
         full_name = self._hosting_db_full_name(name)
         module_norm = (module or '').strip().lower()
         if not module_norm:
-            raise UserError(_("Pick a module name to upgrade."))
+            raise UserError(_("Please type the feature you want to repair."))
         if module_norm != 'all' and not self._UPGRADE_MODULE_RE.match(module_norm):
             raise UserError(_(
-                "Module name '%s' is not valid. Use lowercase letters, "
-                "digits and underscores; or the special keyword 'all'."
+                "'%s' isn't a valid feature name. Use lowercase letters, "
+                "digits and underscores, or 'all' to repair everything."
             ) % module_norm)
         Op = self.env['saas.instance.db.operation']
         if Op.search_count([
@@ -7200,8 +7226,10 @@ class SaasInstance(models.Model):
             # Strip the password from the env before logging in case
             # the helper echoed it — it never does, but defense in depth.
             raise UserError(_(
-                "Admin password reset failed on '%s':\n%s\n%s"
-            ) % (name, stdout[-500:], stderr[-500:]))
+                "We couldn't reset the admin password for '%s' just now. "
+                "Please try again, or contact support if the problem "
+                "continues."
+            ) % name)
         # Pull out the login that was reset so the caller can confirm it.
         login = ''
         capturing = False
@@ -7237,11 +7265,12 @@ class SaasInstance(models.Model):
             proxy.drop(master_pwd, name)
         except xmlrpc.client.Fault as e:
             msg = (e.faultString or '').strip() or str(e)
-            raise UserError(_("Database drop failed: %s") % msg)
-        except Exception as e:
+            raise UserError(_("We couldn't delete the database: %s") % msg)
+        except Exception:
             raise UserError(_(
-                "Could not reach instance: %s"
-            ) % e)
+                "We couldn't reach your instance just now. Please make "
+                "sure it's running and try again."
+            ))
         return name
 
     def _hosting_template_db_name(self):
