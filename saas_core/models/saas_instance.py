@@ -3196,6 +3196,14 @@ class SaasInstance(models.Model):
         Handles both fully deployed instances and partially provisioned
         ones (e.g. directories created, database provisioned, but
         container never started).
+
+        Retention: the most recent successful full-instance snapshot
+        is kept (along with its data in the restic repo) so the
+        customer can ``action_reactivate`` later and restore from it
+        through the standard /backups portal flow. Everything else
+        (other snapshots, on-demand backups, instance files, container,
+        databases, PG role, nginx vhost) is deleted. See
+        ``_do_delete_instance`` for the step-by-step.
         """
         for rec in self:
             if rec.docker_server_id:
@@ -3362,68 +3370,80 @@ class SaasInstance(models.Model):
     def _do_delete_instance(self):
         """Delete instance (runs in background thread).
 
+        Cancellation flow — keep ONE snapshot for restore-after-
+        reactivation, drop everything else.
+
         Order of operations:
-        1. Create a final backup (needs container + DB alive)
-        2. Tear down infrastructure (container, files, nginx, DB)
-        3. Upload final backup directly to cancelled_backups/ folder
-        4. Delete ALL client backups from cloud (regular folder)
-        5. Clean up backup records, set state to cancelled
+        1. Take a fresh full-instance snapshot (needs container alive)
+           so the customer has the most recent state available to
+           restore from.
+        2. Pick the snapshot we'll retain (most recent successful
+           full-instance restic snapshot for this instance).
+        3. Tear down infrastructure (container, files, nginx, PG).
+        4. Prune the restic repo to keep only the retained snapshot's
+           run tag — drops every older snapshot's deduplicated data
+           from the bucket.
+        5. Delete every other backup record (and its bucket object).
+        6. Set state = cancelled. The retained backup record stays so
+           the customer can restore from it after reactivating.
         """
         self.ensure_one()
         server = self.docker_server_id
         instance_path = self._get_instance_path()
-        Backup = self.env['saas.instance.backup']
+        Backup = self.env['saas.instance.backup'].sudo()
 
-        # 1. Create a final backup BEFORE tearing down infrastructure.
-        #    Only attempt if the instance was actually deployed (had a
-        #    running container and database at some point).
-        #    Note: state is 'provisioning' here (set by action_cancel),
-        #    so check pre_provisioning_state for the real previous state.
-        retained_path = False
+        # 1. Take a fresh snapshot if the instance was actually deployed
+        # so we capture the absolute latest state before everything
+        # gets torn down. Best-effort — if the container is unreachable
+        # we just fall back to whatever's already in the repo.
         prev = self.pre_provisioning_state or self.state
         was_deployed = prev in ('running', 'stopped', 'suspended', 'failed')
         if was_deployed:
             try:
-                self._append_log("Creating final backup before deletion...")
-                now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-                partner = self.partner_id
-                partner_folder = '%s_%s' % (
-                    partner.id, Backup._sanitize_name(partner.name),
-                ) if partner else 'no_partner'
-                backup_name = 'final_backup_%s' % now_str
-                # Upload directly into cancelled_backups/ folder
-                object_key = 'cancelled_backups/%s/%s/%s.zip' % (
-                    partner_folder, self.subdomain, backup_name,
-                )
-                final_backup = Backup.create({
-                    'instance_id': self.id,
-                    'name': backup_name,
-                    'bucket_path': object_key,
-                    'state': 'running',
-                })
-                size_bytes = final_backup._create_and_upload_backup(
-                    self, object_key,
-                )
-                final_backup.write({
-                    'state': 'done',
-                    'size_mb': round(size_bytes / (1024 * 1024), 2),
-                })
-                retained_path = object_key
                 self._append_log(
-                    "Final backup uploaded to cancelled folder: %s" % object_key
+                    "Taking a final snapshot so you can restore your "
+                    "data later if you reactivate this instance..."
                 )
+                Backup._perform_full_instance_backup(self)
+                self._append_log("Final snapshot complete.")
             except Exception:
                 _logger.exception(
-                    "Failed to create final backup for %s before deletion",
+                    "Final snapshot before cancellation failed for %s",
                     self.subdomain,
                 )
                 self._append_log(
-                    "WARNING: Final backup creation failed. "
-                    "Proceeding with deletion without a retained backup."
+                    "Couldn't take a fresh final snapshot — we will "
+                    "keep the most recent existing one instead, if any."
                 )
         else:
             self._append_log(
-                "Skipping backup — instance was not fully deployed."
+                "Skipping final snapshot — instance was never fully "
+                "deployed."
+            )
+
+        # 2. Pick the retained snapshot (most recent successful
+        # restic full-instance row for this instance).
+        retained_backup = Backup.search([
+            ('instance_id', '=', self.id),
+            ('is_full_instance', '=', True),
+            ('format', '=', 'restic'),
+            ('state', '=', 'done'),
+        ], order='create_date desc', limit=1)
+        if retained_backup:
+            self._append_log(
+                "Will retain snapshot '%s' (taken %s) so you can "
+                "restore your data after reactivating."
+                % (
+                    retained_backup.name,
+                    retained_backup.create_date and
+                    retained_backup.create_date.strftime('%Y-%m-%d %H:%M UTC')
+                    or 'unknown',
+                )
+            )
+        else:
+            self._append_log(
+                "No snapshot available to retain — there will be "
+                "nothing to restore from after reactivation."
             )
 
         # 2. Unregister webhooks from Git providers
@@ -3487,40 +3507,75 @@ class SaasInstance(models.Model):
                 "WARNING: PostgreSQL cleanup failed (may not have been provisioned)."
             )
 
-        # 4. Delete ALL client backups from cloud storage — both regular
-        #    backups and old cancelled_backups/ from prior cancellations.
-        #    Only keep the new final backup we just created.
-        all_backups = Backup.search([('instance_id', '=', self.id)])
-        for backup in all_backups:
-            if backup.bucket_path and backup.bucket_path != retained_path:
-                try:
-                    backup._delete_from_bucket()
-                except Exception:
-                    _logger.warning(
-                        "Failed to delete old backup %s for %s",
-                        backup.bucket_path, self.subdomain,
-                    )
-
-        # Also delete any old retained backup from a prior cancellation
-        if self.retained_backup_path and self.retained_backup_path != retained_path:
+        # 4. Prune the restic repo to keep only the retained snapshot's
+        # data. ``--keep-tag run=<retained>`` plus ``--prune`` drops the
+        # data of every other snapshot from the bucket. Skipped if we
+        # have no retained snapshot (nothing to anchor pruning to);
+        # the next backup attempt on a hypothetical reactivation would
+        # re-trim under the standard ``--keep-last 7`` policy.
+        if retained_backup and retained_backup.restic_run_tag:
             try:
-                old_temp = Backup.new({
+                self._restic_keep_only_run_tag(retained_backup.restic_run_tag)
+                self._append_log(
+                    "Pruned old snapshot data — only the retained "
+                    "snapshot remains in cloud storage."
+                )
+            except Exception:
+                _logger.exception(
+                    "Failed to prune restic repo for cancelled %s",
+                    self.subdomain,
+                )
+                self._append_log(
+                    "Couldn't fully clean up old snapshot data. The "
+                    "retained snapshot is still available; orphan data "
+                    "(if any) will be reaped on the next backup."
+                )
+
+        # 5. Delete every backup record (and its bucket object) EXCEPT
+        # the one we're retaining. The retained row stays so it shows
+        # up on /backups after reactivation and the customer can hit
+        # Restore. ``unlink`` cascades to ``_delete_from_bucket`` for
+        # rows with a direct ``bucket_path`` (legacy zip / on-demand);
+        # the restic-format rows don't have a single bucket key (data
+        # lives across many objects managed by restic above), so step
+        # 4 was responsible for those.
+        all_backups = Backup.search([('instance_id', '=', self.id)])
+        rows_to_drop = (
+            all_backups - retained_backup if retained_backup else all_backups
+        )
+        for backup in rows_to_drop:
+            try:
+                if backup.bucket_path:
+                    backup._delete_from_bucket()
+            except Exception:
+                _logger.warning(
+                    "Failed to delete bucket object for %s on cancel of %s",
+                    backup.bucket_path, self.subdomain,
+                )
+            try:
+                backup.with_context(_skip_bucket_delete=True).unlink()
+            except Exception:
+                _logger.exception(
+                    "Failed to unlink backup row %s on cancel of %s",
+                    backup.id, self.subdomain,
+                )
+
+        # Old-style legacy zip stored in ``retained_backup_path`` (Char
+        # field) from a prior cancellation — drop it now since the new
+        # retention model uses a saas.instance.backup row.
+        if self.retained_backup_path:
+            try:
+                stale = Backup.new({
                     'instance_id': self.id,
                     'bucket_path': self.retained_backup_path,
                 })
-                old_temp._delete_from_bucket()
-                self._append_log(
-                    "Deleted old retained backup: %s" % self.retained_backup_path
-                )
+                stale._delete_from_bucket()
             except Exception:
                 _logger.warning(
-                    "Failed to delete old retained backup %s for %s",
+                    "Failed to delete legacy retained backup %s for %s",
                     self.retained_backup_path, self.subdomain,
                 )
-
-        # 5. Clean up and finalize
-        all_backups.unlink()
-        self.retained_backup_path = retained_path
+            self.retained_backup_path = False
 
         # Reset repo statuses — infrastructure no longer exists
         for repo in self.repo_ids:
@@ -3534,7 +3589,16 @@ class SaasInstance(models.Model):
 
         self.state = 'cancelled'
         self.pending_operation = False
-        self._append_log("Instance deleted successfully.")
+        if retained_backup:
+            self._append_log(
+                "Cancellation complete. Snapshot '%s' is retained — "
+                "after reactivation you can restore from it on the "
+                "Snapshots page." % retained_backup.name
+            )
+        else:
+            self._append_log(
+                "Cancellation complete. No snapshot retained."
+            )
 
     def action_config(self):
         """Read odoo.conf from the server and display it in a popup."""
@@ -5230,6 +5294,57 @@ class SaasInstance(models.Model):
                 _("Failed to reload Nginx:\n%s\n%s") % (stdout, stderr)
             )
         self._append_log("Nginx reloaded successfully.")
+
+    def _restic_keep_only_run_tag(self, run_tag):
+        """Prune the instance's restic repo to a single retained run.
+
+        Used by the cancellation flow to delete every snapshot except
+        the one we keep so the customer can restore after reactivation.
+        ``restic forget --keep-tag run=<tag>`` keeps anything carrying
+        that tag and drops the rest; ``--prune`` then frees the
+        deduplicated data of the dropped snapshots from the bucket.
+
+        Best-effort: a failure here just leaves stale data in the
+        bucket — it doesn't break the cancellation.
+        """
+        self.ensure_one()
+        if not run_tag:
+            return
+        if not self.docker_server_id:
+            return
+        Backup = self.env['saas.instance.backup'].sudo()
+        gcs_path = None
+        try:
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                Backup._ensure_restic_installed(
+                    ssh, self.docker_server_id.name,
+                )
+                gcs_path = Backup._stage_gcs_credentials(ssh, self)
+                env = Backup._restic_env_vars(self, gcs_path)
+                cmd = Backup._restic_cmd(
+                    env,
+                    [
+                        'forget', '--prune',
+                        '--keep-tag', 'run=' + run_tag,
+                        '--group-by', 'host,tags',
+                        '--quiet',
+                    ],
+                )
+                ec, out, err = ssh.execute(cmd, timeout=1800)
+                if ec != 0:
+                    _logger.warning(
+                        "restic forget on cancel for %s exit=%s "
+                        "out=%r err=%r",
+                        self.subdomain, ec,
+                        out[-300:], err[-300:],
+                    )
+        finally:
+            if gcs_path:
+                try:
+                    with self.docker_server_id._get_ssh_connection() as ssh2:
+                        Backup._unstage_gcs_credentials(ssh2, gcs_path)
+                except Exception:
+                    pass
 
     def _refresh_nginx_config(self, ssh, backend_ip=None):
         """Re-render the nginx vhost and reload — no certbot step.
