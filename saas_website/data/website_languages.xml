@@ -1,30 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
-    <!-- Bilingual support: enable Arabic (Modern Standard Arabic) as a
-         res.lang record and register it on the default website so the
-         language switcher in our custom navbar can target it.
+    <!-- Bilingual support: activate Arabic (Modern Standard Arabic)
+         and add it to every website's allowed-language set so our
+         in-navbar language switcher can route to /ar/... URLs.
 
-         English (en_US) is already active out of the box on every Odoo
-         installation, so we only need to surface Arabic. -->
+         Odoo ships with every res.lang already defined in the ``base``
+         module — they're just deactivated. The supported way to turn
+         one on from a module is ``res.lang._activate_lang(code)``,
+         which flips ``active=True`` on the existing record and loads
+         the gettext .po translations for that locale. Idempotent. -->
 
     <data>
-        <!-- Activate Modern Standard Arabic. -->
-        <record id="lang_ar" model="res.lang">
-            <field name="code">ar_001</field>
-            <field name="active">True</field>
-            <field name="direction">rtl</field>
-        </record>
+        <!-- Step 1 — activate Arabic. -->
+        <function model="res.lang" name="_activate_lang">
+            <value>ar_001</value>
+        </function>
 
-        <!-- Add Arabic to every website's allowed-language set so
-             Odoo's URL-prefix language routing (``/ar/...``) accepts it.
-             The website module records the link in website.language_ids. -->
+        <!-- Step 2 — add Arabic to every website's allowed-language
+             set. ``website.language_ids`` is the relation Odoo's
+             language router consults; without us in there, /ar/
+             URLs 404. -->
         <function model="website" name="write">
             <function model="website" name="search">
                 <value eval="[]"/>
             </function>
-            <value eval="{
-                'language_ids': [(4, ref('lang_ar'))],
-            }"/>
+            <value eval="{'language_ids': [(4, ref('base.lang_ar_001'))]}"/>
         </function>
     </data>
 </odoo>
