@@ -613,6 +613,60 @@ class SaasWebsite(http.Controller):
         return request.render('saas_website.portal_docs_page', {})
 
     # ==================================================================
+    #  Debug: language configuration  –  /saas/debug-lang
+    # ==================================================================
+    @http.route(
+        '/saas/debug-lang',
+        type='http', auth='public', website=True,
+        sitemap=False, multilang=False,
+    )
+    def saas_debug_lang(self, **kwargs):
+        """Dump the current language configuration. Hit this to see
+        whether Arabic is activated and linked to the website."""
+        Lang = request.env['res.lang'].sudo().with_context(active_test=False)
+        ar = Lang.search([('code', '=', 'ar_001')], limit=1)
+        en = Lang.search([('code', '=', 'en_US')], limit=1)
+        website = request.website
+        cookie = request.httprequest.cookies.get('frontend_lang')
+        lines = [
+            '=== SAAS LANGUAGE DEBUG ===',
+            'Active context lang: %s' % request.env.lang,
+            'frontend_lang cookie: %s' % (cookie or '(not set)'),
+            '',
+            '--- res.lang records ---',
+            'en_US: id=%s active=%s url_code=%r direction=%s' % (
+                en.id, en.active, en.url_code, en.direction,
+            ),
+            'ar_001: id=%s active=%s url_code=%r direction=%s' % (
+                ar.id, ar.active, ar.url_code, ar.direction,
+            ),
+            '',
+            '--- Current website ---',
+            'website.id: %s' % website.id,
+            'website.name: %s' % website.name,
+            'website.default_lang_id: id=%s code=%s' % (
+                website.default_lang_id.id, website.default_lang_id.code,
+            ),
+            'website.language_ids: %s' % [
+                {'id': l.id, 'code': l.code, 'url_code': l.url_code}
+                for l in website.language_ids
+            ],
+            '',
+            'Is ar_001 in website.language_ids? %s' % (
+                ar.id in website.language_ids.ids
+            ),
+            'Module version (installed): %s' % (
+                request.env['ir.module.module'].sudo().search(
+                    [('name', '=', 'saas_website')], limit=1,
+                ).latest_version,
+            ),
+        ]
+        return request.make_response(
+            '\n'.join(lines),
+            headers=[('Content-Type', 'text/plain; charset=utf-8')],
+        )
+
+    # ==================================================================
     #  Language switch  –  /saas/switch-lang/<code>
     # ==================================================================
     # We can't use Odoo's stock /website/lang/<url_code> route because
