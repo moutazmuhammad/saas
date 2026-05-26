@@ -7463,13 +7463,45 @@ class SaasInstance(models.Model):
             "    print('%s|%s' % (n, login))\n"
             "print('---SAAS_DB_LIST_END---')\n"
         )
-        with self.docker_server_id._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = self._docker_exec_python(
-                ssh, script,
-                env={'SAAS_DB_PREFIX': prefix},
-                timeout=60,
+        try:
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                exit_code, stdout, stderr = self._docker_exec_python(
+                    ssh, script,
+                    env={'SAAS_DB_PREFIX': prefix},
+                    timeout=60,
+                )
+        except Exception:
+            # SSH-level failure (host down, key rejected, timeout)
+            # — turn it into a UserError so the controller's banner
+            # catches it instead of bubbling up as a 500.
+            _logger.exception(
+                "hosting_db_list: SSH/transport failed for %s",
+                self.subdomain,
+            )
+            raise UserError(
+                _("We couldn't reach your instance just now. Please "
+                  "try again in a moment.")
             )
         if exit_code != 0:
+            # Operator visibility: the customer's message is intentionally
+            # generic, but ops need the exit code + the last few lines of
+            # stderr to debug (container down, compose service name
+            # mismatch, python3 not in container, etc.). Log them.
+            _logger.warning(
+                "hosting_db_list failed for %s: exit=%s stderr=%r stdout=%r",
+                self.subdomain, exit_code,
+                (stderr or '')[-500:], (stdout or '')[-200:],
+            )
+            # Surface a short hint to the operator on the instance log
+            # too — easier to find than grepping server logs.
+            try:
+                self._append_log(
+                    "Database list lookup failed (exit=%s). "
+                    "Last stderr: %s"
+                    % (exit_code, (stderr or '').strip()[-300:]),
+                )
+            except Exception:
+                pass
             raise UserError(
                 _("We couldn't load your list of databases right now. "
                   "Please try again in a moment, or contact support if "

@@ -242,6 +242,18 @@ class SaasPortal(CustomerPortal):
                 databases = instance.hosting_db_list()
             except UserError as e:
                 list_error = str(e)
+            except Exception:
+                # Anything else (transport, attribute, etc.) must
+                # NOT 500 the page — the customer just sees a banner
+                # and the operator log carries the traceback.
+                _logger.exception(
+                    "Unexpected error listing DBs for instance %s",
+                    instance.subdomain,
+                )
+                list_error = _(
+                    "We couldn't load your list of databases right "
+                    "now. Please try again in a moment."
+                )
         else:
             # Friendly, action-oriented copy per state. "Instance is
             # <state>" leaked technical labels to customers who don't
@@ -353,8 +365,20 @@ class SaasPortal(CustomerPortal):
         # leave ops stuck at ``running`` after the underlying work has
         # already finished. The same method is called from the status
         # polling endpoint so a hung op doesn't make the page poll
-        # forever.
-        running_ops = instance.sudo()._hosting_reconcile_db_ops()
+        # forever. If reconcile itself blows up (transport, etc.) the
+        # page still renders — we just show whatever ops we already
+        # have without the reconcile pass.
+        try:
+            running_ops = instance.sudo()._hosting_reconcile_db_ops()
+        except Exception:
+            _logger.exception(
+                "Reconcile pass failed for %s — rendering without it.",
+                instance.subdomain,
+            )
+            running_ops = Op.search([
+                ('instance_id', '=', instance.id),
+                ('state', '=', 'running'),
+            ])
         failed_ops = Op.search([
             ('instance_id', '=', instance.id),
             ('state', '=', 'failed'),
