@@ -2363,8 +2363,25 @@
                                             cancellation is listed there.
                                         </li>
                                         <li>
-                                            Click <strong>Restore</strong> on
-                                            that row.
+                                            <strong>Re-enable Daily Backups</strong>
+                                            first. Restore is part of the paid
+                                            Daily Snapshots add-on, and your
+                                            subscription was reset when the
+                                            instance was cancelled — so the
+                                            Restore button on the snapshot row
+                                            is locked until you turn the add-on
+                                            back on and pay the activation
+                                            invoice. A yellow prompt at the
+                                            top of the snapshots page links
+                                            straight to the Enable / Complete
+                                            Payment step.
+                                        </li>
+                                        <li>
+                                            Once the activation payment clears,
+                                            the Restore button on each retained
+                                            snapshot becomes available. Click
+                                            <strong>Restore</strong> on the
+                                            snapshot you want to roll back to.
                                         </li>
                                         <li>
                                             Confirm and wait for the restore to

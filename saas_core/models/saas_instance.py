@@ -3926,6 +3926,19 @@ class SaasInstance(models.Model):
             raise UserError(
                 _("Instance must be Running or Stopped to restore.")
             )
+        # Snapshots are a paid add-on. After a reactivation the
+        # subscription is reset (see ``action_reactivate``), so the
+        # customer must enable Daily Backups again — and pay the
+        # activation invoice — before they can restore from the
+        # snapshot we retained for them. Without this gate they could
+        # get the snapshot feature's payoff for free post-cancellation.
+        if not self.daily_backup_enabled:
+            raise UserError(_(
+                "Restore is part of the Daily Snapshots feature. "
+                "Please enable Daily Backups (and complete the payment) "
+                "before restoring — once active, the Restore button "
+                "becomes available."
+            ))
 
         backup = self.env['saas.instance.backup'].browse(backup_id)
         if not backup.exists() or backup.instance_id != self:
@@ -8111,10 +8124,14 @@ class SaasInstance(models.Model):
         if billing_period == 'yearly' and not new_plan.yearly_price:
             billing_period = 'monthly'
 
-        # Reset to draft with new plan — clear old infra but keep history.
-        # cancellation_reason and retained_backup_path are intentionally
-        # NOT cleared so the admin can still see the history and restore
-        # the retained backup after reactivation.
+        # Reset to draft with new plan — clear old infra but keep
+        # history. ``cancellation_reason`` and the retained snapshot
+        # rows are intentionally NOT cleared so the customer can
+        # restore their data after re-enabling daily backups.
+        # ``daily_backup_enabled`` IS cleared on purpose: a cancelled
+        # subscription means the snapshot add-on is gone too, so the
+        # customer must opt in (and pay) again before they can use
+        # snapshots — including restoring from the one we retained.
         self.write({
             'state': 'draft',
             'plan_id': new_plan.id,
@@ -8134,6 +8151,14 @@ class SaasInstance(models.Model):
             'scheduled_plan_id': False,
             'scheduled_billing_period': False,
             'suspension_warning_sent': False,
+            # Daily-backup subscription is reset — the customer must
+            # re-enable it (and pay a fresh activation invoice) before
+            # nightly snapshots resume OR the retained snapshot can
+            # be restored. See ``action_restore_full_instance``'s gate.
+            'daily_backup_enabled': False,
+            'daily_backup_pending_invoice_id': False,
+            'daily_backup_next_invoice_date': False,
+            'daily_backup_last_invoice_date': False,
             # retained_backup_path is intentionally NOT cleared
             # Reset restore banner so client sees the option again
             'restore_banner_dismissed': False,

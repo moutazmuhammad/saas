@@ -1163,13 +1163,11 @@
                                         <i class="fas fa-redo"></i>Reactivate Instance
                                     </a>
                                     <div class="mt-2 p-3" style="background:var(--bg-card);border:1px solid var(--border-color);border-radius:var(--radius-md);font-size:0.82rem;color:var(--text-secondary);">
-                                        <p class="mb-2">
-                                            <i class="fas fa-info-circle me-1" style="color:var(--info);"></i>
-                                            <strong>Reactivating</strong> will create a fresh instance with the same subdomain. Your previous data will not be included.
-                                        </p>
                                         <p class="mb-0">
-                                            <i class="fas fa-database me-1" style="color:var(--warning);"></i>
-                                            <strong>Need your old data?</strong> Contact support before reactivating — we may be able to restore your data from a backup (additional charges apply).
+                                            <i class="fas fa-info-circle me-1" style="color:var(--info);"></i>
+                                            <strong>Reactivating</strong> brings your instance back on the same subdomain.
+                                            We kept your most recent snapshot — after reactivation you can re-enable Daily
+                                            Backups from the Snapshots page and restore it yourself.
                                         </p>
                                     </div>
                                 </t>
@@ -2509,6 +2507,44 @@
                         </div>
                     </t>
 
+                    <!-- Locked-restore prompt: shown when the
+                         customer has retained snapshots (typical after
+                         reactivation) but Daily Backups isn't on yet.
+                         Restore is part of the paid Daily Backups
+                         add-on, so we surface the enable CTA right
+                         next to the snapshot list. -->
+                    <t t-if="instance.is_hosting and not instance.is_trial and not instance.daily_backup_enabled and full_instance_backups">
+                        <div class="alert-banner alert-warning mb-3">
+                            <i class="fas fa-lock"></i>
+                            <div class="flex-grow-1">
+                                <strong>Enable Daily Backups to restore your snapshots.</strong>
+                                <p class="mb-2 small">
+                                    Your snapshots are kept safely in cloud storage, but
+                                    Restore is part of the Daily Snapshots add-on. Enable
+                                    it (and complete the activation payment) to unlock
+                                    the Restore button on every snapshot below.
+                                </p>
+                                <t t-if="instance.daily_backup_pending_invoice_id">
+                                    <a t-attf-href="/my/instances/#{instance.id}/daily-backup/checkout"
+                                       class="btn btn-sm btn-warning">
+                                        <i class="fas fa-credit-card me-1"></i>Complete Payment
+                                    </a>
+                                </t>
+                                <t t-else="">
+                                    <form t-attf-action="/my/instances/#{instance.id}/daily-backup/toggle"
+                                          method="POST" class="d-inline">
+                                        <input type="hidden" name="csrf_token"
+                                               t-att-value="request.csrf_token()"/>
+                                        <input type="hidden" name="enable" value="1"/>
+                                        <button type="submit" class="btn btn-sm btn-warning">
+                                            <i class="fas fa-toggle-on me-1"></i>Enable Daily Backups
+                                        </button>
+                                    </form>
+                                </t>
+                            </div>
+                        </div>
+                    </t>
+
                     <!-- Restore-in-flight indicator. When a snapshot
                          restore is running, the instance enters the
                          ``provisioning`` state. The existing
@@ -2602,12 +2638,28 @@
                                                             <i class="fas fa-download me-1"></i>Download
                                                         </a>
                                                     </t>
-                                                    <button type="button"
-                                                            class="btn btn-sm btn-outline-warning"
-                                                            data-bs-toggle="modal"
-                                                            t-attf-data-bs-target="#bRestoreModal-#{b.id}">
-                                                        <i class="fas fa-undo me-1"></i>Restore
-                                                    </button>
+                                                    <!-- Restore is a Daily Snapshots feature.
+                                                         If the customer's add-on isn't active
+                                                         (typical case after reactivation: the
+                                                         retained snapshot is sitting here but
+                                                         the subscription was reset), nudge them
+                                                         to enable it first instead of showing
+                                                         a button that would just raise on click. -->
+                                                    <t t-if="instance.daily_backup_enabled">
+                                                        <button type="button"
+                                                                class="btn btn-sm btn-outline-warning"
+                                                                data-bs-toggle="modal"
+                                                                t-attf-data-bs-target="#bRestoreModal-#{b.id}">
+                                                            <i class="fas fa-undo me-1"></i>Restore
+                                                        </button>
+                                                    </t>
+                                                    <t t-else="">
+                                                        <a t-attf-href="/my/instances/#{instance.id}/backups"
+                                                           class="btn btn-sm btn-outline-secondary disabled"
+                                                           title="Enable Daily Backups to restore this snapshot">
+                                                            <i class="fas fa-lock me-1"></i>Restore
+                                                        </a>
+                                                    </t>
                                                 </t>
                                             </td>
                                         </tr>
