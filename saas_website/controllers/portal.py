@@ -243,9 +243,56 @@ class SaasPortal(CustomerPortal):
             except UserError as e:
                 list_error = str(e)
         else:
-            list_error = _(
-                "Instance is %s — start it to manage databases."
-            ) % instance.state
+            # Friendly, action-oriented copy per state. "Instance is
+            # <state>" leaked technical labels to customers who don't
+            # know what to do next.
+            state_copy = {
+                'draft': _(
+                    "Your instance hasn't been deployed yet — please "
+                    "complete payment to start it."
+                ),
+                'pending_payment': _(
+                    "Waiting for your payment to be confirmed. "
+                    "Refresh in a moment."
+                ),
+                'paid': _(
+                    "Your payment was received — we're starting your "
+                    "instance now. Refresh in a moment."
+                ),
+                'pending_provision': _(
+                    "We're waiting for free capacity to start your "
+                    "instance. This usually takes a few minutes."
+                ),
+                'provisioning': _(
+                    "Your instance is still starting up. Refresh in "
+                    "a moment to see your databases."
+                ),
+                'stopped': _(
+                    "Your instance is stopped. Start it from the "
+                    "instance page to manage databases."
+                ),
+                'suspended': _(
+                    "Your instance is suspended because of an unpaid "
+                    "invoice. Pay it to restore access."
+                ),
+                'failed': _(
+                    "Your instance hit an error during startup. "
+                    "Please contact support so we can get you back up."
+                ),
+                'cancelled': _(
+                    "Your instance is cancelled. Reactivate it to "
+                    "manage databases again."
+                ),
+                'cancelled_by_client': _(
+                    "Your instance is cancelled. Reactivate it to "
+                    "manage databases again."
+                ),
+            }
+            list_error = state_copy.get(
+                instance.state,
+                _("Your instance isn't ready for database management "
+                  "right now. Refresh in a moment."),
+            )
 
         # On-demand backups live here (per database). Find the in-flight
         # one so the template can render the banner + disable buttons,
@@ -1890,9 +1937,17 @@ class SaasPortal(CustomerPortal):
 
                 yield b'event: done\ndata: stream ended\n\n'
 
-            except Exception as e:
+            except Exception:
+                # The raw exception string can contain SSH endpoints,
+                # internal hostnames, container IDs or paramiko trace
+                # fragments — none of that belongs in a browser. Send
+                # a single generic line and rely on the operator log
+                # for the real cause.
                 _logger.exception("Log streaming error for %s", container_name)
-                yield ('event: error\ndata: %s\n\n' % _json.dumps(str(e))).encode('utf-8')
+                yield ('event: error\ndata: %s\n\n' % _json.dumps(
+                    "We lost the connection to the log stream. "
+                    "Please refresh the page to reconnect."
+                )).encode('utf-8')
             finally:
                 ssh_conn._disconnect()
 
@@ -2102,12 +2157,33 @@ class SaasPortal(CustomerPortal):
                 'body_html': '<pre>%s</pre>' % body.replace('\n', '<br/>'),
                 'email_from': partner.email or support_email,
                 'email_to': support_email,
-                'auto_delete': True,
+                # Don't auto-delete — if the send fails we want the
+                # row to stay so the customer's report can be traced.
+                'auto_delete': False,
             })
             mail.send()
-        except Exception as e:
+            # ``mail.send()`` swallows transient failures by leaving
+            # state='exception' on the record. Check explicitly so we
+            # don't tell the customer "request sent" when the email
+            # actually never reached support.
+            if mail.state == 'exception':
+                _logger.warning(
+                    "Restore-request email for instance %s ended in "
+                    "state=exception: %s",
+                    instance_sudo.subdomain,
+                    (mail.failure_reason or '')[:300],
+                )
+                return {'error': _(
+                    "We couldn't deliver your request to support just "
+                    "now. Please email us directly at %s and we'll "
+                    "get back to you."
+                ) % support_email}
+        except Exception:
             _logger.exception("Failed to send restore request email")
-            return {'error': _('Failed to send request. Please contact support directly.')}
+            return {'error': _(
+                "We couldn't deliver your request right now. Please "
+                "email us directly at %s and we'll get back to you."
+            ) % support_email}
 
         instance_sudo._append_log(
             "Client requested data restore via portal. Note: %s" % (note or '(none)')
@@ -2208,9 +2284,15 @@ class SaasPortal(CustomerPortal):
                     packages.append({'name': name, 'version': version})
             packages.sort(key=lambda p: p['name'].lower())
             return {'packages': packages, 'count': len(packages)}
-        except Exception as e:
-            _logger.exception("Failed to list packages for instance %s", instance_sudo.name)
-            return {'error': str(e)}
+        except Exception:
+            _logger.exception(
+                "Failed to list packages for instance %s",
+                instance_sudo.name,
+            )
+            return {'error': _(
+                "We couldn't list the installed packages right now. "
+                "Please try again in a moment."
+            )}
 
     # ==================== Update Packages (Hosting) ====================
 
@@ -2323,8 +2405,17 @@ class SaasPortal(CustomerPortal):
 
         try:
             instance_sudo.action_refresh_usage()
-        except Exception as e:
-            return {'error': str(e)}
+        except Exception:
+            # Don't leak SSH/docker exception text to the browser —
+            # log the raw cause and return a friendly line.
+            _logger.exception(
+                "Usage refresh failed for instance %s",
+                instance_sudo.subdomain,
+            )
+            return {'error': _(
+                "We couldn't fetch live usage right now. Please try "
+                "again in a moment."
+            )}
 
         return {
             'cpu_usage': instance_sudo.cpu_usage or '0%',

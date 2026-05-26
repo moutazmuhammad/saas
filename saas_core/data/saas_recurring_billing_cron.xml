@@ -23,6 +23,20 @@
         <field name="active" eval="True"/>
     </record>
 
+    <!-- Zombie reaper: any database operation (create/duplicate/drop/
+         upgrade) still in 'running' state past the timeout is auto-
+         failed so the customer's portal stops showing an eternal
+         spinner. Safety net for crashed background threads. -->
+    <record id="ir_cron_saas_db_op_zombie_reaper" model="ir.cron">
+        <field name="name">SaaS: Reap Stuck Database Operations</field>
+        <field name="model_id" ref="saas_core.model_saas_instance_db_operation"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_reap_stuck_db_operations()</field>
+        <field name="interval_number">5</field>
+        <field name="interval_type">minutes</field>
+        <field name="active" eval="True"/>
+    </record>
+
     <!-- Daily-backup add-on: monthly renewal invoices, independent of the
          main subscription billing cycle. -->
     <record id="ir_cron_saas_daily_backup_renewal" model="ir.cron">

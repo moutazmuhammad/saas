@@ -76,10 +76,14 @@ class AccountMove(models.Model):
                 'daily_backup_pending_invoice_id': False,
                 'daily_backup_last_invoice_date': today,
                 'daily_backup_next_invoice_date': next_invoice,
-                # Surcharge for retaining the snapshot through
-                # cancellation has been paid (it rode along on this
-                # activation invoice if it was set) — clear the
-                # flag so a future enable doesn't re-charge.
+                # ``pending_retention_surcharge`` is already cleared
+                # at invoice CREATION time (see
+                # ``action_purchase_daily_backup``) so a customer who
+                # cancels-without-paying then re-enables doesn't
+                # accumulate the surcharge across multiple invoices.
+                # We still write False here as a belt-and-braces in
+                # case the activation invoice arrived via a path that
+                # bypassed the create helper.
                 'pending_retention_surcharge': False,
             })
             instance._append_log(

@@ -178,6 +178,21 @@ class SaasInstance(models.Model):
         help='Maximum automatic deploy retries before marking as permanently failed. '
              '0 = no auto-retry.',
     )
+    pending_provision_since = fields.Datetime(
+        string='Pending Since',
+        readonly=True,
+        help='Timestamp when the instance first entered pending_provision. '
+             'Used by the retry cron to back off + give up after a max '
+             'wait window so we never infinite-loop on capacity-blocked '
+             'deploys.',
+    )
+    pending_provision_attempts = fields.Integer(
+        string='Pending Retry Count',
+        default=0,
+        readonly=True,
+        help='Number of times the retry cron has attempted to deploy '
+             'this pending instance. Drives exponential back-off.',
+    )
     pre_provisioning_state = fields.Char(
         string='Pre-Provisioning State',
         readonly=True,
@@ -397,6 +412,25 @@ class SaasInstance(models.Model):
              'daily-backup add-on invoice is charged automatically on '
              'renewal. When disabled the invoice is still issued, but '
              'the customer pays it manually.',
+    )
+    # ---------- Cancellation cleanup retry flags ----------
+    # Set by ``_do_delete_instance`` when the corresponding cleanup
+    # step (PG drop / nginx remove) raised. ``action_reactivate``
+    # checks these and retries before clearing the infrastructure
+    # FKs, so a stale role / vhost can't block the new deploy.
+    pg_cleanup_pending = fields.Boolean(
+        string='PG Cleanup Pending',
+        copy=False,
+        default=False,
+        help='True if the PostgreSQL drop failed during the last '
+             'cancellation. Cleared once the retry succeeds.',
+    )
+    nginx_cleanup_pending = fields.Boolean(
+        string='Nginx Cleanup Pending',
+        copy=False,
+        default=False,
+        help='True if the Nginx vhost removal failed during the last '
+             'cancellation. Cleared once the retry succeeds.',
     )
 
     @api.depends('daily_backup_enabled')
@@ -1155,7 +1189,17 @@ class SaasInstance(models.Model):
         order.action_confirm()
         invoice = order._create_invoices()
         invoice.action_post()
-        self.daily_backup_pending_invoice_id = invoice.id
+        # Clear the retention-surcharge flag the moment the invoice
+        # is POSTED — not at payment. Otherwise, a customer who
+        # enables → cancels-without-paying → re-enables would have
+        # the surcharge appear on a SECOND invoice on top of the
+        # first (still unpaid). The surcharge is a "we ate the
+        # storage cost, here is the bill" — once we billed it, we
+        # billed it; the unpaid invoice remains for them to pay.
+        write_vals = {'daily_backup_pending_invoice_id': invoice.id}
+        if retention_surcharge > 0:
+            write_vals['pending_retention_surcharge'] = False
+        self.write(write_vals)
         self._append_log(
             "Daily-backup add-on activation invoice %s created — "
             "full month %.2f%s."
@@ -1926,9 +1970,15 @@ class SaasInstance(models.Model):
     def _mark_as_pending(self):
         """Set instance to pending_provision — deployment deferred until
         server capacity becomes available.
+
+        Initialises ``pending_provision_since`` on first entry so the
+        retry cron can drive exponential back-off and give up cleanly
+        after the max wait window.
         """
         self.ensure_one()
         self.state = 'pending_provision'
+        if not self.pending_provision_since:
+            self.pending_provision_since = fields.Datetime.now()
         self._append_log(
             "No server available — instance marked as pending provision. "
             "Deployment will be retried automatically when capacity is freed."
@@ -2163,30 +2213,90 @@ class SaasInstance(models.Model):
                     docker_server.name,
                 )
 
+    # Pending-provision retry tuning.
+    _PENDING_MAX_WAIT_HOURS = 24
+    _PENDING_BACKOFF_BASE_MIN = 5
+
     @api.model
     def _cron_retry_pending_provision(self):
         """Cron: attempt to deploy instances stuck in pending_provision.
 
-        For each pending instance, re-runs ``action_deploy()``.  If capacity
-        is still unavailable the instance stays in ``pending_provision``;
-        otherwise it proceeds to ``provisioning`` normally.
+        Capacity-blocked instances can stay pending indefinitely if
+        the operator never adds servers — without back-off this cron
+        would call ``_allocate_servers`` every 5 minutes for days,
+        filling logs and burning resources on a futile loop.
+
+        Strategy:
+        - Exponential back-off: skip the instance until at least
+          ``BASE * 2^attempts`` minutes have passed since the last
+          attempt. Caps naturally as ``attempts`` grows.
+        - Hard escalation: if cumulative pending time exceeds
+          ``_PENDING_MAX_WAIT_HOURS`` (default 24h), mark the
+          instance as ``failed`` so the operator gets paged and the
+          customer sees a clear error instead of silent waiting.
         """
+        now = fields.Datetime.now()
+        max_wait = datetime.timedelta(hours=self._PENDING_MAX_WAIT_HOURS)
         pending = self.search([('state', '=', 'pending_provision')])
         if not pending:
             return
-        _logger.info(
-            "Cron: retrying %d pending_provision instance(s).", len(pending),
-        )
+        retried = 0
+        escalated = 0
         for instance in pending:
+            since = instance.pending_provision_since
+            attempts = instance.pending_provision_attempts or 0
+            # Hard cap: give up + flag for operator attention.
+            if since and now - since > max_wait:
+                instance.write({
+                    'state': 'failed',
+                    'pre_provisioning_state': 'pending_provision',
+                })
+                instance._append_log(
+                    "Provisioning gave up after %d hours of waiting for "
+                    "server capacity. Please contact support so we can "
+                    "expand capacity and resume your deployment."
+                    % self._PENDING_MAX_WAIT_HOURS
+                )
+                _logger.error(
+                    "Instance %s escalated to 'failed' after %dh "
+                    "pending_provision wait — operator must add capacity.",
+                    instance.subdomain, self._PENDING_MAX_WAIT_HOURS,
+                )
+                self.env.cr.commit()
+                escalated += 1
+                continue
+            # Exponential back-off: only retry if the back-off window
+            # since the last attempt has elapsed.
+            backoff_min = min(
+                self._PENDING_BACKOFF_BASE_MIN * (2 ** attempts),
+                # Hard cap each gap at 2h so we don't go silent for
+                # days inside the 24h overall budget.
+                120,
+            )
+            last_attempt = instance.write_date or since
+            if last_attempt and (
+                now - last_attempt < datetime.timedelta(minutes=backoff_min)
+            ):
+                continue
             try:
+                instance.write({
+                    'pending_provision_attempts': attempts + 1,
+                })
                 instance.action_deploy()
                 self.env.cr.commit()
+                retried += 1
             except Exception:
                 self.env.cr.rollback()
                 _logger.exception(
                     "Cron: retry failed for pending instance %s",
                     instance.subdomain,
                 )
+        if retried or escalated:
+            _logger.info(
+                "Pending-provision cron: %d retried, %d escalated to "
+                "failed (of %d pending).",
+                retried, escalated, len(pending),
+            )
 
     # Operations that can be safely re-run if interrupted. Anything else
     # (delete, cancel, suspend) must go to a manual-review state because
@@ -2200,11 +2310,24 @@ class SaasInstance(models.Model):
         re-queued. Destructive operations (cancel/delete/suspend) are NOT
         auto-reverted — doing so would mark a half-deleted instance as
         "running" again. They are routed to ``failed`` for manual review.
+
+        The threshold is intentionally generous (40 min) — a large
+        snapshot restore can legitimately take 15–25 min, so a tighter
+        window used to re-queue restores mid-flight and create duplicate
+        containers. ``restore`` ops get an extra-wide window because
+        they're the slowest legitimate path; everything else uses the
+        standard cutoff.
         """
-        threshold = fields.Datetime.now() - datetime.timedelta(minutes=15)
+        now = fields.Datetime.now()
+        normal_cutoff = now - datetime.timedelta(minutes=40)
+        restore_cutoff = now - datetime.timedelta(minutes=90)
         stuck = self.search([
             ('state', '=', 'provisioning'),
-            ('write_date', '<', threshold),
+            '|',
+            '&', ('pending_operation', '=', 'restore'),
+                 ('write_date', '<', restore_cutoff),
+            '&', ('pending_operation', '!=', 'restore'),
+                 ('write_date', '<', normal_cutoff),
         ])
         if not stuck:
             return
@@ -3087,6 +3210,10 @@ class SaasInstance(models.Model):
         self.last_error = False
         self.last_error_date = False
         self.pending_operation = False
+        # Successfully out of pending_provision — reset back-off so a
+        # later cancel + redeploy starts the counters fresh.
+        self.pending_provision_since = False
+        self.pending_provision_attempts = 0
         self._append_log("Deployment completed successfully. State: running.")
         self._safe_refresh_usage()
         self._send_notification('saas_core.mail_template_saas_deployed')
@@ -3635,7 +3762,11 @@ class SaasInstance(models.Model):
                     instance_path, stderr,
                 )
 
-            # Remove Nginx config and SSL certificate (if configured)
+            # Remove Nginx config and SSL certificate (if configured).
+            # Track failures so the reactivate flow retries — leaving
+            # a vhost behind is harmless on a stopped container, but
+            # it'd cause a conflict if the customer reactivates with
+            # a different topology.
             try:
                 proxy_server = self.domain_id.proxy_server_id
                 if proxy_server and proxy_server != self.docker_server_id:
@@ -3644,16 +3775,32 @@ class SaasInstance(models.Model):
                 else:
                     self._remove_nginx(ssh)
             except Exception:
+                _logger.exception(
+                    "Nginx cleanup failed during cancellation of %s",
+                    self.subdomain,
+                )
+                self.nginx_cleanup_pending = True
                 self._append_log(
-                    "WARNING: Nginx cleanup failed (may not have been configured)."
+                    "Couldn't fully remove the web proxy config — "
+                    "we'll retry automatically the next time you "
+                    "reactivate."
                 )
 
-        # Drop database and role (safe if they don't exist)
+        # Drop database and role (safe if they don't exist). On
+        # failure we set a flag the reactivate flow will retry — and
+        # we don't lose visibility, because the operator log gets
+        # the traceback via ``_logger.exception``.
         try:
             self._drop_postgresql()
         except Exception:
+            _logger.exception(
+                "PostgreSQL cleanup failed during cancellation of %s",
+                self.subdomain,
+            )
+            self.pg_cleanup_pending = True
             self._append_log(
-                "WARNING: PostgreSQL cleanup failed (may not have been provisioned)."
+                "Couldn't fully clean up the database tier yet — "
+                "we'll retry automatically the next time you reactivate."
             )
 
         # 4. Prune the restic repo. Two cases:
@@ -5930,6 +6077,13 @@ class SaasInstance(models.Model):
         Only stores the token if the customer ticked "Save my card"
         (Odoo's payment.transaction.tokenize), so customers retain
         control — no silent retention.
+
+        Accepts ``done`` and ``pending`` transactions: a transaction
+        that's still pending 3DS verification at the moment the
+        invoice's payment_state flips can hold a fully-formed token —
+        Odoo creates payment.token rows before the transaction
+        terminates. The token is gated by ``active`` anyway, so a
+        pending tx that ultimately fails won't be silently used.
         """
         self.ensure_one()
         if not invoice or self.payment_token_id:
@@ -5937,8 +6091,8 @@ class SaasInstance(models.Model):
             # cards is an explicit portal action.
             return
         token = invoice.transaction_ids.filtered(
-            lambda t: t.state == 'done' and t.token_id
-        ).mapped('token_id')[:1]
+            lambda t: t.state in ('done', 'pending') and t.token_id
+        ).mapped('token_id').filtered(lambda t: t.active)[:1]
         if not token:
             return
         self.payment_token_id = token.id
@@ -5954,15 +6108,60 @@ class SaasInstance(models.Model):
         prefixes so the operator can tell renewal flows apart in
         the journal.
 
-        Best-effort: on any failure the invoice stays unpaid and the
-        existing dunning cron handles reminders + eventual suspension.
-        Returns True iff the transaction reached the ``done`` state.
+        Returns ``True`` only when the transaction reaches the
+        terminal ``done`` state. ``pending`` (e.g. 3DS in flight) is
+        treated as "wait and re-check" — the caller suppresses the
+        payment-due email in that case so the customer isn't pinged
+        for an invoice that may still settle. A genuine failure
+        returns ``False`` and leaves the invoice unpaid for dunning.
+
+        Pre-flight checks:
+        - token must be active and its provider must be enabled, or
+          we surface a "Please add a new card" message instead of
+          letting Odoo throw deep in ``_send_payment_request``.
+        - invoice currency must match the token's provider — a
+          mismatch would charge the wrong amount or fail; we log
+          and skip rather than try.
         """
         self.ensure_one()
         if not invoice or invoice.payment_state in ('paid', 'in_payment'):
             return False
         token = self.payment_token_id
         if not token or not token.active:
+            self._append_log(
+                "Auto-renew skipped for invoice %s — your saved card "
+                "is no longer on file. Please add a card from "
+                "Billing settings."
+                % invoice.name
+            )
+            return False
+        if not token.provider_id or not token.provider_id.active:
+            self._append_log(
+                "Auto-renew skipped for invoice %s — your saved "
+                "card's payment provider is currently unavailable. "
+                "Please add a new card to continue."
+                % invoice.name
+            )
+            return False
+        if not token.payment_method_id:
+            self._append_log(
+                "Auto-renew skipped for invoice %s — please re-save "
+                "your card from Billing settings."
+                % invoice.name
+            )
+            return False
+        # Currency sanity: the provider's journal currency must match
+        # the invoice (or the journal must accept any). A mismatch
+        # would either fail or charge the wrong amount.
+        prov_journal_cur = token.provider_id.journal_id.currency_id \
+            if token.provider_id.journal_id else None
+        if prov_journal_cur and prov_journal_cur != invoice.currency_id:
+            _logger.warning(
+                "[AUTO-RENEW:%s] currency mismatch for %s — invoice %s "
+                "(%s) vs provider journal (%s). Skipping auto-charge.",
+                kind, self.subdomain, invoice.name,
+                invoice.currency_id.name, prov_journal_cur.name,
+            )
             return False
         try:
             tx = self.env['payment.transaction'].sudo().create({
@@ -5987,8 +6186,7 @@ class SaasInstance(models.Model):
                 % invoice.name
             )
             return False
-        ok = tx.state == 'done'
-        if ok:
+        if tx.state == 'done':
             self._append_log(
                 "Auto-renew charged your saved card for invoice %s "
                 "(%.2f %s)." % (
@@ -5996,13 +6194,33 @@ class SaasInstance(models.Model):
                     invoice.currency_id.name,
                 )
             )
-        else:
-            self._append_log(
-                "Auto-renew charge for invoice %s did not succeed "
-                "(state=%s). Please pay manually from the portal."
-                % (invoice.name, tx.state)
+            return True
+        if tx.state == 'pending':
+            # In-flight (3DS, async gateway). The caller should NOT
+            # send the payment-due email — the transaction may still
+            # complete asynchronously via webhook. The dunning cron
+            # picks it up later if it never settles.
+            _logger.info(
+                "[AUTO-RENEW:%s] tx %s pending for %s invoice %s — "
+                "waiting on async settlement.",
+                kind, tx.reference, self.subdomain, invoice.name,
             )
-        return ok
+            self._append_log(
+                "Auto-renew for invoice %s is awaiting confirmation "
+                "from your bank. We'll let you know if it doesn't "
+                "go through." % invoice.name
+            )
+            # Treat as "don't bother the customer yet" — return True
+            # to suppress the payment-due email; the dunning cron
+            # will catch a stuck pending later.
+            return True
+        # Terminal failure (error / cancel).
+        self._append_log(
+            "Auto-renew charge for invoice %s did not go through. "
+            "Please pay manually from the portal."
+            % invoice.name
+        )
+        return False
 
     @api.model
     def _cron_generate_recurring_invoices(self):
@@ -6300,9 +6518,16 @@ class SaasInstance(models.Model):
                 instance._check_dunning(today)
                 self.env.cr.commit()
             except Exception:
+                # Per-instance failure must NOT abort the whole pass.
+                # Roll back the row and log loudly so ops can see
+                # which instance got stuck — the next cron run will
+                # retry. ``_check_dunning`` itself already handles
+                # the common race (state changed mid-cron) silently,
+                # so anything reaching here is genuinely unexpected.
                 self.env.cr.rollback()
                 _logger.exception(
-                    "Dunning check failed for %s", instance.subdomain,
+                    "Dunning check crashed for %s — will retry next cron",
+                    instance.subdomain,
                 )
 
     def _is_optional_invoice(self, invoice):
@@ -6369,13 +6594,56 @@ class SaasInstance(models.Model):
         days_overdue = (today - oldest_due).days
 
         if days_overdue > grace_days:
-            # Grace period exceeded — suspend
-            if self.state == 'running':
-                self.action_suspend()
-            elif self.state == 'stopped':
+            # Grace period exceeded — suspend.
+            #
+            # Re-read state at the last possible moment: the cron's
+            # initial ``search`` returned this instance as 'running'
+            # or 'stopped' but other workers / actions may have moved
+            # it since (provisioning, suspended, cancelled, …). Acting
+            # on a stale state raised UserError inside the cron loop
+            # in the past, which was silently swallowed → instance
+            # stayed running with an overdue invoice (revenue leak).
+            self.invalidate_recordset(['state'])
+            current_state = self.state
+            if current_state == 'running':
+                # ``action_suspend`` queues the docker stop in a
+                # background thread; we wrap it so a transient SSH
+                # failure leaves the instance in 'suspended' state
+                # rather than re-raising into the cron loop and
+                # rolling back the whole dunning pass.
+                try:
+                    self.action_suspend()
+                except UserError:
+                    # Lost the race — state changed between recheck
+                    # and the call. Next cron pass will revisit.
+                    _logger.info(
+                        "Dunning skipped %s: state changed mid-cron "
+                        "(now %s); will retry on next run.",
+                        self.subdomain, self.state,
+                    )
+                    return
+                except Exception:
+                    # SSH / docker failure — mark suspended in DB so
+                    # access is denied; ops can investigate the host.
+                    _logger.exception(
+                        "Dunning action_suspend failed for %s; "
+                        "forcing state=suspended in DB only.",
+                        self.subdomain,
+                    )
+                    self.state = 'suspended'
+                    self.pending_operation = False
+            elif current_state == 'stopped':
                 # Container is already stopped — just mark as suspended
                 # so the customer cannot restart without paying.
                 self.state = 'suspended'
+            else:
+                # Provisioning, already suspended, cancelled, failed,
+                # etc. — nothing safe to do this pass.
+                _logger.info(
+                    "Dunning skipped %s: state is %s (not actionable).",
+                    self.subdomain, current_state,
+                )
+                return
             self._append_log(
                 "AUTO-SUSPENDED: Invoice %s overdue by %d days (grace: %d)."
                 % (oldest.name, days_overdue, grace_days)
@@ -7313,11 +7581,37 @@ class SaasInstance(models.Model):
                 None,            # phone
             )
         except xmlrpc.client.Fault as e:
-            msg = (e.faultString or '').strip() or str(e)
+            # XMLRPC fault from the customer's Odoo. faultString can
+            # contain DB connection details, SQL errors, internal
+            # paths — never echo it directly. Log raw, map a couple
+            # of well-known patterns to actionable copy, else generic.
+            raw = (e.faultString or '').strip() or str(e)
+            _logger.warning(
+                "create_database XMLRPC fault for %s: %s",
+                self.subdomain, raw,
+            )
+            low = raw.lower()
+            if 'already exists' in low:
+                raise UserError(_(
+                    "A database with that name already exists. "
+                    "Please pick a different name."
+                ))
+            if 'access denied' in low or 'master password' in low \
+                    or 'admin password' in low:
+                raise UserError(_(
+                    "Your instance refused our request. Please contact "
+                    "support so we can re-link it."
+                ))
             raise UserError(_(
-                "We couldn't create the database: %s"
-            ) % msg)
+                "We couldn't create the database right now. Please try "
+                "again in a moment — if it keeps happening, contact "
+                "support."
+            ))
         except Exception:
+            _logger.exception(
+                "create_database transport error for %s",
+                self.subdomain,
+            )
             raise UserError(_(
                 "We couldn't reach your instance just now. Please make "
                 "sure it's running and try again."
@@ -8457,6 +8751,60 @@ class SaasInstance(models.Model):
             )
         self.action_restart()
 
+    def _retry_pending_cleanup(self):
+        """Retry cancellation cleanup steps that previously failed.
+
+        Called from ``action_reactivate`` before we clear the old
+        infrastructure FKs — without this retry, a transient SSH /
+        Postgres failure during the original cancellation would
+        leave stale resources on disk and the next deploy would
+        either inherit them silently (privacy concern) or fail
+        because of name clashes.
+
+        Idempotent: ``_drop_postgresql`` is no-op if the role / DB
+        doesn't exist, and ``_remove_nginx`` skips when the vhost
+        is gone. Either retry can fail again — the flags stay set
+        and we'll try once more on the next reactivation attempt.
+        """
+        self.ensure_one()
+        if self.pg_cleanup_pending and self.db_server_id:
+            try:
+                self._drop_postgresql()
+                self.pg_cleanup_pending = False
+                self._append_log(
+                    "Cleaned up old database resources from the "
+                    "previous cancellation."
+                )
+            except Exception:
+                _logger.exception(
+                    "Retry PG cleanup still failing for %s",
+                    self.subdomain,
+                )
+                self._append_log(
+                    "Some database resources from the previous "
+                    "cancellation couldn't be cleaned up yet — "
+                    "we'll keep retrying."
+                )
+        if self.nginx_cleanup_pending and self.docker_server_id:
+            try:
+                proxy_server = self.domain_id.proxy_server_id
+                if proxy_server and proxy_server != self.docker_server_id:
+                    with proxy_server._get_ssh_connection() as proxy_ssh:
+                        self._remove_nginx(proxy_ssh)
+                else:
+                    with self.docker_server_id._get_ssh_connection() as ssh:
+                        self._remove_nginx(ssh)
+                self.nginx_cleanup_pending = False
+                self._append_log(
+                    "Cleaned up old web proxy config from the "
+                    "previous cancellation."
+                )
+            except Exception:
+                _logger.exception(
+                    "Retry nginx cleanup still failing for %s",
+                    self.subdomain,
+                )
+
     def action_reactivate(self, new_plan_id, billing_period='monthly'):
         """Reactivate a cancelled instance with a new plan.
 
@@ -8468,6 +8816,11 @@ class SaasInstance(models.Model):
         self.ensure_one()
         if self.state not in ('cancelled', 'cancelled_by_client'):
             raise UserError(_("Only cancelled instances can be reactivated."))
+
+        # Retry any cleanup that failed during the original
+        # cancellation BEFORE we clear the old FKs (we lose the
+        # ability to reach the old resources once the FKs go).
+        self._retry_pending_cleanup()
 
         new_plan = self.env['saas.plan'].browse(int(new_plan_id))
         if not new_plan.exists() or new_plan.is_trial_plan:
@@ -8513,6 +8866,15 @@ class SaasInstance(models.Model):
             'daily_backup_pending_invoice_id': False,
             'daily_backup_next_invoice_date': False,
             'daily_backup_last_invoice_date': False,
+            # Saved card + auto-renew are tied to the previous
+            # subscription. Reactivation is a fresh commitment; force
+            # the customer to opt in again so the new subscription
+            # never charges an old card without explicit consent
+            # (also avoids PCI surprises if the customer changed banks
+            # during the cancellation window).
+            'payment_token_id': False,
+            'auto_renew_subscription': True,
+            'auto_renew_daily_backup': True,
             # retained_backup_path is intentionally NOT cleared
             # Reset restore banner so client sees the option again
             'restore_banner_dismissed': False,
