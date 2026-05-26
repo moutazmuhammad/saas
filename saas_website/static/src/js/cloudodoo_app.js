@@ -1373,11 +1373,10 @@ function initCustomPlanBuilder() {
         var recEl = document.querySelector('#workers-recommendation .rec-users');
         if (recEl) recEl.textContent = '~' + minUsers + '–' + maxUsers;
 
-        // Update price breakdown (always shows monthly unit prices)
+        // Resource counts only — per-resource pricing is an internal
+        // calculation and is intentionally not shown to the customer.
         setText('summary-workers', workers);
         setText('summary-storage', storage);
-        setText('summary-workers-cost', CloudOdoo.formatCurrency(workersCost, config.currency) + '/mo');
-        setText('summary-storage-cost', CloudOdoo.formatCurrency(storageCost, config.currency) + '/mo');
 
         // Toggle monthly/yearly display
         var monthlyDisplay = document.getElementById('summary-monthly-display');
@@ -1401,16 +1400,8 @@ function initCustomPlanBuilder() {
         setText('summary-min-users', minUsers);
         setText('summary-max-users', maxUsers);
 
-        // Calculate backup count (same formula as backend)
-        var wRange = Math.max(1, config.maxWorkers - config.minWorkers);
-        var sRange = Math.max(1, config.maxStorage - config.minStorage);
-        var wPct = (workers - config.minWorkers) / wRange;
-        var sPct = (storage - config.minStorage) / sRange;
-        var planSize = (wPct + sPct) / 2.0;
-        var backupCount = Math.max(config.minBackups, Math.min(config.maxBackups,
-            config.minBackups + Math.round(planSize * (config.maxBackups - config.minBackups))
-        ));
-        setText('summary-backups', backupCount);
+        // Backups are a separate paid add-on, not bundled into the
+        // plan, so there's no backup-count line on the builder.
 
         // Update CTA link
         var ctaEl = document.getElementById('custom-plan-cta');
@@ -1603,16 +1594,9 @@ function initUpgradePlanBuilder() {
             setText('upgrade-summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
         }
 
-        // Calculate backup count
-        var wRange = Math.max(1, config.maxWorkers - config.minWorkers);
-        var sRange = Math.max(1, config.maxStorage - config.minStorage);
-        var wPct = (workers - config.minWorkers) / wRange;
-        var sPct = (storage - config.minStorage) / sRange;
-        var planSize = (wPct + sPct) / 2.0;
-        var backupCount = Math.max(config.minBackups, Math.min(config.maxBackups,
-            config.minBackups + Math.round(planSize * (config.maxBackups - config.minBackups))
-        ));
-        setText('upgrade-summary-backups', backupCount);
+        // Backups are now a separate paid add-on (configured from the
+        // instance's Snapshots page after deployment), not bundled
+        // with the plan — so no backup-count line on this builder.
 
         // Update hidden form fields
         var formWorkers = document.getElementById('upgrade-form-workers');
@@ -1788,19 +1772,12 @@ function initHostingPlanBuilder() {
         if (wInput && wInput !== document.activeElement) wInput.value = workers;
         if (sInput && sInput !== document.activeElement) sInput.value = storage;
 
+        // Resource counts only — per-resource pricing is an internal
+        // calculation and is intentionally not shown to the customer.
+        // Backup count is no longer shown either (backups are a paid
+        // add-on configured separately, not bundled with the plan).
         setText('hosting-summary-workers', workers);
         setText('hosting-summary-storage', storage);
-        setText('hosting-summary-workers-cost', CloudOdoo.formatCurrency(workersCost, config.currency) + '/mo');
-        setText('hosting-summary-storage-cost', CloudOdoo.formatCurrency(storageCost, config.currency) + '/mo');
-
-        // Backup count
-        var wRange = Math.max(1, config.maxWorkers - config.minWorkers);
-        var sRange = Math.max(1, config.maxStorage - config.minStorage);
-        var planSize = ((workers - config.minWorkers) / wRange + (storage - config.minStorage) / sRange) / 2.0;
-        var backupCount = Math.max(config.minBackups, Math.min(config.maxBackups,
-            config.minBackups + Math.round(planSize * (config.maxBackups - config.minBackups))
-        ));
-        setText('hosting-summary-backups', backupCount);
 
         // Toggle monthly/yearly
         var monthlyDisplay = document.getElementById('hosting-summary-monthly-display');
