@@ -23,15 +23,28 @@
                                 Manage your account, instances, and billing from here.
                             </p>
                         </div>
-                        <div class="dropdown mt-2 mt-md-0">
-                            <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
-                                <i class="fas fa-plus me-1"></i>New Instance
-                            </button>
-                            <ul class="dropdown-menu">
-                                <li><a class="dropdown-item" href="/services"><i class="fas fa-cubes me-2"></i>Service</a></li>
-                                <li><a class="dropdown-item" href="/hosting"><i class="fas fa-server me-2"></i>Hosting</a></li>
-                            </ul>
-                        </div>
+                        <!-- The Services section is hidden site-wide when the
+                             operator disables it from Settings → SaaS. Skip
+                             the dropdown entirely in that case — go straight
+                             to /hosting (the only remaining option). -->
+                        <t t-set="_show_services"
+                           t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_services_section', 'True') != 'False'"/>
+                        <t t-if="_show_services">
+                            <div class="dropdown mt-2 mt-md-0">
+                                <button class="btn btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                    <i class="fas fa-plus me-1"></i>New Instance
+                                </button>
+                                <ul class="dropdown-menu">
+                                    <li><a class="dropdown-item" href="/services"><i class="fas fa-cubes me-2"></i>Service</a></li>
+                                    <li><a class="dropdown-item" href="/hosting"><i class="fas fa-server me-2"></i>Hosting</a></li>
+                                </ul>
+                            </div>
+                        </t>
+                        <t t-else="">
+                            <a href="/hosting" class="btn btn-primary mt-2 mt-md-0">
+                                <i class="fas fa-plus me-1"></i>New Hosting
+                            </a>
+                        </t>
                     </div>
 
                     <!-- Quick action cards -->
@@ -263,7 +276,12 @@
                                                     t-esc="option[1]['label']"/>
                                         </t>
                                     </select>
-                                    <t t-if="active_type == 'hosting'">
+                                    <!-- Skip the Service entry (and the
+                                         "New Service" CTA) when the operator
+                                         has hidden the Services section. -->
+                                    <t t-set="_show_services"
+                                       t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_services_section', 'True') != 'False'"/>
+                                    <t t-if="active_type == 'hosting' or not _show_services">
                                         <a href="/hosting" class="btn btn-primary btn-sm">
                                             <i class="fas fa-plus me-1"></i>New Hosting
                                         </a>
@@ -287,17 +305,25 @@
                                 </div>
                             </div>
 
-                            <!-- Type filter tabs -->
-                            <t t-if="services_count > 0 or hosting_count > 0">
+                            <!-- Type filter tabs. The Services tab is hidden
+                                 when the customer has no service instances
+                                 AND the Services section is disabled site-
+                                 wide — otherwise a stale "Services 0" tab
+                                 keeps appearing. Customers with existing
+                                 services keep their tab so they can still
+                                 manage them. -->
+                                <t t-if="services_count > 0 or hosting_count > 0">
                                 <div class="d-flex gap-2 mb-3">
                                     <a t-attf-href="/my/instances?sortby=#{sortby}"
                                        t-attf-class="btn btn-sm #{'btn-primary' if active_type == 'all' else 'btn-outline-secondary'}">
                                         All <span class="badge bg-light text-dark ms-1"><t t-esc="all_count"/></span>
                                     </a>
-                                    <a t-attf-href="/my/instances?sortby=#{sortby}&amp;itype=services"
-                                       t-attf-class="btn btn-sm #{'btn-primary' if active_type == 'services' else 'btn-outline-secondary'}">
-                                        <i class="fas fa-cubes me-1"></i>Services <span class="badge bg-light text-dark ms-1"><t t-esc="services_count"/></span>
-                                    </a>
+                                    <t t-if="services_count > 0 or _show_services">
+                                        <a t-attf-href="/my/instances?sortby=#{sortby}&amp;itype=services"
+                                           t-attf-class="btn btn-sm #{'btn-primary' if active_type == 'services' else 'btn-outline-secondary'}">
+                                            <i class="fas fa-cubes me-1"></i>Services <span class="badge bg-light text-dark ms-1"><t t-esc="services_count"/></span>
+                                        </a>
+                                    </t>
                                     <a t-attf-href="/my/instances?sortby=#{sortby}&amp;itype=hosting"
                                        t-attf-class="btn btn-sm #{'btn-primary' if active_type == 'hosting' else 'btn-outline-secondary'}">
                                         <i class="fas fa-server me-1"></i>Hosting <span class="badge bg-light text-dark ms-1"><t t-esc="hosting_count"/></span>
