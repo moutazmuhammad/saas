@@ -89,7 +89,7 @@
                                         <!-- English -->
                                         <li>
                                             <a class="dropdown-item d-flex align-items-center"
-                                               t-att-href="'/website/lang/' + (_en_lang.url_code or 'en_US') + '?r=' + (request.httprequest.full_path or '/')">
+                                               t-att-href="'/saas/switch-lang/en_US?r=' + (request.httprequest.path or '/')">
                                                 <span class="me-2" style="display:inline-block;width:22px;">🇬🇧</span>
                                                 English
                                                 <t t-if="_cur_lang == 'en_US'">
@@ -100,7 +100,7 @@
                                         <!-- Arabic -->
                                         <li>
                                             <a class="dropdown-item d-flex align-items-center"
-                                               t-att-href="'/website/lang/' + (_ar_lang.url_code or 'ar_001') + '?r=' + (request.httprequest.full_path or '/')">
+                                               t-att-href="'/saas/switch-lang/ar_001?r=' + (request.httprequest.path or '/')">
                                                 <span class="me-2" style="display:inline-block;width:22px;">🇸🇦</span>
                                                 العربية
                                                 <t t-if="_cur_lang == 'ar_001'">

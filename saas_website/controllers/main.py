@@ -613,6 +613,64 @@ class SaasWebsite(http.Controller):
         return request.render('saas_website.portal_docs_page', {})
 
     # ==================================================================
+    #  Language switch  –  /saas/switch-lang/<code>
+    # ==================================================================
+    # We can't use Odoo's stock /website/lang/<url_code> route because
+    # its ``request.redirect()`` doesn't reliably prepend the URL
+    # language prefix (``/ar/``) for non-default languages — the
+    # cookie gets set but the customer lands back on a URL without
+    # the prefix, and Odoo's multilang router treats prefix-less URLs
+    # as the default language regardless of the cookie. This route
+    # does the prefix-handling explicitly + sets the cookie, so
+    # clicking "العربية" actually lands on ``/ar/...`` (or strips
+    # ``/ar/`` when switching back to English).
+    @http.route(
+        '/saas/switch-lang/<string:code>',
+        type='http', auth='public', website=True,
+        sitemap=False, multilang=False,
+    )
+    def saas_switch_lang(self, code, r='/', **kwargs):
+        Lang = request.env['res.lang'].sudo().with_context(active_test=False)
+        # Accept either the full code (``ar_001``) or the short
+        # url_code (``ar``) so callers don't have to guess.
+        lang = Lang.search(['|', ('code', '=', code), ('url_code', '=', code)], limit=1)
+        if not lang or not lang.active:
+            return request.redirect('/')
+
+        # Compute the destination path with the right language prefix.
+        # Strip any existing language prefix first so switching
+        # between non-default languages also works (no double-prefix).
+        target = r or '/'
+        if not target.startswith('/'):
+            target = '/' + target
+        # If the website is a multilang site, every language with a
+        # non-empty ``url_code`` may appear as a path prefix. Strip
+        # whichever one matches the current target so we can apply
+        # the new one cleanly.
+        website = request.website
+        all_langs = website.language_ids
+        for other in all_langs:
+            if other.url_code:
+                pref = '/' + other.url_code
+                if target == pref or target.startswith(pref + '/'):
+                    target = target[len(pref):] or '/'
+                    break
+
+        # Add the new prefix unless this is the website's default
+        # language (default lang serves at the root, no prefix).
+        if lang != website.default_lang_id and lang.url_code:
+            if target == '/':
+                target = '/' + lang.url_code
+            else:
+                target = '/' + lang.url_code + target
+
+        response = request.redirect(target)
+        # ``frontend_lang`` is the cookie Odoo's website middleware
+        # consults to remember the customer's choice across requests.
+        response.set_cookie('frontend_lang', lang.code)
+        return response
+
+    # ==================================================================
     #  6. Hosting  –  /hosting
     # ==================================================================
 
