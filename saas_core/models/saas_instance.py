@@ -7380,9 +7380,14 @@ class SaasInstance(models.Model):
                 '-e %s=%s' % (k, shlex.quote(str(v)))
                 for k, v in env.items()
             )
+        # ``import odoo`` no longer auto-imports the ``tools`` submodule
+        # in current Odoo (was implicit in older versions). The explicit
+        # ``import odoo.tools`` keeps ``odoo.tools.config`` reachable
+        # from the script regardless of upstream version.
         prelude = (
             "import os, sys\n"
             "import odoo\n"
+            "import odoo.tools\n"
             "odoo.tools.config.parse_config(['-c','/etc/odoo/odoo.conf'])\n"
         )
         full_script = prelude + py_script
