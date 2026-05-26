@@ -1017,36 +1017,24 @@ class SaasInstance(models.Model):
             ))
 
         # Daily-backup billing is ALWAYS monthly, independent of the
-        # main subscription's period. Prorate the activation invoice
-        # from today to the first day of next month, denominated in
-        # this calendar month's length so a same-day enable on (say)
-        # Jan 5 charges (days remaining in Jan) / 31. The monthly
-        # renewal cron then takes over from that anchor date.
+        # main subscription's period. No proration on activation:
+        # the customer can't disable from the portal, so enabling is
+        # a monthly commitment — charge the full month and anchor the
+        # next-invoice date to the first day of next month so the
+        # monthly renewal cron picks up cleanly from there.
         today = fields.Date.today()
-        cycle_end = (today + relativedelta(months=1)).replace(day=1)
-        month_start = today.replace(day=1)
-        cycle_days = (month_start + relativedelta(months=1) - month_start).days
-        remaining_days = max(1, min((cycle_end - today).days, cycle_days))
-        prorated_price = round(
-            monthly_price * remaining_days / cycle_days, 2,
-        )
+        next_invoice = (today + relativedelta(months=1)).replace(day=1)
 
         product = self._get_daily_backup_product()
         pricelist = self.partner_id.property_product_pricelist
         line_name = _(
-            'Daily Backups Add-on (monthly, prorated %(days)s/%(total)s '
-            'days through %(end)s) — %(instance)s'
-        ) % {
-            'days': remaining_days,
-            'total': cycle_days,
-            'end': cycle_end.strftime('%Y-%m-%d'),
-            'instance': self.name or self.subdomain,
-        }
+            'Daily Backups Add-on (monthly) — %s'
+        ) % (self.name or self.subdomain)
         order_lines = [(0, 0, {
             'product_id': product.id,
             'name': line_name,
             'product_uom_qty': 1,
-            'price_unit': prorated_price,
+            'price_unit': monthly_price,
         })]
 
         # Retention surcharge — added only once, on the first
@@ -1085,10 +1073,9 @@ class SaasInstance(models.Model):
         self.daily_backup_pending_invoice_id = invoice.id
         self._append_log(
             "Daily-backup add-on activation invoice %s created — "
-            "%s/%s days, prorated %.2f (full monthly price %.2f)%s."
+            "full month %.2f%s."
             % (
-                invoice.name, remaining_days, cycle_days,
-                prorated_price, monthly_price,
+                invoice.name, monthly_price,
                 (' + %.2f retention surcharge' % retention_surcharge)
                 if retention_surcharge > 0 else '',
             )

@@ -1328,24 +1328,12 @@ class SaasPortal(CustomerPortal):
         )
         invoice_access_token = invoice._portal_ensure_token()
 
-        # Proration breakdown for the order-summary table. Daily backups
-        # are billed monthly regardless of the main plan's period, so
-        # the cycle here is always the current calendar month and the
-        # remaining window is today → first of next month.
+        # No proration on activation: snapshot subscription is a flat
+        # monthly commitment (the customer can't disable from the
+        # portal, so we charge the full month whether they enable on
+        # the 1st or the 28th). Renewal cron then bills monthly from
+        # the first day of next month onward.
         monthly_price = instance.sudo()._get_daily_backup_price()
-        full_period_price = monthly_price
-        today = fields.Date.today()
-        cycle_end = (today + relativedelta(months=1)).replace(day=1)
-        month_start = today.replace(day=1)
-        cycle_days = (month_start + relativedelta(months=1) - month_start).days
-        remaining_days = max(1, min((cycle_end - today).days, cycle_days))
-
-        # Pre-computed prorated subscription amount (without surcharge)
-        # so the order-summary template can render the discount line
-        # correctly even when a retention surcharge is also present.
-        prorated_subscription = round(
-            full_period_price * remaining_days / cycle_days, 2,
-        )
         # Retention surcharge — only on the first activation after a
         # reactivation where we kept a snapshot for the customer.
         retention_surcharge = 0.0
@@ -1358,11 +1346,6 @@ class SaasPortal(CustomerPortal):
             'invoice': invoice,
             'monthly_price': monthly_price,
             'period': 'monthly',
-            'full_period_price': full_period_price,
-            'prorated_subscription': prorated_subscription,
-            'cycle_days': cycle_days,
-            'remaining_days': remaining_days,
-            'cycle_end': cycle_end,
             'retention_surcharge': retention_surcharge,
             'page_name': 'saas_daily_backup_checkout',
             # Same shape as portal_checkout uses, so the same
