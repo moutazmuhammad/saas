@@ -613,6 +613,89 @@ class SaasWebsite(http.Controller):
         return request.render('saas_website.portal_docs_page', {})
 
     # ==================================================================
+    #  Fix: force-add Arabic to the current website  –  /saas/fix-arabic
+    # ==================================================================
+    # Manual one-click fix in case the migration script's
+    # ``website.write({'language_ids': [(4, lang.id)]})`` line didn't
+    # persist (we've seen this happen in some Odoo 18.x builds where
+    # the m2m write needs an explicit cr.commit() inside the migration
+    # context, or the write happens against an env that doesn't
+    # propagate). Hitting this URL while logged in as a SaaS manager
+    # ensures Arabic ends up in every website's language_ids.
+    @http.route(
+        '/saas/fix-arabic',
+        type='http', auth='user', website=True,
+        sitemap=False, multilang=False,
+    )
+    def saas_fix_arabic(self, **kwargs):
+        if not request.env.user.has_group('saas_core.group_saas_manager'):
+            return request.make_response(
+                'Forbidden — must be a SaaS manager.',
+                headers=[('Content-Type', 'text/plain')],
+                status=403,
+            )
+
+        Lang = request.env['res.lang'].sudo().with_context(active_test=False)
+        ar = Lang.search([('code', '=', 'ar_001')], limit=1)
+        out = []
+        out.append('=== SAAS FIX-ARABIC ===')
+
+        if not ar:
+            out.append('FATAL: ar_001 not found in res.lang.')
+            return request.make_response('\n'.join(out), headers=[('Content-Type', 'text/plain; charset=utf-8')])
+
+        if not ar.active:
+            ar.write({'active': True})
+            request.env.cr.commit()
+            out.append('Flipped ar_001.active to True (was False).')
+        else:
+            out.append('ar_001.active already True.')
+
+        Website = request.env['website'].sudo()
+        websites = Website.search([])
+        out.append('Found %d website(s).' % len(websites))
+
+        for w in websites:
+            current_codes = w.language_ids.mapped('code')
+            out.append('--- Website %s (id=%s) ---' % (w.name, w.id))
+            out.append('  Before: %s' % current_codes)
+            if 'ar_001' in current_codes:
+                out.append('  Skipping — Arabic already linked.')
+                continue
+            try:
+                w.write({'language_ids': [(4, ar.id)]})
+                request.env.cr.commit()
+                # Re-read after commit to confirm persistence.
+                w.invalidate_recordset(['language_ids'])
+                after_codes = w.language_ids.mapped('code')
+                if 'ar_001' in after_codes:
+                    out.append('  OK — Arabic linked. After: %s' % after_codes)
+                else:
+                    out.append(
+                        '  WARNING — write returned cleanly but '
+                        'language_ids is still %s after commit.' % after_codes
+                    )
+            except Exception as e:
+                request.env.cr.rollback()
+                out.append('  FAILED with %s: %s' % (type(e).__name__, e))
+
+        # Bust the cached ``_get_frontend`` so the next request sees
+        # the new language list immediately.
+        try:
+            request.env.registry.clear_cache()
+            out.append('Cleared registry cache.')
+        except Exception as e:
+            out.append('Could not clear cache: %s' % e)
+
+        out.append('')
+        out.append('Done. Hit /saas/debug-lang to verify, then try the '
+                   'language switcher again.')
+        return request.make_response(
+            '\n'.join(out),
+            headers=[('Content-Type', 'text/plain; charset=utf-8')],
+        )
+
+    # ==================================================================
     #  Debug: language configuration  –  /saas/debug-lang
     # ==================================================================
     @http.route(
