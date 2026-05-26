@@ -348,6 +348,21 @@ class SaasInstance(models.Model):
         copy=False,
         help='Most recent month the daily-backup add-on was billed for.',
     )
+    # Set to True by ``_do_delete_instance`` when a snapshot is
+    # retained at cancellation time. Cleared by the daily-backup
+    # payment hook in ``account_move`` when the customer pays the
+    # next activation invoice. While True, ``action_purchase_daily_backup``
+    # appends a one-time retention-surcharge line so the customer
+    # covers the storage cost we ate during their cancellation period.
+    pending_retention_surcharge = fields.Boolean(
+        string='Snapshot Retention Surcharge Pending',
+        copy=False,
+        default=False,
+        help='Flag set on cancellation when a snapshot is retained, '
+             'cleared on payment of the next daily-backup activation '
+             'invoice. While True, the next activation invoice carries '
+             'an extra one-time fee for retaining the snapshot.',
+    )
 
     @api.depends('daily_backup_enabled')
     def _compute_daily_backup_monthly_price(self):
@@ -934,6 +949,25 @@ class SaasInstance(models.Model):
         except (TypeError, ValueError):
             return 0.0
 
+    def _get_snapshot_retention_surcharge(self):
+        """One-time fee for keeping a snapshot through cancellation.
+
+        Operator-configurable in SaaS settings under the parameter
+        ``saas_master.hosting_snapshot_retention_surcharge``. Added
+        to the customer's first daily-backup activation invoice
+        after reactivation, *only* if their cancellation left a
+        retained snapshot in storage (see ``_do_delete_instance``
+        and ``pending_retention_surcharge``).
+        """
+        try:
+            return float(
+                self.env['ir.config_parameter'].sudo().get_param(
+                    'saas_master.hosting_snapshot_retention_surcharge', '0.0',
+                )
+            )
+        except (TypeError, ValueError):
+            return 0.0
+
     def action_purchase_daily_backup(self):
         """Create an unpaid invoice for the backup add-on.
 
@@ -1008,15 +1042,39 @@ class SaasInstance(models.Model):
             'end': cycle_end.strftime('%Y-%m-%d'),
             'instance': self.name or self.subdomain,
         }
+        order_lines = [(0, 0, {
+            'product_id': product.id,
+            'name': line_name,
+            'product_uom_qty': 1,
+            'price_unit': prorated_price,
+        })]
+
+        # Retention surcharge — added only once, on the first
+        # activation invoice after the customer comes back from a
+        # cancellation that retained a snapshot. The flag is cleared
+        # by the payment hook in account_move once this invoice is
+        # paid, so subsequent enables (e.g. customer disables then
+        # re-enables in the future without cancelling) don't re-charge.
+        retention_surcharge = 0.0
+        if self.pending_retention_surcharge:
+            retention_surcharge = self._get_snapshot_retention_surcharge()
+            if retention_surcharge > 0:
+                surcharge_label = _(
+                    'Snapshot retention fee — one-time charge for '
+                    'keeping your last snapshot in cloud storage '
+                    'through the cancellation period.'
+                )
+                order_lines.append((0, 0, {
+                    'product_id': product.id,
+                    'name': surcharge_label,
+                    'product_uom_qty': 1,
+                    'price_unit': retention_surcharge,
+                }))
+
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': ORIGIN_BACKUP_ADDON % (self.name or self.subdomain),
-            'order_line': [(0, 0, {
-                'product_id': product.id,
-                'name': line_name,
-                'product_uom_qty': 1,
-                'price_unit': prorated_price,
-            })],
+            'order_line': order_lines,
         }
         if pricelist:
             order_vals['pricelist_id'] = pricelist.id
@@ -1027,10 +1085,12 @@ class SaasInstance(models.Model):
         self.daily_backup_pending_invoice_id = invoice.id
         self._append_log(
             "Daily-backup add-on activation invoice %s created — "
-            "%s/%s days, prorated %.2f (full monthly price %.2f)."
+            "%s/%s days, prorated %.2f (full monthly price %.2f)%s."
             % (
                 invoice.name, remaining_days, cycle_days,
                 prorated_price, monthly_price,
+                (' + %.2f retention surcharge' % retention_surcharge)
+                if retention_surcharge > 0 else '',
             )
         )
         return invoice
@@ -3595,11 +3655,20 @@ class SaasInstance(models.Model):
         # snapshot — both wrong. The customer can re-subscribe after
         # they reactivate; ``action_reactivate`` already clears these
         # again as a belt-and-braces.
+        #
+        # ``pending_retention_surcharge`` is set when we have an actual
+        # retained snapshot — the next time the customer enables Daily
+        # Backups (typically after reactivation), they'll be charged a
+        # one-time fee on top of the regular activation invoice for
+        # keeping that snapshot in cloud storage during cancellation.
+        # If nothing was retained (instance was never deployed, no
+        # snapshot to keep), there's nothing extra to charge for.
         self.write({
             'daily_backup_enabled': False,
             'daily_backup_pending_invoice_id': False,
             'daily_backup_next_invoice_date': False,
             'daily_backup_last_invoice_date': False,
+            'pending_retention_surcharge': bool(retained_backup),
         })
         if retained_backup:
             self._append_log(

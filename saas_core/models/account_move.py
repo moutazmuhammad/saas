@@ -69,6 +69,11 @@ class AccountMove(models.Model):
                 'daily_backup_pending_invoice_id': False,
                 'daily_backup_last_invoice_date': today,
                 'daily_backup_next_invoice_date': next_invoice,
+                # Surcharge for retaining the snapshot through
+                # cancellation has been paid (it rode along on this
+                # activation invoice if it was set) — clear the
+                # flag so a future enable doesn't re-charge.
+                'pending_retention_surcharge': False,
             })
             instance._append_log(
                 "Daily backups enabled — add-on payment received. "

@@ -1340,6 +1340,18 @@ class SaasPortal(CustomerPortal):
         cycle_days = (month_start + relativedelta(months=1) - month_start).days
         remaining_days = max(1, min((cycle_end - today).days, cycle_days))
 
+        # Pre-computed prorated subscription amount (without surcharge)
+        # so the order-summary template can render the discount line
+        # correctly even when a retention surcharge is also present.
+        prorated_subscription = round(
+            full_period_price * remaining_days / cycle_days, 2,
+        )
+        # Retention surcharge — only on the first activation after a
+        # reactivation where we kept a snapshot for the customer.
+        retention_surcharge = 0.0
+        if instance.sudo().pending_retention_surcharge:
+            retention_surcharge = instance.sudo()._get_snapshot_retention_surcharge()
+
         values = self._prepare_portal_layout_values()
         values.update({
             'instance': instance,
@@ -1347,9 +1359,11 @@ class SaasPortal(CustomerPortal):
             'monthly_price': monthly_price,
             'period': 'monthly',
             'full_period_price': full_period_price,
+            'prorated_subscription': prorated_subscription,
             'cycle_days': cycle_days,
             'remaining_days': remaining_days,
             'cycle_end': cycle_end,
+            'retention_surcharge': retention_surcharge,
             'page_name': 'saas_daily_backup_checkout',
             # Same shape as portal_checkout uses, so the same
             # ``payment.form`` macro renders.

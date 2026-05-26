@@ -3058,10 +3058,25 @@
                                                 (through <t t-esc="cycle_end.strftime('%Y-%m-%d')"/>)
                                             </td>
                                             <td class="text-end">
-                                                -<t t-esc="full_period_price - amount"
+                                                -<t t-esc="full_period_price - prorated_subscription"
                                                     t-options="{'widget': 'monetary', 'display_currency': currency}"/>
                                             </td>
                                         </tr>
+                                        <t t-if="retention_surcharge and retention_surcharge &gt; 0">
+                                            <tr style="color:var(--warning);">
+                                                <td>
+                                                    <i class="fas fa-archive me-1"></i>
+                                                    Snapshot retention fee
+                                                    <div class="small text-muted" style="font-weight:normal;">
+                                                        One-time charge for keeping your most recent snapshot in cloud storage through the cancellation period — paid once on first activation after reactivation.
+                                                    </div>
+                                                </td>
+                                                <td class="text-end">
+                                                    +<t t-esc="retention_surcharge"
+                                                        t-options="{'widget': 'monetary', 'display_currency': currency}"/>
+                                                </td>
+                                            </tr>
+                                        </t>
                                     </tbody>
                                     <tfoot>
                                         <tr>

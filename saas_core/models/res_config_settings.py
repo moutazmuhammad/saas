@@ -174,6 +174,15 @@ class ResConfigSettings(models.TransientModel):
              'instances. Charged in addition to workers / storage. Retention '
              'is fixed at 7 days per database.',
     )
+    saas_hosting_snapshot_retention_surcharge = fields.Float(
+        string='Hosting: Snapshot Retention Surcharge (post-cancellation)',
+        config_parameter='saas_master.hosting_snapshot_retention_surcharge',
+        default=0.0,
+        help='One-time fee charged on the first Daily Backups activation '
+             'invoice AFTER a reactivation, only when we kept a snapshot in '
+             'cloud storage through the cancellation period. Covers the '
+             'storage cost. Set to 0 to disable.',
+    )
     saas_hosting_min_backups = fields.Integer(
         string='Hosting: Min Backups',
         config_parameter='saas_master.hosting_min_backups',
