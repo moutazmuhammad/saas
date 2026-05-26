@@ -59,11 +59,18 @@ class AccountMove(models.Model):
                 instance.subdomain,
                 instance.daily_backup_pending_invoice_id.name,
             )
-            # Activation payment covers today → first of next month.
-            # Anchor the monthly billing cycle there so the renewal
-            # cron starts charging the customer on day 1 of next month.
+            # Capture the tokenized card (if customer ticked "Save my
+            # card") so the monthly renewal cron can auto-charge.
+            instance._capture_payment_token_from_invoice(
+                instance.daily_backup_pending_invoice_id,
+            )
+            # Flat monthly fee — the customer paid for one full month
+            # starting today, so the next invoice is anchored exactly
+            # one month after the activation date (not on the 1st of
+            # next month — that would short the customer's first
+            # period whenever they activate mid-month).
             today = fields.Date.today()
-            next_invoice = (today + relativedelta(months=1)).replace(day=1)
+            next_invoice = today + relativedelta(months=1)
             instance.write({
                 'daily_backup_enabled': True,
                 'daily_backup_pending_invoice_id': False,
@@ -130,6 +137,14 @@ class AccountMove(models.Model):
         for instance in instances:
             instance.state = 'paid'
             instance._set_next_invoice_date()
+            # Save the card (if customer ticked "Save my card") so
+            # the recurring-billing cron can auto-renew.
+            paid_for_instance = paid_invoices.filtered(
+                lambda inv: inv.line_ids.sale_line_ids.order_id.id
+                in instance.sale_order_id.ids
+            )
+            if paid_for_instance:
+                instance._capture_payment_token_from_invoice(paid_for_instance[:1])
             instance._append_log("Payment received.")
             instance.message_post(
                 body=_("Payment received. Deploying instance automatically."),
@@ -157,6 +172,15 @@ class AccountMove(models.Model):
                 method = '_apply_pending_upgrade'
             else:
                 method = '_apply_pending_plan_change'
+            # Capture saved card if the upgrade payment carried a token —
+            # gives customers without a previously-saved card a chance to
+            # opt in here too.
+            paid_for_instance = paid_invoices.filtered(
+                lambda inv: inv.line_ids.sale_line_ids.order_id.id
+                in instance.sale_order_id.ids
+            )
+            if paid_for_instance:
+                instance._capture_payment_token_from_invoice(paid_for_instance[:1])
             _logger.info(
                 "SaaS instance %s: payment received, applying %s.",
                 instance.subdomain, method,

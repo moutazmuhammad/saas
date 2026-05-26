@@ -1283,6 +1283,123 @@
                                 </t>
                             </div>
 
+                            <!-- Billing & Auto-renew (hide for trials,
+                                 cancelled, draft / pending_payment) -->
+                            <t t-set="_billing_visible"
+                               t-value="not instance.is_trial and instance.state not in ('cancelled', 'cancelled_by_client', 'draft', 'pending_payment')"/>
+                            <t t-if="_billing_visible">
+                                <div class="info-card mt-4">
+                                    <h6 class="text-muted text-uppercase small mb-3">
+                                        <i class="fas fa-credit-card me-1"></i>Billing &amp; Auto-renew
+                                    </h6>
+
+                                    <!-- Saved card -->
+                                    <div class="mb-3">
+                                        <div class="text-muted small mb-1">Saved card</div>
+                                        <t t-if="instance.payment_token_id and instance.payment_token_id.active">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <i class="fas fa-credit-card me-1"></i>
+                                                    <span t-esc="instance.payment_token_id.display_name"/>
+                                                </div>
+                                                <form t-attf-action="/my/instances/#{instance.id}/billing/remove-card"
+                                                      method="post" style="display:inline;">
+                                                    <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                                                            data-confirm="Remove the saved card? Auto-renew will be disabled until you add a new card."
+                                                            data-confirm-variant="warning"
+                                                            data-confirm-yes="Yes, remove"
+                                                            data-confirm-no="Cancel"
+                                                            data-loading-text="Removing...">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </t>
+                                        <t t-else="">
+                                            <div class="small" style="color:var(--co-text-muted,#71717A);">
+                                                No card on file. Pay your next invoice with
+                                                "Save my card" ticked to enable auto-renew.
+                                            </div>
+                                        </t>
+                                    </div>
+
+                                    <!-- Auto-renew subscription -->
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input"
+                                               type="checkbox"
+                                               id="auto-renew-sub-toggle"
+                                               t-att-checked="instance.auto_renew_subscription or None"
+                                               t-att-disabled="None if instance.payment_token_id else 'disabled'"
+                                               t-att-data-instance-id="instance.id"
+                                               data-kind="subscription"/>
+                                        <label class="form-check-label" for="auto-renew-sub-toggle">
+                                            Auto-renew subscription
+                                            <div class="small" style="color:var(--co-text-muted,#71717A);">
+                                                Charge the saved card on each renewal.
+                                            </div>
+                                        </label>
+                                    </div>
+
+                                    <!-- Auto-renew daily backups (hosting only) -->
+                                    <t t-if="is_hosting and instance.daily_backup_enabled">
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input"
+                                                   type="checkbox"
+                                                   id="auto-renew-snap-toggle"
+                                                   t-att-checked="instance.auto_renew_daily_backup or None"
+                                                   t-att-disabled="None if instance.payment_token_id else 'disabled'"
+                                                   t-att-data-instance-id="instance.id"
+                                                   data-kind="snapshot"/>
+                                            <label class="form-check-label" for="auto-renew-snap-toggle">
+                                                Auto-renew Daily Backups
+                                                <div class="small" style="color:var(--co-text-muted,#71717A);">
+                                                    Charge the saved card on the monthly add-on invoice.
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </t>
+
+                                    <t t-if="not instance.payment_token_id">
+                                        <div class="small mt-2" style="color:var(--co-text-muted,#71717A);">
+                                            <i class="fas fa-info-circle me-1"></i>
+                                            Auto-renew toggles unlock once a card is saved.
+                                        </div>
+                                    </t>
+                                </div>
+
+                                <!-- Submit-on-change script for auto-renew toggles. POSTs
+                                     to /billing/auto-renew with kind + new value; reverts
+                                     the checkbox if the server returned non-ok. -->
+                                <script>
+                                    (function(){
+                                        function bind(id){
+                                            var cb = document.getElementById(id);
+                                            if (!cb) return;
+                                            cb.addEventListener('change', function(){
+                                                var fd = new FormData();
+                                                fd.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+                                                fd.append('kind', cb.dataset.kind);
+                                                fd.append('enabled', cb.checked ? '1' : '0');
+                                                fetch('/my/instances/' + cb.dataset.instanceId + '/billing/auto-renew', {
+                                                    method: 'POST',
+                                                    body: fd,
+                                                    credentials: 'same-origin',
+                                                }).then(function(r){ return r.json(); })
+                                                  .then(function(data){
+                                                      if (!data || !data.ok) {
+                                                          cb.checked = !cb.checked;
+                                                      }
+                                                  })
+                                                  .catch(function(){ cb.checked = !cb.checked; });
+                                            });
+                                        }
+                                        bind('auto-renew-sub-toggle');
+                                        bind('auto-renew-snap-toggle');
+                                    })();
+                                </script>
+                            </t>
+
                             <!-- Project Info (hosting instances) -->
                             <t t-if="is_hosting">
                                 <div class="info-card mt-4">
@@ -3026,7 +3143,7 @@
                                                 Daily Backups Add-on
                                                 <span class="badge ms-2 bg-info">Monthly</span>
                                                 <div class="small text-muted">
-                                                    Flat monthly fee — no proration. Once enabled, the next charge is on the 1st of the following month.
+                                                    Flat monthly fee — no proration. Once enabled, the next charge is one full month after today's payment.
                                                 </div>
                                             </td>
                                             <td class="text-end">

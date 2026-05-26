@@ -340,8 +340,9 @@ class SaasInstance(models.Model):
         string='Daily Backup Next Invoice',
         copy=False,
         help='When the next monthly daily-backup invoice is due. Set '
-             'on activation payment to first day of next month, then '
-             'advanced by one month each renewal.',
+             'on activation payment to one full month after the '
+             'activation date (no proration), then advanced by one '
+             'month each renewal.',
     )
     daily_backup_last_invoice_date = fields.Date(
         string='Daily Backup Last Invoice',
@@ -362,6 +363,40 @@ class SaasInstance(models.Model):
              'cleared on payment of the next daily-backup activation '
              'invoice. While True, the next activation invoice carries '
              'an extra one-time fee for retaining the snapshot.',
+    )
+
+    # ---------- Saved card + auto-renewal ----------
+    # ``payment_token_id`` holds the saved card that renewal crons
+    # charge automatically. It's captured the first time the customer
+    # pays an activation invoice with "Save my card" ticked. The
+    # customer can clear it at any time from the portal billing
+    # settings; clearing it disables both auto-renew toggles.
+    payment_token_id = fields.Many2one(
+        'payment.token',
+        string='Saved Card',
+        copy=False,
+        ondelete='set null',
+        help='Card used for auto-renewal. Captured on the first '
+             'tokenized activation payment; cleared when the customer '
+             'removes it from billing settings.',
+    )
+    auto_renew_subscription = fields.Boolean(
+        string='Auto-renew Subscription',
+        copy=False,
+        default=True,
+        help='When enabled and a saved card is on file, the monthly / '
+             'yearly subscription invoice is charged automatically on '
+             'renewal. When disabled the invoice is still issued, but '
+             'the customer pays it manually.',
+    )
+    auto_renew_daily_backup = fields.Boolean(
+        string='Auto-renew Daily Backups',
+        copy=False,
+        default=True,
+        help='When enabled and a saved card is on file, the monthly '
+             'daily-backup add-on invoice is charged automatically on '
+             'renewal. When disabled the invoice is still issued, but '
+             'the customer pays it manually.',
     )
 
     @api.depends('daily_backup_enabled')
@@ -1069,10 +1104,11 @@ class SaasInstance(models.Model):
         # main subscription's period. No proration on activation:
         # the customer can't disable from the portal, so enabling is
         # a monthly commitment — charge the full month and anchor the
-        # next-invoice date to the first day of next month so the
-        # monthly renewal cron picks up cleanly from there.
+        # next-invoice date exactly one month after activation (NOT
+        # the 1st of next month: that would shorten the customer's
+        # first period whenever they activate mid-month).
         today = fields.Date.today()
-        next_invoice = (today + relativedelta(months=1)).replace(day=1)
+        next_invoice = today + relativedelta(months=1)
 
         product = self._get_daily_backup_product()
         pricelist = self.partner_id.property_product_pricelist
@@ -5883,6 +5919,91 @@ class SaasInstance(models.Model):
         self.last_invoice_date = today
         self.suspension_warning_sent = False
 
+    # ============================================================
+    # Saved card + auto-renewal
+    # ============================================================
+    def _capture_payment_token_from_invoice(self, invoice):
+        """Persist the tokenized card used to pay ``invoice``.
+
+        Called from the payment-confirmation hook in ``account_move``
+        after activation / upgrade / daily-backup invoices are paid.
+        Only stores the token if the customer ticked "Save my card"
+        (Odoo's payment.transaction.tokenize), so customers retain
+        control — no silent retention.
+        """
+        self.ensure_one()
+        if not invoice or self.payment_token_id:
+            # Don't overwrite an existing token here — switching
+            # cards is an explicit portal action.
+            return
+        token = invoice.transaction_ids.filtered(
+            lambda t: t.state == 'done' and t.token_id
+        ).mapped('token_id')[:1]
+        if not token:
+            return
+        self.payment_token_id = token.id
+        self._append_log(
+            "Card saved for auto-renewal: %s. You can remove it any "
+            "time from Billing settings." % token.display_name
+        )
+
+    def _try_auto_charge_invoice(self, invoice, kind):
+        """Attempt to auto-charge ``invoice`` using the saved card.
+
+        ``kind`` is 'subscription' or 'snapshot' — used only for log
+        prefixes so the operator can tell renewal flows apart in
+        the journal.
+
+        Best-effort: on any failure the invoice stays unpaid and the
+        existing dunning cron handles reminders + eventual suspension.
+        Returns True iff the transaction reached the ``done`` state.
+        """
+        self.ensure_one()
+        if not invoice or invoice.payment_state in ('paid', 'in_payment'):
+            return False
+        token = self.payment_token_id
+        if not token or not token.active:
+            return False
+        try:
+            tx = self.env['payment.transaction'].sudo().create({
+                'amount': invoice.amount_residual,
+                'currency_id': invoice.currency_id.id,
+                'partner_id': invoice.partner_id.id,
+                'provider_id': token.provider_id.id,
+                'payment_method_id': token.payment_method_id.id,
+                'token_id': token.id,
+                'operation': 'offline',
+                'invoice_ids': [(6, 0, [invoice.id])],
+            })
+            tx._send_payment_request()
+        except Exception:
+            _logger.exception(
+                "[AUTO-RENEW:%s] auto-charge crashed for %s invoice %s",
+                kind, self.subdomain, invoice.name,
+            )
+            self._append_log(
+                "Auto-renew couldn't charge your saved card for "
+                "invoice %s — please pay manually from the portal."
+                % invoice.name
+            )
+            return False
+        ok = tx.state == 'done'
+        if ok:
+            self._append_log(
+                "Auto-renew charged your saved card for invoice %s "
+                "(%.2f %s)." % (
+                    invoice.name, invoice.amount_total,
+                    invoice.currency_id.name,
+                )
+            )
+        else:
+            self._append_log(
+                "Auto-renew charge for invoice %s did not succeed "
+                "(state=%s). Please pay manually from the portal."
+                % (invoice.name, tx.state)
+            )
+        return ok
+
     @api.model
     def _cron_generate_recurring_invoices(self):
         """Generate renewal invoices for running instances whose billing
@@ -5982,7 +6103,7 @@ class SaasInstance(models.Model):
             'daily_backup_next_invoice_date': (
                 self.daily_backup_next_invoice_date + relativedelta(months=1)
                 if self.daily_backup_next_invoice_date
-                else (today + relativedelta(months=1)).replace(day=1)
+                else today + relativedelta(months=1)
             ),
         })
         invoice.action_post()
@@ -5993,6 +6114,11 @@ class SaasInstance(models.Model):
                 self.daily_backup_next_invoice_date,
             )
         )
+        # Auto-charge the saved card if both the per-instance toggle
+        # and the card are present. On failure the invoice remains
+        # unpaid and the dunning cron + customer email take over.
+        if self.auto_renew_daily_backup and self.payment_token_id:
+            self._try_auto_charge_invoice(invoice, kind='snapshot')
         return invoice
 
     def _generate_renewal_invoice(self):
@@ -6131,15 +6257,25 @@ class SaasInstance(models.Model):
             "Renewal invoice %s created (%s). Payment due.",
         ) % (invoice.name, period_label))
 
+        # Auto-charge the saved card if subscription auto-renew is on
+        # and a card is on file. Skip the payment-due notification if
+        # the charge succeeds so customers aren't pinged for a bill
+        # that's already settled.
+        auto_paid = False
+        if self.auto_renew_subscription and self.payment_token_id:
+            auto_paid = self._try_auto_charge_invoice(invoice, kind='subscription')
+
         # Send payment-due notification (best-effort: never roll back the
-        # renewal if mail delivery fails).
-        try:
-            self._send_notification('saas_core.mail_template_saas_payment_due')
-        except Exception:
-            _logger.exception(
-                "Failed to send payment-due notification for renewal of %s",
-                self.subdomain,
-            )
+        # renewal if mail delivery fails). Skip when auto-charge already
+        # paid the invoice.
+        if not auto_paid:
+            try:
+                self._send_notification('saas_core.mail_template_saas_payment_due')
+            except Exception:
+                _logger.exception(
+                    "Failed to send payment-due notification for renewal of %s",
+                    self.subdomain,
+                )
 
     # ========== Dunning / Grace Period ==========
 

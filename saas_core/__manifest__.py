@@ -1,6 +1,6 @@
 {
     'name': 'SaaS Instance Manager',
-    'version': '18.0.20.0.0',
+    'version': '18.0.21.0.0',
     'category': 'SaaS',
     'summary': 'Provision and manage multi-tenant Odoo instances with Docker containers',
     'description': """
@@ -23,7 +23,13 @@ Key capabilities:
 """,
     'author': 'SaaS Platform',
     'license': 'LGPL-3',
-    'depends': ['base', 'mail', 'sale', 'account', 'portal', 'phone_validation'],
+    'depends': [
+        'base', 'mail', 'sale', 'account', 'portal', 'phone_validation',
+        # 'payment' + 'account_payment' for saved-card auto-renewal:
+        # saas.instance.payment_token_id -> payment.token, and renewal
+        # crons create payment.transaction records to charge that token.
+        'payment', 'account_payment',
+    ],
     'external_dependencies': {
         'python': ['paramiko', 'jinja2', 'boto3', 'google-cloud-storage'],
     },

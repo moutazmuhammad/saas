@@ -1331,8 +1331,8 @@ class SaasPortal(CustomerPortal):
         # No proration on activation: snapshot subscription is a flat
         # monthly commitment (the customer can't disable from the
         # portal, so we charge the full month whether they enable on
-        # the 1st or the 28th). Renewal cron then bills monthly from
-        # the first day of next month onward.
+        # the 1st or the 28th). Renewal cron then bills monthly,
+        # exactly one month after the activation payment.
         monthly_price = instance.sudo()._get_daily_backup_price()
         # Retention surcharge — only on the first activation after a
         # reactivation where we kept a snapshot for the customer.
@@ -2643,3 +2643,76 @@ class SaasPortal(CustomerPortal):
                 return {'error': _('Folder not found.')}
         instances.write({'folder_id': folder_id or False})
         return {'success': True}
+
+    # ==================== Billing & Auto-renew ====================
+
+    @http.route(
+        '/my/instances/<int:instance_id>/billing/auto-renew',
+        type='http', auth='user', website=True, methods=['POST'],
+        csrf=True,
+    )
+    def portal_instance_auto_renew_toggle(self, instance_id, kind=None,
+                                          enabled=None, **kw):
+        """Toggle subscription / snapshot auto-renew for an instance.
+
+        Called by the form-switch JS on the instance page. Returns a
+        small JSON {ok: bool} payload so the JS can revert the checkbox
+        if the server rejected the change.
+        """
+        import json as _json
+        try:
+            instance = self._document_check_access(
+                'saas.instance', instance_id,
+            )
+        except Exception:
+            return request.make_response(
+                _json.dumps({'ok': False, 'error': 'forbidden'}),
+                headers=[('Content-Type', 'application/json')],
+            )
+        if kind not in ('subscription', 'snapshot'):
+            return request.make_response(
+                _json.dumps({'ok': False, 'error': 'bad-kind'}),
+                headers=[('Content-Type', 'application/json')],
+            )
+        flag = 'auto_renew_subscription' if kind == 'subscription' \
+            else 'auto_renew_daily_backup'
+        # Don't allow flipping ON without a saved card — toggle is
+        # disabled in the UI but JS clients could bypass that.
+        new_val = str(enabled or '') == '1'
+        if new_val and not instance.payment_token_id:
+            return request.make_response(
+                _json.dumps({'ok': False, 'error': 'no-card'}),
+                headers=[('Content-Type', 'application/json')],
+            )
+        instance.sudo().write({flag: new_val})
+        return request.make_response(
+            _json.dumps({'ok': True}),
+            headers=[('Content-Type', 'application/json')],
+        )
+
+    @http.route(
+        '/my/instances/<int:instance_id>/billing/remove-card',
+        type='http', auth='user', website=True, methods=['POST'],
+        csrf=True,
+    )
+    def portal_instance_remove_card(self, instance_id, **kw):
+        """Remove the saved card from the instance.
+
+        Also disables both auto-renew flags — there's no card to
+        charge anymore, so leaving them on would be misleading and
+        the next renewal would just fall back to manual payment
+        anyway. The token itself is left untouched in the payment
+        module (the customer may use it for other instances).
+        """
+        instance = self._document_check_access('saas.instance', instance_id)
+        instance.sudo().write({
+            'payment_token_id': False,
+            'auto_renew_subscription': False,
+            'auto_renew_daily_backup': False,
+        })
+        return request.redirect(
+            '/my/instances/%s?msg=%s' % (
+                instance_id,
+                url_quote(_('Saved card removed. Auto-renew is now off.')),
+            )
+        )
