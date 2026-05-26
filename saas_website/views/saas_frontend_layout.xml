@@ -60,23 +60,28 @@
                                 </li>
 
                                 <!-- Language switcher. Odoo's website
-                                     module exposes /<lang_url>/...
-                                     prefixes for non-default languages
-                                     (``/ar/`` for Arabic). The
-                                     ``website.lang_ids`` set (populated
-                                     by data/website_languages.xml)
-                                     controls which languages are
-                                     legal here. We render the active
-                                     language's short label on the
-                                     trigger and let the customer
-                                     pick from the rest. -->
+                                     module exposes /website/lang/<url_code>
+                                     which sets the ``frontend_lang``
+                                     cookie and redirects back through
+                                     ``r=`` to the same path — Odoo's
+                                     multilang router then prepends the
+                                     URL prefix (``/ar/``) automatically.
+                                     We use ``url_code`` (typically ``ar``
+                                     and ``en``) — the route falls back
+                                     to ``lang.code`` if the url_code
+                                     can't be found, so any reasonable
+                                     value works in practice. -->
+                                <t t-set="_en_lang"
+                                   t-value="request.env['res.lang'].sudo().with_context(active_test=False).search([('code', '=', 'en_US')], limit=1)"/>
+                                <t t-set="_ar_lang"
+                                   t-value="request.env['res.lang'].sudo().with_context(active_test=False).search([('code', '=', 'ar_001')], limit=1)"/>
+                                <t t-set="_cur_lang" t-value="request.env.lang or 'en_US'"/>
                                 <li class="nav-item dropdown">
                                     <a class="nav-link dropdown-toggle d-flex align-items-center"
                                        href="#" role="button"
                                        data-bs-toggle="dropdown" aria-expanded="false"
-                                       t-att-aria-label="'Language: ' + (request.env.lang or 'en_US')">
+                                       t-att-aria-label="'Language: ' + _cur_lang">
                                         <i class="fas fa-globe me-1"></i>
-                                        <t t-set="_cur_lang" t-value="request.env.lang or 'en_US'"/>
                                         <span t-if="_cur_lang == 'ar_001'">العربية</span>
                                         <span t-else="">EN</span>
                                     </a>
@@ -84,7 +89,7 @@
                                         <!-- English -->
                                         <li>
                                             <a class="dropdown-item d-flex align-items-center"
-                                               t-att-href="'/website/lang/en_US?r=' + (request.httprequest.full_path or '/')">
+                                               t-att-href="'/website/lang/' + (_en_lang.url_code or 'en_US') + '?r=' + (request.httprequest.full_path or '/')">
                                                 <span class="me-2" style="display:inline-block;width:22px;">🇬🇧</span>
                                                 English
                                                 <t t-if="_cur_lang == 'en_US'">
@@ -95,7 +100,7 @@
                                         <!-- Arabic -->
                                         <li>
                                             <a class="dropdown-item d-flex align-items-center"
-                                               t-att-href="'/website/lang/ar_001?r=' + (request.httprequest.full_path or '/')">
+                                               t-att-href="'/website/lang/' + (_ar_lang.url_code or 'ar_001') + '?r=' + (request.httprequest.full_path or '/')">
                                                 <span class="me-2" style="display:inline-block;width:22px;">🇸🇦</span>
                                                 العربية
                                                 <t t-if="_cur_lang == 'ar_001'">

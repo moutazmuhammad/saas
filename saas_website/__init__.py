@@ -43,3 +43,17 @@ def _activate_arabic(env):
         _logger.exception(
             "Could not add Arabic to website.language_ids.",
         )
+
+    # Apply our Arabic dictionary to every saas_website view. Done
+    # programmatically rather than via the .po file because each
+    # msgid in the .po needs a per-view ``#:`` reference, and we'd
+    # need to hand-author hundreds — the dictionary approach below
+    # is one source of truth for translations + a single pass over
+    # every view.
+    try:
+        from .i18n.ar_translations import apply_arabic_translations
+        apply_arabic_translations(env)
+    except Exception:
+        _logger.exception(
+            "Could not apply Arabic translation dictionary.",
+        )

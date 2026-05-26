@@ -37,3 +37,15 @@ def migrate(cr, version):
             "post-update 18.0.5.1.0: could not add Arabic to "
             "website.language_ids.",
         )
+
+    # Apply our Arabic dictionary to every saas_website view.
+    try:
+        from odoo.addons.saas_website.i18n.ar_translations import (
+            apply_arabic_translations,
+        )
+        apply_arabic_translations(env)
+    except Exception:
+        _logger.exception(
+            "post-update 18.0.5.1.0: could not apply Arabic "
+            "translation dictionary.",
+        )
