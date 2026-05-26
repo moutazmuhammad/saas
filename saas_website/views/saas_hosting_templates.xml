@@ -314,13 +314,12 @@
                                                 <label class="form-check-label" for="daily-backup-toggle">
                                                     <span class="fw-semibold">
                                                         <i class="fas fa-shield-alt me-1"></i>Add daily backups
-                                                        — <t t-esc="'${:,.2f}'.format(config.get('daily_backup_price', 0))"/>/mo
                                                     </span>
                                                     <div class="small mt-1" style="color:var(--co-text-muted,#71717A);">
                                                         Every database on this instance is dumped daily to encrypted
                                                         cloud storage. Up to 7 most recent snapshots are kept; older
                                                         ones roll off automatically. Restore any snapshot with one
-                                                        click from your portal.
+                                                        click from your portal. The price is included in your monthly total below.
                                                     </div>
                                                 </label>
                                             </div>
@@ -408,23 +407,23 @@
                                         </div>
                                     </t>
                                     <t t-else="">
-                                        <!-- Paid: show full price breakdown -->
+                                        <!-- Paid: resources listed, only the FINAL price is shown.
+                                             Per-resource pricing is an internal calculation — the
+                                             customer just sees what they get + what they pay. -->
                                         <div class="price-breakdown">
                                             <div class="breakdown-row">
-                                                <span class="breakdown-label"><i class="fas fa-cogs me-2"></i><t t-esc="workers"/> Workers</span>
-                                                <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(workers_cost)"/>/mo</span>
+                                                <span class="breakdown-label"><i class="fas fa-cogs me-2"></i>Workers</span>
+                                                <span class="breakdown-value"><t t-esc="workers"/></span>
                                             </div>
                                             <div class="breakdown-row">
-                                                <span class="breakdown-label"><i class="fas fa-hdd me-2"></i><t t-esc="storage"/>GB Storage</span>
-                                                <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(storage_cost)"/>/mo</span>
+                                                <span class="breakdown-label"><i class="fas fa-hdd me-2"></i>Storage</span>
+                                                <span class="breakdown-value"><t t-esc="storage"/> GB</span>
                                             </div>
                                             <div class="breakdown-row"
                                                  id="backup-cost-row"
                                                  t-att-style="'' if daily_backup else 'display:none;'">
                                                 <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Daily Backups</span>
-                                                <span class="breakdown-value" id="backup-cost-value">
-                                                    <t t-esc="'${:,.2f}'.format(backup_cost)"/>/mo
-                                                </span>
+                                                <span class="breakdown-value">Included</span>
                                             </div>
                                             <div class="breakdown-divider"></div>
                                             <div class="breakdown-total">
@@ -444,14 +443,14 @@
                                                 </span>
                                             </div>
                                         </div>
-                                        <!-- Live update when the daily-backup checkbox toggles, so
-                                             the customer sees the new total without a page reload. -->
+                                        <!-- Live update when the daily-backup checkbox toggles —
+                                             only the FINAL total changes; per-resource prices
+                                             stay hidden from the customer. -->
                                         <script>
                                             (function(){
                                                 var cb = document.getElementById('daily-backup-toggle');
                                                 if (!cb) return;
                                                 var row = document.getElementById('backup-cost-row');
-                                                var costEl = document.getElementById('backup-cost-value');
                                                 var totalEl = document.getElementById('hosting-total-amount');
                                                 if (!totalEl) return;
                                                 var baseMonthly = parseFloat(totalEl.dataset.baseMonthly) || 0;
@@ -463,7 +462,6 @@
                                                     var addon = cb.checked ? price : 0;
                                                     var monthly = baseMonthly + addon;
                                                     if (row) row.style.display = cb.checked ? '' : 'none';
-                                                    if (costEl) costEl.textContent = fmt(addon) + '/mo';
                                                     totalEl.textContent = billing === 'yearly'
                                                         ? fmt(monthly * 12 * (1 - yd))
                                                         : fmt(monthly);

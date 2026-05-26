@@ -1582,11 +1582,11 @@ function initUpgradePlanBuilder() {
         if (wInput && wInput !== document.activeElement) wInput.value = workers;
         if (sInput && sInput !== document.activeElement) sInput.value = storage;
 
-        // Update price breakdown
+        // Update resource summary (counts only — per-resource pricing
+        // is an internal calculation and is intentionally not shown
+        // to the customer; they see the final total only).
         setText('upgrade-summary-workers', workers);
         setText('upgrade-summary-storage', storage);
-        setText('upgrade-summary-workers-cost', CloudOdoo.formatCurrency(workersCost, config.currency) + '/mo');
-        setText('upgrade-summary-storage-cost', CloudOdoo.formatCurrency(storageCost, config.currency) + '/mo');
 
         // Toggle monthly/yearly display
         var monthlyDisplay = document.getElementById('upgrade-summary-monthly-display');

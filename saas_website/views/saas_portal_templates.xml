@@ -2070,20 +2070,25 @@
                                 <div class="col-lg-5">
                                     <div class="custom-price-card">
                                         <h5 class="mb-3">New Plan Configuration</h5>
+                                        <!-- Per-resource pricing is an internal calculation —
+                                             the customer sees the resources they're getting and
+                                             one final total only. -->
                                         <div class="price-breakdown">
                                             <div class="breakdown-row">
                                                 <span class="breakdown-label">
-                                                    <i class="fas fa-cogs me-2"></i>
-                                                    <span id="upgrade-summary-workers"><t t-esc="current_workers"/></span> Workers
+                                                    <i class="fas fa-cogs me-2"></i>Workers
                                                 </span>
-                                                <span class="breakdown-value" id="upgrade-summary-workers-cost">$0.00</span>
+                                                <span class="breakdown-value">
+                                                    <span id="upgrade-summary-workers"><t t-esc="current_workers"/></span>
+                                                </span>
                                             </div>
                                             <div class="breakdown-row">
                                                 <span class="breakdown-label">
-                                                    <i class="fas fa-hdd me-2"></i>
-                                                    <span id="upgrade-summary-storage"><t t-esc="current_storage"/></span> GB Storage
+                                                    <i class="fas fa-hdd me-2"></i>Storage
                                                 </span>
-                                                <span class="breakdown-value" id="upgrade-summary-storage-cost">$0.00</span>
+                                                <span class="breakdown-value">
+                                                    <span id="upgrade-summary-storage"><t t-esc="current_storage"/></span> GB
+                                                </span>
                                             </div>
                                             <div class="breakdown-row">
                                                 <span class="breakdown-label">
@@ -2277,20 +2282,25 @@
                                 <div class="col-lg-5">
                                     <div class="custom-price-card">
                                         <h5 class="mb-3">Plan Configuration</h5>
+                                        <!-- Per-resource pricing is an internal calculation —
+                                             the customer sees the resources they're getting and
+                                             one final total only. -->
                                         <div class="price-breakdown">
                                             <div class="breakdown-row">
                                                 <span class="breakdown-label">
-                                                    <i class="fas fa-cogs me-2"></i>
-                                                    <span id="upgrade-summary-workers"><t t-esc="current_workers"/></span> Workers
+                                                    <i class="fas fa-cogs me-2"></i>Workers
                                                 </span>
-                                                <span class="breakdown-value" id="upgrade-summary-workers-cost">$0.00</span>
+                                                <span class="breakdown-value">
+                                                    <span id="upgrade-summary-workers"><t t-esc="current_workers"/></span>
+                                                </span>
                                             </div>
                                             <div class="breakdown-row">
                                                 <span class="breakdown-label">
-                                                    <i class="fas fa-hdd me-2"></i>
-                                                    <span id="upgrade-summary-storage"><t t-esc="current_storage"/></span> GB Storage
+                                                    <i class="fas fa-hdd me-2"></i>Storage
                                                 </span>
-                                                <span class="breakdown-value" id="upgrade-summary-storage-cost">$0.00</span>
+                                                <span class="breakdown-value">
+                                                    <span id="upgrade-summary-storage"><t t-esc="current_storage"/></span> GB
+                                                </span>
                                             </div>
                                             <div class="breakdown-row">
                                                 <span class="breakdown-label">

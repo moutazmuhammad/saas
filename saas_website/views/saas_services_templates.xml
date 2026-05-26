@@ -674,21 +674,9 @@
                                     </span>
                                 </div>
 
-                                <div class="price-breakdown mt-3">
-                                    <div class="breakdown-row">
-                                        <span class="breakdown-label">Workers (<t t-esc="workers"/> × <t t-esc="'${:,.2f}'.format(config['worker_price'])"/>)</span>
-                                        <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(workers_cost)"/>/mo</span>
-                                    </div>
-                                    <div class="breakdown-row">
-                                        <span class="breakdown-label">Storage (<t t-esc="storage"/>GB × <t t-esc="'${:,.2f}'.format(config['storage_price_per_gb'])"/>)</span>
-                                        <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(storage_cost)"/>/mo</span>
-                                    </div>
-                                    <div class="breakdown-divider"></div>
-                                    <div class="breakdown-row" style="font-size:0.85rem;color:var(--text-muted);">
-                                        <span>Monthly subtotal</span>
-                                        <span><t t-esc="'${:,.2f}'.format(monthly_total)"/>/mo</span>
-                                    </div>
-                                </div>
+                                <!-- Per-resource pricing is an internal calculation. The
+                                     customer sees the resources they're getting (above) and
+                                     the final total below — nothing else. -->
 
                                 <t t-if="billing_period == 'yearly'">
                                     <div class="summary-total">
