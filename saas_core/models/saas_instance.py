@@ -3466,34 +3466,44 @@ class SaasInstance(models.Model):
     def _do_delete_instance(self):
         """Delete instance (runs in background thread).
 
-        Cancellation flow — keep ONE snapshot for restore-after-
-        reactivation, drop everything else.
+        Cancellation rule — every cancel drops **every** pre-existing
+        snapshot. A fresh snapshot is taken immediately beforehand
+        and becomes the single retained one. We never fall back to
+        an older snapshot: if the fresh capture fails, nothing is
+        retained and the old ones still get cleaned up.
 
         Order of operations:
-        1. Take a fresh full-instance snapshot (needs container alive)
-           so the customer has the most recent state available to
-           restore from.
-        2. Pick the snapshot we'll retain (most recent successful
-           full-instance restic snapshot for this instance).
+        1. Snapshot the IDs of all existing snapshots — these are
+           ALL slated for deletion regardless of what happens next.
+        2. Take a fresh full-instance snapshot (needs container
+           alive). That row is the only one allowed to survive.
         3. Tear down infrastructure (container, files, nginx, PG).
-        4. Prune the restic repo to keep only the retained snapshot's
-           run tag — drops every older snapshot's deduplicated data
-           from the bucket.
-        5. Delete every other backup record (and its bucket object).
-        6. Set state = cancelled. The retained backup record stays so
-           the customer can restore from it after reactivating.
+        4. Prune the restic repo to keep only the fresh snapshot's
+           run tag (or wipe everything if no fresh snapshot).
+        5. Delete every backup record that isn't the fresh one.
+        6. Set state = cancelled.
         """
         self.ensure_one()
         server = self.docker_server_id
         instance_path = self._get_instance_path()
         Backup = self.env['saas.instance.backup'].sudo()
 
-        # 1. Take a fresh snapshot if the instance was actually deployed
-        # so we capture the absolute latest state before everything
-        # gets torn down. Best-effort — if the container is unreachable
-        # we just fall back to whatever's already in the repo.
+        # 1. Record the snapshots that existed BEFORE this cancellation.
+        # Every one of them is going away — we never keep a "most
+        # recent existing" one. The retained slot is reserved for the
+        # fresh snapshot taken in step 2 (and only that).
+        pre_existing_ids = set(Backup.search([
+            ('instance_id', '=', self.id),
+            ('is_full_instance', '=', True),
+        ]).ids)
+
+        # 2. Take a fresh snapshot if the instance was actually
+        # deployed (there's a DB + filestore to capture). Best-effort
+        # — if it fails, no snapshot is retained, and the pre-existing
+        # ones are still deleted in step 5.
         prev = self.pre_provisioning_state or self.state
         was_deployed = prev in ('running', 'stopped', 'suspended', 'failed')
+        fresh_ok = False
         if was_deployed:
             try:
                 self._append_log(
@@ -3501,6 +3511,7 @@ class SaasInstance(models.Model):
                     "data later if you reactivate this instance..."
                 )
                 Backup._perform_full_instance_backup(self)
+                fresh_ok = True
                 self._append_log("Final snapshot complete.")
             except Exception:
                 _logger.exception(
@@ -3508,27 +3519,33 @@ class SaasInstance(models.Model):
                     self.subdomain,
                 )
                 self._append_log(
-                    "Couldn't take a fresh final snapshot — we will "
-                    "keep the most recent existing one instead, if any."
+                    "Couldn't take a fresh final snapshot — older "
+                    "snapshots will still be removed and nothing "
+                    "will be retained for restore."
                 )
         else:
             self._append_log(
                 "Skipping final snapshot — instance was never fully "
-                "deployed."
+                "deployed. Any older snapshots will still be removed."
             )
 
-        # 2. Pick the retained snapshot (most recent successful
-        # restic full-instance row for this instance).
-        retained_backup = Backup.search([
-            ('instance_id', '=', self.id),
-            ('is_full_instance', '=', True),
-            ('format', '=', 'restic'),
-            ('state', '=', 'done'),
-        ], order='create_date desc', limit=1)
+        # The retained backup is ONLY the freshly-taken one. We look
+        # for a successful full-instance restic row whose id wasn't
+        # in the pre-cancellation set. If the fresh capture failed,
+        # this is empty — and nothing gets retained.
+        retained_backup = Backup.browse()
+        if fresh_ok:
+            retained_backup = Backup.search([
+                ('instance_id', '=', self.id),
+                ('is_full_instance', '=', True),
+                ('format', '=', 'restic'),
+                ('state', '=', 'done'),
+                ('id', 'not in', list(pre_existing_ids)),
+            ], order='create_date desc', limit=1)
         if retained_backup:
             self._append_log(
-                "Will retain snapshot '%s' (taken %s) so you can "
-                "restore your data after reactivating."
+                "Will retain only the fresh snapshot '%s' (taken %s). "
+                "All previous snapshots will be removed."
                 % (
                     retained_backup.name,
                     retained_backup.create_date and
@@ -3538,8 +3555,8 @@ class SaasInstance(models.Model):
             )
         else:
             self._append_log(
-                "No snapshot available to retain — there will be "
-                "nothing to restore from after reactivation."
+                "No snapshot will be retained — every snapshot for "
+                "this instance is being deleted."
             )
 
         # 2. Unregister webhooks from Git providers
@@ -3603,17 +3620,16 @@ class SaasInstance(models.Model):
                 "WARNING: PostgreSQL cleanup failed (may not have been provisioned)."
             )
 
-        # 4. Prune the restic repo to keep only the retained snapshot's
-        # data. ``--keep-tag run=<retained>`` plus ``--prune`` drops the
-        # data of every other snapshot from the bucket. Skipped if we
-        # have no retained snapshot (nothing to anchor pruning to);
-        # the next backup attempt on a hypothetical reactivation would
-        # re-trim under the standard ``--keep-last 7`` policy.
+        # 4. Prune the restic repo. Two cases:
+        #    a) We have a fresh retained snapshot → keep ONLY its
+        #       run tag; every other snapshot's data is dropped.
+        #    b) No retained snapshot → wipe the entire repo so no
+        #       old snapshot data lingers in the bucket.
         if retained_backup and retained_backup.restic_run_tag:
             try:
                 self._restic_keep_only_run_tag(retained_backup.restic_run_tag)
                 self._append_log(
-                    "Pruned old snapshot data — only the retained "
+                    "Pruned old snapshot data — only the fresh "
                     "snapshot remains in cloud storage."
                 )
             except Exception:
@@ -3625,6 +3641,21 @@ class SaasInstance(models.Model):
                     "Couldn't fully clean up old snapshot data. The "
                     "retained snapshot is still available; orphan data "
                     "(if any) will be reaped on the next backup."
+                )
+        else:
+            try:
+                self._restic_wipe_repo()
+                self._append_log(
+                    "Removed all snapshot data from cloud storage."
+                )
+            except Exception:
+                _logger.exception(
+                    "Failed to wipe restic repo for cancelled %s",
+                    self.subdomain,
+                )
+                self._append_log(
+                    "Couldn't fully clean up snapshot data; orphan "
+                    "objects (if any) will be reaped later."
                 )
 
         # 5. Delete every backup record (and its bucket object) EXCEPT
@@ -5390,6 +5421,76 @@ class SaasInstance(models.Model):
                 _("Failed to reload Nginx:\n%s\n%s") % (stdout, stderr)
             )
         self._append_log("Nginx reloaded successfully.")
+
+    def _restic_wipe_repo(self):
+        """Drop every snapshot in the instance's restic repo.
+
+        Used by the cancellation flow when there is NO fresh snapshot
+        to retain (e.g. the pre-cancel snapshot attempt failed or the
+        instance was never deployed). ``forget --keep-last 0`` plus
+        ``--prune`` removes every snapshot and frees the deduplicated
+        data from the bucket. Best-effort: a failure here just leaves
+        stale objects in cloud storage — it doesn't break cancellation.
+        """
+        self.ensure_one()
+        if not self.docker_server_id:
+            return
+        Backup = self.env['saas.instance.backup'].sudo()
+        gcs_path = None
+        try:
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                Backup._ensure_restic_installed(
+                    ssh, self.docker_server_id.name,
+                )
+                gcs_path = Backup._stage_gcs_credentials(ssh, self)
+                env = Backup._restic_env_vars(self, gcs_path)
+                # ``--keep-last 0`` would be rejected by restic
+                # (minimum 1); ``forget <id>`` per snapshot is the
+                # safest cross-version way to drop everything. So:
+                # list snapshot IDs, then forget them by id.
+                list_cmd = Backup._restic_cmd(
+                    env,
+                    ['snapshots', '--json', '--quiet'],
+                )
+                ec, out, err = ssh.execute(list_cmd, timeout=600)
+                if ec != 0:
+                    # No repo or empty repo → nothing to wipe.
+                    if 'unable to open config file' in (err or '').lower():
+                        return
+                    _logger.warning(
+                        "restic snapshots on wipe for %s exit=%s "
+                        "err=%r",
+                        self.subdomain, ec, (err or '')[-300:],
+                    )
+                    return
+                import json as _json
+                try:
+                    snaps = _json.loads(out or '[]')
+                except Exception:
+                    snaps = []
+                ids = [s.get('short_id') or s.get('id') for s in snaps]
+                ids = [i for i in ids if i]
+                if not ids:
+                    return
+                cmd = Backup._restic_cmd(
+                    env,
+                    ['forget', '--prune', '--quiet'] + ids,
+                )
+                ec, out, err = ssh.execute(cmd, timeout=1800)
+                if ec != 0:
+                    _logger.warning(
+                        "restic forget --prune (wipe) for %s exit=%s "
+                        "out=%r err=%r",
+                        self.subdomain, ec,
+                        (out or '')[-300:], (err or '')[-300:],
+                    )
+        finally:
+            if gcs_path:
+                try:
+                    with self.docker_server_id._get_ssh_connection() as ssh2:
+                        Backup._unstage_gcs_credentials(ssh2, gcs_path)
+                except Exception:
+                    pass
 
     def _restic_keep_only_run_tag(self, run_tag):
         """Prune the instance's restic repo to a single retained run.
