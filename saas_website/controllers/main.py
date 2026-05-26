@@ -628,10 +628,14 @@ class SaasWebsite(http.Controller):
         sitemap=False, multilang=False,
     )
     def saas_fix_arabic(self, **kwargs):
-        if not request.env.user.has_group('saas_core.group_saas_manager'):
+        # Restrict to internal users (anyone with backend access).
+        # The earlier saas_core.group_saas_manager check was too narrow
+        # for an operator running this once during setup.
+        if not request.env.user.has_group('base.group_user'):
             return request.make_response(
-                'Forbidden — must be a SaaS manager.',
-                headers=[('Content-Type', 'text/plain')],
+                'Forbidden — must be an internal user (sign in to the '
+                'Odoo backend first).',
+                headers=[('Content-Type', 'text/plain; charset=utf-8')],
                 status=403,
             )
 
