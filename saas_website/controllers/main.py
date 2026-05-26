@@ -613,6 +613,110 @@ class SaasWebsite(http.Controller):
         return request.render('saas_website.portal_docs_page', {})
 
     # ==================================================================
+    #  Fix: force-apply Arabic translations  –  /saas/fix-arabic-translations
+    # ==================================================================
+    @http.route(
+        '/saas/fix-arabic-translations',
+        type='http', auth='user', website=True,
+        sitemap=False, multilang=False,
+    )
+    def saas_fix_arabic_translations(self, **kwargs):
+        """Force-apply the Arabic translation dictionary to every
+        saas_website view, with a verbose report. Use this when the
+        migration didn't load translations and the customer-facing
+        text is still English under /ar/."""
+        if not request.env.user.has_group('base.group_user'):
+            return request.make_response(
+                'Forbidden — must be an internal user.',
+                headers=[('Content-Type', 'text/plain; charset=utf-8')],
+                status=403,
+            )
+
+        from odoo.addons.saas_website.i18n.ar_translations import (
+            TRANSLATIONS,
+        )
+        out = []
+        out.append('=== SAAS FIX-ARABIC-TRANSLATIONS ===')
+        out.append('Dictionary entries: %d' % len(TRANSLATIONS))
+
+        ordered = sorted(TRANSLATIONS.items(), key=lambda kv: -len(kv[0]))
+
+        IrModelData = request.env['ir.model.data'].sudo()
+        view_ids = IrModelData.search([
+            ('module', '=', 'saas_website'),
+            ('model', '=', 'ir.ui.view'),
+        ]).mapped('res_id')
+        out.append('saas_website views found: %d' % len(view_ids))
+
+        View = request.env['ir.ui.view'].sudo()
+        views = View.browse(view_ids).exists()
+
+        applied = 0
+        no_match = 0
+        failed = 0
+        for view in views:
+            try:
+                source = view.with_context(lang='en_US').arch_db or ''
+            except Exception as e:
+                out.append('  ! Could not read en_US arch_db for view %s: %s' % (view.id, e))
+                failed += 1
+                continue
+            if not source:
+                continue
+            translated = source
+            replacement_count = 0
+            for en, ar in ordered:
+                if en in translated:
+                    translated = translated.replace(en, ar)
+                    replacement_count += 1
+            if translated == source:
+                no_match += 1
+                continue
+            try:
+                view.with_context(lang='ar_001').write({'arch_db': translated})
+                applied += 1
+                xmlid = view.xml_id or '(no xmlid, id=%s)' % view.id
+                out.append('  ✓ %s — %d strings replaced' % (xmlid, replacement_count))
+            except Exception as e:
+                failed += 1
+                out.append('  ✗ view id=%s — write FAILED: %s' % (view.id, e))
+
+        request.env.cr.commit()
+        # Bust ormcache so the next read picks up the new translations.
+        try:
+            request.env.registry.clear_cache()
+            out.append('Cleared registry cache.')
+        except Exception as e:
+            out.append('Could not clear cache: %s' % e)
+
+        out.append('')
+        out.append('Summary:')
+        out.append('  Views with translations written: %d' % applied)
+        out.append('  Views with no matching strings:  %d' % no_match)
+        out.append('  Views that failed:               %d' % failed)
+        out.append('')
+
+        # Verify by reading back one specific known string.
+        try:
+            layout = request.env.ref(
+                'saas_website.cloudodoo_layout', raise_if_not_found=False,
+            )
+            if layout:
+                en_arch = layout.with_context(lang='en_US').arch_db
+                ar_arch = layout.with_context(lang='ar_001').arch_db
+                out.append('Verification — cloudodoo_layout:')
+                out.append('  en_US contains "Hosting": %s' % ('Hosting' in (en_arch or '')))
+                out.append('  ar_001 contains "الاستضافة": %s' % ('الاستضافة' in (ar_arch or '')))
+                out.append('  ar_001 still contains "Hosting": %s' % ('Hosting' in (ar_arch or '')))
+        except Exception as e:
+            out.append('Verification failed: %s' % e)
+
+        return request.make_response(
+            '\n'.join(out),
+            headers=[('Content-Type', 'text/plain; charset=utf-8')],
+        )
+
+    # ==================================================================
     #  Fix: force-add Arabic to the current website  –  /saas/fix-arabic
     # ==================================================================
     # Manual one-click fix in case the migration script's
