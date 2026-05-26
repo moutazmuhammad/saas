@@ -285,11 +285,13 @@ def apply_arabic_translations(env):
     View = env['ir.ui.view'].sudo()
     views = View.browse(view_ids).exists()
     _logger.info(
-        "Applying Arabic translations to %d saas_website views.",
-        len(views),
+        "[saas_website] apply_arabic_translations: scanning %d "
+        "view(s) against a %d-entry dictionary.",
+        len(views), len(ordered),
     )
 
     applied = 0
+    skipped_no_match = 0
     for view in views:
         # Read the English source. ``arch_db`` returned with the
         # ``en_US`` context is the canonical source text.
@@ -312,18 +314,24 @@ def apply_arabic_translations(env):
 
         if translated == source:
             # No translatable string found in this view — skip.
+            skipped_no_match += 1
             continue
 
         try:
             view.with_context(lang='ar_001').write({'arch_db': translated})
             applied += 1
+            _logger.info(
+                "[saas_website]   ✓ %s (id=%s) — Arabic arch_db written.",
+                view.xml_id or view.id, view.id,
+            )
         except Exception:
             _logger.exception(
-                "Could not write Arabic arch_db for view %s.",
-                view.xml_id or view.id,
+                "[saas_website]   ✗ %s (id=%s) — write FAILED.",
+                view.xml_id or view.id, view.id,
             )
 
     _logger.info(
-        "Arabic translations applied to %d view(s).",
-        applied,
+        "[saas_website] Arabic translations applied to %d view(s); "
+        "%d view(s) had no matching strings.",
+        applied, skipped_no_match,
     )
