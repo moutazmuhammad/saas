@@ -607,22 +607,73 @@ class SaasInstance(models.Model):
 
     # ========== Constraints ==========
     def init(self):
-        """Create partial unique indexes that exclude cancelled instances."""
+        """Create unique indexes for subdomain (full) and ports (partial).
+
+        Subdomain uniqueness is **unconditional** — including cancelled
+        instances. Once a subdomain is bound to an instance record, it
+        stays reserved forever (or until that record is hard-deleted
+        from the backend), so nobody can claim it for a fresh order
+        and the original owner is steered toward Reactivate Instance.
+
+        Ports remain a partial unique index excluding cancelled rows
+        because that lets us recycle ports for new instances on the
+        same docker host without bumping into the audit-trail records
+        of long-cancelled ones.
+        """
         cr = self.env.cr
+        # ---------- Subdomain: full unique index ----------
+        # Detect whether the current index already covers cancelled
+        # rows. If it still has the legacy ``WHERE … NOT IN`` clause,
+        # tear it down and create the strict one in its place.
         cr.execute("""
-            SELECT 1 FROM pg_indexes
+            SELECT indexdef FROM pg_indexes
             WHERE indexname = 'saas_instance_unique_subdomain_per_domain'
-              AND indexdef ILIKE '%cancelled%'
         """)
-        if not cr.fetchone():
+        row = cr.fetchone()
+        needs_recreate = (not row) or ('cancelled' in (row[0] or '').lower())
+        if needs_recreate:
+            # Renaming clashing subdomains BEFORE creating the strict
+            # index — without this, the CREATE would fail if there
+            # are pre-existing duplicate (subdomain, domain_id) rows
+            # left over from before the rule changed (e.g. two
+            # cancelled instances at the same subdomain). We append a
+            # ``-cancelled-<id>`` suffix to the duplicates so each
+            # row becomes unique while staying obviously cancelled.
+            cr.execute("""
+                WITH ranked AS (
+                    SELECT id, subdomain, domain_id,
+                           row_number() OVER (
+                               PARTITION BY subdomain, domain_id
+                               ORDER BY
+                                   CASE WHEN state NOT IN
+                                       ('cancelled', 'cancelled_by_client')
+                                       THEN 0 ELSE 1 END,
+                                   id
+                           ) AS rn
+                    FROM saas_instance
+                )
+                UPDATE saas_instance s
+                    SET subdomain = s.subdomain || '-cancelled-' || s.id
+                  FROM ranked r
+                 WHERE s.id = r.id
+                   AND r.rn > 1
+            """)
+            renamed = cr.rowcount
+            if renamed:
+                _logger.warning(
+                    "saas.instance: renamed %d duplicate subdomain(s) "
+                    "with a '-cancelled-<id>' suffix to allow the new "
+                    "strict unique-subdomain index to be created.",
+                    renamed,
+                )
             cr.execute("""
                 ALTER TABLE saas_instance
                     DROP CONSTRAINT IF EXISTS saas_instance_unique_subdomain_per_domain;
                 DROP INDEX IF EXISTS saas_instance_unique_subdomain_per_domain;
                 CREATE UNIQUE INDEX saas_instance_unique_subdomain_per_domain
-                    ON saas_instance (subdomain, domain_id)
-                    WHERE state NOT IN ('cancelled', 'cancelled_by_client');
+                    ON saas_instance (subdomain, domain_id);
             """)
+        # ---------- Ports: keep the partial index (recycle on cancel) ----------
         for col in ('xmlrpc_port', 'longpolling_port'):
             idx = 'saas_instance_unique_%s_per_server' % col
             cr.execute("""
@@ -641,8 +692,6 @@ class SaasInstance(models.Model):
                       AND %s IS NOT NULL AND %s > 0;
             """ % (idx, idx, idx, col, col, col))
 
-    # Note: SQL-level uniqueness is enforced by partial indexes in init()
-    # (cancelled instances must be allowed to retain their old ports for audit).
     _sql_constraints = []
 
     @api.constrains('is_trial', 'partner_id')

@@ -6,10 +6,17 @@ from odoo.http import request
 
 from odoo.addons.saas_core.models.saas_instance import SUBDOMAIN_RE
 
-# States that represent "alive" instances (block subdomain reuse)
+# States that BLOCK a new subdomain claim. Cancelled instances are
+# included on purpose: a cancelled instance still has its retained
+# snapshot in cloud storage waiting for reactivation, and we don't
+# want another customer (or even the same one creating a fresh
+# instance instead of reactivating) to steal the subdomain it was
+# previously bound to. The original owner can either reactivate the
+# existing record or pick a brand-new subdomain.
 _ACTIVE_STATES = (
     'draft', 'pending_payment', 'paid', 'pending_provision',
     'provisioning', 'running', 'stopped', 'suspended',
+    'cancelled', 'cancelled_by_client',
 )
 
 
@@ -1109,6 +1116,21 @@ class SaasWebsite(http.Controller):
         ], limit=1)
 
         if existing:
+            # If the existing record is the current user's own
+            # cancelled instance, give them the clearer "reactivate
+            # instead" message — otherwise just say it's taken.
+            current_partner = request.env.user.partner_id
+            if (existing.state in ('cancelled', 'cancelled_by_client')
+                    and current_partner
+                    and existing.partner_id == current_partner):
+                return {
+                    'available': False,
+                    'message': _(
+                        "'%s' is your own cancelled instance — "
+                        "reactivate it from My Instances instead of "
+                        "creating a new one."
+                    ) % subdomain,
+                }
             return {
                 'available': False,
                 'message': _("'%s' is already taken.") % subdomain,
