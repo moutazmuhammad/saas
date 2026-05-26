@@ -2378,12 +2378,22 @@
                         </ol>
                     </nav>
 
+                    <!-- ``_is_cancelled`` gates every snapshot-management
+                         affordance on this page. A cancelled instance
+                         shouldn't show "Daily Backups Active", the
+                         Enable / Complete-payment buttons, or the
+                         Restore action — there's no live container to
+                         act on, and any new payment for snapshots
+                         would be wasted until the customer reactivates. -->
+                    <t t-set="_is_cancelled"
+                       t-value="instance.state in ('cancelled', 'cancelled_by_client')"/>
+
                     <div class="d-flex justify-content-between align-items-start mb-3">
                         <div>
                             <h3 class="mb-1">Snapshots for
                                 <span class="text-muted" t-esc="instance.subdomain"/>
                             </h3>
-                            <t t-if="instance.is_hosting">
+                            <t t-if="instance.is_hosting and not _is_cancelled">
                                 <p class="text-muted mb-0">
                                     <i class="fas fa-info-circle me-1"></i>
                                     <t t-if="instance.daily_backup_enabled">
@@ -2403,19 +2413,21 @@
                                     </t>
                                 </p>
                             </t>
+                            <t t-if="_is_cancelled">
+                                <p class="text-muted mb-0">
+                                    <i class="fas fa-ban me-1"></i>
+                                    This instance is <strong>cancelled</strong>.
+                                    Your most recent snapshot is kept safely.
+                                    Reactivate the instance to restore it.
+                                </p>
+                            </t>
                         </div>
-                        <!-- Daily-backup toggle (hosting only, non-trial).
-                             Three states:
-                              - enabled  → read-only "Active" badge (no
-                                           self-service disable; operators
-                                           can flip the flag from the backend
-                                           if a customer really needs it off)
+                        <!-- Daily-backup toggle (hosting only, non-trial,
+                             non-cancelled). Three states:
+                              - enabled  → read-only "Active" badge
                               - pending  → yellow Complete-payment link
-                                           + small Cancel button
-                              - off      → green Enable button (POST enable=1)
-                                           which goes through the purchase
-                                           flow and lands on the checkout page -->
-                        <t t-if="instance.is_hosting and not instance.is_trial">
+                              - off      → green Enable button -->
+                        <t t-if="instance.is_hosting and not instance.is_trial and not _is_cancelled">
                             <t t-if="instance.daily_backup_enabled">
                                 <span class="badge ms-3 bg-success d-inline-flex align-items-center"
                                       title="Daily backups are active. To turn this off, contact support.">
@@ -2507,13 +2519,39 @@
                         </div>
                     </t>
 
+                    <!-- Cancelled-instance prompt: the snapshot stays
+                         around so the customer can reactivate and
+                         restore. Until then, restore is unavailable. -->
+                    <t t-if="_is_cancelled and full_instance_backups">
+                        <div class="alert-banner alert-warning mb-3">
+                            <i class="fas fa-ban"></i>
+                            <div class="flex-grow-1">
+                                <strong>Instance is cancelled.</strong>
+                                <p class="mb-2 small">
+                                    Your most recent snapshot is kept safely in
+                                    our cloud storage. To restore it, reactivate
+                                    this instance from the
+                                    <a t-attf-href="/my/instances/#{instance.id}">instance page</a>,
+                                    then re-enable Daily Backups and click
+                                    Restore.
+                                </p>
+                                <a t-attf-href="/my/instances/#{instance.id}/reactivate"
+                                   class="btn btn-sm btn-warning">
+                                    <i class="fas fa-redo me-1"></i>Reactivate Instance
+                                </a>
+                            </div>
+                        </div>
+                    </t>
+
                     <!-- Locked-restore prompt: shown when the
                          customer has retained snapshots (typical after
                          reactivation) but Daily Backups isn't on yet.
                          Restore is part of the paid Daily Backups
                          add-on, so we surface the enable CTA right
-                         next to the snapshot list. -->
-                    <t t-if="instance.is_hosting and not instance.is_trial and not instance.daily_backup_enabled and full_instance_backups">
+                         next to the snapshot list. Suppressed for
+                         cancelled instances because they need to
+                         reactivate first, not enable a subscription. -->
+                    <t t-if="instance.is_hosting and not instance.is_trial and not _is_cancelled and not instance.daily_backup_enabled and full_instance_backups">
                         <div class="alert-banner alert-warning mb-3">
                             <i class="fas fa-lock"></i>
                             <div class="flex-grow-1">
@@ -2639,13 +2677,16 @@
                                                         </a>
                                                     </t>
                                                     <!-- Restore is a Daily Snapshots feature.
-                                                         If the customer's add-on isn't active
-                                                         (typical case after reactivation: the
-                                                         retained snapshot is sitting here but
-                                                         the subscription was reset), nudge them
-                                                         to enable it first instead of showing
-                                                         a button that would just raise on click. -->
-                                                    <t t-if="instance.daily_backup_enabled">
+                                                         Cancelled instances: no button at all
+                                                         — the banner above the list explains
+                                                         the path (reactivate first).
+                                                         Active but no add-on: locked button
+                                                         pointing to enable.
+                                                         Active and subscribed: real Restore. -->
+                                                    <t t-if="_is_cancelled">
+                                                        <!-- intentionally no action -->
+                                                    </t>
+                                                    <t t-elif="instance.daily_backup_enabled">
                                                         <button type="button"
                                                                 class="btn btn-sm btn-outline-warning"
                                                                 data-bs-toggle="modal"

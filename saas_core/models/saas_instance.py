@@ -3589,6 +3589,18 @@ class SaasInstance(models.Model):
 
         self.state = 'cancelled'
         self.pending_operation = False
+        # Snapshot subscription ends with the instance. Without this
+        # the cancelled-instance card would still show "Daily Backups
+        # Active" and an unlocked Restore button next to the retained
+        # snapshot — both wrong. The customer can re-subscribe after
+        # they reactivate; ``action_reactivate`` already clears these
+        # again as a belt-and-braces.
+        self.write({
+            'daily_backup_enabled': False,
+            'daily_backup_pending_invoice_id': False,
+            'daily_backup_next_invoice_date': False,
+            'daily_backup_last_invoice_date': False,
+        })
         if retained_backup:
             self._append_log(
                 "Cancellation complete. Snapshot '%s' is retained — "
