@@ -89,7 +89,7 @@ export default function Home() {
             className="inline-flex items-center gap-2 rounded-full border border-border bg-card/60 px-3 py-1 text-xs font-medium text-muted backdrop-blur transition-colors hover:text-foreground"
           >
             <span className="flex size-1.5 rounded-full bg-success" />
-            Odoo 18 hosting is live
+            Odoo 19 hosting is live
             <ArrowRight className="size-3" />
           </Link>
           <h1 className="mx-auto mt-6 max-w-4xl text-4xl font-bold tracking-tight sm:text-6xl">
