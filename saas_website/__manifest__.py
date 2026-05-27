@@ -17,15 +17,15 @@
         'views/saas_registration_templates.xml',
         'views/saas_invoice_templates.xml',
         'views/saas_portal_templates.xml',
-        'views/saas_docs_templates.xml',
     ],
     'assets': {
         'web.assets_frontend': [
             'saas_website/static/src/css/cloudodoo.css',
             'saas_website/static/src/js/cloudodoo_app.js',
             'saas_website/static/src/js/subdomain_check.js',
-            'saas_website/static/src/js/portal_actions.js',
-            'saas_website/static/src/js/portal_logs.js',
+            # portal_actions.js / portal_logs.js removed: the portal pages
+            # they drove (instance start/stop, live logs) are now the
+            # VELTNEX SPA, which calls /saas/api/v1 + the log SSE directly.
         ],
     },
     'installable': True,

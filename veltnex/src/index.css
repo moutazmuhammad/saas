@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    border-color: theme("colors.border");
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::selection {
+    background: rgba(32, 60, 134, 0.4);
+    color: #fafafa;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #27272a;
+    border-radius: 9999px;
+    border: 2px solid #09090b;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3f3f46;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-card/60 backdrop-blur-xl border border-border/80;
+  }
+
+  .glass-strong {
+    background: linear-gradient(
+      180deg,
+      rgba(24, 24, 27, 0.9) 0%,
+      rgba(24, 24, 27, 0.6) 100%
+    );
+    @apply backdrop-blur-xl border border-border;
+  }
+
+  .text-gradient {
+    @apply bg-gradient-to-br from-foreground via-foreground to-muted bg-clip-text text-transparent;
+  }
+
+  .focus-ring {
+    @apply outline-none focus-visible:ring-2 focus-visible:ring-primary-glow/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+}
+
+/* Custom styled range input for SliderControl */
+input[type="range"].veltnex-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  outline: none;
+}
+input[type="range"].veltnex-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  width: 20px;
+  border-radius: 9999px;
+  background: #fafafa;
+  border: 4px solid #203c86;
+  cursor: pointer;
+  box-shadow: 0 0 0 4px rgba(32, 60, 134, 0.25);
+  transition: transform 0.15s ease;
+}
+input[type="range"].veltnex-range::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+}
+input[type="range"].veltnex-range::-moz-range-thumb {
+  height: 18px;
+  width: 18px;
+  border-radius: 9999px;
+  background: #fafafa;
+  border: 4px solid #203c86;
+  cursor: pointer;
+}

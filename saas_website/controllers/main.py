@@ -58,48 +58,8 @@ class SaasWebsite(http.Controller):
     #  1. Services Catalog  –  /services
     # ==================================================================
 
-    @http.route('/services', type='http', auth='public', website=True, sitemap=True)
-    def services_page(self, **kw):
-        """Browse all published SaaS service products."""
-        if not self._section_enabled('services'):
-            return request.redirect('/')
-        products = request.env['saas.product'].sudo().search([
-            ('is_published', '=', True),
-            ('is_hosting', '=', False),
-        ], order='sequence, id')
-
-        return request.render('saas_website.services_page', {
-            'products': products,
-        })
-
-    # ==================================================================
-    #  2. Service Detail / Plan Selection  –  /services/<id>
-    # ==================================================================
-
-    @http.route('/services/<int:product_id>', type='http', auth='public',
-                website=True, sitemap=True)
-    def service_plans(self, product_id, **kw):
-        """Show available plans for the selected service."""
-        if not self._section_enabled('services'):
-            return request.redirect('/')
-        product = request.env['saas.product'].sudo().browse(product_id)
-        if not product.exists() or not product.is_published:
-            return request.redirect('/services')
-
-        all_plans = product.plan_ids.sorted('sequence')
-        trial_plan = all_plans.filtered(lambda p: p.is_trial_plan)[:1]
-
-        trial_available, trial_days = self._get_trial_info()
-
-        custom_config = self._get_custom_plan_config()
-
-        return request.render('saas_website.service_plans_page', {
-            'product': product,
-            'trial_plan': trial_plan,
-            'trial_available': trial_available,
-            'trial_days': trial_days,
-            'custom_config': custom_config,
-        })
+    # /services and /services/<id> are served by the VELTNEX SPA — see
+    # controllers/spa.py. (Ordering still POSTs to /services/order below.)
 
     # ==================================================================
     #  3. Configure Instance  –  /services/<id>/plans/<plan_id>/configure
@@ -614,10 +574,7 @@ class SaasWebsite(http.Controller):
     # ==================================================================
     #  Customer Documentation  –  /docs
     # ==================================================================
-    @http.route('/docs', type='http', auth='public', website=True, sitemap=True)
-    def docs_page(self, **kw):
-        """Render the customer-facing how-to documentation."""
-        return request.render('saas_website.portal_docs_page', {})
+    # /docs is served by the VELTNEX SPA — see controllers/spa.py.
 
     # ==================================================================
     #  Cleanup: erase every Arabic-related database artifact
@@ -846,23 +803,8 @@ class SaasWebsite(http.Controller):
             })
         return plan
 
-    @http.route('/hosting', type='http', auth='public', website=True, sitemap=True)
-    def hosting_page(self, **kw):
-        """Hosting landing page with plan builder and version selection."""
-        if not self._section_enabled('hosting'):
-            return request.redirect('/')
-        hosting_config = self._get_hosting_plan_config()
-        versions = request.env['saas.odoo.version'].sudo().search(
-            [('is_hosting_version', '=', True)], order='name desc',
-        )
-        trial_available, trial_days = self._get_trial_info(hosting=True)
-
-        return request.render('saas_website.hosting_page', {
-            'hosting_config': hosting_config,
-            'versions': versions,
-            'trial_available': trial_available,
-            'trial_days': trial_days,
-        })
+    # /hosting is served by the VELTNEX SPA — see controllers/spa.py.
+    # /hosting/configure (below) stays Odoo QWeb: it's the purchase funnel.
 
     @http.route('/hosting/configure', type='http', auth='public', website=True)
     def hosting_configure(self, workers=0, storage=0, billing='monthly',

@@ -1,0 +1,128 @@
+import * as React from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Mail, Lock, ArrowRight } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Input, Label } from "@/components/ui/input";
+import { ActionButton } from "@/components/ActionButton";
+import { AlertBanner } from "@/components/AlertBanner";
+import { Logo } from "@/components/Logo";
+import { useAuth } from "@/context/AuthContext";
+import { useToast } from "@/context/ToastContext";
+import { ApiError } from "@/lib/api";
+
+export default function Login() {
+  const { login } = useAuth();
+  const toast = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const from = (location.state as { from?: string } | null)?.from ?? "/my";
+
+  const [email, setEmail] = React.useState("");
+  const [password, setPassword] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!email.includes("@") || !password) {
+      setError("Enter your email and password to continue.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await login(email, password);
+      toast.success("Welcome back", "You're signed in.");
+      navigate(from, { replace: true });
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "We couldn't sign you in just now. Please try again."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="relative flex min-h-[calc(100vh-4rem)] items-center justify-center overflow-hidden px-4 py-12">
+      <div className="pointer-events-none absolute left-1/2 top-0 h-96 w-[700px] -translate-x-1/2 rounded-full bg-primary/15 blur-[130px]" />
+      <div className="relative w-full max-w-md animate-scale-in">
+        <div className="mb-8 flex justify-center">
+          <Logo />
+        </div>
+        <Card glass className="p-8">
+          <h1 className="text-2xl font-bold tracking-tight">Sign in</h1>
+          <p className="mt-1.5 text-sm text-muted">
+            Welcome back. Sign in to manage your instances.
+          </p>
+
+          {error && (
+            <AlertBanner
+              className="mt-5"
+              variant="danger"
+              title="Sign-in failed"
+              description={error}
+              onDismiss={() => setError(null)}
+            />
+          )}
+
+          <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                <Input
+                  id="email"
+                  type="email"
+                  className="pl-9"
+                  placeholder="you@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <a href="/web/reset_password" className="text-xs text-primary-glow hover:underline">
+                  Forgot?
+                </a>
+              </div>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                <Input
+                  id="password"
+                  type="password"
+                  className="pl-9"
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+              </div>
+            </div>
+            <ActionButton
+              type="submit"
+              className="w-full"
+              loading={loading}
+              loadingText="Signing in…"
+            >
+              Sign in
+              <ArrowRight />
+            </ActionButton>
+          </form>
+
+          <p className="mt-6 text-center text-sm text-muted">
+            New to VELTNEX?{" "}
+            <Link to="/services/register" className="font-medium text-primary-glow hover:underline">
+              Create an account
+            </Link>
+          </p>
+        </Card>
+      </div>
+    </div>
+  );
+}
