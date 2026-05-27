@@ -11,12 +11,12 @@
         <xpath expr="//head" position="inside">
             <script>
                 (function(){
-                    var t = localStorage.getItem('co-theme') || 'dark';
-                    document.documentElement.setAttribute('data-theme', t);
+                    // VELTNEX is dark-only (matches the SPA). Force dark.
+                    document.documentElement.setAttribute('data-theme', 'dark');
                 })();
             </script>
-            <link rel="icon" type="image/svg+xml" href="/saas_website/static/src/img/sudud-icon.svg"/>
-            <link rel="shortcut icon" href="/saas_website/static/src/img/sudud-icon.svg"/>
+            <link rel="icon" type="image/svg+xml" href="/saas_website/static/src/img/veltnex-icon.svg"/>
+            <link rel="shortcut icon" href="/saas_website/static/src/img/veltnex-icon.svg"/>
             <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" as="style"/>
             <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"/>
         </xpath>
@@ -41,8 +41,8 @@
                 <nav class="navbar navbar-expand-lg fixed-top co-navbar">
                     <div class="container">
                         <a class="navbar-brand d-flex align-items-center" href="/">
-                            <img src="/saas_website/static/src/img/sudud-icon.svg" alt="SUDUD" style="height:36px;" class="me-2"/>
-                            <span class="fw-bold">SUDUD</span>
+                            <img src="/saas_website/static/src/img/veltnex-icon.svg" alt="VELTNEX" style="height:30px;" class="me-2"/>
+                            <span class="fw-bold">VELT<span style="color:#3656b8;">NEX</span></span>
                         </a>
                         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#coNavbar">
                             <span class="navbar-toggler-icon"></span>
@@ -75,7 +75,8 @@
                                             <span class="d-none d-lg-inline" t-esc="request.env.user.name"/>
                                         </a>
                                         <ul class="dropdown-menu dropdown-menu-end">
-                                            <li><a class="dropdown-item" href="/my/home"><i class="fas fa-user me-2"></i>Profile</a></li>
+                                            <li><a class="dropdown-item" href="/my"><i class="fas fa-th-large me-2"></i>Dashboard</a></li>
+                                            <li><a class="dropdown-item" href="/my/account"><i class="fas fa-user me-2"></i>Profile</a></li>
                                             <li><a class="dropdown-item" href="/my/instances"><i class="fas fa-server me-2"></i>My Instances</a></li>
                                             <li t-if="request.env.user.has_group('base.group_user')">
                                                 <a class="dropdown-item" href="/odoo"><i class="fas fa-cogs me-2"></i>Backend</a>
@@ -86,25 +87,15 @@
                                     </li>
                                 </t>
 
-                                <!-- Public user nav -->
+                                <!-- Public user nav (matches the VELTNEX SPA) -->
                                 <t t-if="request.env.user._is_public()">
                                     <li class="nav-item ms-lg-3">
-                                        <a class="btn btn-outline-light btn-sm" href="/services/register">Sign Up</a>
+                                        <a class="nav-link" href="/login">Sign in</a>
                                     </li>
                                     <li class="nav-item ms-2">
-                                        <a class="btn btn-primary btn-sm" href="/web/login">Sign In</a>
+                                        <a class="btn btn-primary btn-sm" href="/services/register">Get started</a>
                                     </li>
                                 </t>
-
-                                <!-- Theme toggle (far right) -->
-                                <li class="nav-item ms-lg-2">
-                                    <button class="nav-link btn btn-link co-theme-toggle"
-                                            id="themeToggle" type="button"
-                                            aria-label="Toggle theme"
-                                            title="Toggle dark/light mode">
-                                        <i class="fas fa-sun" id="themeIcon"></i>
-                                    </button>
-                                </li>
                             </ul>
                         </div>
                     </div>
@@ -127,56 +118,51 @@
                t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_hosting_section', 'True') != 'False'"/>
             <footer id="bottom" data-anchor="true" class="co-footer">
                 <div class="container">
-                    <div class="row g-4 py-4">
-                        <div class="col-lg-4">
-                            <div class="d-flex align-items-center mb-3">
-                                <img src="/saas_website/static/src/img/sudud-icon.svg" alt="SUDUD" style="height:32px;" class="me-2"/>
-                                <span class="fw-bold fs-5">SUDUD</span>
+                    <div class="row g-4 py-5">
+                        <div class="col-12 col-lg-3">
+                            <a href="/" class="d-flex align-items-center mb-3 text-decoration-none">
+                                <img src="/saas_website/static/src/img/veltnex-icon.svg" alt="VELTNEX" style="height:30px;" class="me-2"/>
+                                <span class="fw-bold fs-5" style="color:var(--co-text-primary, #FAFAFA);">VELT<span style="color:#3656b8;">NEX</span></span>
+                            </a>
+                            <p class="small mb-4" style="color:var(--co-text-muted, #71717A);max-width:22rem;">The Logic of Stability. Enterprise-grade managed hosting for Odoo, built for teams that can't afford downtime.</p>
+                            <div class="d-flex gap-2">
+                                <a href="#" class="co-social" aria-label="Twitter"><i class="fab fa-twitter"></i></a>
+                                <a href="#" class="co-social" aria-label="GitHub"><i class="fab fa-github"></i></a>
+                                <a href="#" class="co-social" aria-label="LinkedIn"><i class="fab fa-linkedin"></i></a>
                             </div>
-                            <p class="small mb-0" style="color:var(--co-text-muted, #71717A);">SUDUD: The Logic of Stability. Deploy, manage, and scale your business applications on the cloud with ease.</p>
                         </div>
-                        <div class="col-6 col-lg-2">
+                        <div class="col-6 col-lg-3">
                             <h6 class="fw-bold mb-3">Product</h6>
                             <ul class="list-unstyled">
                                 <li t-if="show_services_section"><a href="/services" class="co-footer-link">Services</a></li>
                                 <li t-if="show_hosting_section"><a href="/hosting" class="co-footer-link">Hosting</a></li>
-                                <li><a href="#" class="co-footer-link">Pricing</a></li>
-                                <li><a href="#" class="co-footer-link">Features</a></li>
+                                <li t-if="show_hosting_section"><a href="/hosting/configure" class="co-footer-link">Configure</a></li>
+                                <li><a href="/docs" class="co-footer-link">Docs</a></li>
                             </ul>
                         </div>
-                        <div class="col-6 col-lg-2">
+                        <div class="col-6 col-lg-3">
                             <h6 class="fw-bold mb-3">Company</h6>
                             <ul class="list-unstyled">
                                 <li><a href="#" class="co-footer-link">About</a></li>
-                                <li><a href="#" class="co-footer-link">Blog</a></li>
+                                <li><a href="#" class="co-footer-link">Customers</a></li>
                                 <li><a href="#" class="co-footer-link">Careers</a></li>
-                            </ul>
-                        </div>
-                        <div class="col-6 col-lg-2">
-                            <h6 class="fw-bold mb-3">Support</h6>
-                            <ul class="list-unstyled">
-                                <li><a href="/docs" class="co-footer-link">Documentation</a></li>
-                                <li><a href="/docs#sec-troubleshoot" class="co-footer-link">Help Center</a></li>
                                 <li><a href="/contactus" class="co-footer-link">Contact</a></li>
                             </ul>
                         </div>
-                        <div class="col-6 col-lg-2">
-                            <h6 class="fw-bold mb-3">Legal</h6>
+                        <div class="col-6 col-lg-3">
+                            <h6 class="fw-bold mb-3">Account</h6>
                             <ul class="list-unstyled">
-                                <li><a href="#" class="co-footer-link">Privacy</a></li>
-                                <li><a href="#" class="co-footer-link">Terms</a></li>
-                                <li><a href="#" class="co-footer-link">Security</a></li>
+                                <li><a href="/login" class="co-footer-link">Sign in</a></li>
+                                <li><a href="/services/register" class="co-footer-link">Get started</a></li>
+                                <li><a href="/my" class="co-footer-link">Dashboard</a></li>
+                                <li><a href="/my/billing" class="co-footer-link">Invoices</a></li>
                             </ul>
                         </div>
                     </div>
-                    <hr class="my-2 border-secondary"/>
-                    <div class="d-flex flex-wrap justify-content-between align-items-center py-3">
-                        <p class="small mb-0" style="color:var(--co-text-muted, #71717A);">&#169; 2026 SUDUD. All rights reserved.</p>
-                        <div class="d-flex gap-3">
-                            <a href="#" style="color:var(--co-text-muted, #71717A);"><i class="fab fa-twitter"></i></a>
-                            <a href="#" style="color:var(--co-text-muted, #71717A);"><i class="fab fa-linkedin"></i></a>
-                            <a href="#" style="color:var(--co-text-muted, #71717A);"><i class="fab fa-github"></i></a>
-                        </div>
+                    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-center gap-2 py-4"
+                         style="border-top:1px solid var(--border-color, #27272A);">
+                        <p class="small mb-0" style="color:var(--co-text-muted, #71717A);">&#169; 2026 VELTNEX, Inc. All rights reserved.</p>
+                        <p class="small mb-0" style="color:var(--co-text-muted, #71717A);">Status: <span style="color:#10B981;">All systems operational</span></p>
                     </div>
                 </div>
             </footer>

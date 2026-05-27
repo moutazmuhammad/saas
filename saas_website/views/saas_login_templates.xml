@@ -17,14 +17,14 @@
             <t t-call="web.frontend_layout">
                 <t t-set="no_header" t-value="True"/>
                 <t t-set="no_footer" t-value="True"/>
-                <t t-set="x_icon" t-value="'/saas_website/static/src/img/sudud-icon.svg'"/>
+                <t t-set="x_icon" t-value="'/saas_website/static/src/img/veltnex-icon.svg'"/>
 
                 <div class="co-login-page">
                     <!-- Left panel: branding -->
                     <div class="co-login-brand d-none d-lg-flex">
                         <div class="co-login-brand-content">
                             <div class="co-login-brand-logo">
-                                <img src="/saas_website/static/src/img/sudud-logo-name.svg" alt="SUDUD" style="height:80px;"/>
+                                <img src="/saas_website/static/src/img/veltnex-logo-name.svg" alt="VELTNEX" style="height:80px;"/>
                             </div>
                             <h1 class="co-login-brand-title">Welcome Back</h1>
                             <p class="co-login-brand-subtitle">
@@ -46,7 +46,7 @@
                             </div>
                         </div>
                         <div class="co-login-brand-footer">
-                            <span>&#169; 2026 SUDUD. All rights reserved.</span>
+                            <span>&#169; 2026 VELTNEX. All rights reserved.</span>
                         </div>
                     </div>
 
@@ -55,7 +55,7 @@
                         <div class="co-login-form-wrapper">
                             <!-- Mobile logo -->
                             <div class="co-login-mobile-logo d-lg-none">
-                                <img src="/saas_website/static/src/img/sudud-logo-name.svg" alt="SUDUD" style="height:60px;"/>
+                                <img src="/saas_website/static/src/img/veltnex-logo-name.svg" alt="VELTNEX" style="height:60px;"/>
                             </div>
 
                             <div class="co-login-form-header">
@@ -112,7 +112,7 @@
               inherit_id="web.layout" customize_show="False">
         <xpath expr="//link[@rel='shortcut icon']" position="attributes">
             <attribute name="t-att-href"/>
-            <attribute name="href">/saas_website/static/src/img/sudud-icon.svg</attribute>
+            <attribute name="href">/saas_website/static/src/img/veltnex-icon.svg</attribute>
             <attribute name="type">image/svg+xml</attribute>
         </xpath>
     </template>

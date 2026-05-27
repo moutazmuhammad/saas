@@ -41,6 +41,8 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route path="/my" element={<PortalLayout />}>
           <Route index element={<Dashboard />} />
+          {/* Odoo's standard portal home URL → our dashboard */}
+          <Route path="home" element={<Navigate to="/my" replace />} />
           <Route path="instances" element={<Instances />} />
           <Route path="instances/:id" element={<InstanceDetail />} />
           <Route path="instances/:id/databases" element={<Databases />} />

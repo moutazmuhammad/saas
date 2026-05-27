@@ -283,7 +283,7 @@ html {
 
 /* CloudOdoo custom footer */
 .co-footer {
-    background: var(--bg-card) !important;
+    background: var(--bg-dark) !important;
     border-top: 1px solid var(--border-color);
     color: var(--text-primary);
 }
@@ -299,6 +299,23 @@ html {
 }
 .co-footer-link:hover {
     color: var(--text-primary) !important;
+}
+/* Footer social squares (match the VELTNEX SPA) */
+.co-social {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    color: var(--text-muted) !important;
+    text-decoration: none;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+.co-social:hover {
+    color: var(--text-primary) !important;
+    border-color: var(--border-light);
 }
 
 /* Ensure fixed navbar doesn't overlap content */

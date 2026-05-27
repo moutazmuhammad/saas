@@ -1,6 +1,14 @@
 import * as React from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { Menu, X, LayoutDashboard } from "lucide-react";
+import {
+  Menu,
+  X,
+  LayoutDashboard,
+  User,
+  Server,
+  LogOut,
+  ChevronDown,
+} from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/context/AuthContext";
@@ -12,10 +20,19 @@ const LINKS = [
   { to: "/docs", label: "Docs" },
 ];
 
+// Shared account menu — kept identical to the QWeb header dropdown so the
+// experience is the same across every page. "Profile" is an Odoo portal
+// page, so it uses a full navigation; the rest are SPA routes.
+const MENU = [
+  { label: "Dashboard", icon: LayoutDashboard, to: "/my", external: false },
+  { label: "Profile", icon: User, to: "/my/account", external: true },
+  { label: "My Instances", icon: Server, to: "/my/instances", external: false },
+];
+
 export function PublicNav() {
   const [open, setOpen] = React.useState(false);
   const [scrolled, setScrolled] = React.useState(false);
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user, logout } = useAuth();
   const navigate = useNavigate();
 
   React.useEffect(() => {
@@ -23,6 +40,16 @@ export function PublicNav() {
     window.addEventListener("scroll", onScroll);
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  const go = (item: (typeof MENU)[number]) => {
+    if (item.external) window.location.href = item.to;
+    else navigate(item.to);
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/");
+  };
 
   return (
     <header
@@ -56,10 +83,12 @@ export function PublicNav() {
 
         <div className="hidden items-center gap-3 md:flex">
           {isAuthenticated ? (
-            <Button size="sm" onClick={() => navigate("/my")}>
-              <LayoutDashboard className="size-4" />
-              Dashboard
-            </Button>
+            <UserMenu
+              initials={user?.initials || "U"}
+              name={user?.name || "Account"}
+              onGo={go}
+              onLogout={handleLogout}
+            />
           ) : (
             <>
               <Link
@@ -104,9 +133,33 @@ export function PublicNav() {
                 {l.label}
               </NavLink>
             ))}
-            <div className="flex flex-col gap-2 pt-3">
+            <div className="mt-2 flex flex-col gap-1 border-t border-border pt-3">
               {isAuthenticated ? (
-                <Button onClick={() => navigate("/my")}>Dashboard</Button>
+                <>
+                  {MENU.map((item) => (
+                    <button
+                      key={item.label}
+                      onClick={() => {
+                        setOpen(false);
+                        go(item);
+                      }}
+                      className="flex items-center gap-2.5 rounded-md px-3 py-2.5 text-left text-sm font-medium text-muted hover:bg-card hover:text-foreground"
+                    >
+                      <item.icon className="size-4" />
+                      {item.label}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => {
+                      setOpen(false);
+                      handleLogout();
+                    }}
+                    className="flex items-center gap-2.5 rounded-md px-3 py-2.5 text-left text-sm font-medium text-danger hover:bg-danger/10"
+                  >
+                    <LogOut className="size-4" />
+                    Sign out
+                  </button>
+                </>
               ) : (
                 <>
                   <Button variant="secondary" onClick={() => navigate("/login")}>
@@ -122,5 +175,66 @@ export function PublicNav() {
         </div>
       )}
     </header>
+  );
+}
+
+function UserMenu({
+  initials,
+  name,
+  onGo,
+  onLogout,
+}: {
+  initials: string;
+  name: string;
+  onGo: (item: (typeof MENU)[number]) => void;
+  onLogout: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1.5 text-sm transition-colors hover:bg-border/40"
+      >
+        <span className="flex size-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+          {initials}
+        </span>
+        <span className="max-w-[120px] truncate font-medium">{name}</span>
+        <ChevronDown className={cn("size-4 text-muted transition-transform", open && "rotate-180")} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-2 w-52 overflow-hidden rounded-xl border border-border bg-card shadow-card animate-scale-in">
+            {MENU.map((item) => (
+              <button
+                key={item.label}
+                onClick={() => {
+                  setOpen(false);
+                  onGo(item);
+                }}
+                className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-border/50"
+              >
+                <item.icon className="size-4 text-muted" />
+                {item.label}
+              </button>
+            ))}
+            <div className="border-t border-border" />
+            <button
+              onClick={() => {
+                setOpen(false);
+                onLogout();
+              }}
+              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-danger transition-colors hover:bg-danger/10"
+            >
+              <LogOut className="size-4" />
+              Sign out
+            </button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
