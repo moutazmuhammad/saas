@@ -48,7 +48,9 @@
                             <span class="navbar-toggler-icon"></span>
                         </button>
                         <div class="collapse navbar-collapse" id="coNavbar">
-                            <ul class="navbar-nav ms-auto align-items-center">
+                            <!-- Left group: nav links sit next to the logo
+                                 (matches the VELTNEX SPA home page). -->
+                            <ul class="navbar-nav me-auto align-items-center">
                                 <li t-if="show_services_section" class="nav-item">
                                     <a class="nav-link" href="/services">Services</a>
                                 </li>
@@ -58,7 +60,9 @@
                                 <li class="nav-item">
                                     <a class="nav-link" href="/docs">Docs</a>
                                 </li>
-
+                            </ul>
+                            <!-- Right group: account dropdown / auth buttons. -->
+                            <ul class="navbar-nav align-items-center">
                                 <!-- Logged-in user nav. The standalone
                                      "My Instances" link is intentionally
                                      not in the top bar — it lives inside
