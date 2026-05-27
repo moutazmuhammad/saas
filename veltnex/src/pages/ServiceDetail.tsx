@@ -1,18 +1,23 @@
 import * as React from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Check, PackageX, Server, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, PackageX, Server, Users, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { ServiceIcon } from "@/components/ServiceIcon";
-import { api, ApiError, type ApiService } from "@/lib/api";
+import { api, ApiError, type ApiService, type TrialInfo } from "@/lib/api";
 
 export default function ServiceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [service, setService] = React.useState<ApiService | null>(null);
+  const [trial, setTrial] = React.useState<TrialInfo | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    api.meta().then((m) => setTrial(m.trial)).catch(() => {});
+  }, []);
 
   React.useEffect(() => {
     setService(null);
@@ -51,7 +56,8 @@ export default function ServiceDetail() {
   }
 
   const realPlans = (service.plans || []).filter((p) => !p.is_trial);
-  const trialPlan = (service.plans || []).find((p) => p.is_trial);
+  const canTrial =
+    !!service.trial_plan_id && !!trial?.services_available && (trial?.days ?? 0) > 0;
 
   return (
     <div className="animate-fade-in">
@@ -73,12 +79,13 @@ export default function ServiceDetail() {
             {service.tagline && (
               <p className="mt-3 text-lg text-primary-glow">{service.tagline}</p>
             )}
-            {trialPlan && (
+            {canTrial && (
               <div className="mt-6">
-                <Button onClick={() => configure(trialPlan.id, true)}>
-                  Start free trial
-                  <ArrowRight />
+                <Button onClick={() => configure(service.trial_plan_id!, true)}>
+                  <Sparkles className="size-4" />
+                  Start your {trial?.days}-day free trial
                 </Button>
+                <p className="mt-2 text-xs text-muted">No credit card required.</p>
               </div>
             )}
           </div>
@@ -114,7 +121,7 @@ export default function ServiceDetail() {
         {realPlans.length === 0 ? (
           <p className="mt-4 text-muted">
             Plans for this service are configured at checkout.{" "}
-            {trialPlan && "Start a free trial above to get going."}
+            {canTrial && "Start a free trial above to get going."}
           </p>
         ) : (
           <div className="mt-8 grid gap-5 md:grid-cols-3">

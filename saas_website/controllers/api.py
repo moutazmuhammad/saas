@@ -248,9 +248,19 @@ class SaasApi(http.Controller):
         versions = request.env['saas.odoo.version'].sudo().search(
             [('is_hosting_version', '=', True)], order='name desc',
         )
+        # Free-trial availability (mirrors the old site). _get_trial_info
+        # accounts for trial_days > 0 and whether this user already used
+        # their trial; for anonymous visitors it reports availability.
+        svc_trial, trial_days = site._get_trial_info()
+        host_trial, _hd = site._get_trial_info(hosting=True)
         return ok({
             'hosting_config': site._get_hosting_plan_config(),
             'custom_config': site._get_custom_plan_config(),
+            'trial': {
+                'days': trial_days,
+                'services_available': svc_trial,
+                'hosting_available': host_trial,
+            },
             'sections': {
                 'services': site._section_enabled('services'),
                 'hosting': site._section_enabled('hosting'),
@@ -692,6 +702,11 @@ class SaasApi(http.Controller):
                 {'title': f.name, 'description': getattr(f, 'description', '') or ''}
                 for f in product.feature_line_ids
             ]
+            # Trial plan for this service (if configured), for the
+            # "Start free trial" button. Trial plans may be flagged custom,
+            # so we look across all plans here, not just the public ones.
+            trial_plan = product.plan_ids.filtered(lambda p: p.is_trial_plan)[:1]
+            data['trial_plan_id'] = trial_plan.id if trial_plan else 0
             data['plans'] = [{
                 'id': p.id,
                 'name': p.name,

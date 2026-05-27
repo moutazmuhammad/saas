@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowRight, Check, ShieldCheck, Cpu, HardDrive, Globe } from "lucide-react";
+import { ArrowRight, Check, ShieldCheck, Cpu, HardDrive, Globe, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertBanner } from "@/components/AlertBanner";
@@ -91,6 +91,18 @@ export default function Hosting() {
             Move the sliders to shape your instance. One transparent total —
             no per-resource math, no surprises on the invoice.
           </p>
+          {meta?.trial.hosting_available && meta.trial.days > 0 && (
+            <div className="mt-8 flex flex-col items-center gap-2">
+              <Button
+                size="lg"
+                onClick={() => (window.location.href = "/hosting/configure?is_trial=1")}
+              >
+                <Sparkles className="size-4" />
+                Start your {meta.trial.days}-day free trial
+              </Button>
+              <span className="text-xs text-muted">No credit card required.</span>
+            </div>
+          )}
         </div>
       </section>
 

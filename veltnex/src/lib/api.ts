@@ -107,9 +107,16 @@ export interface PlanConfigMeta {
   currency: string;
 }
 
+export interface TrialInfo {
+  days: number;
+  services_available: boolean;
+  hosting_available: boolean;
+}
+
 export interface Meta {
   hosting_config: PlanConfigMeta;
   custom_config: PlanConfigMeta;
+  trial: TrialInfo;
   sections: { services: boolean; hosting: boolean };
   support_email: string;
   countries: { id: number; name: string; code: string }[];
@@ -126,6 +133,7 @@ export interface ApiService {
   image_url: string;
   highlights?: string[];
   description?: string;
+  trial_plan_id?: number;
   features?: { title: string; description: string }[];
   plans?: {
     id: number;

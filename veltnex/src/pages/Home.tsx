@@ -10,12 +10,13 @@ import {
   Lock,
   Gauge,
   CheckCircle2,
+  Sparkles,
 } from "lucide-react";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ServiceIcon } from "@/components/ServiceIcon";
-import { api, type ApiService } from "@/lib/api";
+import { api, type ApiService, type TrialInfo } from "@/lib/api";
 
 const STATS = [
   { value: "99.99%", label: "Uptime SLA" },
@@ -66,10 +67,15 @@ const FEATURES = [
 export default function Home() {
   const navigate = useNavigate();
   const [services, setServices] = React.useState<ApiService[]>([]);
+  const [trial, setTrial] = React.useState<TrialInfo | null>(null);
 
   React.useEffect(() => {
     api.services().then(setServices).catch(() => setServices([]));
+    api.meta().then((m) => setTrial(m.trial)).catch(() => {});
   }, []);
+
+  const trialReady = !!trial?.hosting_available && (trial?.days ?? 0) > 0;
+  const startTrial = () => (window.location.href = "/hosting/configure?is_trial=1");
 
   return (
     <div className="animate-fade-in">
@@ -95,10 +101,17 @@ export default function Home() {
             infrastructure headache.
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button size="lg" onClick={() => navigate("/hosting")}>
-              Start building
-              <ArrowRight />
-            </Button>
+            {trialReady ? (
+              <Button size="lg" onClick={startTrial}>
+                <Sparkles className="size-4" />
+                Start your {trial?.days}-day free trial
+              </Button>
+            ) : (
+              <Button size="lg" onClick={() => navigate("/hosting")}>
+                Start building
+                <ArrowRight />
+              </Button>
+            )}
             <Button
               size="lg"
               variant="secondary"
@@ -107,6 +120,11 @@ export default function Home() {
               View hosting plans
             </Button>
           </div>
+          {trialReady && (
+            <p className="mt-3 text-xs text-muted">
+              {trial?.days}-day free trial · no credit card required
+            </p>
+          )}
 
           {/* Floating dashboard preview */}
           <div className="relative mx-auto mt-16 max-w-4xl">
@@ -241,7 +259,11 @@ export default function Home() {
               </Button>
             </div>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted">
-              {["No setup fees", "Cancel anytime", "Daily backups included"].map((t) => (
+              {[
+                ...(trialReady ? [`${trial?.days}-day free trial`] : ["No setup fees"]),
+                "Cancel anytime",
+                "Daily backups included",
+              ].map((t) => (
                 <span key={t} className="flex items-center gap-1.5">
                   <CheckCircle2 className="size-4 text-success" />
                   {t}
