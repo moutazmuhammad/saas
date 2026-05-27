@@ -21,7 +21,7 @@ import { api, type ApiService, type TrialInfo } from "@/lib/api";
 const STATS = [
   { value: "99.99%", label: "Uptime SLA" },
   { value: "<40ms", label: "Avg. response" },
-  { value: "12", label: "Global regions" },
+  { value: "Free", label: "SSL Certificates" },
   { value: "24/7", label: "Expert support" },
 ];
 
