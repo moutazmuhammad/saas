@@ -2,6 +2,22 @@
 <odoo>
 
     <!-- ============================================================
+         White-label: replace the `<meta name="generator" content="Odoo">`
+         that website.layout injects on every QWeb-rendered page (checkout,
+         /my/invoices, etc.) so the source no longer fingerprints the
+         underlying stack. The SPA shell at `/` and other `spa_shell()`
+         routes never include this meta — they ship a plain HTML doc — so
+         this only affects the legacy Odoo-rendered pages.
+         ============================================================ -->
+
+    <template id="veltnex_hide_generator" name="VELTNEX: Hide Generator"
+              inherit_id="website.layout" customize_show="False">
+        <xpath expr="//meta[@name='generator']" position="attributes">
+            <attribute name="content">VELTNEX</attribute>
+        </xpath>
+    </template>
+
+    <!-- ============================================================
          Inject early theme script to prevent FOUC (flash of wrong theme).
          Runs synchronously before CSS paints.
          ============================================================ -->
@@ -9,10 +25,27 @@
     <template id="cloudodoo_theme_init" name="CloudOdoo Theme Init"
               inherit_id="web.frontend_layout" customize_show="False">
         <xpath expr="//head" position="inside">
+            <!--
+                Apply the user's theme BEFORE CSS paints so there's no
+                flash. Uses the same localStorage key as the SPA
+                (`veltnex-theme`) so toggling theme in the SPA is
+                reflected on QWeb-rendered pages (checkout, /my/invoices,
+                portal, etc.) and vice versa.
+            -->
             <script>
                 (function(){
-                    // VELTNEX is dark-only (matches the SPA). Force dark.
-                    document.documentElement.setAttribute('data-theme', 'dark');
+                    try {
+                        var t = localStorage.getItem('veltnex-theme');
+                        if (t !== 'light' &amp;&amp; t !== 'dark') {
+                            t = (window.matchMedia &amp;&amp; window.matchMedia('(prefers-color-scheme: light)').matches)
+                                ? 'light' : 'dark';
+                        }
+                        document.documentElement.setAttribute('data-theme', t);
+                        document.documentElement.classList.toggle('dark', t === 'dark');
+                    } catch (e) {
+                        document.documentElement.setAttribute('data-theme', 'dark');
+                        document.documentElement.classList.add('dark');
+                    }
                 })();
             </script>
             <link rel="icon" type="image/svg+xml" href="/saas_website/static/src/img/veltnex-icon.svg"/>

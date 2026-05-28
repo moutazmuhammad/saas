@@ -321,7 +321,7 @@ server {
     client_max_body_size 200m;
 
     location /websocket {
-        proxy_pass http://odoo_chat;
+        proxy_pass cchttp://odoo_chat;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

@@ -110,6 +110,20 @@ class ResPartner(models.Model):
                 ) % p.phone)
             seen[p.phone] = p.id
 
+    def _saas_has_paid_instance(self, hosting=False):
+        """True if this partner already owns a paid (non-trial, non-cancelled)
+        instance of the given type. Used to disqualify the partner from the
+        free trial: once they pay for a server, the server is paid and the
+        trial no longer applies.
+        """
+        self.ensure_one()
+        return bool(self.env['saas.instance'].sudo().search_count([
+            ('partner_id', '=', self.id),
+            ('is_trial', '=', False),
+            ('is_hosting', '=', bool(hosting)),
+            ('state', 'not in', ('cancelled', 'cancelled_by_client')),
+        ], limit=1))
+
     def action_view_saas_instances(self):
         self.ensure_one()
         return {

@@ -20,11 +20,21 @@
                 <t t-set="x_icon" t-value="'/saas_website/static/src/img/veltnex-icon.svg'"/>
 
                 <div class="co-login-page">
+                    <!-- Floating theme toggle: same localStorage key as
+                         the SPA so the choice carries everywhere. -->
+                    <button type="button" class="vx-theme-toggle"
+                            onclick="(function(b){var c=document.documentElement;var t=c.getAttribute('data-theme')==='dark'?'light':'dark';c.setAttribute('data-theme',t);c.classList.toggle('dark',t==='dark');try{localStorage.setItem('veltnex-theme',t);}catch(e){}})(this)"
+                            aria-label="Toggle theme" title="Toggle theme">
+                        <i class="vx-icon-sun fas fa-sun"></i>
+                        <i class="vx-icon-moon fas fa-moon"></i>
+                    </button>
+
                     <!-- Left panel: branding -->
                     <div class="co-login-brand d-none d-lg-flex">
                         <div class="co-login-brand-content">
                             <div class="co-login-brand-logo">
-                                <img src="/saas_website/static/src/img/veltnex-logo-name.svg" alt="VELTNEX" style="height:80px;"/>
+                                <img class="vx-logo-light" src="/saas_website/static/src/img/veltnex-logo-name-light.svg" alt="VELTNEX" style="height:80px;"/>
+                                <img class="vx-logo-dark" src="/saas_website/static/src/img/veltnex-logo-name.svg" alt="VELTNEX" style="height:80px;"/>
                             </div>
                             <h1 class="co-login-brand-title">Welcome Back</h1>
                             <p class="co-login-brand-subtitle">
@@ -55,7 +65,8 @@
                         <div class="co-login-form-wrapper">
                             <!-- Mobile logo -->
                             <div class="co-login-mobile-logo d-lg-none">
-                                <img src="/saas_website/static/src/img/veltnex-logo-name.svg" alt="VELTNEX" style="height:60px;"/>
+                                <img class="vx-logo-light" src="/saas_website/static/src/img/veltnex-logo-name-light.svg" alt="VELTNEX" style="height:60px;"/>
+                                <img class="vx-logo-dark" src="/saas_website/static/src/img/veltnex-logo-name.svg" alt="VELTNEX" style="height:60px;"/>
                             </div>
 
                             <div class="co-login-form-header">
@@ -105,15 +116,37 @@
     </template>
 
     <!-- ============================================================
-         Override the base web layout favicon globally
+         White-label the base web layout — replace every Odoo brand
+         reference visible in `view-source:` (favicon URL, title
+         default, apple-touch-icon URL, theme color) so the admin
+         shell at /web and /odoo doesn't fingerprint the stack.
          ============================================================ -->
 
     <template id="cloudodoo_favicon" name="CloudOdoo Favicon"
               inherit_id="web.layout" customize_show="False">
+        <!-- Favicon (browser tab icon) -->
         <xpath expr="//link[@rel='shortcut icon']" position="attributes">
             <attribute name="t-att-href"/>
             <attribute name="href">/saas_website/static/src/img/veltnex-icon.svg</attribute>
             <attribute name="type">image/svg+xml</attribute>
+        </xpath>
+        <!-- Default <title>: was "Odoo" when no page-specific title set -->
+        <xpath expr="//title" position="attributes">
+            <attribute name="t-esc">title or 'VELTNEX'</attribute>
+        </xpath>
+    </template>
+
+    <!-- web.webclient_bootstrap (the /web and /odoo admin shell) adds
+         an apple-touch-icon whose URL literally contains "odoo" and a
+         theme-color. Re-point both to VELTNEX assets. -->
+    <template id="veltnex_webclient_branding"
+              name="VELTNEX: Webclient Branding"
+              inherit_id="web.webclient_bootstrap" customize_show="False">
+        <xpath expr="//link[@rel='apple-touch-icon']" position="attributes">
+            <attribute name="href">/saas_website/static/src/img/veltnex-icon.svg</attribute>
+        </xpath>
+        <xpath expr="//meta[@name='theme-color']" position="attributes">
+            <attribute name="content">#203c86</attribute>
         </xpath>
     </template>
 

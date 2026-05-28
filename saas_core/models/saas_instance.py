@@ -812,12 +812,21 @@ class SaasInstance(models.Model):
                     (vals['partner_id'],),
                 )
                 row = self.env.cr.fetchone()
+                partner = self.env['res.partner'].browse(vals['partner_id'])
+                trial_type = 'hosting' if is_hosting_trial else 'service'
                 if row and row[0]:
-                    partner = self.env['res.partner'].browse(vals['partner_id'])
-                    trial_type = 'hosting' if is_hosting_trial else 'service'
                     raise ValidationError(
                         _("Client '%s' has already used their free %s trial. "
                           "Only one trial per type is allowed.")
+                        % (partner.name, trial_type)
+                    )
+                # Once the partner has paid for a server, the trial no
+                # longer applies — the server is paid.
+                if partner._saas_has_paid_instance(hosting=is_hosting_trial):
+                    raise ValidationError(
+                        _("Client '%s' already owns a paid %s instance. "
+                          "The free trial is no longer available — the "
+                          "server is paid.")
                         % (partner.name, trial_type)
                     )
             subdomain = vals.get('subdomain', '')

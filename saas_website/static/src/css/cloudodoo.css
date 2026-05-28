@@ -3539,3 +3539,52 @@ body.saas-overlay-locked {
     transform: translateY(-1px);
     transition: all 0.15s ease;
 }
+
+/* ============================================
+   Theme-aware logo variants
+   The logo-name SVG has hardcoded text fills (white "VELT" on the dark
+   variant, near-black "VELT" on the light variant). Render both <img>
+   tags and let `data-theme` pick — same pattern used in the DB manager.
+   ============================================ */
+.vx-logo-dark { display: none; }
+.vx-logo-light { display: inline-block; }
+[data-theme="dark"] .vx-logo-dark { display: inline-block; }
+[data-theme="dark"] .vx-logo-light { display: none; }
+
+/* ============================================
+   Login-page floating theme toggle button
+   ============================================ */
+.vx-theme-toggle {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 50;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    box-shadow: var(--shadow-sm);
+}
+.vx-theme-toggle:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+.vx-theme-toggle .vx-icon-sun,
+.vx-theme-toggle .vx-icon-moon {
+    font-size: 15px;
+    line-height: 1;
+}
+/* Show sun in dark theme (click to switch to light), moon in light */
+.vx-theme-toggle .vx-icon-sun { display: none; }
+.vx-theme-toggle .vx-icon-moon { display: inline-block; }
+[data-theme="dark"] .vx-theme-toggle .vx-icon-sun { display: inline-block; }
+[data-theme="dark"] .vx-theme-toggle .vx-icon-moon { display: none; }

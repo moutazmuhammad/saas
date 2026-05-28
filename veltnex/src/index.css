@@ -2,8 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =========================================================================
+ * Theme tokens
+ * ---
+ * Values are space-separated RGB triplets so Tailwind's `rgb(var(--x) /
+ * <alpha-value>)` form can apply opacity modifiers (bg-card/50 etc.).
+ *
+ * `:root` carries the LIGHT palette (the default). The `.dark` class on
+ * <html> swaps in the dark palette. The class is set by an inline script
+ * in index.html before paint so there's no FOUC.
+ * ========================================================================= */
+
 @layer base {
   :root {
+    --background: 255 255 255;
+    --card: 250 250 250;
+    --border: 228 228 231;
+    --foreground: 24 24 27;
+    --muted: 113 113 122;
+    --primary: 32 60 134;
+    --primary-foreground: 250 250 250;
+    --primary-glow: 54 86 184;
+    --success: 16 185 129;
+    --warning: 245 158 11;
+    --danger: 239 68 68;
+    --info: 59 130 246;
+    --grid: 228 228 231;
+    --shadow: 24 24 27;
+    color-scheme: light;
+  }
+
+  .dark {
+    --background: 9 9 11;
+    --card: 24 24 27;
+    --border: 39 39 42;
+    --foreground: 250 250 250;
+    --muted: 161 161 170;
+    --primary: 32 60 134;
+    --primary-foreground: 250 250 250;
+    --primary-glow: 54 86 184;
+    --success: 16 185 129;
+    --warning: 245 158 11;
+    --danger: 239 68 68;
+    --info: 59 130 246;
+    --grid: 39 39 42;
+    --shadow: 0 0 0;
     color-scheme: dark;
   }
 
@@ -18,14 +61,16 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    /* Smooth out theme transitions on user toggle */
+    transition: background-color 200ms ease, color 200ms ease;
   }
 
   ::selection {
-    background: rgba(32, 60, 134, 0.4);
-    color: #fafafa;
+    background: rgb(var(--primary) / 0.35);
+    color: rgb(var(--foreground));
   }
 
-  /* Scrollbar */
+  /* Scrollbar — track stays transparent, thumb uses the theme border */
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;
@@ -34,12 +79,12 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #27272a;
+    background: rgb(var(--border));
     border-radius: 9999px;
-    border: 2px solid #09090b;
+    border: 2px solid rgb(var(--background));
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #3f3f46;
+    background: rgb(var(--muted) / 0.7);
   }
 }
 
@@ -51,8 +96,8 @@
   .glass-strong {
     background: linear-gradient(
       180deg,
-      rgba(24, 24, 27, 0.9) 0%,
-      rgba(24, 24, 27, 0.6) 100%
+      rgb(var(--card) / 0.9) 0%,
+      rgb(var(--card) / 0.6) 100%
     );
     @apply backdrop-blur-xl border border-border;
   }
@@ -81,10 +126,10 @@ input[type="range"].veltnex-range::-webkit-slider-thumb {
   height: 20px;
   width: 20px;
   border-radius: 9999px;
-  background: #fafafa;
-  border: 4px solid #203c86;
+  background: rgb(var(--foreground));
+  border: 4px solid rgb(var(--primary));
   cursor: pointer;
-  box-shadow: 0 0 0 4px rgba(32, 60, 134, 0.25);
+  box-shadow: 0 0 0 4px rgb(var(--primary) / 0.25);
   transition: transform 0.15s ease;
 }
 input[type="range"].veltnex-range::-webkit-slider-thumb:hover {
@@ -94,7 +139,7 @@ input[type="range"].veltnex-range::-moz-range-thumb {
   height: 18px;
   width: 18px;
   border-radius: 9999px;
-  background: #fafafa;
-  border: 4px solid #203c86;
+  background: rgb(var(--foreground));
+  border: 4px solid rgb(var(--primary));
   cursor: pointer;
 }

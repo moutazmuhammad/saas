@@ -23,14 +23,13 @@ export default function Services() {
 
   return (
     <div className="mx-auto max-w-7xl animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
-      <div className="max-w-2xl">
+      <div>
         <p className="text-sm font-medium text-primary-glow">Services</p>
-        <h1 className="mt-2 text-4xl font-bold tracking-tight">
+        <h1 className="mt-2 max-w-2xl text-4xl font-bold tracking-tight">
           Build your stack on VELTNEX
         </h1>
         <p className="mt-4 text-muted">
-          Managed building blocks for Odoo — pick what you need today and add the
-          rest as you grow.
+          Managed building blocks for Odoo — pick what you need today and add the rest as you grow.
         </p>
       </div>
 

@@ -41,18 +41,26 @@ class SaasWebsite(http.Controller):
         """Return (trial_available, trial_days) for the current user.
 
         :param hosting: if True, check hosting trial; otherwise service trial.
+
+        A trial is unavailable when (a) trial_days is 0, (b) the partner has
+        already used their trial of this type, or (c) the partner already
+        owns a paid (non-trial) instance of this type — once the customer
+        has paid for a server, the free trial no longer applies.
         """
         trial_days = int(request.env['ir.config_parameter'].sudo().get_param(
             'saas_master.trial_days', '14',
         ))
+        if trial_days <= 0:
+            return False, trial_days
         if request.env.user._is_public():
-            return trial_days > 0, trial_days
+            return True, trial_days
         partner = request.env.user.partner_id.sudo()
-        if hosting:
-            trial_available = not partner.saas_hosting_trial_used and trial_days > 0
-        else:
-            trial_available = not partner.saas_trial_used and trial_days > 0
-        return trial_available, trial_days
+        used_flag = 'saas_hosting_trial_used' if hosting else 'saas_trial_used'
+        if partner[used_flag]:
+            return False, trial_days
+        if partner._saas_has_paid_instance(hosting=hosting):
+            return False, trial_days
+        return True, trial_days
 
     # ==================================================================
     #  1. Services Catalog  –  /services
@@ -200,13 +208,20 @@ class SaasWebsite(http.Controller):
                     **post,
                 )
 
-        # --- Trial: one per client ---
+        # --- Trial: one per client, and not after a paid instance ---
         if is_trial:
             partner_sudo = partner.sudo()
             if partner_sudo.saas_trial_used:
                 return self.service_configure(
                     product_id, plan_id,
                     error=_("You have already used your free trial."),
+                    **post,
+                )
+            if partner_sudo._saas_has_paid_instance(hosting=False):
+                return self.service_configure(
+                    product_id, plan_id,
+                    error=_("You already have a paid service instance — "
+                            "the free trial is no longer available."),
                     **post,
                 )
 
@@ -952,11 +967,15 @@ class SaasWebsite(http.Controller):
                 # Private repos need a token; public might work without one
                 pass  # Allow it — clone will fail with clear error if repo is private
 
-        # Hosting trial: one per client
+        # Hosting trial: one per client, and not after a paid hosting instance
         if is_trial:
             partner_sudo = partner.sudo()
             if partner_sudo.saas_hosting_trial_used:
                 return request.redirect(err_redirect % ('You+have+already+used+your+free+hosting+trial'))
+            if partner_sudo._saas_has_paid_instance(hosting=True):
+                return request.redirect(err_redirect % (
+                    'You+already+have+a+paid+hosting+instance+-+the+free+trial+is+no+longer+available'
+                ))
 
         # Get or create hosting product and plan
         product = self._get_or_create_hosting_product()

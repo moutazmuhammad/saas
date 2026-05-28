@@ -1,13 +1,36 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Apply the theme class BEFORE CSS paints so there's no flash of the
+      wrong palette. Order: explicit user pref in localStorage → OS pref
+      via prefers-color-scheme → dark fallback (the site's heritage).
+    -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("veltnex-theme");
+          if (t !== "light" && t !== "dark") {
+            t = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+          }
+          document.documentElement.classList.toggle("dark", t === "dark");
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {
+          document.documentElement.classList.add("dark");
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
     <meta
       name="description"
-      content="VELTNEX — The Logic of Stability. Enterprise-grade cloud hosting for Odoo."
+      content="VELTNEX — The Logic of Stability. Enterprise-grade managed cloud infrastructure for mission-critical business applications."
     />
+    <meta name="generator" content="VELTNEX" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

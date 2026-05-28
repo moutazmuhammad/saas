@@ -1,24 +1,30 @@
 /** @type {import('tailwindcss').Config} */
+//
+// Colors are exposed as `rgb(var(--token) / <alpha-value>)` so opacity
+// modifiers (bg-card/50, text-muted/70, etc.) keep working. The actual
+// values live in src/index.css under `:root` (light) and `.dark` (dark),
+// which is what makes the whole app theme-switchable without touching
+// any component class names.
 export default {
   darkMode: "class",
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        background: "#09090B",
-        card: "#18181B",
-        border: "#27272A",
-        foreground: "#FAFAFA",
-        muted: "#A1A1AA",
+        background: "rgb(var(--background) / <alpha-value>)",
+        card: "rgb(var(--card) / <alpha-value>)",
+        border: "rgb(var(--border) / <alpha-value>)",
+        foreground: "rgb(var(--foreground) / <alpha-value>)",
+        muted: "rgb(var(--muted) / <alpha-value>)",
         primary: {
-          DEFAULT: "#203c86",
-          foreground: "#FAFAFA",
-          glow: "#3656b8",
+          DEFAULT: "rgb(var(--primary) / <alpha-value>)",
+          foreground: "rgb(var(--primary-foreground) / <alpha-value>)",
+          glow: "rgb(var(--primary-glow) / <alpha-value>)",
         },
-        success: "#10B981",
-        warning: "#F59E0B",
-        danger: "#EF4444",
-        info: "#3B82F6",
+        success: "rgb(var(--success) / <alpha-value>)",
+        warning: "rgb(var(--warning) / <alpha-value>)",
+        danger: "rgb(var(--danger) / <alpha-value>)",
+        info: "rgb(var(--info) / <alpha-value>)",
       },
       fontFamily: {
         sans: [
@@ -33,12 +39,12 @@ export default {
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       boxShadow: {
-        glow: "0 0 40px -10px rgba(32, 60, 134, 0.6)",
-        card: "0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -12px rgba(0,0,0,0.6)",
+        glow: "0 0 40px -10px rgb(var(--primary) / 0.6)",
+        card: "0 1px 2px rgb(var(--shadow) / 0.4), 0 8px 24px -12px rgb(var(--shadow) / 0.6)",
       },
       backgroundImage: {
         "grid-faint":
-          "linear-gradient(to right, rgba(39,39,42,0.4) 1px, transparent 1px), linear-gradient(to bottom, rgba(39,39,42,0.4) 1px, transparent 1px)",
+          "linear-gradient(to right, rgb(var(--grid) / 0.4) 1px, transparent 1px), linear-gradient(to bottom, rgb(var(--grid) / 0.4) 1px, transparent 1px)",
       },
       keyframes: {
         "fade-in": {
