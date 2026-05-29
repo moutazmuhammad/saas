@@ -7574,33 +7574,33 @@ class SaasInstance(models.Model):
         url = '%s/xmlrpc/2/db' % self.url.rstrip('/')
         return xmlrpc.client.ServerProxy(url, context=ctx, allow_none=True)
 
-    # Modules that ``db.create_database`` doesn't pull in via the
-    # auto-install graph but that we consider essential for a usable
-    # Odoo (the customer's /web/login fails without ``web`` for
-    # instance). Installed via a follow-up XML-RPC call after the
-    # database is created. Add ``web_editor``, ``mail`` etc. here if
-    # you discover something else is missing.
-    _HOSTING_ESSENTIAL_MODULES = ['web', 'base_setup']
-
     def hosting_db_create(self, name, login, password, lang='en_US',
                           country_code=None):
-        """Create a new Odoo database via the instance's XML-RPC db service.
+        """Create a customer database by cloning the per-instance template.
 
-        Two steps:
+        Production path, built to scale to many databases across many
+        instances:
 
-        1. ``db.create_database(master_pwd, …)`` — the customer's live
-           Odoo creates the empty PG database, installs ``base``, sets
-           the admin user, creates the filestore.
+        1. Validate the requested name.
+        2. Ensure the per-instance template ``__odoo_template_<sub>``
+           exists. It's initialised once via a one-off
+           ``odoo -i base`` container (slow, ~60-90s) the FIRST time
+           a DB is created on the instance; every call after that is
+           a single ``SELECT``. The live container is NOT stopped —
+           the template lives outside the instance's dbfilter prefix
+           so running workers never load it.
+        3. ``CREATE DATABASE <new> WITH TEMPLATE <template>`` on the
+           db server. Postgres copies the data files at the storage
+           layer — seconds, no Odoo init runs. The new DB is always
+           either fully present or fully absent; a half-built state
+           (the empty-shell failure the XML-RPC path produced) is
+           impossible because the clone is atomic.
+        4. ``cp -a`` the template's filestore to the new DB's path.
+        5. Patch the cloned admin user's login / password / lang and
+           the company country.
 
-        2. ``_hosting_install_essentials`` — authenticate as the new
-           admin user and install ``web`` + ``base_setup``. Odoo's
-           ``create_database`` only installs ``base`` and modules
-           flagged ``auto_install=True``; in the standard Docker
-           image ``web`` isn't auto-installed, so without this step
-           the very first ``/web/login`` request blows up with
-           ``External ID not found in the system: web.login``.
-
-        If step 2 fails we drop the DB so a retry starts clean.
+        Any failure after the clone rolls back — drops the DB and its
+        filestore — so a retry starts from a clean slate.
         """
         self._ensure_hosting_for_db_ops()
         name = self._hosting_db_full_name(name)
@@ -7612,153 +7612,53 @@ class SaasInstance(models.Model):
         if name in existing:
             raise UserError(_("Database '%s' already exists.") % name)
 
-        import xmlrpc.client
-        proxy = self._hosting_xmlrpc_db_proxy()
-        master_pwd = self.sudo().admin_password
-        try:
-            proxy.create_database(
-                master_pwd,
-                name,
-                False,           # demo
-                lang or 'en_US',
-                password,        # admin password
-                login,           # admin login
-                country_code,    # country
-                None,            # phone
-            )
-        except xmlrpc.client.Fault as e:
-            # XMLRPC fault from the customer's Odoo. faultString can
-            # contain DB connection details, SQL errors, internal
-            # paths — never echo it directly. Log raw, map a couple
-            # of well-known patterns to actionable copy, else generic.
-            raw = (e.faultString or '').strip() or str(e)
-            _logger.warning(
-                "create_database XMLRPC fault for %s: %s",
-                self.subdomain, raw,
-            )
-            low = raw.lower()
-            if 'already exists' in low:
-                raise UserError(_(
-                    "A database with that name already exists. "
-                    "Please pick a different name."
-                ))
-            if 'access denied' in low or 'master password' in low \
-                    or 'admin password' in low:
-                raise UserError(_(
-                    "Your instance refused our request. Please contact "
-                    "support so we can re-link it."
-                ))
-            raise UserError(_(
-                "We couldn't create the database right now. Please try "
-                "again in a moment — if it keeps happening, contact "
-                "support."
-            ))
-        except Exception:
-            _logger.exception(
-                "create_database transport error for %s",
-                self.subdomain,
-            )
-            raise UserError(_(
-                "We couldn't reach your instance just now. Please make "
-                "sure it's running and try again."
-            ))
+        # 1. Ensure the per-instance template exists. First call: slow
+        # (~60-90s init in a side container). Subsequent calls: one
+        # SELECT.
+        template = self._hosting_ensure_template_db()
 
-        # Step 2 — install essentials. Best-effort: the DB itself is
-        # already complete and login-capable, so a failure here
-        # (commonly the registry-reload after install severing the
-        # XML-RPC connection mid-response) shouldn't trash the DB the
-        # customer just paid the bootstrap time for. We log loudly so
-        # it's still visible; in practice ``web`` is ``auto_install``
-        # in upstream Odoo and gets pulled in by ``base`` anyway.
+        # 2. Clone the PG database from the template. Atomic, seconds.
+        self._append_log(
+            "Cloning '%s' from template '%s'..." % (name, template)
+        )
+        self._pg_clone_db(template, name)
+
+        # 3. Clone the filestore. An Odoo DB is two things: the psql
+        # database (cloned in step 2) AND a per-DB filestore directory.
+        # ``CREATE DATABASE WITH TEMPLATE`` only covers the first;
+        # without this the new DB's first request would 500 on the
+        # missing attachments its cloned ir_attachment rows point at.
         try:
-            self._hosting_install_essentials(name, login, password)
+            self._hosting_clone_filestore(template, name)
         except Exception as e:
-            _logger.warning(
-                "Essentials install on '%s' did not complete cleanly: "
-                "%s. DB is kept — customer can log in and finish any "
-                "module install via /web.",
-                name, e,
+            self._pg_drop_db(name)
+            raise UserError(_(
+                "Database '%s' was cloned but filestore copy failed; "
+                "rolled back:\n%s"
+            ) % (name, e))
+
+        # 4. Patch admin credentials. The cloned DB inherits the
+        # template's placeholder admin user; replace its login /
+        # password / lang with what the customer entered. On failure
+        # we drop both the DB and its filestore so a retry is clean.
+        try:
+            self._hosting_patch_admin_creds(
+                db_name=name, login=login, password=password,
+                lang=lang or 'en_US', country_code=country_code,
             )
-        return name
-
-    def _hosting_install_essentials(self, db_name, login, user_password):
-        """Authenticate as the new admin and install ``web`` etc.
-
-        Called from ``hosting_db_create`` straight after the live
-        Odoo's ``db.create_database`` returns. Uses ORM XML-RPC
-        (``/xmlrpc/2/common`` + ``/xmlrpc/2/object``) so the running
-        Odoo handles dependency resolution, transactions, and
-        registry refresh itself — same path the customer would take
-        if they installed a module from Apps.
-
-        Authentication is retried with backoff: ``create_database``
-        and the follow-up ``authenticate`` may land on different
-        workers in a multi-worker deployment, and the worker handling
-        the auth call sometimes hasn't yet seen the freshly-committed
-        ``res_users`` row (registry / connection-pool caching). A
-        couple of seconds is usually enough for the new row to become
-        visible.
-        """
-        import xmlrpc.client
-        import ssl
-        import time
-
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        base_url = self.url.rstrip('/')
-
-        common = xmlrpc.client.ServerProxy(
-            '%s/xmlrpc/2/common' % base_url, context=ctx, allow_none=True,
-        )
-        uid = None
-        last_error = None
-        for attempt in range(5):
+        except Exception as e:
             try:
-                uid = common.authenticate(
-                    db_name, login, user_password, {},
-                )
-            except Exception as e:
-                last_error = e
-                uid = None
-            if uid:
-                break
-            time.sleep(2)
-        if not uid:
-            # Don't roll back the DB — it's perfectly usable, the
-            # customer can log in via /web/login and Odoo will resolve
-            # the auto-install graph (web is normally auto_install=True
-            # in upstream). Surface a warning so we still notice if
-            # this becomes systemic.
-            _logger.warning(
-                "Could not authenticate as '%s' on freshly-created DB "
-                "'%s' after retries (last error: %s). Skipping the "
-                "essentials install step — DB is otherwise ready.",
-                login, db_name, last_error,
-            )
-            return
+                self._hosting_drop_filestore(name)
+            except Exception:
+                pass
+            self._pg_drop_db(name)
+            raise UserError(_(
+                "Database '%s' cloned but admin credential patch "
+                "failed; rolled back:\n%s"
+            ) % (name, e))
 
-        obj = xmlrpc.client.ServerProxy(
-            '%s/xmlrpc/2/object' % base_url, context=ctx, allow_none=True,
-        )
-        # Look up only the modules that aren't already installed
-        # (in case a future Odoo version flips ``web.auto_install`` on
-        # and this call becomes a no-op).
-        module_ids = obj.execute_kw(
-            db_name, uid, user_password,
-            'ir.module.module', 'search',
-            [[
-                ['name', 'in', self._HOSTING_ESSENTIAL_MODULES],
-                ['state', '=', 'uninstalled'],
-            ]],
-        )
-        if not module_ids:
-            return
-        obj.execute_kw(
-            db_name, uid, user_password,
-            'ir.module.module', 'button_immediate_install',
-            [module_ids],
-        )
+        self._append_log("Database '%s' ready." % name)
+        return name
 
     def hosting_db_duplicate(self, source, new_name):
         """Duplicate a database via the instance's XML-RPC db service."""
@@ -8033,7 +7933,15 @@ class SaasInstance(models.Model):
         return login or 'admin'
 
     def hosting_db_drop(self, name):
-        """Drop a database via the instance's XML-RPC db service.
+        """Drop a customer database at the PG level (reliable).
+
+        Uses ``dropdb --force`` (PG 13+) on the db server via
+        :meth:`_pg_drop_db`, which terminates any lingering
+        connections — including the registry-build attempts a broken
+        DB attracts — and drops atomically in one step. The previous
+        XML-RPC ``db.drop`` path lost a race against the instance's
+        own workers reconnecting to rebuild the registry, so a DB that
+        had failed to load could never be deleted from the dashboard.
 
         The customer can only target DBs in the instance's prefix
         namespace — ``_hosting_db_full_name`` enforces that even if a
@@ -8046,19 +7954,20 @@ class SaasInstance(models.Model):
                 _("Database '%s' does not belong to this instance.") % name
             )
 
-        import xmlrpc.client
-        proxy = self._hosting_xmlrpc_db_proxy()
-        master_pwd = self.sudo().admin_password
+        # Drop the PG database (force-terminates connections), then
+        # remove its filestore. ``_pg_drop_db`` is ``--if-exists`` and
+        # clears any ``datistemplate`` flag first, so it's safe even
+        # on a half-built DB. Filestore cleanup is best-effort: a
+        # dropped DB with a leftover filestore dir is harmless, just
+        # wasted disk.
+        self._pg_drop_db(name)
         try:
-            proxy.drop(master_pwd, name)
-        except xmlrpc.client.Fault as e:
-            msg = (e.faultString or '').strip() or str(e)
-            raise UserError(_("We couldn't delete the database: %s") % msg)
+            self._hosting_drop_filestore(name)
         except Exception:
-            raise UserError(_(
-                "We couldn't reach your instance just now. Please make "
-                "sure it's running and try again."
-            ))
+            _logger.warning(
+                "Dropped DB '%s' but filestore cleanup failed; orphaned "
+                "files remain at its filestore path.", name,
+            )
         return name
 
     def _hosting_template_db_name(self):
@@ -8108,8 +8017,16 @@ class SaasInstance(models.Model):
 
         instance_path = self._get_instance_path()
         with self.docker_server_id._get_ssh_connection() as ssh:
-            self._hosting_db_pause_container(ssh, instance_path)
-
+            # We deliberately do NOT stop the live container. The
+            # template DB lives outside the instance's dbfilter prefix
+            # (``__odoo_template_*``), so running workers never load
+            # it, and the init runs in a separate one-off
+            # ``docker compose run --rm`` container that doesn't bind
+            # the http port (``--no-http``) or share the service slot.
+            # Taking the customer's whole instance down for the
+            # ~60-90s init — which the old pause/resume did — was the
+            # production pain that got this clone path shelved; there's
+            # no correctness reason for it.
             init_cmd = (
                 'cd %s && docker compose run --rm -T odoo '
                 'odoo -d %s '
@@ -8123,15 +8040,10 @@ class SaasInstance(models.Model):
                 shlex.quote(instance_path),
                 shlex.quote(template),
             )
-            init_exit = 0
-            init_output = ''
-            try:
-                init_exit, stdout, stderr = ssh.execute(
-                    init_cmd, timeout=1200,
-                )
-                init_output = (stdout or '') + (stderr or '')
-            finally:
-                self._hosting_db_resume_container(ssh, instance_path)
+            init_exit, stdout, stderr = ssh.execute(
+                init_cmd, timeout=1200,
+            )
+            init_output = (stdout or '') + (stderr or '')
 
             def _cleanup_template():
                 # Drop the half-built template + its filestore so a
@@ -8166,95 +8078,6 @@ class SaasInstance(models.Model):
         self._pg_mark_template(template, flag=True)
         self._append_log("Template DB ready.")
         return template
-
-    def _DEPRECATED_hosting_db_create_template_clone(self, name, login, password, lang='en_US',
-                          country_code=None):
-        """[DEPRECATED — kept for reference] Create a customer DB via
-        PG template cloning.
-
-        Replaced by the XML-RPC-based ``hosting_db_create`` above —
-        the live Odoo handles registry plumbing properly there, and
-        template-clone added too much moving infrastructure (per-
-        instance template bootstrap, filestore cp, datistemplate flag
-        management) that bit us in production. This body kept only so
-        the design intent is documented.
-
-        1. Validate the customer's name.
-        2. Ensure the per-instance template exists (slow on first
-           call, instant after — runs only when the template's
-           genuinely missing).
-        3. ``CREATE DATABASE <new> WITH TEMPLATE <template> OWNER
-           <role>`` on the db server. Postgres copies data files at
-           the storage layer — typically seconds, no Odoo init runs.
-        4. ``docker compose exec`` a short ORM patch to update the
-           admin user's login / password / lang (the cloned DB has
-           the template's ``admin / admin`` placeholders) and set
-           the company country if supplied.
-
-        No container restart. No racing workers. The new DB is
-        always either fully present or fully absent — half-built
-        states are impossible because Postgres' ``CREATE DATABASE
-        WITH TEMPLATE`` is atomic.
-        """
-        self._ensure_hosting_for_db_ops()
-        name = self._hosting_db_full_name(name)
-        login = (login or 'admin').strip()
-        if not password:
-            raise UserError(_("Initial admin password is required."))
-
-        existing = {r['name'] for r in self.hosting_db_list()}
-        if name in existing:
-            raise UserError(_("Database '%s' already exists.") % name)
-
-        # 1. Make sure the template exists. First call: slow (~60-90s
-        # init, container down). Subsequent calls: a single SELECT.
-        template = self._hosting_ensure_template_db()
-
-        # 2. Clone the PG database from the template. Fast (atomic).
-        self._append_log(
-            "Cloning '%s' from template '%s'..." % (name, template)
-        )
-        self._pg_clone_db(template, name)
-
-        # 3. Clone the filestore directory. An Odoo DB is two things:
-        # the psql database (cloned in step 2) AND a per-DB filestore
-        # directory at /var/lib/odoo/filestore/<name>. ``CREATE
-        # DATABASE WITH TEMPLATE`` only covers the first. Without
-        # this step, the new DB's first request would 500 on missing
-        # attachments / icons that the cloned ir_attachment rows
-        # point at.
-        try:
-            self._hosting_clone_filestore(template, name)
-        except Exception as e:
-            self._pg_drop_db(name)
-            raise UserError(_(
-                "Database '%s' was cloned but filestore copy failed; "
-                "rolled back:\n%s"
-            ) % (name, e))
-
-        # 4. Patch admin credentials via a short ORM script. The
-        # cloned DB inherits the template's admin user; we replace
-        # the placeholder login/password with what the customer
-        # entered. On failure we drop both the DB and its filestore
-        # so a retry starts clean.
-        try:
-            self._hosting_patch_admin_creds(
-                db_name=name, login=login, password=password,
-                lang=lang or 'en_US', country_code=country_code,
-            )
-        except Exception as e:
-            try:
-                self._hosting_drop_filestore(name)
-            except Exception:
-                pass
-            self._pg_drop_db(name)
-            raise UserError(_(
-                "Database '%s' cloned but admin credential patch "
-                "failed; rolled back:\n%s"
-            ) % (name, e))
-
-        self._append_log("Database '%s' ready." % name)
-        return name
 
     def _hosting_filestore_path(self, db_name):
         """Return the host-side path to a DB's Odoo filestore.
@@ -8380,45 +8203,6 @@ class SaasInstance(models.Model):
                 "Could not patch admin credentials:\n%s\n%s"
             ) % ((stdout or '')[-1000:], (stderr or '')[-500:]))
 
-    def _hosting_db_pause_container(self, ssh, instance_path):
-        """Stop the customer's Odoo container so it doesn't race the
-        init we're about to run on a new database.
-
-        Why ``docker compose down`` rather than ``docker stop``: we
-        also want the container removed so the ephemeral
-        ``docker compose run --rm`` below can reuse the service slot
-        cleanly without name conflicts. The volumes are preserved
-        because we don't pass ``-v``.
-        """
-        self._append_log(
-            "Pausing instance container during DB init..."
-        )
-        ssh.execute(
-            'cd %s && docker compose down 2>&1'
-            % shlex.quote(instance_path),
-            timeout=120,
-        )
-
-    def _hosting_db_resume_container(self, ssh, instance_path):
-        """Bring the instance container back up after a DB init.
-
-        Best-effort: if this fails we log it but don't raise — the
-        operator can also bring it back manually. Raising here would
-        mask the original (init) failure from the caller.
-        """
-        self._append_log("Resuming instance container...")
-        ec, out, err = ssh.execute(
-            'cd %s && docker compose up -d 2>&1'
-            % shlex.quote(instance_path),
-            timeout=300,
-        )
-        if ec != 0:
-            self._append_log(
-                "WARNING: container resume returned exit %s — manual "
-                "intervention may be needed.\n%s"
-                % (ec, (err or out or '')[-1000:])
-            )
-
     def _hosting_db_is_initialized(self, ssh, name):
         """Return True iff ``base`` is fully installed in ``name``.
 
@@ -8458,33 +8242,6 @@ class SaasInstance(models.Model):
         exit_code, stdout, _ = ssh.execute(cmd, timeout=60)
         # The query returns either '1' (initialised) or empty/no rows.
         return exit_code == 0 and stdout.strip() == '1'
-
-    def _hosting_db_rollback(self, ssh, name):
-        """Best-effort drop a half-built database after a failed init.
-
-        Runs ``docker compose exec`` against the running container so
-        we don't need a fresh ephemeral container just to clean up.
-        Errors are swallowed — the original init failure is more
-        important to surface than a cleanup hiccup.
-        """
-        script = (
-            "from odoo.service import db\n"
-            "try:\n"
-            "    db.exp_drop(os.environ['SAAS_DB_NAME'])\n"
-            "except Exception:\n"
-            "    pass\n"
-            "print('OK')\n"
-        )
-        try:
-            self._docker_exec_python(
-                ssh, script,
-                env={'SAAS_DB_NAME': name}, timeout=60,
-            )
-        except Exception:
-            _logger = __import__('logging').getLogger(__name__)
-            _logger.warning(
-                "Best-effort rollback of %s failed", name,
-            )
 
     def hosting_db_create_async(self, name, login, password,
                                 lang='en_US', country_code=None):
