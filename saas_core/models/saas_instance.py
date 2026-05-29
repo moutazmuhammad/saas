@@ -7987,46 +7987,70 @@ class SaasInstance(models.Model):
         """Create the per-instance template DB if it doesn't exist.
 
         The template is a fully-initialised Odoo database (``base`` +
-        every auto-installable module). It's created once via the
-        slow ``odoo -i base`` path, then ``datistemplate=true`` flags
-        it as a Postgres template so subsequent customer DB creates
-        are near-instant ``CREATE DATABASE WITH TEMPLATE`` clones
-        instead of repeating the slow init.
+        every auto-installable module) named ``__odoo_template_<sub>``.
+        It's built once via the slow ``odoo -i base`` path; every
+        customer create after that is a near-instant
+        ``CREATE DATABASE WITH TEMPLATE`` clone off it.
 
-        Container is stopped for the duration of the init (~60-90s)
-        — there's no way to run init alongside live Odoo workers
-        without one of them caching a half-initialised registry. We
-        accept the brief downtime on FIRST DB create only.
+        We flag ``datistemplate=true`` BEFORE running the init, not
+        after — that's the crux of doing this with zero downtime.
+        Odoo's ``list_dbs()`` (which backs the dbfilter and the
+        ``/web/database/selector``) excludes ``datistemplate``
+        databases, so the live container's workers — and the bot
+        traffic that hammers every public instance — never auto-load
+        the template while it's being built. The init itself runs
+        ``odoo -d <template>``, which targets the DB explicitly and so
+        bypasses the filter. Without this shield the workers race the
+        init: they cache a half-built registry (``KeyError:
+        'ir.http'``), and their open connections both corrupt the
+        install AND later block the clone — ``CREATE DATABASE ... WITH
+        TEMPLATE`` needs *zero* connections to the source, and
+        ``datistemplate`` does not waive that; it just keeps Odoo away
+        so there are none.
 
-        Idempotent and concurrency-safe: if the template already
-        exists, this is a single ``SELECT`` and returns. If two
-        creates race the bootstrap, the second's
-        ``_pg_ensure_db_with_grants`` will fail on "database already
-        exists" — caller handles.
+        Idempotent / concurrency-safe: a template that's present but
+        not yet fully installed means a build is in flight (or
+        crashed) — we don't hand that back to be cloned into a
+        half-built customer DB; the caller is told to retry.
         """
         self.ensure_one()
         template = self._hosting_template_db_name()
         if self._pg_db_exists(template):
-            return template
+            # Present isn't ready. A build still running (or one that
+            # died mid-init) leaves the DB there with ``base`` not yet
+            # installed; cloning it would produce a half-built
+            # customer database. Only a template with ``base`` fully
+            # installed is usable.
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                ready = self._hosting_db_is_initialized(ssh, template)
+            if ready:
+                # Make sure the shield flag is set — templates built
+                # before this change, or a flag that somehow got
+                # cleared, still need it or the clone will fail.
+                self._pg_mark_template(template, flag=True)
+                return template
+            raise UserError(_(
+                "This instance's database template is still being "
+                "prepared. Please try again in a minute."
+            ))
 
         self._append_log(
             "Bootstrapping per-instance template DB '%s' (one-time, "
             "~60s)..." % template
         )
         self._pg_ensure_db_with_grants(template)
+        # Shield it from the live workers / bots / db-selector BEFORE
+        # the init runs (see docstring). The init's explicit ``-d``
+        # still reaches it; nothing else will.
+        self._pg_mark_template(template, flag=True)
 
         instance_path = self._get_instance_path()
         with self.docker_server_id._get_ssh_connection() as ssh:
-            # We deliberately do NOT stop the live container. The
-            # template DB lives outside the instance's dbfilter prefix
-            # (``__odoo_template_*``), so running workers never load
-            # it, and the init runs in a separate one-off
-            # ``docker compose run --rm`` container that doesn't bind
-            # the http port (``--no-http``) or share the service slot.
-            # Taking the customer's whole instance down for the
-            # ~60-90s init — which the old pause/resume did — was the
-            # production pain that got this clone path shelved; there's
-            # no correctness reason for it.
+            # The live container stays UP — no customer downtime. The
+            # datistemplate flag above keeps its workers off this DB,
+            # and the init runs in a separate one-off
+            # ``docker compose run --rm`` container with ``--no-http``
+            # so there's no port conflict or registry race.
             init_cmd = (
                 'cd %s && docker compose run --rm -T odoo '
                 'odoo -d %s '
@@ -8047,7 +8071,9 @@ class SaasInstance(models.Model):
 
             def _cleanup_template():
                 # Drop the half-built template + its filestore so a
-                # retry starts from a fully-clean slate.
+                # retry starts from a fully-clean slate. ``_pg_drop_db``
+                # clears ``datistemplate`` first, then ``dropdb
+                # --force``.
                 try:
                     self._pg_drop_db(template)
                 except Exception:
@@ -8070,12 +8096,6 @@ class SaasInstance(models.Model):
                     "incomplete schema. Last 8KB of init output:\n\n%s"
                 ) % init_output[-8000:])
 
-        # Flip ``datistemplate=true``. Two effects:
-        # 1. ``CREATE DATABASE x WITH TEMPLATE __odoo_template_X``
-        #    works without disconnecting whoever's connected.
-        # 2. Our Odoo workers never auto-load it (they filter out
-        #    ``datistemplate`` databases at the registry level).
-        self._pg_mark_template(template, flag=True)
         self._append_log("Template DB ready.")
         return template
 
