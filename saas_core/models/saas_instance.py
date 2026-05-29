@@ -6,6 +6,7 @@ import re
 import secrets
 import shlex
 import string
+import threading
 from dateutil.relativedelta import relativedelta
 from jinja2 import Environment, FileSystemLoader
 
@@ -15,6 +16,23 @@ from odoo.exceptions import UserError, ValidationError
 from ..utils import run_in_background
 
 _logger = logging.getLogger(__name__)
+
+# Per-instance locks serialising the one-time template-DB build so two
+# concurrent first-creates can't both run the init (or one drop the
+# other's in-flight build). Keyed by instance id; only the build's
+# critical section is held, and only same-instance builds contend.
+_HOSTING_TEMPLATE_BUILD_LOCKS = {}
+_HOSTING_TEMPLATE_BUILD_LOCKS_GUARD = threading.Lock()
+
+
+def _hosting_template_build_lock(instance_id):
+    with _HOSTING_TEMPLATE_BUILD_LOCKS_GUARD:
+        lock = _HOSTING_TEMPLATE_BUILD_LOCKS.get(instance_id)
+        if lock is None:
+            lock = threading.Lock()
+            _HOSTING_TEMPLATE_BUILD_LOCKS[instance_id] = lock
+        return lock
+
 
 TEMPLATES_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -1785,6 +1803,36 @@ class SaasInstance(models.Model):
         with psql_server._get_ssh_connection() as ssh:
             exit_code, stdout, _ = ssh.execute(cmd)
         return exit_code == 0 and stdout.strip() == '1'
+
+    def _pg_db_initialized(self, db_name):
+        """Return True iff ``db_name`` has ``base`` fully installed.
+
+        This is the "is the template (or DB) actually usable?" check,
+        run as ``postgres`` straight on the db server — so it does NOT
+        depend on the instance container being up (the post-init
+        verification runs right after we bring the container back, when
+        ``docker compose exec`` might not be ready yet). An empty or
+        half-built DB makes the inner query error on the missing
+        ``ir_module_module`` table; that prints nothing to stdout, so
+        the ``== '1'`` test cleanly reads as "not initialised".
+        """
+        self.ensure_one()
+        psql_server = self.db_server_id
+        if not psql_server or not self._DB_IDENT_RE.match(db_name or ''):
+            return False
+        sql = (
+            "SELECT 1 FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname='public' AND c.relname='ir_module_module' "
+            "AND EXISTS (SELECT 1 FROM ir_module_module "
+            "WHERE name='base' AND state='installed')"
+        )
+        cmd = 'sudo -u postgres psql -d %s -tA -c %s 2>/dev/null' % (
+            shlex.quote(db_name), shlex.quote(sql),
+        )
+        with psql_server._get_ssh_connection() as ssh:
+            _exit, stdout, _err = ssh.execute(cmd, timeout=60)
+        return stdout.strip() == '1'
 
     def _pg_clone_db(self, source, target):
         """``CREATE DATABASE target WITH TEMPLATE source OWNER <role>``.
@@ -7984,89 +8032,95 @@ class SaasInstance(models.Model):
         return '__odoo_template_%s' % safe
 
     def _hosting_ensure_template_db(self):
-        """Create the per-instance template DB if it doesn't exist.
+        """Return a ready-to-clone per-instance template DB, building
+        it if necessary. Self-healing and concurrency-safe.
 
-        The template is a fully-initialised Odoo database (``base`` +
-        every auto-installable module) named ``__odoo_template_<sub>``.
-        It's built once via the slow ``odoo -i base`` path; every
-        customer create after that is a near-instant
+        The template (``__odoo_template_<sub>``) is a fully-installed
+        ``base`` database. It's built once via the slow ``odoo -i
+        base`` path; every customer create after that is a near-instant
         ``CREATE DATABASE WITH TEMPLATE`` clone off it.
 
-        The build does two protective things, both learned in
-        production:
+        Three states are handled so a create never dead-ends:
 
-        * **Stops the live container for the duration of the init.**
-          The init runs in a second ``docker compose run --rm`` Odoo
-          container; run alongside the live one it doubles RAM on the
-          host and gets OOM-killed mid-install (symptom: ``SSL
-          connection has been closed unexpectedly``). Pausing frees
-          the RAM. It's a ONE-TIME ~60-90s blip — only on the first
-          DB create per instance; every create after that is an
-          instant clone with no pause.
-        * **Flags ``datistemplate=true`` before the init.** Odoo's
-          ``list_dbs()`` (which backs the dbfilter and the
-          ``/web/database/selector``) excludes ``datistemplate``
-          databases, so even when the container is back up nothing
-          auto-loads the template. This also lets the later clone run:
-          ``CREATE DATABASE ... WITH TEMPLATE`` needs *zero*
-          connections to the source — ``datistemplate`` doesn't waive
-          that, it just keeps Odoo's workers away so there are none.
+        * **Healthy** (exists + ``base`` installed) → make sure the
+          ``datistemplate`` shield is set and return it.
+        * **Half-built leftover** (exists but ``base`` NOT installed —
+          a previous build was OOM-killed or interrupted) → drop it and
+          rebuild. No manual cleanup, no "stuck retry".
+        * **Missing** → build it.
 
-        Idempotent / concurrency-safe: a template that's present but
-        not yet fully installed means a build is in flight (or
-        crashed) — we don't hand that back to be cloned into a
-        half-built customer DB; the caller is told to retry.
+        A per-instance in-process lock serialises the build so two
+        concurrent first-creates can't both init, and so the
+        drop-and-rebuild above can't ever hit a build that's actually
+        in flight.
         """
         self.ensure_one()
         template = self._hosting_template_db_name()
-        if self._pg_db_exists(template):
-            # Present isn't ready. A build still running (or one that
-            # died mid-init) leaves the DB there with ``base`` not yet
-            # installed; cloning it would produce a half-built
-            # customer database. Only a template with ``base`` fully
-            # installed is usable.
-            with self.docker_server_id._get_ssh_connection() as ssh:
-                ready = self._hosting_db_is_initialized(ssh, template)
-            if ready:
-                # Make sure the shield flag is set — templates built
-                # before this change, or a flag that somehow got
-                # cleared, still need it or the clone will fail.
+        with _hosting_template_build_lock(self.id):
+            # Happy path first: a healthy template already exists.
+            if self._pg_db_initialized(template):
+                # Ensure the shield flag is set — covers templates from
+                # older code that flagged after init, or a flag that
+                # got cleared. Idempotent and cheap.
                 self._pg_mark_template(template, flag=True)
                 return template
-            raise UserError(_(
-                "This instance's database template is still being "
-                "prepared. Please try again in a minute."
-            ))
 
+            # Not healthy. If a half-built shell is sitting there from a
+            # failed attempt, clear it — the lock guarantees no other
+            # build is using this name right now, so this is safe.
+            if self._pg_db_exists(template):
+                self._append_log(
+                    "Template '%s' exists but is incomplete (previous "
+                    "build interrupted) — dropping and rebuilding."
+                    % template
+                )
+                self._pg_drop_db(template)
+                try:
+                    self._hosting_drop_filestore(template)
+                except Exception:
+                    pass
+
+            return self._hosting_build_template_db(template)
+
+    def _hosting_build_template_db(self, template):
+        """Build ``template`` from scratch: createdb → init → verify.
+
+        Pauses the live container for the one-time init. Two reasons,
+        both learned the hard way in production:
+
+        * **Memory** — the init runs in a second ``docker compose run
+          --rm`` Odoo container; run alongside the live one it doubles
+          RAM on the host and the init gets OOM-killed mid-install
+          (symptom: the install dies with ``SSL connection has been
+          closed unexpectedly`` — the PG backend killed under memory
+          pressure). Freeing the live container's RAM first gives the
+          init room.
+        * **Race** — with the container down, no worker can grab the
+          half-built DB and cache a broken registry.
+
+        This is a ONE-TIME ~60-90s blip, and only on the first DB
+        create per instance. Every create after that is an instant
+        clone with no pause.
+
+        ``datistemplate=true`` is flagged up front so that (a) once the
+        container is back up Odoo's ``list_dbs()`` keeps its workers /
+        cron / db-selector off it, and (b) the later clone can run —
+        ``CREATE DATABASE ... WITH TEMPLATE`` needs *zero* connections
+        to the source, and the flag is what keeps Odoo from opening
+        any.
+        """
+        self.ensure_one()
         self._append_log(
             "Bootstrapping per-instance template DB '%s' (one-time, "
-            "~60s)..." % template
+            "~60-90s)..." % template
         )
         self._pg_ensure_db_with_grants(template)
-        # Shield from the live workers / db-selector. Belt-and-braces
-        # with the pause below, and it's what lets the later clone run
-        # without workers reconnecting to the source mid-``CREATE``
-        # (``CREATE DATABASE ... WITH TEMPLATE`` needs zero connections
-        # to the source).
         self._pg_mark_template(template, flag=True)
 
         instance_path = self._get_instance_path()
+        init_exit = 1
+        init_output = ''
         with self.docker_server_id._get_ssh_connection() as ssh:
-            # Stop the live container for the one-time init. Two
-            # reasons, both learned the hard way in production:
-            #   * Memory — ``docker compose run --rm`` spins a SECOND
-            #     Odoo container; run alongside the live one it doubles
-            #     RAM on the host and the init gets OOM-killed
-            #     mid-install. The symptom is the install dying with
-            #     ``SSL connection has been closed unexpectedly`` (the
-            #     PG backend killed under memory pressure). Freeing the
-            #     live container's RAM first gives the init room.
-            #   * Race — with the container down, no worker can grab
-            #     the half-built DB and cache a broken registry.
-            # This is a ONE-TIME ~60-90s blip, and only on the FIRST
-            # DB create per instance (when the template doesn't exist
-            # yet). Every create after that is an instant clone with no
-            # pause.
             self._append_log(
                 "Pausing instance for one-time template build "
                 "(~60-90s, first DB only)..."
@@ -8089,11 +8143,9 @@ class SaasInstance(models.Model):
                 shlex.quote(instance_path),
                 shlex.quote(template),
             )
-            init_exit = 1
-            init_output = ''
             try:
                 init_exit, stdout, stderr = ssh.execute(
-                    init_cmd, timeout=1200,
+                    init_cmd, timeout=1800,
                 )
                 init_output = (stdout or '') + (stderr or '')
             finally:
@@ -8107,34 +8159,27 @@ class SaasInstance(models.Model):
                     timeout=300,
                 )
 
-            def _cleanup_template():
-                # Drop the half-built template + its filestore so a
-                # retry starts from a fully-clean slate. ``_pg_drop_db``
-                # clears ``datistemplate`` first, then ``dropdb
-                # --force``.
-                try:
-                    self._pg_drop_db(template)
-                except Exception:
-                    pass
-                try:
-                    self._hosting_drop_filestore(template)
-                except Exception:
-                    pass
+        # Verify at the PG level (independent of the container being
+        # fully back up). On any failure, drop the partial build + its
+        # filestore so the NEXT create self-heals from a clean slate
+        # rather than tripping over our debris.
+        if init_exit != 0 or not self._pg_db_initialized(template):
+            try:
+                self._pg_drop_db(template)
+            except Exception:
+                pass
+            try:
+                self._hosting_drop_filestore(template)
+            except Exception:
+                pass
+            raise UserError(_(
+                "Couldn't prepare the database template for this "
+                "instance (the one-time setup failed). The instance is "
+                "back online; please try creating the database again.\n\n"
+                "Last setup output:\n%s"
+            ) % (init_output[-6000:] or '(no output captured)'))
 
-            if init_exit != 0:
-                _cleanup_template()
-                raise UserError(_(
-                    "Template DB init failed (exit %s):\n\n%s"
-                ) % (init_exit, init_output[-8000:]))
-
-            if not self._hosting_db_is_initialized(ssh, template):
-                _cleanup_template()
-                raise UserError(_(
-                    "Template DB init exited cleanly but left an "
-                    "incomplete schema. Last 8KB of init output:\n\n%s"
-                ) % init_output[-8000:])
-
-        self._append_log("Template DB ready.")
+        self._append_log("Template DB '%s' ready." % template)
         return template
 
     def _hosting_filestore_path(self, db_name):
@@ -8260,46 +8305,6 @@ class SaasInstance(models.Model):
             raise UserError(_(
                 "Could not patch admin credentials:\n%s\n%s"
             ) % ((stdout or '')[-1000:], (stderr or '')[-500:]))
-
-    def _hosting_db_is_initialized(self, ssh, name):
-        """Return True iff ``base`` is fully installed in ``name``.
-
-        Used as a post-init verification so we don't claim success on
-        a half-built database. We check via plain psql so the answer
-        doesn't depend on the registry's loaded state — we want the
-        ground truth from PG.
-        """
-        sql = (
-            "SELECT 1 FROM pg_class c "
-            "JOIN pg_namespace n ON n.oid = c.relnamespace "
-            "WHERE n.nspname='public' AND c.relname='ir_module_module' "
-            "AND EXISTS ("
-            "  SELECT 1 FROM ir_module_module "
-            "  WHERE name='base' AND state='installed'"
-            ")"
-        )
-        # ``-d <name>`` here is the DB we just initialized, not the
-        # subdomain DB the container normally talks to.
-        instance_path = self._get_instance_path()
-        psql_server = self.db_server_id
-        env_flags = (
-            '-e PGPASSWORD=%s' % shlex.quote(self.sudo().db_password or '')
-        )
-        cmd = (
-            "cd %s && docker compose exec -T %s odoo psql "
-            "-h %s -p %s -U %s -d %s -tA -c %s 2>&1"
-        ) % (
-            shlex.quote(instance_path),
-            env_flags,
-            shlex.quote(self._get_db_host()),
-            shlex.quote(str(psql_server.psql_port or 5432)),
-            shlex.quote(self.sudo().db_user or ''),
-            shlex.quote(name),
-            shlex.quote(sql),
-        )
-        exit_code, stdout, _ = ssh.execute(cmd, timeout=60)
-        # The query returns either '1' (initialised) or empty/no rows.
-        return exit_code == 0 and stdout.strip() == '1'
 
     def hosting_db_create_async(self, name, login, password,
                                 lang='en_US', country_code=None):
