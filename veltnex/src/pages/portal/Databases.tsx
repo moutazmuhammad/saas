@@ -267,8 +267,9 @@ export default function Databases() {
         dbName={resetTarget}
         onClose={() => setResetTarget(null)}
         onReset={async (name, password) => {
-          await api.dbResetPassword(instanceId, name, password);
+          const { login } = await api.dbResetPassword(instanceId, name, password);
           toast.success("Password reset", `New admin password set for ${name}.`);
+          return login;
         }}
       />
 
@@ -433,13 +434,14 @@ function ResetPasswordDialog({
 }: {
   dbName: string | null;
   onClose: () => void;
-  onReset: (name: string, password: string) => Promise<void>;
+  onReset: (name: string, password: string) => Promise<string>;
 }) {
   const [password, setPassword] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
-  const [copied, setCopied] = React.useState(false);
+  const [adminLogin, setAdminLogin] = React.useState("");
+  const [copiedField, setCopiedField] = React.useState<"login" | "password" | null>(null);
 
   React.useEffect(() => {
     if (dbName) {
@@ -447,9 +449,16 @@ function ResetPasswordDialog({
       setError(null);
       setLoading(false);
       setDone(false);
-      setCopied(false);
+      setAdminLogin("");
+      setCopiedField(null);
     }
   }, [dbName]);
+
+  const copy = (field: "login" | "password", value: string) => {
+    navigator.clipboard?.writeText(value);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 1500);
+  };
 
   const submit = async () => {
     if (!dbName) return;
@@ -457,7 +466,8 @@ function ResetPasswordDialog({
     setError(null);
     setLoading(true);
     try {
-      await onReset(dbName, password);
+      const login = await onReset(dbName, password);
+      setAdminLogin(login);
       setDone(true);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Couldn't reset the password.");
@@ -483,14 +493,24 @@ function ResetPasswordDialog({
         </>
       ) : (
         <>
-          <AlertBanner variant="success" title="Password reset" description="The admin password has been updated." />
+          <AlertBanner variant="success" title="Password reset" description="The admin password has been updated. Use the login below to sign in — handy if you forgot which user is the admin." />
+          <div className="mt-4">
+            <Label>Admin login</Label>
+            <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-background p-2.5">
+              <code className="flex-1 truncate font-mono text-sm">{adminLogin || "admin"}</code>
+              <Button size="sm" variant="ghost" onClick={() => copy("login", adminLogin || "admin")}>
+                {copiedField === "login" ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
+                {copiedField === "login" ? "Copied" : "Copy"}
+              </Button>
+            </div>
+          </div>
           <div className="mt-4">
             <Label>New password</Label>
             <div className="mt-2 flex items-center gap-2 rounded-lg border border-border bg-background p-2.5">
               <code className="flex-1 truncate font-mono text-sm">{password}</code>
-              <Button size="sm" variant="ghost" onClick={() => { navigator.clipboard?.writeText(password); setCopied(true); setTimeout(() => setCopied(false), 1500); }}>
-                {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
-                {copied ? "Copied" : "Copy"}
+              <Button size="sm" variant="ghost" onClick={() => copy("password", password)}>
+                {copiedField === "password" ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
+                {copiedField === "password" ? "Copied" : "Copy"}
               </Button>
             </div>
           </div>
