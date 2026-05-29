@@ -494,6 +494,22 @@ class SaasApi(http.Controller):
             return err(str(e), 'drop_failed')
         return ok({'db_name': op.db_name})
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/backup',
+                type='json', auth='public')
+    def db_backup(self, instance_id, name=None, access_token=None, **kw):
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        try:
+            instance.hosting_db_backup(name=name or '')
+        except UserError as e:
+            return err(str(e), 'backup_failed')
+        except Exception:
+            _logger.exception("DB backup failed for %s", instance_id)
+            return err(_("Couldn't start the backup. Please try again."), 'backup_failed')
+        return ok({})
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/reset-password',
                 type='json', auth='public')
     def db_reset_password(self, instance_id, name=None, new_password=None,

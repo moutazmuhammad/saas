@@ -10,6 +10,7 @@ import {
   Check,
   MoreHorizontal,
   Loader2,
+  Archive,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -85,6 +86,16 @@ export default function Databases() {
   const handleDrop = async (name: string) => {
     await api.dbDrop(instanceId, name);
     await load();
+  };
+
+  const handleBackup = async (name: string) => {
+    setOpenMenu(null);
+    try {
+      await api.dbBackup(instanceId, name);
+      toast.success("Backup started", `A backup of “${name}” is being created — it'll appear on the Backups page.`);
+    } catch (e) {
+      toast.error("Couldn't start backup", e instanceof ApiError ? e.message : "Please try again.");
+    }
   };
 
   return (
@@ -229,6 +240,7 @@ export default function Databases() {
                                   className="fixed z-40 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card animate-scale-in"
                                   style={{ top: menuPos.top, right: menuPos.right }}
                                 >
+                                  <MenuItem icon={Archive} label="Back up now" onClick={() => handleBackup(db.name)} />
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
                                   <div className="border-t border-border" />
                                   <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpenMenu(null); setDropTarget(db.name); }} />

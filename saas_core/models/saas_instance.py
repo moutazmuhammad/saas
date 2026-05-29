@@ -8057,6 +8057,75 @@ class SaasInstance(models.Model):
             )
         return name
 
+    def hosting_db_backup(self, name):
+        """Create an on-demand zip backup of a SINGLE customer database.
+
+        Per-DB counterpart to the instance-wide snapshot: triggered
+        from the Databases page (a button next to each database), it
+        backs up just ``<sub>_<name>`` to a zip that then shows up —
+        and is downloadable — on the Backups page. Runs in the
+        background like the full backup; reuses ``_run_portal_backup``,
+        which honours the record's ``db_name``.
+        """
+        self.ensure_one()
+        self._ensure_hosting_for_db_ops()
+        full = self._hosting_db_full_name(name)
+        if full not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % full
+            )
+        if self.plan_id and self.plan_id.is_trial_plan:
+            raise UserError(_(
+                "Backups are not available on trial plans. Please "
+                "upgrade to a paid plan."
+            ))
+
+        Backup = self.env['saas.instance.backup']
+        # Serialise against concurrent backup clicks on this instance
+        # (same guard as the instance-level backup).
+        self.env.cr.execute(
+            "SELECT id FROM saas_instance WHERE id = %s FOR UPDATE",
+            (self.id,),
+        )
+        if Backup.search_count([
+            ('instance_id', '=', self.id),
+            ('state', '=', 'running'),
+        ]):
+            raise UserError(_(
+                "A backup is already in progress on this instance. "
+                "Please wait for it to finish."
+            ))
+
+        now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        backup = Backup.create({
+            'instance_id': self.id,
+            'db_name': full,
+            'name': 'backup_%s_%s' % (full, now_str),
+            'state': 'running',
+            'is_full_instance': False,
+        })
+        # Rotate this database's own on-demand backups to the plan
+        # limit — never touch other databases' backups or the
+        # full-instance snapshots.
+        if self.plan_id and self.plan_id.max_backups > 0:
+            done = Backup.search([
+                ('instance_id', '=', self.id),
+                ('db_name', '=', full),
+                ('is_full_instance', '=', False),
+                ('state', '=', 'done'),
+            ], order='create_date asc')
+            while len(done) >= self.plan_id.max_backups:
+                oldest = done[0]
+                oldest._delete_from_bucket()
+                oldest.unlink()
+                done -= oldest
+
+        run_in_background(
+            backup, '_run_portal_backup',
+            thread_name='saas_db_backup_%s' % full,
+        )
+        return backup
+
     def _hosting_template_db_name(self):
         """Per-instance template DB name.
 
