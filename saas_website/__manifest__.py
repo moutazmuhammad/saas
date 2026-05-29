@@ -1,6 +1,6 @@
 {
     'name': 'SaaS Website',
-    'version': '18.0.5.0.2',
+    'version': '18.0.5.0.10',
     'category': 'SaaS',
     'summary': 'Customer-facing website for SaaS plan selection, ordering, and instance management',
     'author': 'SaaS Platform',
@@ -20,6 +20,10 @@
     ],
     'assets': {
         'web.assets_frontend': [
+            # Theme bootstrap — first so it sets `data-theme` before
+            # any other JS runs. Has `@odoo-module ignore` so it's
+            # delivered as a plain script (not wrapped as a module).
+            'saas_website/static/src/js/veltnex_theme.js',
             'saas_website/static/src/css/cloudodoo.css',
             'saas_website/static/src/js/cloudodoo_app.js',
             'saas_website/static/src/js/subdomain_check.js',

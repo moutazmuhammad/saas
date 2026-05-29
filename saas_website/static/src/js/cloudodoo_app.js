@@ -92,32 +92,24 @@ const CloudOdoo = {
 };
 
 // ============================================
-// Theme Toggle (Dark/Light)
+// Theme Toggle (Dark/Light) — REMOVED
 // ============================================
-
-function initThemeToggle() {
-    var saved = localStorage.getItem('co-theme') || 'dark';
-    document.documentElement.setAttribute('data-theme', saved);
-
-    var toggle = document.getElementById('themeToggle');
-    var icon = document.getElementById('themeIcon');
-    if (!toggle || !icon) return;
-
-    function updateIcon(theme) {
-        // Show sun icon in dark mode (click to go light), moon in light mode (click to go dark)
-        icon.className = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
-    }
-
-    updateIcon(saved);
-
-    toggle.addEventListener('click', function() {
-        var current = document.documentElement.getAttribute('data-theme') || 'dark';
-        var next = current === 'dark' ? 'light' : 'dark';
-        document.documentElement.setAttribute('data-theme', next);
-        localStorage.setItem('co-theme', next);
-        updateIcon(next);
-    });
-}
+//
+// The legacy toggle here used its own `co-theme` localStorage key and
+// `#themeToggle`/`#themeIcon` elements (no longer rendered). Worse, it
+// ran late (on initAll, after the page had loaded) and unconditionally
+// did `setAttribute('data-theme', localStorage.getItem('co-theme') ||
+// 'dark')` — and because the live theme system writes `veltnex-theme`,
+// not `co-theme`, that read was ALWAYS 'dark'. So every QWeb page got
+// its correct server-rendered theme stomped back to dark a beat after
+// load (e.g. toggle light in the SPA → navigate to a QWeb page → it
+// briefly showed light, then flipped to dark).
+//
+// Theming is now owned entirely by the `veltnex-theme` system:
+//   - server-side  : cloudodoo_html_theme / spa.py stamp <html data-theme>
+//   - pre-paint    : the inline script in cloudodoo_theme_init
+//   - assets/sync  : veltnex_theme.js (wires .vx-theme-toggle)
+// Do NOT reintroduce a second toggle here.
 
 // ============================================
 // Billing Toggle (Plans Page)
@@ -1853,7 +1845,8 @@ function initHostingPlanBuilder() {
 
 function initAll() {
     // Initialize all interactive components
-    initThemeToggle();
+    // (theme is handled by the veltnex-theme system, not here — see the
+    //  removed initThemeToggle note above)
     initBillingToggle();
     initSubdomainCheck();
     initCustomPlanBuilder();

@@ -19,9 +19,12 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
-  // phone-OTP registration (mirrors the Odoo saas.registration.otp flow)
-  registerStart: (form: RegisterForm) => Promise<void>;
-  registerResend: (phone: string) => Promise<void>;
+  // phone-OTP registration (mirrors the Odoo saas.registration.otp flow).
+  // Both resolve with `{ otp_sent, debug_otp? }` — `debug_otp` is a
+  // TODO-remove testing aid the backend includes so the code can be
+  // shown on screen.
+  registerStart: (form: RegisterForm) => Promise<{ otp_sent: boolean; debug_otp?: string }>;
+  registerResend: (phone: string) => Promise<{ otp_sent: boolean; debug_otp?: string }>;
   registerVerify: (form: RegisterForm & { otp: string }) => Promise<ApiUser>;
 }
 
@@ -63,12 +66,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const registerStart = React.useCallback(async (form: RegisterForm) => {
-    await api.registerStart(form as unknown as Record<string, unknown>);
+  const registerStart = React.useCallback((form: RegisterForm) => {
+    return api.registerStart(form as unknown as Record<string, unknown>);
   }, []);
 
-  const registerResend = React.useCallback(async (phone: string) => {
-    await api.registerResend(phone);
+  const registerResend = React.useCallback((phone: string) => {
+    return api.registerResend(phone);
   }, []);
 
   const registerVerify = React.useCallback(

@@ -8,6 +8,7 @@ import {
   Menu,
   X,
   LifeBuoy,
+  LayoutGrid,
   ChevronRight,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
@@ -72,6 +73,17 @@ export function PortalLayout() {
           <LifeBuoy className="size-4" />
           Documentation
         </NavLink>
+        {/* Internal (backend) users get a jump-link into the Odoo backend.
+            `/odoo` is the Odoo web client root → full navigation. */}
+        {user?.is_internal && (
+          <a
+            href="/odoo"
+            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted transition-colors hover:bg-card hover:text-foreground"
+          >
+            <LayoutGrid className="size-4" />
+            Backend
+          </a>
+        )}
         <div className="mt-2 flex items-center gap-3 rounded-lg border border-border p-3">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
             {user?.initials}

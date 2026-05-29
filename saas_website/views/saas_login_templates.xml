@@ -22,11 +22,13 @@
                 <div class="co-login-page">
                     <!-- Floating theme toggle: same localStorage key as
                          the SPA so the choice carries everywhere. -->
+                    <!-- Click wired via event delegation in veltnex_theme.js (no
+                         inline onclick → CSP-friendly without `unsafe-inline`). -->
                     <button type="button" class="vx-theme-toggle"
-                            onclick="(function(b){var c=document.documentElement;var t=c.getAttribute('data-theme')==='dark'?'light':'dark';c.setAttribute('data-theme',t);c.classList.toggle('dark',t==='dark');try{localStorage.setItem('veltnex-theme',t);}catch(e){}})(this)"
                             aria-label="Toggle theme" title="Toggle theme">
-                        <i class="vx-icon-sun fas fa-sun"></i>
-                        <i class="vx-icon-moon fas fa-moon"></i>
+                        <!-- Inline lucide icons — same set the SPA ThemeToggle uses. -->
+                        <svg class="vx-icon-sun" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                        <svg class="vx-icon-moon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
                     </button>
 
                     <!-- Left panel: branding -->

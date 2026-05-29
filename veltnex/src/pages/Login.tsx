@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Mail, Lock, ArrowRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input, Label } from "@/components/ui/input";
@@ -15,7 +15,20 @@ export default function Login() {
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from ?? "/my";
+  const [searchParams] = useSearchParams();
+
+  // Where to land after sign-in:
+  //  - `state.from`  — set by ProtectedRoute / the navbar "Sign in" link;
+  //    always an in-app SPA path, so we client-route to it.
+  //  - `?redirect=`  — set by Odoo when it bounces a logged-out visitor
+  //    from /web/login here; may be a backend/QWeb URL (e.g. /odoo), so
+  //    it needs a full navigation. Only honoured if it's a safe relative
+  //    path (guards against open-redirect).
+  //  - otherwise the home page — never a forced detour through /my.
+  const fromState = (location.state as { from?: string } | null)?.from ?? null;
+  const redirectParam = searchParams.get("redirect");
+  const safeRedirect =
+    redirectParam && /^\/(?!\/)/.test(redirectParam) ? redirectParam : null;
 
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -25,15 +38,19 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!email.includes("@") || !password) {
-      setError("Enter your email and password to continue.");
+    // Accept any login, not just emails — staff/admin sign in with a
+    // plain username (e.g. "admin"). The backend authenticates by login.
+    if (!email.trim() || !password) {
+      setError("Enter your email/username and password to continue.");
       return;
     }
     setLoading(true);
     try {
       await login(email, password);
       toast.success("Welcome back", "You're signed in.");
-      navigate(from, { replace: true });
+      if (fromState) navigate(fromState, { replace: true });
+      else if (safeRedirect) window.location.assign(safeRedirect);
+      else navigate("/", { replace: true });
     } catch (err) {
       setError(
         err instanceof ApiError
@@ -70,17 +87,17 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">Email or username</Label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
                 <Input
                   id="email"
-                  type="email"
+                  type="text"
                   className="pl-9"
                   placeholder="you@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="email"
+                  autoComplete="username"
                 />
               </div>
             </div>

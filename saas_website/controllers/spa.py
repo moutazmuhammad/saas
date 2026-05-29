@@ -22,9 +22,11 @@ the instance-management + billing-view pages under ``/my``.
 """
 import os
 import logging
+from urllib.parse import urlencode
 
 from odoo import http
 from odoo.http import request
+from odoo.addons.web.controllers.home import Home
 
 from .main import SaasWebsite
 from .portal import SaasPortal
@@ -42,6 +44,12 @@ _INDEX_CACHE = {'html': None}
 
 def spa_shell():
     """Return the SPA's index.html as an HTTP response.
+
+    The static `<html lang="en">` tag is rewritten on the fly to
+    include `data-theme="…"` (and the matching `.dark` class) based
+    on the `veltnex-theme` cookie. This means the first byte of HTML
+    the browser receives already has the correct theme — the inline
+    FOUC script then just confirms it, no flash.
 
     If the app hasn't been built yet, return a clear, friendly message
     instead of a 500 so a fresh checkout doesn't look broken.
@@ -63,8 +71,24 @@ def spa_shell():
                 "<code>saas_website/static/spa/</code>.</p></body></html>",
                 headers=[('Content-Type', 'text/html; charset=utf-8')],
             )
-    return request.make_response(
-        html,
+
+    # Server-side theme injection — see cloudodoo_html_theme XML twin
+    # for the QWeb side of the same mechanism.
+    theme = request.httprequest.cookies.get('veltnex-theme', 'dark')
+    if theme not in ('light', 'dark'):
+        theme = 'dark'
+    cls = ' class="dark"' if theme == 'dark' else ''
+    # The built `<html lang="en">` has no other attributes, so a
+    # straight string replace is safe — and keeps the cached shell
+    # bytes intact (the cache holds the unmodified file).
+    rendered = html.replace(
+        '<html lang="en">',
+        f'<html lang="en" data-theme="{theme}"{cls}>',
+        1,
+    )
+
+    response = request.make_response(
+        rendered,
         headers=[
             ('Content-Type', 'text/html; charset=utf-8'),
             # The shell is tiny and route-agnostic; let the browser cache
@@ -72,6 +96,20 @@ def spa_shell():
             ('Cache-Control', 'no-cache'),
         ],
     )
+    # Pin the theme cookie on the response so the very next request
+    # (e.g. clicking through to /hosting/configure) already carries
+    # the value our QWeb override will read. This closes the gap
+    # where a brand-new visitor lands on the SPA, has nothing in
+    # localStorage / cookies, gets `dark` as the SPA default — but
+    # would have ended up with `dark` on the QWeb page too because
+    # the client-side JS hadn't run yet to backfill the cookie.
+    response.set_cookie(
+        'veltnex-theme', theme,
+        max_age=60 * 60 * 24 * 365,  # 1 year
+        path='/',
+        samesite='Lax',
+    )
+    return response
 
 
 # ----------------------------------------------------------------------
@@ -179,3 +217,26 @@ class SaasSpaAux(http.Controller):
     @http.route('/login', type='http', auth='public', website=True, sitemap=False)
     def spa_login(self, **kw):
         return spa_shell()
+
+
+class SaasWebLogin(Home):
+    """Funnel every visitor through the single branded SPA login.
+
+    We don't want two login pages. Odoo's stock ``/web/login`` form is
+    kept (password-reset completion, 2FA, and any programmatic POST still
+    rely on it) but a plain anonymous GET is bounced to ``/login`` — the
+    React page — carrying the ``redirect`` target so post-login deep-links
+    (e.g. ``/odoo`` for staff, a portal page for customers) still work.
+
+    Authenticated GETs and non-GET requests fall through to the stock
+    handler unchanged.
+    """
+
+    @http.route()
+    def web_login(self, redirect=None, **kw):
+        if request.httprequest.method == 'GET' and not request.session.uid:
+            url = '/login'
+            if redirect:
+                url += '?' + urlencode({'redirect': redirect})
+            return request.redirect(url)
+        return super().web_login(redirect=redirect, **kw)

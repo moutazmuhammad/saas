@@ -79,6 +79,8 @@ export interface ApiUser {
   company: string;
   initials: string;
   phone: string;
+  /** True for Odoo internal/backend users (shows a "Backend" menu link). */
+  is_internal?: boolean;
 }
 
 export interface PriceResult {
@@ -257,10 +259,11 @@ export const api = {
   login: (login: string, password: string) =>
     rpc<ApiUser>("/saas/api/v1/auth/login", { login, password }),
   logout: () => rpc("/saas/api/v1/auth/logout"),
+  // `debug_otp` is a TODO-remove testing aid surfaced by the backend.
   registerStart: (form: Record<string, unknown>) =>
-    rpc<{ otp_sent: boolean }>("/saas/api/v1/auth/register/start", form),
+    rpc<{ otp_sent: boolean; debug_otp?: string }>("/saas/api/v1/auth/register/start", form),
   registerResend: (phone: string) =>
-    rpc<{ otp_sent: boolean }>("/saas/api/v1/auth/register/resend", { phone }),
+    rpc<{ otp_sent: boolean; debug_otp?: string }>("/saas/api/v1/auth/register/resend", { phone }),
   registerVerify: (form: Record<string, unknown>) =>
     rpc<ApiUser>("/saas/api/v1/auth/register/verify", form),
 

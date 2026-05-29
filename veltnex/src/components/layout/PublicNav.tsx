@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Menu,
   X,
@@ -8,6 +8,8 @@ import {
   Server,
   LogOut,
   ChevronDown,
+  LayoutGrid,
+  type LucideIcon,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
@@ -21,20 +23,39 @@ const LINKS = [
   { to: "/docs", label: "Docs" },
 ];
 
+type MenuItem = { label: string; icon: LucideIcon; to: string; external: boolean };
+
 // Shared account menu — kept identical to the QWeb header dropdown so the
 // experience is the same across every page. "Profile" is an Odoo portal
 // page, so it uses a full navigation; the rest are SPA routes.
-const MENU = [
+const MENU: MenuItem[] = [
   { label: "Dashboard", icon: LayoutDashboard, to: "/my", external: false },
   { label: "Profile", icon: User, to: "/my/account", external: true },
   { label: "My Instances", icon: Server, to: "/my/instances", external: false },
 ];
+
+// Internal (backend) users also get a link into the Odoo backend, mirroring
+// the QWeb header's `t-if="has_group('base.group_user')"` Backend entry.
+// `/odoo` is the Odoo web client root, so it's a full navigation.
+const BACKEND_ITEM: MenuItem = {
+  label: "Backend",
+  icon: LayoutGrid,
+  to: "/odoo",
+  external: true,
+};
 
 export function PublicNav() {
   const [open, setOpen] = React.useState(false);
   const [scrolled, setScrolled] = React.useState(false);
   const { isAuthenticated, user, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Remember where the user is so signing in returns them here instead
+  // of always dumping them on the dashboard. (Don't carry /login itself.)
+  const current = location.pathname + location.search;
+  const loginState = current.startsWith("/login") ? undefined : { from: current };
+  // Backend users get the extra "Backend" link; portal users don't.
+  const menuItems = user?.is_internal ? [...MENU, BACKEND_ITEM] : MENU;
 
   React.useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -42,7 +63,7 @@ export function PublicNav() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  const go = (item: (typeof MENU)[number]) => {
+  const go = (item: MenuItem) => {
     if (item.external) window.location.href = item.to;
     else navigate(item.to);
   };
@@ -88,6 +109,7 @@ export function PublicNav() {
             <UserMenu
               initials={user?.initials || "U"}
               name={user?.name || "Account"}
+              items={menuItems}
               onGo={go}
               onLogout={handleLogout}
             />
@@ -95,6 +117,7 @@ export function PublicNav() {
             <>
               <Link
                 to="/login"
+                state={loginState}
                 className="text-sm font-medium text-muted transition-colors hover:text-foreground"
               >
                 Sign in
@@ -141,7 +164,7 @@ export function PublicNav() {
             <div className="mt-2 flex flex-col gap-1 border-t border-border pt-3">
               {isAuthenticated ? (
                 <>
-                  {MENU.map((item) => (
+                  {menuItems.map((item) => (
                     <button
                       key={item.label}
                       onClick={() => {
@@ -167,7 +190,7 @@ export function PublicNav() {
                 </>
               ) : (
                 <>
-                  <Button variant="secondary" onClick={() => navigate("/login")}>
+                  <Button variant="secondary" onClick={() => navigate("/login", { state: loginState })}>
                     Sign in
                   </Button>
                   <Button onClick={() => navigate("/services/register")}>
@@ -186,12 +209,14 @@ export function PublicNav() {
 function UserMenu({
   initials,
   name,
+  items,
   onGo,
   onLogout,
 }: {
   initials: string;
   name: string;
-  onGo: (item: (typeof MENU)[number]) => void;
+  items: MenuItem[];
+  onGo: (item: MenuItem) => void;
   onLogout: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
@@ -213,7 +238,7 @@ function UserMenu({
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 z-20 mt-2 w-52 overflow-hidden rounded-xl border border-border bg-card shadow-card animate-scale-in">
-            {MENU.map((item) => (
+            {items.map((item) => (
               <button
                 key={item.label}
                 onClick={() => {

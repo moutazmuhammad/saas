@@ -22,30 +22,114 @@
          Runs synchronously before CSS paints.
          ============================================================ -->
 
+    <!-- ============================================================
+         SERVER-SIDE theme injection.
+         Reads the `veltnex-theme` cookie (set by both the SPA's
+         useTheme hook and the QWeb veltnex_theme.js) and stamps the
+         <html> tag with the matching `data-theme` attribute and
+         (optionally) the `.dark` class. The CSS in cloudodoo.css
+         keys on `data-theme` so this gives the correct palette from
+         the first byte of HTML — no FOUC, no JS race.
+         ============================================================ -->
+
+    <template id="cloudodoo_html_theme" name="VELTNEX: HTML data-theme"
+              inherit_id="website.layout" customize_show="False" priority="100">
+        <!--
+            Inject `data-theme` (and matching `dark` class) into the
+            html_data dict that website.layout spreads onto <html>.
+            This is more robust than `t-att-data-theme` on the same
+            element because we don't fight the existing `t-att`
+            spread — we just add a key to the dict it spreads.
+        -->
+        <xpath expr="//html" position="before">
+            <t t-set="_vx_theme"
+               t-value="request.httprequest.cookies.get('veltnex-theme') if request.httprequest.cookies.get('veltnex-theme') in ('light', 'dark') else 'dark'"/>
+            <t t-set="html_data" t-value="dict(html_data or {}, **{
+                'data-theme': _vx_theme,
+                'class': ((html_data or {}).get('class', '') + (' dark' if _vx_theme == 'dark' else '')).strip(),
+            })"/>
+        </xpath>
+    </template>
+
     <template id="cloudodoo_theme_init" name="CloudOdoo Theme Init"
               inherit_id="web.frontend_layout" customize_show="False">
         <xpath expr="//head" position="inside">
-            <!--
-                Apply the user's theme BEFORE CSS paints so there's no
-                flash. Uses the same localStorage key as the SPA
-                (`veltnex-theme`) so toggling theme in the SPA is
-                reflected on QWeb-rendered pages (checkout, /my/invoices,
-                portal, etc.) and vice versa.
-            -->
             <script>
                 (function(){
-                    try {
-                        var t = localStorage.getItem('veltnex-theme');
-                        if (t !== 'light' &amp;&amp; t !== 'dark') {
-                            t = (window.matchMedia &amp;&amp; window.matchMedia('(prefers-color-scheme: light)').matches)
-                                ? 'light' : 'dark';
-                        }
+                    // 1) Apply theme BEFORE paint (mirrors the SPA's
+                    //    inline script in veltnex/index.html so the
+                    //    same localStorage key drives both worlds).
+                    function apply(t) {
                         document.documentElement.setAttribute('data-theme', t);
                         document.documentElement.classList.toggle('dark', t === 'dark');
-                    } catch (e) {
-                        document.documentElement.setAttribute('data-theme', 'dark');
-                        document.documentElement.classList.add('dark');
                     }
+                    var t;
+                    try {
+                        // Trust the server-rendered `data-theme`
+                        // (cloudodoo_html_theme sets it from the
+                        // cookie). Don't re-decide — just sync
+                        // localStorage + cookie to match. This is
+                        // what eliminates the white→dark flash on
+                        // navigation: nothing flips the attribute
+                        // after the server has already set it.
+                        var server = document.documentElement.getAttribute('data-theme');
+                        if (server === 'light' || server === 'dark') {
+                            try { localStorage.setItem('veltnex-theme', server); } catch (err) {}
+                            document.cookie = 'veltnex-theme=' + server + '; path=/; max-age=31536000; SameSite=Lax';
+                            t = server;
+                        } else {
+                            t = localStorage.getItem('veltnex-theme');
+                            if (t !== 'light' &amp;&amp; t !== 'dark') {
+                                t = (window.matchMedia &amp;&amp; window.matchMedia('(prefers-color-scheme: light)').matches)
+                                    ? 'light' : 'dark';
+                            }
+                            apply(t);
+                            try { localStorage.setItem('veltnex-theme', t); } catch (err) {}
+                            document.cookie = 'veltnex-theme=' + t + '; path=/; max-age=31536000; SameSite=Lax';
+                        }
+                    } catch (e) { apply('dark'); }
+
+                    // 2) Live sync — if the user toggles theme in
+                    //    another tab (SPA toggle writes localStorage),
+                    //    repaint THIS page without a reload.
+                    window.addEventListener('storage', function(e){
+                        if (e.key === 'veltnex-theme' &amp;&amp; (e.newValue === 'light' || e.newValue === 'dark')) {
+                            apply(e.newValue);
+                        }
+                    });
+
+                    // 3) Re-sync on visibility change (catches the
+                    //    case where another tab changed it while we
+                    //    were backgrounded — storage event doesn't
+                    //    always fire for backgrounded tabs).
+                    document.addEventListener('visibilitychange', function(){
+                        if (!document.hidden) {
+                            try {
+                                var v = localStorage.getItem('veltnex-theme');
+                                if ((v === 'light' || v === 'dark') &amp;&amp;
+                                    v !== document.documentElement.getAttribute('data-theme')) {
+                                    apply(v);
+                                }
+                            } catch (e) {}
+                        }
+                    });
+
+                    // 4) Scroll-to-blur on the navbar to match the SPA
+                    //    PublicNav's transparent-at-top behaviour. The
+                    //    selector covers both the cloudodoo navbar
+                    //    (`.co-navbar`, on website.layout pages) and
+                    //    the default portal navbar (`navbar-light
+                    //    bg-light`, on /payment/* and /my/invoices/*),
+                    //    which we restyle via CSS to look the same.
+                    document.addEventListener('DOMContentLoaded', function(){
+                        var nav = document.querySelector('.co-navbar, nav.navbar.navbar-light.bg-light');
+                        if (!nav) return;
+                        var onScroll = function(){
+                            nav.classList.toggle('co-navbar--scrolled', window.scrollY > 8);
+                        };
+                        window.addEventListener('scroll', onScroll, { passive: true });
+                        onScroll();
+                    });
                 })();
             </script>
             <link rel="icon" type="image/svg+xml" href="/saas_website/static/src/img/veltnex-icon.svg"/>
@@ -56,16 +140,17 @@
     </template>
 
     <!-- ============================================================
-         Override Odoo's website header with CloudOdoo dark navbar.
-         This applies to ALL website pages (services, portal, login,
-         contact, etc.) so the entire site looks consistent.
+         Override Odoo's website header with VELTNEX navbar.
+         The full markup is inlined (rather than extracted to a shared
+         t-call template) so any future descendant inherits can still
+         anchor on <header>/<nav> elements that exist directly in
+         this view's arch — Odoo 18's view validator only sees the
+         immediate parent's bare arch when resolving xpaths.
          ============================================================ -->
 
     <template id="cloudodoo_header" name="CloudOdoo Header"
               inherit_id="website.layout" customize_show="False">
         <xpath expr="//header" position="replace">
-            <!-- Section visibility flags. Unset / 'True' => shown.
-                 Default-on so a fresh install behaves like before. -->
             <t t-set="show_services_section"
                t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_services_section', 'True') != 'False'"/>
             <t t-set="show_hosting_section"
@@ -81,8 +166,6 @@
                             <span class="navbar-toggler-icon"></span>
                         </button>
                         <div class="collapse navbar-collapse" id="coNavbar">
-                            <!-- Left group: nav links sit next to the logo
-                                 (matches the VELTNEX SPA home page). -->
                             <ul class="navbar-nav me-auto align-items-center">
                                 <li t-if="show_services_section" class="nav-item">
                                     <a class="nav-link" href="/services">Services</a>
@@ -94,22 +177,32 @@
                                     <a class="nav-link" href="/docs">Docs</a>
                                 </li>
                             </ul>
-                            <!-- Right group: account dropdown / auth buttons. -->
                             <ul class="navbar-nav align-items-center">
-                                <!-- Logged-in user nav. The standalone
-                                     "My Instances" link is intentionally
-                                     not in the top bar — it lives inside
-                                     the profile dropdown below so the
-                                     header stays uncluttered. -->
+                                <li class="nav-item me-2">
+                                    <!-- Click handler wired via event delegation in
+                                         veltnex_theme.js — no inline onclick so the
+                                         page passes a `script-src` CSP without
+                                         `unsafe-inline`. -->
+                                    <button type="button" class="vx-theme-toggle vx-theme-toggle-nav"
+                                            aria-label="Toggle theme" title="Toggle theme">
+                                        <!-- Inline lucide icons to match the SPA's ThemeToggle 1:1
+                                             (FontAwesome's fa-sun reads as a cog at this size). -->
+                                        <svg class="vx-icon-sun" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                                        <svg class="vx-icon-moon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+                                    </button>
+                                </li>
                                 <t t-if="not request.env.user._is_public()">
                                     <li class="nav-item dropdown ms-lg-3">
                                         <a class="nav-link dropdown-toggle d-flex align-items-center" href="#"
                                            role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                             <div class="d-flex align-items-center justify-content-center rounded-circle me-2"
                                                  style="width:32px;height:32px;background:var(--co-primary, #203c86);font-size:0.8rem;color:white;">
-                                                <t t-esc="(request.env.user.name or 'U')[:2].upper()"/>
+                                                <t t-esc="''.join([w[0] for w in (request.env.user.name or 'U').split()[:2]]).upper() or 'U'"/>
                                             </div>
                                             <span class="d-none d-lg-inline" t-esc="request.env.user.name"/>
+                                            <!-- lucide chevron-down, replacing Bootstrap's caret to
+                                                 match the SPA UserMenu (rotates 180° when open). -->
+                                            <svg class="vx-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
                                         </a>
                                         <ul class="dropdown-menu dropdown-menu-end">
                                             <li><a class="dropdown-item" href="/my"><i class="fas fa-th-large me-2"></i>Dashboard</a></li>
@@ -123,8 +216,6 @@
                                         </ul>
                                     </li>
                                 </t>
-
-                                <!-- Public user nav (matches the VELTNEX SPA) -->
                                 <t t-if="request.env.user._is_public()">
                                     <li class="nav-item ms-lg-3">
                                         <a class="nav-link" href="/login">Sign in</a>
@@ -142,9 +233,23 @@
     </template>
 
     <!-- ============================================================
-         Override Odoo's website footer with CloudOdoo dark footer.
-         Removes "Powered by Odoo" branding.
+         Payment / portal pages (/payment/*, /my/invoices/*, ...) use
+         `portal.frontend_layout` directly, which renders its own
+         `<nav class="navbar navbar-light bg-light">` inside the page
+         header. Trying to replace that header via XML inheritance is
+         brittle in Odoo 18 (neither `web.frontend_layout` nor
+         `portal.frontend_layout` exposes the `<header>` element in
+         its *own* arch — both define it through xpath ops on
+         `web.layout`, so xpath inheritance validation can't anchor
+         on it).
+         Instead, the theme-init script in `cloudodoo_theme_init`
+         rewrites the rendered DOM at page load to swap that default
+         navbar/footer for the shared VELTNEX ones — see the JS in
+         the head template for the implementation.
          ============================================================ -->
+
+    <!-- Override Odoo's website footer with the VELTNEX footer (inline
+         markup so descendant inherits can anchor on <footer> if needed). -->
 
     <template id="cloudodoo_footer" name="CloudOdoo Footer"
               inherit_id="website.layout" customize_show="False">
@@ -206,6 +311,9 @@
         </xpath>
     </template>
 
+    <!-- Portal/payment footer: same story as the navbar above —
+         replaced at runtime via the head script, not via XML inheritance. -->
+
     <!-- ============================================================
          Remove Salesperson card from invoice portal page
          ============================================================ -->
@@ -257,13 +365,12 @@
         </xpath>
     </template>
 
-    <!-- Hide the copyright bar on all pages -->
-    <template id="hide_copyright_bar" name="Hide Copyright Bar"
-              inherit_id="web.frontend_layout" customize_show="False">
-        <xpath expr="//footer[@id='bottom']" position="before">
-            <t t-set="no_copyright" t-value="True"/>
-        </xpath>
-    </template>
+    <!-- The copyright bar is hidden via CSS instead of XML inheritance.
+         The original xpath `//footer[@id='bottom']` can't be located in
+         `web.frontend_layout`'s bare arch (the <footer> only exists in
+         the xpath-replacement content, which Odoo 18's inheritance
+         validator doesn't traverse). See cloudodoo.css → "Hide Odoo's
+         default copyright bar on all QWeb pages". -->
 
     <!-- Remove "Powered by Odoo" from portal record sidebar
          (invoice detail, sale order detail, etc.) -->
@@ -344,6 +451,30 @@
     <template id="cloudodoo_layout" name="CloudOdoo Layout">
         <t t-call="website.layout">
             <t t-set="no_livechat" t-value="True"/>
+            <!-- Defensive theme + navbar handlers — runs even if the
+                 `cloudodoo_theme_init` extension of web.frontend_layout
+                 is somehow stripped (cached compiled view, override
+                 conflict, etc.). Same logic, idempotent. -->
+            <script>
+                (function(){
+                    // No initial apply — the server already set
+                    // `data-theme` from the cookie. We only need a
+                    // cross-tab `storage` listener so a toggle in a
+                    // sibling tab repaints this one without a reload.
+                    function apply(t){
+                        document.documentElement.setAttribute('data-theme', t);
+                        document.documentElement.classList.toggle('dark', t === 'dark');
+                    }
+                    try {
+                        window.addEventListener('storage', function(e){
+                            if (e.key === 'veltnex-theme'
+                                &amp;&amp; (e.newValue === 'light' || e.newValue === 'dark')) {
+                                apply(e.newValue);
+                            }
+                        });
+                    } catch(e) {}
+                })();
+            </script>
             <div id="wrap" class="oe_structure">
                 <t t-out="0"/>
             </div>

@@ -160,7 +160,7 @@ class SaasApi(http.Controller):
         if error:
             return err(error, 'invalid')
         try:
-            request.env['saas.registration.otp'].sudo()._generate_and_send_phone(
+            otp = request.env['saas.registration.otp'].sudo()._generate_and_send_phone(
                 p.get('phone').strip()
             )
         except Exception:
@@ -169,7 +169,9 @@ class SaasApi(http.Controller):
                 _("We couldn't send your verification code. Please try again."),
                 'otp_send_failed',
             )
-        return ok({'otp_sent': True})
+        # TODO: REMOVE before production — exposes the OTP to the client
+        # for testing (mirrors registration.py's `debug_phone_otp`).
+        return ok({'otp_sent': True, 'debug_otp': otp.code})
 
     @http.route('/saas/api/v1/auth/register/resend', type='json', auth='public')
     def register_resend(self, phone=None, **kw):
@@ -177,10 +179,11 @@ class SaasApi(http.Controller):
         if not phone:
             return err(_("Phone number is required."), 'invalid')
         try:
-            request.env['saas.registration.otp'].sudo()._generate_and_send_phone(phone)
+            otp = request.env['saas.registration.otp'].sudo()._generate_and_send_phone(phone)
         except Exception:
             return err(_("Couldn't resend the code. Please try again."), 'otp_send_failed')
-        return ok({'otp_sent': True})
+        # TODO: REMOVE before production — exposes the OTP for testing.
+        return ok({'otp_sent': True, 'debug_otp': otp.code})
 
     @http.route('/saas/api/v1/auth/register/verify', type='json', auth='public')
     def register_verify(self, **p):
@@ -580,6 +583,10 @@ class SaasApi(http.Controller):
             'company': partner.commercial_company_name or partner.company_name or partner.name,
             'initials': initials,
             'phone': partner.phone or '',
+            # Internal (backend) users get a link to the Odoo backend in the
+            # SPA account menu — portal users don't. `_serialize_user` is
+            # always called for the current user, so env.user is correct.
+            'is_internal': request.env.user.has_group('base.group_user'),
         }
 
     def _usage(self, instance):
