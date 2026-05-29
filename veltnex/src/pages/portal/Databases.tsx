@@ -293,16 +293,20 @@ function DeleteDatabaseDialog({
 }) {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [confirmText, setConfirmText] = React.useState("");
 
   React.useEffect(() => {
     if (dbName) {
       setLoading(false);
       setError(null);
+      setConfirmText("");
     }
   }, [dbName]);
 
+  const confirmed = confirmText.trim() === dbName;
+
   const submit = async () => {
-    if (!dbName) return;
+    if (!dbName || !confirmed) return;
     setError(null);
     setLoading(true);
     try {
@@ -332,9 +336,23 @@ function DeleteDatabaseDialog({
           </p>
         </div>
       </div>
+      <div className="mt-5 space-y-2">
+        <Label htmlFor="confirm-name">
+          Type <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">{dbName}</code> to confirm
+        </Label>
+        <Input
+          id="confirm-name"
+          autoFocus
+          autoComplete="off"
+          placeholder={dbName ?? ""}
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && confirmed && submit()}
+        />
+      </div>
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={loading}>Cancel</Button>
-        <ActionButton variant="danger" loading={loading} loadingText="Deleting…" onClick={submit}>
+        <ActionButton variant="danger" loading={loading} loadingText="Deleting…" disabled={!confirmed} onClick={submit}>
           Delete database
         </ActionButton>
       </div>
