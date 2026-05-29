@@ -217,6 +217,7 @@ export interface ApiInstance {
   next_invoice_date?: string;
   daily_backup_enabled?: boolean;
   pending_plan?: string;
+  scheduled_plan?: string;
   backups?: ApiBackup[];
   invoices?: ApiInvoice[];
   has_unpaid_invoice?: boolean;

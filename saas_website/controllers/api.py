@@ -638,6 +638,7 @@ class SaasApi(http.Controller):
                     if instance.next_invoice_date else '',
                 'daily_backup_enabled': instance.daily_backup_enabled,
                 'pending_plan': instance.pending_plan_id.name if instance.pending_plan_id else '',
+                'scheduled_plan': instance.scheduled_plan_id.name if instance.scheduled_plan_id else '',
                 'backups': [self._serialize_backup(b) for b in backups],
                 'invoices': [self._serialize_invoice(i) for i in invoices],
                 'has_unpaid_invoice': any(

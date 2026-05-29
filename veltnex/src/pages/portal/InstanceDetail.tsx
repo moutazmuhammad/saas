@@ -14,6 +14,8 @@ import {
   Globe,
   ServerCrash,
   CreditCard,
+  ArrowUpCircle,
+  Clock,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -243,6 +245,36 @@ export default function InstanceDetail() {
         <InfoCard label="Plan" value={<span className="text-base">{instance.plan_name || `${instance.workers}W`}</span>} hint={`${instance.workers} workers`} />
         <InfoCard label="Storage" value={formatBytes(instance.storage_gb)} hint={instance.created ? `Since ${formatDate(instance.created)}` : undefined} />
       </div>
+
+      <Card className="mt-4 flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm text-muted">Current plan</p>
+          <p className="mt-0.5 text-base font-semibold">{instance.plan_name || `${instance.workers} workers`}</p>
+          <p className="mt-1 text-xs text-muted">
+            {instance.workers} workers · {formatBytes(instance.storage_gb)} · billed {instance.billing_cycle}
+          </p>
+          {instance.pending_plan && (
+            <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-warning">
+              <Clock className="size-3.5" /> Change to “{instance.pending_plan}” pending payment
+            </p>
+          )}
+          {instance.scheduled_plan && (
+            <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-info">
+              <Clock className="size-3.5" /> Downgrade to “{instance.scheduled_plan}” scheduled for next billing cycle
+            </p>
+          )}
+        </div>
+        <Button
+          variant="secondary"
+          className="shrink-0"
+          onClick={() => {
+            window.location.href = `/my/instances/${instance.id}/${instance.is_trial ? "upgrade" : "change-plan"}`;
+          }}
+        >
+          <ArrowUpCircle className="size-4" />
+          {instance.is_trial ? "Upgrade plan" : "Change plan"}
+        </Button>
+      </Card>
 
       <h2 className="mt-10 text-lg font-semibold">Manage</h2>
       <div className="mt-4 grid gap-4 sm:grid-cols-3">
