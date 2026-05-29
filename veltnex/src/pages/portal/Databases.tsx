@@ -58,10 +58,20 @@ export default function Databases() {
 
   // While async create/drop ops are in flight, poll until they settle.
   const hasPending = !!data?.pending_ops?.length;
-  // A create that's mid-flight: the DB doesn't exist in `databases`
-  // yet, so we surface it as a loading row and block starting another.
-  const creatingOps = (data?.pending_ops ?? []).filter((o) => o.operation === "create");
-  const isCreating = creatingOps.length > 0;
+  // Operation currently running against a given DB name (if any), so a
+  // row can show the right label ("Creating…" vs "Deleting…").
+  const pendingOp = (name: string) =>
+    data?.pending_ops?.find((o) => o.db_name === name)?.operation;
+  // A create that's mid-flight: while the DB hasn't appeared in the
+  // list yet we surface it as a synthetic loading row. Once it shows up
+  // in `databases` (mid-create), its own row carries the spinner — so
+  // exclude those here to avoid a duplicate row.
+  const existingNames = new Set((data?.databases ?? []).map((d) => d.name));
+  const creatingOps = (data?.pending_ops ?? []).filter(
+    (o) => o.operation === "create" && !existingNames.has(o.db_name),
+  );
+  // Any create in flight (existing-in-list or not) locks the button.
+  const isCreating = (data?.pending_ops ?? []).some((o) => o.operation === "create");
   React.useEffect(() => {
     if (!hasPending) return;
     const t = setInterval(load, 5000);
@@ -155,7 +165,8 @@ export default function Databases() {
                   </tr>
                 ))}
                 {data.databases.map((db) => {
-                  const pending = data.pending_ops?.some((o) => o.db_name === db.name);
+                  const op = pendingOp(db.name);
+                  const pending = !!op;
                   return (
                     <tr key={db.name} className="transition-colors hover:bg-card/60">
                       <td className="px-5 py-4">
@@ -168,7 +179,7 @@ export default function Databases() {
                       <td className="px-5 py-4">
                         {pending ? (
                           <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                            <Loader2 className="size-3.5 animate-spin" /> Deleting…
+                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : "Creating…"}
                           </span>
                         ) : (
                           <StatusBadge status="running" label="Active" />
