@@ -56,6 +56,10 @@ export default function Databases() {
 
   // While async create/drop ops are in flight, poll until they settle.
   const hasPending = !!data?.pending_ops?.length;
+  // A create that's mid-flight: the DB doesn't exist in `databases`
+  // yet, so we surface it as a loading row and block starting another.
+  const creatingOps = (data?.pending_ops ?? []).filter((o) => o.operation === "create");
+  const isCreating = creatingOps.length > 0;
   React.useEffect(() => {
     if (!hasPending) return;
     const t = setInterval(load, 5000);
@@ -89,9 +93,13 @@ export default function Databases() {
           <h1 className="text-2xl font-bold tracking-tight">Databases</h1>
           <p className="mt-1 text-sm text-muted">Create, back up, and manage your databases.</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} disabled={!data?.ready}>
-          <Plus className="size-4" />
-          Create database
+        <Button
+          onClick={() => setCreateOpen(true)}
+          disabled={!data?.ready || isCreating}
+          title={isCreating ? "A database is already being created on this instance." : undefined}
+        >
+          {isCreating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+          {isCreating ? "Creating…" : "Create database"}
         </Button>
       </div>
 
@@ -100,12 +108,12 @@ export default function Databases() {
       )}
       {error && <AlertBanner className="mt-6" variant="danger" title="Database management" description={error} />}
 
-      {data?.pending_ops?.map((op) => (
+      {data?.pending_ops?.filter((op) => op.operation === "drop").map((op) => (
         <AlertBanner
           key={op.db_name}
           className="mt-4"
           variant="info"
-          title={`${op.operation === "drop" ? "Deleting" : "Creating"} ${op.db_name}…`}
+          title={`Deleting ${op.db_name}…`}
           description="This usually takes about a minute. The list updates automatically."
         />
       ))}
@@ -122,7 +130,7 @@ export default function Databases() {
           description="Database management becomes available once your instance is running."
           action={<Button variant="secondary" onClick={() => navigate(`/my/instances/${id}`)}>Back to instance</Button>}
         />
-      ) : data && data.databases.length === 0 ? (
+      ) : data && data.databases.length === 0 && !isCreating ? (
         <EmptyState
           className="mt-8"
           icon={Database}
@@ -143,6 +151,23 @@ export default function Databases() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
+                {creatingOps.map((op) => (
+                  <tr key={`creating-${op.db_name}`} className="bg-info/5">
+                    <td className="px-5 py-4">
+                      <div className="flex items-center gap-2.5">
+                        <Database className="size-4 text-muted" />
+                        <span className="font-medium">{op.db_name}</span>
+                      </div>
+                    </td>
+                    <td className="hidden px-5 py-4 text-muted sm:table-cell">—</td>
+                    <td className="px-5 py-4">
+                      <span className="inline-flex items-center gap-1.5 text-xs text-info">
+                        <Loader2 className="size-3.5 animate-spin" /> Creating…
+                      </span>
+                    </td>
+                    <td className="px-5 py-4" />
+                  </tr>
+                ))}
                 {data.databases.map((db) => {
                   const pending = data.pending_ops?.some((o) => o.db_name === db.name);
                   return (
@@ -206,9 +231,9 @@ export default function Databases() {
         existing={data?.databases.map((d) => d.name) || []}
         onCreate={async (name, login, password) => {
           await api.dbCreate(instanceId, name, login, password);
-          toast.success("Creating database", `${name} is being provisioned.`);
-          setBanner({ variant: "info", title: "Creating database…", description: `${name} will appear shortly.` });
-          load();
+          // No banner/toast — the new DB now shows as a live "Creating…"
+          // row in the list, and the Create button locks until it's done.
+          await load();
         }}
       />
 

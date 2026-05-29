@@ -8325,17 +8325,25 @@ class SaasInstance(models.Model):
         existing = {r['name'] for r in self.hosting_db_list()}
         if full_name in existing:
             raise UserError(_("Database '%s' already exists.") % full_name)
-        # Don't queue a second create for the same target name while
-        # the first is still running.
+        # Only ONE create may run on an instance at a time. The first
+        # one builds the per-instance template (a ~60-90s, container-
+        # pausing, single-flight operation) and a parallel create would
+        # race it; just as importantly, this is the server-side guard
+        # that stops a customer kicking off a second create from
+        # another browser tab. Enforced here (not just in the UI) so it
+        # holds no matter how the request arrives.
         Op = self.env['saas.instance.db.operation']
-        if Op.search_count([
+        running_create = Op.search([
             ('instance_id', '=', self.id),
-            ('db_name', '=', full_name),
+            ('operation', '=', 'create'),
             ('state', '=', 'running'),
-        ]):
-            raise UserError(
-                _("A create for '%s' is already in progress.") % full_name
-            )
+        ], limit=1)
+        if running_create:
+            raise UserError(_(
+                "A database is already being created on this instance "
+                "(%s). Please wait for it to finish before starting "
+                "another."
+            ) % running_create.db_name)
 
         op = Op.create({
             'instance_id': self.id,
