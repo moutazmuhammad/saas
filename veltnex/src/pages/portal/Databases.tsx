@@ -25,8 +25,6 @@ import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type DbListData } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type Banner = { variant: "success" | "danger" | "info"; title: string; description?: string };
-
 export default function Databases() {
   const { id = "" } = useParams();
   const instanceId = Number(id);
@@ -35,7 +33,6 @@ export default function Databases() {
 
   const [data, setData] = React.useState<DbListData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [banner, setBanner] = React.useState<Banner | null>(null);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
@@ -72,10 +69,11 @@ export default function Databases() {
   }, [hasPending, load]);
 
   // Runs the actual delete once confirmed in the dialog. Throws on
-  // failure so the dialog can surface the error inline.
+  // failure so the dialog can surface the error inline. No banner —
+  // the row shows a "Deleting…" spinner until it's gone, mirroring
+  // the create flow.
   const handleDrop = async (name: string) => {
     await api.dbDrop(instanceId, name);
-    setBanner({ variant: "info", title: "Deleting database…", description: `${name} is being removed.` });
     await load();
   };
 
@@ -104,20 +102,7 @@ export default function Databases() {
         </Button>
       </div>
 
-      {banner && (
-        <AlertBanner className="mt-6" variant={banner.variant} title={banner.title} description={banner.description} onDismiss={() => setBanner(null)} />
-      )}
       {error && <AlertBanner className="mt-6" variant="danger" title="Database management" description={error} />}
-
-      {data?.pending_ops?.filter((op) => op.operation === "drop").map((op) => (
-        <AlertBanner
-          key={op.db_name}
-          className="mt-4"
-          variant="info"
-          title={`Deleting ${op.db_name}…`}
-          description="This usually takes about a minute. The list updates automatically."
-        />
-      ))}
 
       {!data && !error ? (
         <div className="mt-20 flex justify-center">
@@ -183,7 +168,7 @@ export default function Databases() {
                       <td className="px-5 py-4">
                         {pending ? (
                           <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                            <Loader2 className="size-3.5 animate-spin" /> Working…
+                            <Loader2 className="size-3.5 animate-spin" /> Deleting…
                           </span>
                         ) : (
                           <StatusBadge status="running" label="Active" />
