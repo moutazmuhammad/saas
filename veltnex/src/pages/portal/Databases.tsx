@@ -266,8 +266,8 @@ export default function Databases() {
       <ResetPasswordDialog
         dbName={resetTarget}
         onClose={() => setResetTarget(null)}
-        onReset={async (name, password) => {
-          const { login } = await api.dbResetPassword(instanceId, name, password);
+        onReset={async (name, password, targetLogin) => {
+          const { login } = await api.dbResetPassword(instanceId, name, password, targetLogin);
           toast.success("Password reset", `New admin password set for ${name}.`);
           return login;
         }}
@@ -434,9 +434,10 @@ function ResetPasswordDialog({
 }: {
   dbName: string | null;
   onClose: () => void;
-  onReset: (name: string, password: string) => Promise<string>;
+  onReset: (name: string, password: string, targetLogin?: string) => Promise<string>;
 }) {
   const [password, setPassword] = React.useState("");
+  const [targetLogin, setTargetLogin] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [done, setDone] = React.useState(false);
@@ -446,6 +447,7 @@ function ResetPasswordDialog({
   React.useEffect(() => {
     if (dbName) {
       setPassword("");
+      setTargetLogin("");
       setError(null);
       setLoading(false);
       setDone(false);
@@ -466,7 +468,7 @@ function ResetPasswordDialog({
     setError(null);
     setLoading(true);
     try {
-      const login = await onReset(dbName, password);
+      const login = await onReset(dbName, password, targetLogin.trim() || undefined);
       setAdminLogin(login);
       setDone(true);
     } catch (e) {
@@ -482,6 +484,11 @@ function ResetPasswordDialog({
         <>
           {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't reset password" description={error} />}
           <AlertBanner variant="warning" title="This rotates the admin password" description="The admin user will need the new password to sign in." />
+          <div className="mt-4 space-y-2">
+            <Label htmlFor="reset-login">Administrator login <span className="font-normal text-muted">(optional)</span></Label>
+            <Input id="reset-login" placeholder="Leave blank to reset the main administrator" value={targetLogin} onChange={(e) => setTargetLogin(e.target.value)} />
+            <p className="text-xs text-muted">If you replaced the default admin with your own user, enter that login. Otherwise leave this blank.</p>
+          </div>
           <div className="mt-4 space-y-2">
             <Label htmlFor="new-pass">New password</Label>
             <Input id="new-pass" type="password" placeholder="••••••••" value={password} autoFocus onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />

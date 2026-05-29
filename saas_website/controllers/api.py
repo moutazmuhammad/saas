@@ -497,7 +497,7 @@ class SaasApi(http.Controller):
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/reset-password',
                 type='json', auth='public')
     def db_reset_password(self, instance_id, name=None, new_password=None,
-                          access_token=None, **kw):
+                          login=None, access_token=None, **kw):
         try:
             instance = self._hosting(instance_id, access_token)
         except (AccessError, MissingError):
@@ -505,12 +505,13 @@ class SaasApi(http.Controller):
         if not new_password or len(new_password) < 6:
             return err(_("Choose a password of at least 6 characters."), 'invalid')
         try:
-            login = instance.hosting_db_reset_admin_password(
+            reset_login = instance.hosting_db_reset_admin_password(
                 name=name or '', new_password=new_password,
+                login=(login or '').strip() or None,
             )
         except UserError as e:
             return err(str(e), 'reset_failed')
-        return ok({'login': login})
+        return ok({'login': reset_login})
 
     # ==================================================================
     #  Portal: backups

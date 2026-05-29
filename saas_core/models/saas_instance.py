@@ -7901,20 +7901,35 @@ class SaasInstance(models.Model):
         )
         return op
 
-    def hosting_db_reset_admin_password(self, name, new_password):
-        """Reset the ``base.user_admin`` password on a customer database.
+    def hosting_db_reset_admin_password(self, name, new_password,
+                                        login=None):
+        """Reset an administrator's password on a customer database.
 
         Self-service for "I forgot my admin password". We don't have
         the customer's current password (that's the whole point), so
         we can't go through XML-RPC ``authenticate``. Instead we
         docker-exec a short Python script inside the customer's Odoo
         container — same path ``hosting_db_list`` uses — and let the
-        ORM set the password directly via the inverse setter (so the
-        proper pbkdf2 hashing pipeline runs, not raw column writes).
+        ORM set the password via the inverse setter (so the proper
+        pbkdf2 hashing pipeline runs, not raw column writes).
 
-        Only resets the password of ``base.user_admin`` (the user
-        created during initial DB bootstrap). Other users' passwords
-        are untouched.
+        Which user gets reset, in order:
+
+        1. ``login`` — an exact login the customer typed. Use this
+           when they created their own admin and know its login, or
+           when several admins exist and they want a specific one.
+        2. ``base.user_admin`` — the bootstrap admin, if it still
+           exists and is active.
+        3. The oldest active internal member of the
+           Settings/Administration group (``base.group_system``).
+           This is what covers "the customer DELETED the original
+           admin and created their own" — we reset whoever currently
+           holds admin rights, not a hardcoded uid.
+        4. The oldest active internal user (last resort).
+
+        Returns the login of the user whose password was reset, so the
+        caller can show it (useful when the customer forgot which user
+        is the admin).
         """
         self._ensure_hosting_for_db_ops()
         name = self._hosting_db_full_name(name)
@@ -7939,25 +7954,49 @@ class SaasInstance(models.Model):
             "registry = Registry(os.environ['SAAS_DB'])\n"
             "with registry.cursor() as cr:\n"
             "    env = api.Environment(cr, SUPERUSER_ID, {})\n"
-            "    user = env.ref('base.user_admin', raise_if_not_found=False)\n"
-            "    if not user:\n"
-            "        # Older databases didn't carry the xmlid; fall\n"
-            "        # back to uid 2 which is the conventional admin.\n"
-            "        user = env['res.users'].browse(2).exists()\n"
+            "    Users = env['res.users']\n"
+            "    target = (os.environ.get('SAAS_TARGET_LOGIN') or '').strip()\n"
+            "    if target:\n"
+            "        user = Users.search([('login', '=', target)], limit=1)\n"
+            "        if not user:\n"
+            "            raise SystemExit('NO_SUCH_USER')\n"
+            "    else:\n"
+            "        user = env.ref('base.user_admin', raise_if_not_found=False)\n"
+            "        if not (user and user.active):\n"
+            "            grp = env.ref('base.group_system', raise_if_not_found=False)\n"
+            "            pool = grp.users if grp else Users\n"
+            "            cands = pool.filtered(lambda u: u.active and not u.share)\n"
+            "            if not cands:\n"
+            "                cands = Users.search("
+            "[('active', '=', True), ('share', '=', False)])\n"
+            "            user = cands.sorted('id')[:1]\n"
             "    if not user:\n"
             "        raise SystemExit('NO_ADMIN_USER')\n"
             "    user.password = os.environ['SAAS_NEW_PW']\n"
             "    cr.commit()\n"
             "    print('---SAAS_PW_RESET_BEGIN---')\n"
-            "    print('login=%s' % user.login)\n"
+            "    print('login=%s' % (user.login or ''))\n"
             "    print('---SAAS_PW_RESET_END---')\n"
         )
+        script_env = {'SAAS_DB': name, 'SAAS_NEW_PW': new_password}
+        if login:
+            script_env['SAAS_TARGET_LOGIN'] = login.strip()
         with self.docker_server_id._get_ssh_connection() as ssh:
             exit_code, stdout, stderr = self._docker_exec_python(
-                ssh, script,
-                env={'SAAS_DB': name, 'SAAS_NEW_PW': new_password},
-                timeout=120,
+                ssh, script, env=script_env, timeout=120,
             )
+        combined = (stdout or '') + (stderr or '')
+        if 'NO_SUCH_USER' in combined:
+            raise UserError(_(
+                "No user with login '%s' exists on '%s'. Leave the login "
+                "blank to reset the main administrator instead."
+            ) % (login, name))
+        if 'NO_ADMIN_USER' in combined:
+            raise UserError(_(
+                "We couldn't find an administrator account on '%s' to "
+                "reset. If every admin user was removed, please contact "
+                "support."
+            ) % name)
         if exit_code != 0 or '---SAAS_PW_RESET_BEGIN---' not in stdout:
             # Strip the password from the env before logging in case
             # the helper echoed it — it never does, but defense in depth.
@@ -7967,7 +8006,7 @@ class SaasInstance(models.Model):
                 "continues."
             ) % name)
         # Pull out the login that was reset so the caller can confirm it.
-        login = ''
+        reset_login = ''
         capturing = False
         for line in stdout.splitlines():
             line = line.strip()
@@ -7977,8 +8016,8 @@ class SaasInstance(models.Model):
             if line == '---SAAS_PW_RESET_END---':
                 break
             if capturing and line.startswith('login='):
-                login = line[len('login='):]
-        return login or 'admin'
+                reset_login = line[len('login='):]
+        return reset_login or (login or 'admin')
 
     def hosting_db_drop(self, name):
         """Drop a customer database at the PG level (reliable).

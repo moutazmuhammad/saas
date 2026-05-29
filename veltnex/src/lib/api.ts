@@ -303,10 +303,11 @@ export const api = {
     }),
   dbDrop: (id: number, name: string) =>
     rpc<{ db_name: string }>(`/saas/api/v1/instances/${id}/databases/drop`, { name }),
-  dbResetPassword: (id: number, name: string, new_password: string) =>
+  dbResetPassword: (id: number, name: string, new_password: string, login?: string) =>
     rpc<{ login: string }>(`/saas/api/v1/instances/${id}/databases/reset-password`, {
       name,
       new_password,
+      login: login || undefined,
     }),
 
   backups: (id: number) => rpc<ApiBackup[]>(`/saas/api/v1/instances/${id}/backups`),
