@@ -39,6 +39,10 @@ export default function Databases() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
   const [openMenu, setOpenMenu] = React.useState<string | null>(null);
+  // The actions menu is rendered at fixed viewport coords (anchored to
+  // the trigger button) so it isn't clipped by the table/card overflow
+  // — which happened when a single short row left no room below it.
+  const [menuPos, setMenuPos] = React.useState<{ top: number; right: number }>({ top: 0, right: 0 });
 
   const load = React.useCallback(async () => {
     try {
@@ -208,13 +212,30 @@ export default function Databases() {
                             <span className="hidden lg:inline">Open</span>
                           </Button>
                           <div className="relative">
-                            <Button size="icon" variant="ghost" disabled={pending} onClick={() => setOpenMenu(openMenu === db.name ? null : db.name)} aria-label="More actions">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              disabled={pending}
+                              aria-label="More actions"
+                              onClick={(e) => {
+                                if (openMenu === db.name) {
+                                  setOpenMenu(null);
+                                  return;
+                                }
+                                const r = e.currentTarget.getBoundingClientRect();
+                                setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right });
+                                setOpenMenu(db.name);
+                              }}
+                            >
                               <MoreHorizontal className="size-4" />
                             </Button>
                             {openMenu === db.name && (
                               <>
-                                <div className="fixed inset-0 z-10" onClick={() => setOpenMenu(null)} />
-                                <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card animate-scale-in">
+                                <div className="fixed inset-0 z-30" onClick={() => setOpenMenu(null)} />
+                                <div
+                                  className="fixed z-40 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card animate-scale-in"
+                                  style={{ top: menuPos.top, right: menuPos.right }}
+                                >
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
                                   <div className="border-t border-border" />
                                   <MenuItem icon={Trash2} label="Delete" danger onClick={() => handleDrop(db.name)} />
