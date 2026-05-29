@@ -7992,21 +7992,25 @@ class SaasInstance(models.Model):
         customer create after that is a near-instant
         ``CREATE DATABASE WITH TEMPLATE`` clone off it.
 
-        We flag ``datistemplate=true`` BEFORE running the init, not
-        after — that's the crux of doing this with zero downtime.
-        Odoo's ``list_dbs()`` (which backs the dbfilter and the
-        ``/web/database/selector``) excludes ``datistemplate``
-        databases, so the live container's workers — and the bot
-        traffic that hammers every public instance — never auto-load
-        the template while it's being built. The init itself runs
-        ``odoo -d <template>``, which targets the DB explicitly and so
-        bypasses the filter. Without this shield the workers race the
-        init: they cache a half-built registry (``KeyError:
-        'ir.http'``), and their open connections both corrupt the
-        install AND later block the clone — ``CREATE DATABASE ... WITH
-        TEMPLATE`` needs *zero* connections to the source, and
-        ``datistemplate`` does not waive that; it just keeps Odoo away
-        so there are none.
+        The build does two protective things, both learned in
+        production:
+
+        * **Stops the live container for the duration of the init.**
+          The init runs in a second ``docker compose run --rm`` Odoo
+          container; run alongside the live one it doubles RAM on the
+          host and gets OOM-killed mid-install (symptom: ``SSL
+          connection has been closed unexpectedly``). Pausing frees
+          the RAM. It's a ONE-TIME ~60-90s blip — only on the first
+          DB create per instance; every create after that is an
+          instant clone with no pause.
+        * **Flags ``datistemplate=true`` before the init.** Odoo's
+          ``list_dbs()`` (which backs the dbfilter and the
+          ``/web/database/selector``) excludes ``datistemplate``
+          databases, so even when the container is back up nothing
+          auto-loads the template. This also lets the later clone run:
+          ``CREATE DATABASE ... WITH TEMPLATE`` needs *zero*
+          connections to the source — ``datistemplate`` doesn't waive
+          that, it just keeps Odoo's workers away so there are none.
 
         Idempotent / concurrency-safe: a template that's present but
         not yet fully installed means a build is in flight (or
@@ -8039,18 +8043,39 @@ class SaasInstance(models.Model):
             "~60s)..." % template
         )
         self._pg_ensure_db_with_grants(template)
-        # Shield it from the live workers / bots / db-selector BEFORE
-        # the init runs (see docstring). The init's explicit ``-d``
-        # still reaches it; nothing else will.
+        # Shield from the live workers / db-selector. Belt-and-braces
+        # with the pause below, and it's what lets the later clone run
+        # without workers reconnecting to the source mid-``CREATE``
+        # (``CREATE DATABASE ... WITH TEMPLATE`` needs zero connections
+        # to the source).
         self._pg_mark_template(template, flag=True)
 
         instance_path = self._get_instance_path()
         with self.docker_server_id._get_ssh_connection() as ssh:
-            # The live container stays UP — no customer downtime. The
-            # datistemplate flag above keeps its workers off this DB,
-            # and the init runs in a separate one-off
-            # ``docker compose run --rm`` container with ``--no-http``
-            # so there's no port conflict or registry race.
+            # Stop the live container for the one-time init. Two
+            # reasons, both learned the hard way in production:
+            #   * Memory — ``docker compose run --rm`` spins a SECOND
+            #     Odoo container; run alongside the live one it doubles
+            #     RAM on the host and the init gets OOM-killed
+            #     mid-install. The symptom is the install dying with
+            #     ``SSL connection has been closed unexpectedly`` (the
+            #     PG backend killed under memory pressure). Freeing the
+            #     live container's RAM first gives the init room.
+            #   * Race — with the container down, no worker can grab
+            #     the half-built DB and cache a broken registry.
+            # This is a ONE-TIME ~60-90s blip, and only on the FIRST
+            # DB create per instance (when the template doesn't exist
+            # yet). Every create after that is an instant clone with no
+            # pause.
+            self._append_log(
+                "Pausing instance for one-time template build "
+                "(~60-90s, first DB only)..."
+            )
+            ssh.execute(
+                'cd %s && docker compose down 2>&1'
+                % shlex.quote(instance_path),
+                timeout=180,
+            )
             init_cmd = (
                 'cd %s && docker compose run --rm -T odoo '
                 'odoo -d %s '
@@ -8064,10 +8089,23 @@ class SaasInstance(models.Model):
                 shlex.quote(instance_path),
                 shlex.quote(template),
             )
-            init_exit, stdout, stderr = ssh.execute(
-                init_cmd, timeout=1200,
-            )
-            init_output = (stdout or '') + (stderr or '')
+            init_exit = 1
+            init_output = ''
+            try:
+                init_exit, stdout, stderr = ssh.execute(
+                    init_cmd, timeout=1200,
+                )
+                init_output = (stdout or '') + (stderr or '')
+            finally:
+                # Always bring the instance back up, even if the init
+                # raised — leaving the customer's container down is far
+                # worse than a failed template build.
+                self._append_log("Resuming instance...")
+                ssh.execute(
+                    'cd %s && docker compose up -d 2>&1'
+                    % shlex.quote(instance_path),
+                    timeout=300,
+                )
 
             def _cleanup_template():
                 # Drop the half-built template + its filestore so a
