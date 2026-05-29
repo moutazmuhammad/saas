@@ -248,6 +248,9 @@ export interface DbListData {
   databases: { name: string; login: string }[];
   ready: boolean;
   state?: InstanceState;
+  /** Instance host, e.g. https://acme.veltnex.com. A specific DB is
+   *  opened at `${url}/web?db=${name}` (all DBs share the host). */
+  url?: string;
   pending_ops?: { db_name: string; operation: string }[];
 }
 

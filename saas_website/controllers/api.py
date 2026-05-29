@@ -457,6 +457,10 @@ class SaasApi(http.Controller):
             'databases': [{'name': d.get('name'), 'login': d.get('login', '')}
                           for d in dbs],
             'ready': True,
+            # Instance host (https://<sub>.<domain>). The SPA opens a
+            # specific DB at <url>/web?db=<name> — all DBs share the
+            # host, so the db must be selected via the query param.
+            'url': instance.url or '',
             'pending_ops': [{'db_name': o.db_name, 'operation': o.operation} for o in ops],
         })
 

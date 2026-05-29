@@ -193,8 +193,16 @@ export default function Databases() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            disabled={pending}
-                            onClick={() => window.open(`https://${db.name}`, "_blank")}
+                            disabled={pending || !data?.url}
+                            title={data?.url ? undefined : "Instance URL unavailable"}
+                            onClick={() =>
+                              data?.url &&
+                              window.open(
+                                `${data.url.replace(/\/$/, "")}/web?db=${encodeURIComponent(db.name)}`,
+                                "_blank",
+                                "noopener,noreferrer",
+                              )
+                            }
                           >
                             <ExternalLink className="size-4" />
                             <span className="hidden lg:inline">Open</span>
