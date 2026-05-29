@@ -343,11 +343,14 @@ function DatabaseBackupsDialog({
   };
 
   return (
-    <Dialog open={!!dbName} onClose={onClose} title="Backups" description={dbName ? `On-demand backups for “${dbName}”.` : undefined}>
+    <Dialog open={!!dbName} onClose={onClose} title="Backups" description={dbName ? `On-demand backup for “${dbName}”.` : undefined}>
       {error && <AlertBanner className="mb-4" variant="danger" title="Backup" description={error} />}
+      <p className="mb-4 rounded-lg border border-border bg-background/60 px-3 py-2 text-xs text-muted">
+        Only the most recent on-demand backup is kept per instance — starting a new one replaces the previous backup, and it's deleted automatically after 24 hours.
+      </p>
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted">
-          {backups.length ? `${backups.length} backup${backups.length > 1 ? "s" : ""}` : "No backups yet for this database."}
+          {backups.length ? "Current backup" : "No on-demand backup yet."}
         </p>
         <ActionButton loading={loading} loadingText="Starting…" onClick={start}>
           <Archive className="size-4" />
