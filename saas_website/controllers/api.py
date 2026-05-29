@@ -675,6 +675,7 @@ class SaasApi(http.Controller):
             'status': _BACKUP_STATUS.get(b.state, 'available'),
             'download_url': b.download_url or '',
             'is_full_instance': b.is_full_instance,
+            'db_name': b.db_name or '',
         }
 
     def _serialize_invoice(self, inv, detail=False):

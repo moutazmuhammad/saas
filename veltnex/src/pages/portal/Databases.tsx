@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Loader2,
   Archive,
+  Download,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,8 @@ import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
-import { api, ApiError, type DbListData } from "@/lib/api";
+import { api, ApiError, type DbListData, type ApiBackup } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function Databases() {
@@ -37,6 +39,8 @@ export default function Databases() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
+  const [backupsTarget, setBackupsTarget] = React.useState<string | null>(null);
+  const [backups, setBackups] = React.useState<ApiBackup[]>([]);
   const [openMenu, setOpenMenu] = React.useState<string | null>(null);
   // The actions menu is rendered at fixed viewport coords (anchored to
   // the trigger button) so it isn't clipped by the table/card overflow
@@ -45,8 +49,12 @@ export default function Databases() {
 
   const load = React.useCallback(async () => {
     try {
-      const d = await api.databases(instanceId);
+      const [d, b] = await Promise.all([
+        api.databases(instanceId),
+        api.backups(instanceId).catch(() => [] as ApiBackup[]),
+      ]);
       setData(d);
+      setBackups(b);
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load databases.");
@@ -57,8 +65,13 @@ export default function Databases() {
     load();
   }, [load]);
 
-  // While async create/drop ops are in flight, poll until they settle.
-  const hasPending = !!data?.pending_ops?.length;
+  // Per-database, non-snapshot backups for a given DB name, newest first.
+  const backupsFor = (name: string) =>
+    backups.filter((b) => !b.is_full_instance && b.db_name === name);
+  const backupRunning = backups.some((b) => b.status === "in_progress");
+
+  // While async create/drop ops — or a backup — are in flight, poll.
+  const hasPending = !!data?.pending_ops?.length || backupRunning;
   // Operation currently running against a given DB name (if any), so a
   // row can show the right label ("Creating…" vs "Deleting…").
   const pendingOp = (name: string) =>
@@ -88,14 +101,12 @@ export default function Databases() {
     await load();
   };
 
+  // Trigger a backup of one database, then reload so it shows up (and
+  // becomes downloadable) right inside the per-database backups dialog.
+  // Throws on failure so the dialog surfaces the error inline.
   const handleBackup = async (name: string) => {
-    setOpenMenu(null);
-    try {
-      await api.dbBackup(instanceId, name);
-      toast.success("Backup started", `A backup of “${name}” is being created — it'll appear on the Backups page.`);
-    } catch (e) {
-      toast.error("Couldn't start backup", e instanceof ApiError ? e.message : "Please try again.");
-    }
+    await api.dbBackup(instanceId, name);
+    await load();
   };
 
   return (
@@ -240,7 +251,7 @@ export default function Databases() {
                                   className="fixed z-40 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card animate-scale-in"
                                   style={{ top: menuPos.top, right: menuPos.right }}
                                 >
-                                  <MenuItem icon={Archive} label="Back up now" onClick={() => handleBackup(db.name)} />
+                                  <MenuItem icon={Archive} label="Backups" onClick={() => { setOpenMenu(null); setBackupsTarget(db.name); }} />
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
                                   <div className="border-t border-border" />
                                   <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpenMenu(null); setDropTarget(db.name); }} />
@@ -286,7 +297,97 @@ export default function Databases() {
         onClose={() => setDropTarget(null)}
         onConfirm={handleDrop}
       />
+
+      <DatabaseBackupsDialog
+        dbName={backupsTarget}
+        backups={backupsTarget ? backupsFor(backupsTarget) : []}
+        onBackup={handleBackup}
+        onClose={() => setBackupsTarget(null)}
+      />
     </div>
+  );
+}
+
+function DatabaseBackupsDialog({
+  dbName,
+  backups,
+  onBackup,
+  onClose,
+}: {
+  dbName: string | null;
+  backups: ApiBackup[];
+  onBackup: (name: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (dbName) {
+      setLoading(false);
+      setError(null);
+    }
+  }, [dbName]);
+
+  const start = async () => {
+    if (!dbName) return;
+    setError(null);
+    setLoading(true);
+    try {
+      await onBackup(dbName);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't start the backup.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!dbName} onClose={onClose} title="Backups" description={dbName ? `On-demand backups for “${dbName}”.` : undefined}>
+      {error && <AlertBanner className="mb-4" variant="danger" title="Backup" description={error} />}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted">
+          {backups.length ? `${backups.length} backup${backups.length > 1 ? "s" : ""}` : "No backups yet for this database."}
+        </p>
+        <ActionButton loading={loading} loadingText="Starting…" onClick={start}>
+          <Archive className="size-4" />
+          Back up now
+        </ActionButton>
+      </div>
+      {backups.length > 0 && (
+        <div className="mt-4 divide-y divide-border overflow-hidden rounded-lg border border-border">
+          {backups.map((b) => (
+            <div key={b.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{formatDateTime(b.created)}</p>
+                {b.status === "available" && b.size_mb > 0 && (
+                  <p className="text-xs text-muted">{(b.size_mb / 1024).toFixed(2)} GB</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <StatusBadge status={b.status} />
+                {b.status === "available" && b.download_url ? (
+                  <a href={b.download_url} target="_blank" rel="noreferrer">
+                    <Button size="sm" variant="ghost">
+                      <Download className="size-4" />
+                      <span className="hidden sm:inline">Download</span>
+                    </Button>
+                  </a>
+                ) : (
+                  <Button size="sm" variant="ghost" disabled>
+                    <Download className="size-4" />
+                    <span className="hidden sm:inline">Download</span>
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="mt-6 flex justify-end">
+        <Button variant="secondary" onClick={onClose}>Close</Button>
+      </div>
+    </Dialog>
   );
 }
 

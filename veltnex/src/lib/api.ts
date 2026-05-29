@@ -175,6 +175,7 @@ export interface ApiBackup {
   status: "available" | "in_progress" | "failed";
   download_url: string;
   is_full_instance: boolean;
+  db_name?: string;
 }
 
 export interface ApiInvoice {
