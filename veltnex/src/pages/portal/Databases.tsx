@@ -38,6 +38,7 @@ export default function Databases() {
   const [banner, setBanner] = React.useState<Banner | null>(null);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
+  const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [openMenu, setOpenMenu] = React.useState<string | null>(null);
   // The actions menu is rendered at fixed viewport coords (anchored to
   // the trigger button) so it isn't clipped by the table/card overflow
@@ -70,16 +71,12 @@ export default function Databases() {
     return () => clearInterval(t);
   }, [hasPending, load]);
 
+  // Runs the actual delete once confirmed in the dialog. Throws on
+  // failure so the dialog can surface the error inline.
   const handleDrop = async (name: string) => {
-    setOpenMenu(null);
-    if (!confirm(`Delete database "${name}"? This cannot be undone.`)) return;
-    try {
-      await api.dbDrop(instanceId, name);
-      setBanner({ variant: "info", title: "Deleting database…", description: `${name} is being removed.` });
-      load();
-    } catch (e) {
-      setBanner({ variant: "danger", title: "Couldn't delete", description: e instanceof ApiError ? e.message : "" });
-    }
+    await api.dbDrop(instanceId, name);
+    setBanner({ variant: "info", title: "Deleting database…", description: `${name} is being removed.` });
+    await load();
   };
 
   return (
@@ -238,7 +235,7 @@ export default function Databases() {
                                 >
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
                                   <div className="border-t border-border" />
-                                  <MenuItem icon={Trash2} label="Delete" danger onClick={() => handleDrop(db.name)} />
+                                  <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpenMenu(null); setDropTarget(db.name); }} />
                                 </div>
                               </>
                             )}
@@ -274,7 +271,73 @@ export default function Databases() {
           toast.success("Password reset", `New admin password set for ${name}.`);
         }}
       />
+
+      <DeleteDatabaseDialog
+        dbName={dropTarget}
+        onClose={() => setDropTarget(null)}
+        onConfirm={handleDrop}
+      />
     </div>
+  );
+}
+
+function DeleteDatabaseDialog({
+  dbName,
+  onClose,
+  onConfirm,
+}: {
+  dbName: string | null;
+  onClose: () => void;
+  onConfirm: (name: string) => Promise<void>;
+}) {
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (dbName) {
+      setLoading(false);
+      setError(null);
+    }
+  }, [dbName]);
+
+  const submit = async () => {
+    if (!dbName) return;
+    setError(null);
+    setLoading(true);
+    try {
+      await onConfirm(dbName);
+      onClose();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't delete the database.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!dbName} onClose={onClose} title="Delete database">
+      {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't delete" description={error} />}
+      <div className="flex gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
+          <Trash2 className="size-5" />
+        </span>
+        <div className="text-sm">
+          <p className="font-medium text-foreground">
+            Delete database “{dbName}”?
+          </p>
+          <p className="mt-1 text-muted">
+            This permanently removes the database and all of its data. This action
+            cannot be undone.
+          </p>
+        </div>
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={loading}>Cancel</Button>
+        <ActionButton variant="danger" loading={loading} loadingText="Deleting…" onClick={submit}>
+          Delete database
+        </ActionButton>
+      </div>
+    </Dialog>
   );
 }
 
