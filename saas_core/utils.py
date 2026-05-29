@@ -227,6 +227,27 @@ class SSHConnection:
         exit_code = stdout.channel.recv_exit_status()
         return exit_code, stdout_str, stderr_str
 
+    def exec_command_streaming(self, command, timeout=None):
+        """Start ``command`` and return paramiko ``(stdout, stderr)`` file
+        objects for STREAMING reads.
+
+        Used to pipe a large backup (``pg_dump``) straight to object
+        storage without ever buffering it in memory or on disk: the
+        caller reads ``stdout`` (a file-like) to EOF — typically by
+        handing it to an S3/GCS streaming-upload call — then reads the
+        exit code via ``stdout.channel.recv_exit_status()`` and
+        ``stderr`` for diagnostics.
+
+        ``timeout`` is the per-read socket timeout (so a wedged remote
+        can't block forever); it must be comfortably larger than the
+        longest gap between output chunks, NOT the total backup time.
+        """
+        stdin, stdout, stderr = self._client.exec_command(
+            command, timeout=timeout or self.timeout,
+        )
+        stdin.close()
+        return stdout, stderr
+
     def write_file(self, remote_path, content):
         """Write string content to a remote file via SFTP."""
         sftp = self._client.open_sftp()

@@ -21,6 +21,30 @@ ONDEMAND_URL_EXPIRY = 24 * 3600
 ONDEMAND_DOWNLOAD_GRACE = 600  # seconds the link stays alive after click
 ONDEMAND_PREFIX = 'ondemand'
 
+# Per-read socket timeout while streaming a backup. Must exceed the
+# longest gap between pg_dump output chunks (NOT the total backup
+# duration) — generous so a slow disk can't trip it, finite so a wedged
+# host can't hang the worker thread forever.
+BACKUP_STREAM_READ_TIMEOUT = 3600
+
+
+class _CountingReader:
+    """Wrap a readable file-like and tally bytes read.
+
+    Lets the streaming upload report the final object size without
+    buffering anything — we never know the size of a streamed
+    ``pg_dump`` up front.
+    """
+
+    def __init__(self, fileobj):
+        self._f = fileobj
+        self.bytes_read = 0
+
+    def read(self, size=-1):
+        chunk = self._f.read(size)
+        self.bytes_read += len(chunk)
+        return chunk
+
 
 class SaasInstanceBackup(models.Model):
     _name = 'saas.instance.backup'
@@ -302,6 +326,102 @@ class SaasInstanceBackup(models.Model):
                     object_key,
                     ExtraArgs={'ContentType': 'application/zip'},
                 )
+
+    def _upload_stream_to_bucket(self, object_key, fileobj,
+                                 content_type='application/octet-stream'):
+        """Stream ``fileobj`` to the configured bucket via the SDK's
+        native multipart/resumable upload.
+
+        Bounded memory (one chunk at a time), no object-size limit, no
+        temp file — this is what lets an on-demand backup of a 50 GB+
+        database succeed where the old single-PUT path (5 GB cap, whole
+        file in RAM) could not.
+        """
+        cfg = self._get_backup_config()
+        if cfg['provider'] == 'gcs':
+            client, bucket_name = self._get_gcs_client()
+            blob = client.bucket(bucket_name).blob(object_key)
+            # Resumable upload requires an explicit chunk size for a
+            # non-seekable stream.
+            blob.chunk_size = 16 * 1024 * 1024
+            blob.upload_from_file(fileobj, content_type=content_type)
+        else:
+            from boto3.s3.transfer import TransferConfig
+            client, bucket = self._get_s3_client()
+            # ``use_threads=False`` so parts are read sequentially from
+            # the (non-seekable) pipe; 64 MB parts keep the part count
+            # well under S3's 10k limit even for very large dumps.
+            transfer = TransferConfig(
+                multipart_threshold=16 * 1024 * 1024,
+                multipart_chunksize=64 * 1024 * 1024,
+                use_threads=False,
+            )
+            client.upload_fileobj(
+                fileobj, bucket, object_key,
+                ExtraArgs={'ContentType': content_type},
+                Config=transfer,
+            )
+
+    def _stream_pg_dump_to_bucket(self, instance, object_key, db_name):
+        """Stream ``pg_dump -Fc`` from the instance's container straight
+        to object storage. Returns the uploaded size in bytes.
+
+        Produces Odoo's native "dump" custom format (the same thing the
+        database-manager "pg_dump custom format" backup gives), so a
+        developer can restore it locally with ``pg_restore`` or via
+        Odoo's Restore. It's diskless and bounded-memory end to end:
+        ``pg_dump`` stdout is piped over SSH and handed to the SDK's
+        multipart uploader, so database size is not a constraint.
+        """
+        instance._ensure_can_ssh()
+        container = instance._get_container_name()
+        db_host = instance._get_db_host()
+        db_port = instance.db_server_id.psql_port or 5432
+        cmd = (
+            'docker exec -e PGPASSWORD=%s %s pg_dump -Fc -Z3 '
+            '-h %s -p %s -U %s -d %s --no-owner'
+        ) % (
+            shlex.quote(instance.sudo().db_password or ''),
+            shlex.quote(container),
+            shlex.quote(db_host),
+            shlex.quote(str(db_port)),
+            shlex.quote(instance.sudo().db_user or ''),
+            shlex.quote(db_name),
+        )
+        with instance.docker_server_id._get_ssh_connection() as ssh:
+            stdout, stderr = ssh.exec_command_streaming(
+                cmd, timeout=BACKUP_STREAM_READ_TIMEOUT,
+            )
+            reader = _CountingReader(stdout)
+            upload_error = None
+            try:
+                self._upload_stream_to_bucket(object_key, reader)
+            except Exception as e:
+                upload_error = e
+            # stdout is at EOF (upload drained it, or it errored) — now
+            # the exit code is available without deadlocking.
+            exit_code = stdout.channel.recv_exit_status()
+            err_tail = ''
+            try:
+                err_tail = stderr.read().decode('utf-8', 'replace')[-2000:]
+            except Exception:
+                pass
+
+            if upload_error is not None or exit_code != 0:
+                # Don't leave a truncated/corrupt object behind.
+                try:
+                    self._delete_bucket_path(object_key)
+                except Exception:
+                    pass
+                if exit_code != 0:
+                    raise UserError(_(
+                        "The database backup (pg_dump) failed:\n%s"
+                    ) % (err_tail or 'exit code %s' % exit_code))
+                raise UserError(_(
+                    "Uploading the backup failed:\n%s"
+                ) % upload_error)
+
+        return reader.bytes_read
 
     def _generate_presigned_url(self, expiry=None):
         """Return a presigned GET URL for this backup's bucket object.
@@ -1467,10 +1587,14 @@ fi
 
         - Daily / legacy portal:   ``<partner>/<sub>/<db>/<name>.zip``
           (or ``<partner>/<db>/<name>.zip`` for non-hosting)
-        - On-demand:                ``ondemand/<partner>/<sub>/<db>/<name>.zip``
+        - On-demand:                ``ondemand/<partner>/<sub>/<db>/<name>.dump``
 
-        On-demand backups also get a 1-hour presigned URL and an
-        ``expires_at`` timestamp so the cleanup cron can reap them.
+        The on-demand path streams ``pg_dump -Fc`` straight to object
+        storage (diskless, multipart) so it works at ANY database size —
+        it produces Odoo's native "dump" custom format, restorable with
+        ``pg_restore`` or Odoo's Restore. On-demand backups also get a
+        24h presigned URL and an ``expires_at`` so the cleanup cron
+        reaps them.
         """
         self.ensure_one()
         instance = self.instance_id
@@ -1481,7 +1605,7 @@ fi
         db_name = self.db_name or instance.subdomain
 
         if self.ephemeral:
-            object_key = '%s/%s/%s/%s/%s.zip' % (
+            object_key = '%s/%s/%s/%s/%s.dump' % (
                 ONDEMAND_PREFIX, partner_folder, instance.subdomain,
                 db_name, self.name,
             )
@@ -1495,9 +1619,16 @@ fi
         self.bucket_path = object_key
 
         try:
-            size_bytes = self._create_and_upload_backup(
-                instance, object_key, db_name=db_name,
-            )
+            if self.ephemeral:
+                # On-demand: stream pg_dump custom format to the bucket —
+                # diskless, multipart, any size.
+                size_bytes = self._stream_pg_dump_to_bucket(
+                    instance, object_key, db_name,
+                )
+            else:
+                size_bytes = self._create_and_upload_backup(
+                    instance, object_key, db_name=db_name,
+                )
             ttl = ONDEMAND_URL_EXPIRY if self.ephemeral else PRESIGNED_URL_EXPIRY
             url = self._generate_presigned_url(expiry=ttl)
             now = fields.Datetime.now()
