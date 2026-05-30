@@ -65,7 +65,18 @@ class SaasPricingEngine(models.AbstractModel):
     # cleanly; they intentionally do nothing in S1.
     # ------------------------------------------------------------------
     def _region_multiplier(self, region):
-        """S7: per-region price multiplier. No region model yet -> 1.0."""
+        """Per-region price multiplier for the compute+storage portion.
+        ``region`` may be a saas.region record, an id, or falsy. Unknown /
+        falsy -> 1.0 (behaviour-neutral; legacy instances have no region)."""
+        if not region:
+            return 1.0
+        try:
+            if isinstance(region, int):
+                region = self.env['saas.region'].sudo().browse(region)
+            if region and region.exists() and region.price_multiplier:
+                return region.price_multiplier
+        except Exception:
+            return 1.0
         return 1.0
 
     def _cost_floor(self, cfg, workers, storage):

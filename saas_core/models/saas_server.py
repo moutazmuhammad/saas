@@ -45,6 +45,15 @@ class SaasServer(models.Model):
         help='This server acts as a reverse proxy (Nginx) for routing '
              'traffic from wildcard domains to Docker servers.',
     )
+    region_id = fields.Many2one(
+        'saas.region',
+        string='Region',
+        index=True,
+        tracking=True,
+        help='Region this server belongs to. All servers serving one '
+             'instance (proxy, docker, db) must share the same region '
+             '(co-location). Used for region-based allocation and pricing.',
+    )
     company_id = fields.Many2one(
         'res.company',
         string='Company',

@@ -196,6 +196,29 @@ class TestPricingEngine(TransactionCase):
         self.assertEqual(o3['mode'], 'none')
         self.assertAlmostEqual(o3['charge'], 0.0, places=2)
 
+    def test_region_multiplier_scales_compute_not_addons(self):
+        """Region multiplier scales compute+storage only; add-ons unaffected."""
+        region = self.env['saas.region'].sudo().create({
+            'name': 'TEST x2', 'code': 'test_x2', 'price_multiplier': 2.0,
+        })
+        base = self.engine.compute('hosting', 4, 50, 'monthly')
+        reg = self.engine.compute('hosting', 4, 50, 'monthly', region=region.id)
+        self.assertEqual(reg['region_factor'], 2.0)
+        self.assertAlmostEqual(
+            reg['breakdown']['resource_monthly'],
+            base['breakdown']['resource_monthly'] * 2, places=2)
+        # No region -> factor 1.0 (behaviour-neutral).
+        self.assertEqual(base['region_factor'], 1.0)
+        # Add-ons are NOT scaled by region.
+        if self.env['saas.addon'].sudo().search_count(
+                [('code', '=', 'daily_snapshots')]):
+            self._set({'saas_master.hosting_daily_backup_price': '7.0'})
+            rega = self.engine.compute(
+                'hosting', 4, 50, 'monthly',
+                addon_codes=['daily_snapshots'], region=region.id)
+            self.assertAlmostEqual(
+                rega['breakdown']['addons_monthly'], 7.0, places=2)
+
     def test_created_plan_price_matches_engine(self):
         """A custom plan stamped from the engine carries the same price
         the engine quotes — i.e. checkout/plan == preview (consistency)."""

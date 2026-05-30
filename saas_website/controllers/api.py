@@ -333,6 +333,22 @@ class SaasApi(http.Controller):
             })
         return ok(out)
 
+    @http.route('/saas/api/v1/regions', type='json', auth='public')
+    def regions(self):
+        """Active regions for the create flow's region picker (S8). Each
+        carries a price multiplier so the SPA can show region-adjusted
+        prices (the engine is still the source of the actual quote)."""
+        regs = request.env['saas.region'].sudo().search(
+            [('active', '=', True)], order='sequence, id',
+        )
+        return ok([{
+            'id': r.id,
+            'code': r.code,
+            'name': r.name,
+            'multiplier': r.price_multiplier or 1.0,
+            'default': r.is_default,
+        } for r in regs])
+
     @http.route('/saas/api/v1/check-subdomain', type='json', auth='public')
     def check_subdomain(self, subdomain='', domain_id=0):
         # Delegate to the canonical implementation.

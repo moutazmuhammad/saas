@@ -73,6 +73,13 @@
               action="saas_odoo_version_action"
               sequence="40"/>
 
+    <!-- Configuration > Regions -->
+    <menuitem id="saas_master_menu_regions"
+              name="Regions"
+              parent="saas_master_menu_configuration"
+              action="saas_region_action"
+              sequence="55"/>
+
     <!-- Configuration > Servers -->
     <menuitem id="saas_master_menu_servers"
               name="Servers"
