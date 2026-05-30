@@ -321,6 +321,56 @@
                         </setting>
                     </block>
 
+                    <!-- ==================== Pricing Engine ==================== -->
+                    <block title="Pricing Engine" name="saas_pricing_engine_container">
+                        <setting id="saas_cost_floor_setting"
+                                 string="Cost Floors (margin protection)"
+                                 help="Minimum monthly cost charged per worker / per GB on CUSTOM configurations. The engine charges max(rate, floor), so cheap-resource + huge-storage configs can't be sold below cost. 0 = no floor (unchanged).">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_hosting_worker_floor" string="Hosting: per worker" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_worker_floor" class="col-2"/>
+                                </div>
+                                <div class="row mt8">
+                                    <label for="saas_hosting_storage_floor" string="Hosting: per GB" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_storage_floor" class="col-2"/>
+                                </div>
+                                <div class="row mt8">
+                                    <label for="saas_worker_floor" string="Services: per worker" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_worker_floor" class="col-2"/>
+                                </div>
+                                <div class="row mt8">
+                                    <label for="saas_storage_floor" string="Services: per GB" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_storage_floor" class="col-2"/>
+                                </div>
+                            </div>
+                        </setting>
+                        <setting id="saas_storage_block_setting"
+                                 string="Storage Expansion Block"
+                                 help="Storage above the plan allowance is sold/billed in whole blocks of this size (wired from S6) — keeps storage pricing predictable. Price 0 = not configured.">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_storage_block_gb" string="Block size (GB)" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_storage_block_gb" class="col-2"/>
+                                </div>
+                                <div class="row mt8">
+                                    <label for="saas_storage_block_price" string="Block price (monthly)" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_storage_block_price" class="col-2"/>
+                                </div>
+                            </div>
+                        </setting>
+                        <setting id="saas_snapshots_count_toward_storage_setting"
+                                 string="Count Snapshots Toward Storage"
+                                 help="ON (current): half the deduplicated snapshot footprint counts against the plan storage allowance. OFF (recommended): snapshots are covered solely by the Daily Backups add-on. Wired in S6.">
+                            <field name="saas_snapshots_count_toward_storage"/>
+                        </setting>
+                        <setting id="saas_custom_min_is_nearest_tier_setting"
+                                 string="Custom Price >= Nearest Tier"
+                                 help="When on, a custom (slider) configuration is never priced below the nearest public tier with equal-or-greater resources. Protects tier value. Wired in S4.">
+                            <field name="saas_custom_min_is_nearest_tier"/>
+                        </setting>
+                    </block>
+
                     <!-- ==================== Monitoring ==================== -->
                     <block title="Monitoring" name="saas_monitoring_container">
                         <setting id="saas_resource_usage_multiplier_setting"

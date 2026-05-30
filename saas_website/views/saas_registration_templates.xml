@@ -80,6 +80,7 @@
                                             <input type="hidden" name="storage" t-att-value="form_values.get('storage', '')"/>
                                             <input type="hidden" name="billing" t-att-value="form_values.get('billing', '')"/>
                                             <input type="hidden" name="odoo_version_id" t-att-value="form_values.get('odoo_version_id', '')"/>
+                                            <input type="hidden" name="region_id" t-att-value="form_values.get('region_id', '')"/>
                                             <!-- Hidden field for combined OTP -->
                                             <input type="hidden" name="phone_otp" id="phone_otp_hidden" value=""/>
 
@@ -123,6 +124,7 @@
                                             <input type="hidden" name="storage" t-att-value="form_values.get('storage', '')"/>
                                             <input type="hidden" name="billing" t-att-value="form_values.get('billing', '')"/>
                                             <input type="hidden" name="odoo_version_id" t-att-value="form_values.get('odoo_version_id', '')"/>
+                                            <input type="hidden" name="region_id" t-att-value="form_values.get('region_id', '')"/>
                                             <button type="submit" class="btn btn-outline-secondary w-100">
                                                 <i class="fas fa-redo me-2"></i>Resend Code
                                             </button>
@@ -165,6 +167,7 @@
                                         <input type="hidden" name="storage" t-att-value="form_values.get('storage', '')"/>
                                         <input type="hidden" name="billing" t-att-value="form_values.get('billing', '')"/>
                                         <input type="hidden" name="odoo_version_id" t-att-value="form_values.get('odoo_version_id', '')"/>
+                                        <input type="hidden" name="region_id" t-att-value="form_values.get('region_id', '')"/>
 
                                         <div class="row g-3">
                                             <div class="col-12">

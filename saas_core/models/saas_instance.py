@@ -172,6 +172,18 @@ class SaasInstance(models.Model):
         help='Physical server where the Docker container for this instance runs. '
              'Leave empty for automatic allocation based on server capacity.',
     )
+    region_id = fields.Many2one(
+        'saas.region',
+        string='Region',
+        index=True,
+        ondelete='restrict',
+        default=lambda self: self.env['saas.region']._get_default(),
+        help='Region the instance is hosted in. Chosen at creation and '
+             'fixed thereafter — drives region pricing and constrains '
+             'server allocation (proxy/docker/db all in this region). '
+             'Empty on legacy instances (treated as the default region, '
+             'multiplier 1.0).',
+    )
     db_server_id = fields.Many2one(
         'saas.server',
         string='Database Server',
@@ -1989,17 +2001,21 @@ class SaasInstance(models.Model):
         if not self.docker_server_id:
             plan = self.plan_id
 
+            # Region the instance must stay within (co-location). Legacy
+            # instances have no region -> no constraint (today's behaviour).
+            region = self.region_id
+
             # Level 1 — Ideal allocation (respect capacity)
             if mode == 'strict':
                 self.docker_server_id = Server._allocate_docker_server(
-                    plan=plan, raise_on_failure=True,
+                    plan=plan, raise_on_failure=True, region=region,
                 )
                 self._append_log(
                     "Allocated Docker server (strict): %s"
                     % self.docker_server_id.name
                 )
             else:
-                server = Server._allocate_docker_server(plan=plan)
+                server = Server._allocate_docker_server(plan=plan, region=region)
                 if server:
                     self.docker_server_id = server
                     self._append_log(
@@ -2007,7 +2023,7 @@ class SaasInstance(models.Model):
                     )
                 else:
                     # Level 2 — Overcommit fallback
-                    server = Server._allocate_overcommit_server(plan=plan)
+                    server = Server._allocate_overcommit_server(plan=plan, region=region)
                     if server:
                         self.docker_server_id = server
                         self.is_overcommitted = True
@@ -2046,8 +2062,12 @@ class SaasInstance(models.Model):
         elif docker_srv.is_db_server:
             self.db_server_id = docker_srv
         else:
+            # Co-location: stay within the instance's region for the
+            # generic DB-server fallback (the topology branches above are
+            # already pinned to the chosen docker host).
             db_srv = Server.search(
-                [('is_db_server', '=', True)], limit=1,
+                [('is_db_server', '=', True)]
+                + Server._region_match_domain(self.region_id), limit=1,
             )
             if not db_srv:
                 if self.provisioning_mode == 'flexible':
@@ -2638,8 +2658,15 @@ class SaasInstance(models.Model):
         # record stores the WHOLE repo's current size, so the latest
         # record is the current total snapshot footprint — we do NOT sum
         # records (that would multiply the repo by the record count).
-        snapshot_bytes = self._snapshot_total_bytes()
-        total_bytes = disk_bytes + db_bytes + snapshot_bytes // 2
+        # Half the snapshot footprint counts toward storage only when the
+        # policy flag is ON (default ON = current behaviour). Turn it OFF
+        # in Settings so snapshots are covered solely by the Daily Backups
+        # add-on and don't consume the plan allowance (recommended — avoids
+        # double-charging).
+        total_bytes = disk_bytes + db_bytes
+        if self.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.snapshots_count_toward_storage', 'True') != 'False':
+            total_bytes += self._snapshot_total_bytes() // 2
         self.total_storage = self._format_bytes(total_bytes) if total_bytes else ''
         self.total_storage_bytes = total_bytes
 
@@ -6758,27 +6785,22 @@ class SaasInstance(models.Model):
         # so a customer on a yearly plan still pays for backups once a
         # month — see ``_generate_daily_backup_renewal_invoice``.
 
-        # Add extra storage charge if usage exceeds plan limit
-        extra_storage_price = float(
-            self.env['ir.config_parameter'].sudo().get_param(
-                'saas_master.extra_storage_price_per_gb', '0'
-            )
+        # Add extra storage charge if usage exceeds the plan limit.
+        # Centralised in the pricing engine: block-based when a storage
+        # block price is configured, else the legacy per-GB rate.
+        overage = self.env['saas.pricing.engine'].storage_overage(
+            self.total_storage_bytes, plan.storage_limit,
         )
-        if extra_storage_price > 0 and plan.storage_limit > 0:
-            total_bytes = self.total_storage_bytes
-            limit_bytes = int(round(plan.storage_limit * (1024 ** 3)))
-            if total_bytes > limit_bytes:
-                extra_gb = math.ceil((total_bytes - limit_bytes) / (1024 ** 3))
-                extra_charge = extra_gb * extra_storage_price
-                order_lines.append((0, 0, {
-                    'product_id': self._get_billing_product().id,
-                    'name': _('Extra storage: %d GB over %s limit (%s)') % (
-                        extra_gb, '%.2f GB' % plan.storage_limit,
-                        self.name or self.subdomain,
-                    ),
-                    'product_uom_qty': 1,
-                    'price_unit': extra_charge,
-                }))
+        if overage['charge'] > 0:
+            order_lines.append((0, 0, {
+                'product_id': self._get_billing_product().id,
+                'name': _('Extra storage: %d GB over %s limit (%s)') % (
+                    overage['over_gb'], '%.2f GB' % plan.storage_limit,
+                    self.name or self.subdomain,
+                ),
+                'product_uom_qty': 1,
+                'price_unit': overage['charge'],
+            }))
 
         order_vals = {
             'partner_id': self.partner_id.id,

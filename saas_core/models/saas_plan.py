@@ -1,5 +1,5 @@
 from odoo import api, fields, models, _
-from odoo.exceptions import UserError
+from odoo.exceptions import UserError, ValidationError
 
 
 class SaasPlan(models.Model):
@@ -29,6 +29,26 @@ class SaasPlan(models.Model):
         default=False,
         help='Auto-generated plans from the custom plan builder. '
              'These are hidden from the public pricing page.',
+    )
+
+    # ========== Public Tier (configurable named plans) ==========
+    is_public_tier = fields.Boolean(
+        string='Public Tier',
+        default=False,
+        help='Show this plan as a named tier card (e.g. Starter / Pro / '
+             'Business) on the public pricing & configure pages. '
+             'Custom (slider-built) plans leave this off.',
+    )
+    is_recommended = fields.Boolean(
+        string='Recommended Tier',
+        default=False,
+        help='Highlight this tier as the recommended / default choice on '
+             'the pricing cards.',
+    )
+    badge = fields.Char(
+        string='Tier Badge',
+        help='Optional short badge shown on the tier card '
+             '(e.g. "Most popular", "Best value").',
     )
 
     # ========== Pricing ==========
@@ -125,6 +145,30 @@ class SaasPlan(models.Model):
                     "Trial plans must have price = 0, yearly_price = 0 and "
                     "max_backups = 0. Plan: %s"
                 ) % rec.name)
+
+    @api.constrains('price', 'workers', 'storage_limit', 'is_trial_plan',
+                    'saas_product_ids')
+    def _check_price_floor(self):
+        """A plan's monthly price may not fall below the engine's
+        cost-derived floor for its resources (margin protection / abuse
+        prevention). Skipped for trials and when no floor is configured
+        (floor 0 => no constraint, i.e. behaviour-neutral by default)."""
+        engine = self.env['saas.pricing.engine']
+        for rec in self:
+            if rec.is_trial_plan or not rec.workers:
+                continue
+            kind = 'hosting' if any(
+                p.is_hosting for p in rec.saas_product_ids
+            ) else 'services'
+            cfg = engine._rate_config(kind)
+            floor = engine._cost_floor(cfg, rec.workers, int(rec.storage_limit or 0))
+            if floor > 0 and rec.price + 0.01 < floor:
+                raise ValidationError(_(
+                    "Plan '%s': monthly price %.2f is below the cost floor "
+                    "%.2f for %d workers / %d GB. Raise the price, or lower "
+                    "the cost floor in Settings."
+                ) % (rec.name, rec.price, floor, rec.workers,
+                     int(rec.storage_limit or 0)))
 
     @api.depends('price', 'yearly_price')
     def _compute_yearly_discount_pct(self):

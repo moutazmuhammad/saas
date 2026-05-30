@@ -81,6 +81,33 @@
                                         </select>
                                     </div>
 
+                                    <!-- Region (S8c). Shown only when there's a real choice;
+                                         changing it reloads the funnel so price + available
+                                         domains recompute server-side (single source of truth).
+                                         Non-sensitive fields are carried over; the Git token is
+                                         intentionally kept out of the URL. -->
+                                    <t t-if="show_region_picker">
+                                        <div class="mb-3">
+                                            <label class="form-label">Region</label>
+                                            <select name="region_id" class="form-select"
+                                                    id="region-select"
+                                                    onchange="(function(s){var f=s.form;var p=new URLSearchParams();['workers','storage','billing','odoo_version_id','subdomain','domain_id','repo_url','repo_branch'].forEach(function(n){var el=f.elements[n];if(el &amp;&amp; el.value)p.set(n,el.value);});p.set('region_id',s.value);var db=f.elements['daily_backup'];if(db &amp;&amp; db.checked)p.set('daily_backup','1');var tr=f.elements['is_trial'];if(tr &amp;&amp; tr.value)p.set('is_trial',tr.value);window.location='/hosting/configure?'+p.toString();})(this)">
+                                                <t t-foreach="regions" t-as="reg">
+                                                    <option t-att-value="reg.id"
+                                                            t-att-selected="reg.id == selected_region_id">
+                                                        <t t-esc="reg.name"/>
+                                                    </option>
+                                                </t>
+                                            </select>
+                                            <div class="form-text text-muted">
+                                                Server location for this instance. Fixed once created.
+                                            </div>
+                                        </div>
+                                    </t>
+                                    <t t-else="">
+                                        <input type="hidden" name="region_id" t-att-value="selected_region_id"/>
+                                    </t>
+
                                     <!-- Daily backup add-on (paid only — hidden for trials) -->
                                     <t t-if="form_values.get('is_trial') != '1' and config.get('daily_backup_price', 0) &gt; 0">
                                         <div class="mb-3 p-3"

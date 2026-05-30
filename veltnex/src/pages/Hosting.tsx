@@ -4,7 +4,17 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertBanner } from "@/components/AlertBanner";
 import { PlanBuilder, type PlanConfig } from "@/components/PlanBuilder";
-import { api, ApiError, type Meta, type PriceResult } from "@/lib/api";
+import { api, ApiError, type Meta, type PriceResult, type ApiTier } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+function money(amount: number, currency = "USD") {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
 
 const INCLUDED = [
   "Daily automated backups",
@@ -24,26 +34,32 @@ const SPECS = [
 
 export default function Hosting() {
   const [meta, setMeta] = React.useState<Meta | null>(null);
+  const [tiers, setTiers] = React.useState<ApiTier[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [config, setConfig] = React.useState<PlanConfig | null>(null);
   const [price, setPrice] = React.useState<PriceResult | null>(null);
+  // When tiers exist we show cards by default; "customize" reveals the slider.
+  const [customize, setCustomize] = React.useState(false);
 
-  // Load limits/defaults once.
+  // Load limits/defaults + published tiers once.
   React.useEffect(() => {
-    api
-      .meta()
-      .then((m) => {
+    Promise.all([api.meta(), api.tiers("hosting").catch(() => [] as ApiTier[])])
+      .then(([m, t]) => {
         setMeta(m);
+        setTiers(t);
+        const rec = t.find((x) => x.recommended) || t[0];
         setConfig({
-          workers: m.hosting_config.min_workers,
-          storageGb: m.hosting_config.min_storage,
+          workers: rec ? rec.workers : m.hosting_config.min_workers,
+          storageGb: rec ? rec.storage : m.hosting_config.min_storage,
           cycle: "monthly",
         });
+        // No tiers configured -> behave exactly as before (slider only).
+        if (!t.length) setCustomize(true);
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load hosting plans."));
   }, []);
 
-  // Recompute the (server-authoritative) price whenever the config changes.
+  // Recompute the (server-authoritative) slider price whenever the config changes.
   React.useEffect(() => {
     if (!config) return;
     let cancelled = false;
@@ -61,15 +77,17 @@ export default function Hosting() {
   }, [config]);
 
   // Finalizing (subdomain, version, repo, payment) stays on Odoo.
-  const continueToConfigure = () => {
-    if (!config) return;
+  const goConfigure = (workers: number, storage: number, cycle: "monthly" | "yearly") => {
     const qs = new URLSearchParams({
-      workers: String(config.workers),
-      storage: String(config.storageGb),
-      billing: config.cycle,
+      workers: String(workers),
+      storage: String(storage),
+      billing: cycle,
     });
     window.location.href = `/hosting/configure?${qs.toString()}`;
   };
+
+  const setCycle = (cycle: "monthly" | "yearly") =>
+    setConfig((c) => (c ? { ...c, cycle } : c));
 
   const limits = meta
     ? {
@@ -110,20 +128,119 @@ export default function Hosting() {
         {error && (
           <AlertBanner className="mb-6" variant="danger" title="Couldn't load hosting plans" description={error} />
         )}
-        {config && (
-          <PlanBuilder
-            config={config}
-            onChange={setConfig}
-            limits={limits}
-            price={price}
-            currency={price?.currency || meta?.hosting_config.currency}
-            footer={
-              <Button className="w-full" size="lg" onClick={continueToConfigure}>
-                Continue to configure
-                <ArrowRight />
-              </Button>
-            }
-          />
+        {config && tiers && tiers.length > 0 && !customize && (
+          <div className="space-y-10">
+            {/* Shared billing cycle toggle */}
+            <div className="flex justify-center">
+              <div className="inline-flex rounded-xl border border-border bg-card p-1">
+                {(["monthly", "yearly"] as const).map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setCycle(c)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-5 py-2 text-sm font-medium capitalize transition-colors",
+                      config.cycle === c
+                        ? "bg-primary/20 text-foreground ring-1 ring-primary/40"
+                        : "text-muted hover:text-foreground",
+                    )}
+                  >
+                    {c}
+                    {c === "yearly" && (
+                      <span className="rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+                        Save
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-6 md:grid-cols-3">
+              {tiers.map((t) => {
+                const amount = config.cycle === "yearly" ? t.yearly : t.monthly;
+                const per = config.cycle === "yearly" ? "/yr" : "/mo";
+                return (
+                  <Card
+                    key={t.id}
+                    className={cn(
+                      "relative flex flex-col p-6",
+                      t.recommended && "ring-2 ring-primary",
+                    )}
+                  >
+                    {t.recommended && (
+                      <span className="absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-primary px-3 py-0.5 text-xs font-semibold text-white">
+                        {t.badge || "Most popular"}
+                      </span>
+                    )}
+                    <h3 className="text-lg font-semibold">{t.name}</h3>
+                    <p className="mt-3 text-3xl font-bold">
+                      {money(amount, t.currency)}
+                      <span className="text-base font-normal text-muted">{per}</span>
+                    </p>
+                    <ul className="mt-5 space-y-2 text-sm text-muted">
+                      <li className="flex items-center gap-2">
+                        <Cpu className="size-4 text-primary-glow" /> {t.workers} dedicated workers
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <HardDrive className="size-4 text-primary-glow" /> {formatBytes(t.storage)} storage
+                      </li>
+                    </ul>
+                    <Button
+                      className="mt-6 w-full"
+                      size="lg"
+                      variant={t.recommended ? "default" : "secondary"}
+                      onClick={() => goConfigure(t.workers, t.storage, config.cycle)}
+                    >
+                      Choose {t.name}
+                      <ArrowRight />
+                    </Button>
+                  </Card>
+                );
+              })}
+            </div>
+
+            <p className="text-center text-sm text-muted">
+              Need a different size?{" "}
+              <button
+                onClick={() => setCustomize(true)}
+                className="font-medium text-primary-glow underline-offset-2 hover:underline"
+              >
+                Build a custom plan
+              </button>
+            </p>
+          </div>
+        )}
+
+        {config && (customize || !tiers || tiers.length === 0) && (
+          <div className="space-y-6">
+            <PlanBuilder
+              config={config}
+              onChange={setConfig}
+              limits={limits}
+              price={price}
+              currency={price?.currency || meta?.hosting_config.currency}
+              footer={
+                <Button
+                  className="w-full"
+                  size="lg"
+                  onClick={() => goConfigure(config.workers, config.storageGb, config.cycle)}
+                >
+                  Continue to configure
+                  <ArrowRight />
+                </Button>
+              }
+            />
+            {tiers && tiers.length > 0 && (
+              <p className="text-center text-sm text-muted">
+                <button
+                  onClick={() => setCustomize(false)}
+                  className="font-medium text-primary-glow underline-offset-2 hover:underline"
+                >
+                  ← Back to standard plans
+                </button>
+              </p>
+            )}
+          </div>
         )}
       </section>
 

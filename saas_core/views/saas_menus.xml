@@ -52,6 +52,13 @@
               action="saas_plan_action"
               sequence="20"/>
 
+    <!-- Configuration > Add-ons -->
+    <menuitem id="saas_master_menu_addons"
+              name="Add-ons"
+              parent="saas_master_menu_configuration"
+              action="saas_addon_action"
+              sequence="22"/>
+
     <!-- Configuration > Base Domains -->
     <menuitem id="saas_master_menu_based_domain"
               name="Base Domains"
@@ -65,6 +72,13 @@
               parent="saas_master_menu_configuration"
               action="saas_odoo_version_action"
               sequence="40"/>
+
+    <!-- Configuration > Regions -->
+    <menuitem id="saas_master_menu_regions"
+              name="Regions"
+              parent="saas_master_menu_configuration"
+              action="saas_region_action"
+              sequence="55"/>
 
     <!-- Configuration > Servers -->
     <menuitem id="saas_master_menu_servers"

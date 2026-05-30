@@ -328,9 +328,10 @@ class SaasWebsite(http.Controller):
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
-        workers_cost = workers * config['worker_price']
-        storage_cost = storage * config['storage_price_per_gb']
-        monthly_total = workers_cost + storage_cost
+        _q = request.env['saas.pricing.engine'].compute('services', workers, storage)
+        workers_cost = _q['breakdown']['workers_cost']
+        storage_cost = _q['breakdown']['storage_cost']
+        monthly_total = _q['monthly']
 
         min_users = workers * config['users_per_worker_min']
         max_users = workers * config['users_per_worker_max']
@@ -370,9 +371,10 @@ class SaasWebsite(http.Controller):
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
-        workers_cost = workers * config['worker_price']
-        storage_cost = storage * config['storage_price_per_gb']
-        monthly_total = workers_cost + storage_cost
+        _q = request.env['saas.pricing.engine'].compute('services', workers, storage, billing_period)
+        workers_cost = _q['breakdown']['workers_cost']
+        storage_cost = _q['breakdown']['storage_cost']
+        monthly_total = _q['monthly']
 
         discount = config['yearly_discount_pct'] / 100.0
         if billing_period == 'yearly':
@@ -518,12 +520,18 @@ class SaasWebsite(http.Controller):
                 **post,
             )
 
-    def _get_or_create_custom_plan(self, product, workers, storage, config):
-        """Find or create a plan matching the custom configuration."""
+    def _get_or_create_custom_plan(self, product, workers, storage, config, region=None):
+        """Find or create a plan matching the custom configuration.
+
+        ``region`` (optional) applies the region price multiplier; None =>
+        x1.0 (default region / behaviour-neutral)."""
         Plan = request.env['saas.plan'].sudo()
         plan_name = 'Custom (%dW / %dGB)' % (workers, storage)
 
-        monthly_price = (workers * config['worker_price']) + (storage * config['storage_price_per_gb'])
+        # Single source of truth: saas.pricing.engine. Behaviour-neutral.
+        _q = request.env['saas.pricing.engine'].compute(
+            'services', workers, storage, region=region)
+        monthly_price = _q['monthly']
 
         # Search for existing matching custom plan
         plan = Plan.search([
@@ -543,8 +551,7 @@ class SaasWebsite(http.Controller):
             else:
                 ram_limit = '%dm' % ram_mb
 
-            discount = config['yearly_discount_pct'] / 100.0
-            yearly_price = monthly_price * 12 * (1 - discount)
+            yearly_price = _q['yearly']
             recommended_users = workers * config['users_per_worker_max']
 
             # Scale backups based on plan size (0.0 = smallest, 1.0 = largest)
@@ -746,10 +753,47 @@ class SaasWebsite(http.Controller):
             })
         return product
 
-    def _get_or_create_hosting_plan(self, product, workers, storage, config):
-        """Find or create a plan matching the hosting configuration."""
+    def _resolve_region(self, region_id=0):
+        """Resolve the customer-picked region for the create flow.
+
+        Explicit pick -> default region -> None (no regions configured).
+        None keeps the funnel behaviour-neutral: the pricing engine uses
+        x1.0 and allocation imposes no region constraint."""
+        Region = request.env['saas.region'].sudo()
+        region = None
+        try:
+            rid = int(region_id or 0)
+        except (TypeError, ValueError):
+            rid = 0
+        if rid:
+            region = Region.browse(rid)
+            if not region.exists() or not region.active:
+                region = None
+        return region or Region._get_default()
+
+    def _region_domain_ok(self, domain, region):
+        """Proxy co-location: a domain is usable in ``region`` when its
+        reverse-proxy server sits in that region — or it has no proxy (the
+        nginx config then lands on the region-matched Docker host, so the
+        domain is region-neutral). A proxy with no region is treated as
+        region-neutral too (behaviour-neutral with an unassigned fleet)."""
+        if not region:
+            return True
+        proxy = domain.proxy_server_id
+        if not proxy or not proxy.region_id:
+            return True
+        return proxy.region_id.id == region.id
+
+    def _get_or_create_hosting_plan(self, product, workers, storage, config, region=None):
+        """Find or create a plan matching the hosting configuration.
+
+        ``region`` (optional) applies the region price multiplier; None =>
+        x1.0 (default region / behaviour-neutral)."""
         Plan = request.env['saas.plan'].sudo()
-        monthly_price = (workers * config['worker_price']) + (storage * config['storage_price_per_gb'])
+        # Single source of truth: saas.pricing.engine. Behaviour-neutral.
+        _q = request.env['saas.pricing.engine'].compute(
+            'hosting', workers, storage, region=region)
+        monthly_price = _q['monthly']
         plan_name = 'Hosting (%dW / %dGB)' % (workers, storage)
 
         plan = Plan.search([
@@ -765,8 +809,7 @@ class SaasWebsite(http.Controller):
             ram_mb = workers * config['ram_per_worker']
             ram_limit = '%dg' % (ram_mb // 1024) if ram_mb >= 1024 else '%dm' % ram_mb
 
-            discount = config['yearly_discount_pct'] / 100.0
-            yearly_price = monthly_price * 12 * (1 - discount)
+            yearly_price = _q['yearly']
 
             w_range = max(1, config['max_workers'] - config['min_workers'])
             s_range = max(1, config['max_storage'] - config['min_storage'])
@@ -823,7 +866,7 @@ class SaasWebsite(http.Controller):
 
     @http.route('/hosting/configure', type='http', auth='public', website=True)
     def hosting_configure(self, workers=0, storage=0, billing='monthly',
-                          odoo_version_id='0', error=None, **kw):
+                          odoo_version_id='0', region_id='0', error=None, **kw):
         """Configure hosting instance: subdomain, repo, version."""
         if not self._section_enabled('hosting'):
             return request.redirect('/')
@@ -831,6 +874,8 @@ class SaasWebsite(http.Controller):
             params = 'hosting=1&workers=%s&storage=%s&billing=%s&odoo_version_id=%s' % (
                 workers, storage, billing, odoo_version_id,
             )
+            if region_id and str(region_id) != '0':
+                params += '&region_id=%s' % region_id
             if kw.get('is_trial') == '1':
                 params += '&is_trial=1'
             return request.redirect('/services/register?%s' % params)
@@ -844,10 +889,23 @@ class SaasWebsite(http.Controller):
         # free or not at all (per spec — paid feature only).
         daily_backup = (kw.get('daily_backup') == '1')
 
-        workers_cost = workers * config['worker_price']
-        storage_cost = storage * config['storage_price_per_gb']
-        backup_cost = config['daily_backup_price'] if daily_backup else 0.0
-        monthly_total = workers_cost + storage_cost + backup_cost
+        # Region (S8c). Resolve the picked/default region; the picker is
+        # only shown when there's a genuine choice (>1 active region), so
+        # single-region / unconfigured fleets behave exactly as before.
+        Region = request.env['saas.region'].sudo()
+        regions = Region.search([('active', '=', True)], order='sequence, id')
+        region = self._resolve_region(region_id)
+        show_region_picker = len(regions) > 1
+
+        _addons = ['daily_snapshots'] if daily_backup else []
+        _q = request.env['saas.pricing.engine'].compute(
+            'hosting', workers, storage, addon_codes=_addons,
+            region=region or None,
+        )
+        workers_cost = _q['breakdown']['workers_cost']
+        storage_cost = _q['breakdown']['storage_cost']
+        backup_cost = _q['breakdown']['addons_monthly']
+        monthly_total = _q['monthly']
         discount = config['yearly_discount_pct'] / 100.0
         yearly_total = monthly_total * 12 * (1 - discount)
 
@@ -855,6 +913,10 @@ class SaasWebsite(http.Controller):
             [('is_hosting_version', '=', True)], order='name desc',
         )
         domains = request.env['saas.based.domain'].sudo().search([])
+        # Proxy co-location: when the customer can pick a region, only offer
+        # domains whose reverse proxy lives in that region (S8c).
+        if show_region_picker and region:
+            domains = domains.filtered(lambda d: self._region_domain_ok(d, region))
 
         # Compute backup count
         w_range = max(1, config['max_workers'] - config['min_workers'])
@@ -867,6 +929,9 @@ class SaasWebsite(http.Controller):
         return request.render('saas_website.hosting_configure_form', {
             'domains': domains,
             'versions': versions,
+            'regions': regions,
+            'selected_region_id': region.id if region else 0,
+            'show_region_picker': show_region_picker,
             'error': error,
             'workers': workers,
             'storage': storage,
@@ -904,12 +969,17 @@ class SaasWebsite(http.Controller):
         if billing_period not in ('monthly', 'yearly'):
             billing_period = 'monthly'
 
+        # Region (S8c): fixed at creation. Resolves to the default when
+        # not supplied -> behaviour-neutral for single-region fleets.
+        region = self._resolve_region(post.get('region_id', 0))
+
         config = self._get_hosting_plan_config()
         workers = max(config['min_workers'], min(workers, config['max_workers']))
         storage = max(config['min_storage'], min(storage, config['max_storage']))
 
-        err_redirect = '/hosting/configure?workers=%d&storage=%d&billing=%s&odoo_version_id=%d&error=%%s' % (
+        err_redirect = '/hosting/configure?workers=%d&storage=%d&billing=%s&odoo_version_id=%d&region_id=%d&error=%%s' % (
             workers, storage, billing_period, odoo_version_id,
+            region.id if region else 0,
         )
 
         # Subdomain validation
@@ -934,6 +1004,11 @@ class SaasWebsite(http.Controller):
         domain = request.env['saas.based.domain'].sudo().browse(domain_id)
         if not domain.exists():
             return request.redirect(err_redirect % ('Please+select+a+domain'))
+        # Proxy co-location: the domain's reverse proxy must be in the
+        # chosen region (nginx + odoo + db all co-located).
+        if not self._region_domain_ok(domain, region):
+            return request.redirect(err_redirect % (
+                'Selected+domain+is+not+available+in+this+region'))
 
         partner = request.env.user.partner_id
 
@@ -949,15 +1024,19 @@ class SaasWebsite(http.Controller):
             if active_count >= max_instances:
                 return request.redirect(err_redirect % ('Maximum+instances+reached'))
 
-        # Infrastructure validation
-        docker_servers = request.env['saas.server'].sudo().search(
-            [('is_docker_host', '=', True)], limit=1,
+        # Infrastructure validation (region-aware: a region needs both a
+        # Docker host and a DB server to be provisionable — co-location).
+        Server = request.env['saas.server'].sudo()
+        region_dom = Server._region_match_domain(region)
+        docker_servers = Server.search(
+            [('is_docker_host', '=', True)] + region_dom, limit=1,
         )
-        db_servers = request.env['saas.server'].sudo().search(
-            [('is_db_server', '=', True)], limit=1,
+        db_servers = Server.search(
+            [('is_db_server', '=', True)] + region_dom, limit=1,
         )
         if not docker_servers or not db_servers:
-            return request.redirect(err_redirect % ('Service+temporarily+unavailable'))
+            return request.redirect(err_redirect % (
+                'Service+temporarily+unavailable+in+the+selected+region'))
 
         # Validate repo URL format (if provided)
         if repo_url:
@@ -984,7 +1063,8 @@ class SaasWebsite(http.Controller):
         if is_trial:
             plan = self._get_or_create_hosting_trial_plan(product, config)
         else:
-            plan = self._get_or_create_hosting_plan(product, workers, storage, config)
+            plan = self._get_or_create_hosting_plan(
+                product, workers, storage, config, region=region)
 
         instance = None
         try:
@@ -1002,6 +1082,10 @@ class SaasWebsite(http.Controller):
                     not is_trial and post.get('daily_backup') == '1'
                 ),
             }
+            # Pin the region at creation (fixed for the instance's life);
+            # drives co-located server allocation.
+            if region:
+                vals['region_id'] = region.id
             if is_trial:
                 vals['is_trial'] = True
 
@@ -1040,9 +1124,10 @@ class SaasWebsite(http.Controller):
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
-        workers_cost = workers * config['worker_price']
-        storage_cost = storage * config['storage_price_per_gb']
-        monthly_total = workers_cost + storage_cost
+        _q = request.env['saas.pricing.engine'].compute('hosting', workers, storage)
+        workers_cost = _q['breakdown']['workers_cost']
+        storage_cost = _q['breakdown']['storage_cost']
+        monthly_total = _q['monthly']
 
         return {
             'workers': workers,

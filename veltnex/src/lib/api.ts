@@ -83,6 +83,19 @@ export interface ApiUser {
   is_internal?: boolean;
 }
 
+export interface ApiTier {
+  id: number;
+  name: string;
+  workers: number;
+  storage: number;
+  monthly: number;
+  yearly: number;
+  recommended: boolean;
+  badge: string;
+  sequence: number;
+  currency: string;
+}
+
 export interface PriceResult {
   workers: number;
   storage: number;
@@ -99,8 +112,8 @@ export interface PriceResult {
 }
 
 export interface PlanConfigMeta {
-  worker_price: number;
-  storage_price_per_gb: number;
+  // Per-unit rates are intentionally NOT exposed to the client; pricing
+  // comes from the calculate endpoint (server-side engine).
   min_workers: number;
   max_workers: number;
   min_storage: number;
@@ -279,6 +292,7 @@ export const api = {
 
   // public
   meta: () => rpc<Meta>("/saas/api/v1/meta"),
+  tiers: (kind = "hosting") => rpc<ApiTier[]>("/saas/api/v1/tiers", { kind }),
   services: () => rpc<ApiService[]>("/saas/api/v1/services"),
   service: (id: number) => rpc<ApiService>(`/saas/api/v1/services/${id}`),
   hostingCalculate: (workers: number, storage: number, billing: string) =>

@@ -257,8 +257,8 @@ class SaasApi(http.Controller):
         svc_trial, trial_days = site._get_trial_info()
         host_trial, _hd = site._get_trial_info(hosting=True)
         return ok({
-            'hosting_config': site._get_hosting_plan_config(),
-            'custom_config': site._get_custom_plan_config(),
+            'hosting_config': self._public_plan_config(site._get_hosting_plan_config()),
+            'custom_config': self._public_plan_config(site._get_custom_plan_config()),
             'trial': {
                 'days': trial_days,
                 'services_available': svc_trial,
@@ -303,34 +303,100 @@ class SaasApi(http.Controller):
         config = site._get_custom_plan_config()
         return ok(self._price(config, workers, storage, billing))
 
+    @http.route('/saas/api/v1/tiers', type='json', auth='public')
+    def tiers(self, kind='hosting'):
+        """Public named tiers for the pricing/configure cards (S8 renders
+        them). Returns [] until tiers are configured (S9), so the SPA can
+        fall back to the slider configurator."""
+        plans = request.env['saas.plan'].sudo().search(
+            [('is_public_tier', '=', True)], order='sequence, id',
+        )
+        default_currency = request.env.company.currency_id.name or 'USD'
+        out = []
+        for p in plans:
+            p_kind = 'hosting' if any(
+                prod.is_hosting for prod in p.saas_product_ids
+            ) else 'services'
+            if p_kind != kind:
+                continue
+            out.append({
+                'id': p.id,
+                'name': p.name,
+                'workers': p.workers,
+                'storage': int(p.storage_limit or 0),
+                'monthly': round(p.price, 2),
+                'yearly': round(p.yearly_price, 2),
+                'recommended': p.is_recommended,
+                'badge': p.badge or '',
+                'sequence': p.sequence,
+                'currency': p.currency_id.name or default_currency,
+            })
+        return ok(out)
+
+    @http.route('/saas/api/v1/regions', type='json', auth='public')
+    def regions(self):
+        """Active regions for the create flow's region picker (S8). Each
+        carries a price multiplier so the SPA can show region-adjusted
+        prices (the engine is still the source of the actual quote)."""
+        regs = request.env['saas.region'].sudo().search(
+            [('active', '=', True)], order='sequence, id',
+        )
+        Server = request.env['saas.server'].sudo()
+
+        def _available(region):
+            # Selectable only if the region has BOTH a docker host and a
+            # db server (co-location prerequisite). Null-region servers
+            # count as the default region (see _region_match_domain).
+            dom = Server._region_match_domain(region)
+            return bool(
+                Server.search_count([('is_docker_host', '=', True)] + dom)
+                and Server.search_count([('is_db_server', '=', True)] + dom)
+            )
+
+        return ok([{
+            'id': r.id,
+            'code': r.code,
+            'name': r.name,
+            'multiplier': r.price_multiplier or 1.0,
+            'default': r.is_default,
+            'available': _available(r),
+        } for r in regs])
+
     @http.route('/saas/api/v1/check-subdomain', type='json', auth='public')
     def check_subdomain(self, subdomain='', domain_id=0):
         # Delegate to the canonical implementation.
         return ok(SaasWebsite().check_subdomain(subdomain=subdomain, domain_id=domain_id))
 
-    def _price(self, config, workers, storage, billing):
-        """Compute one customer-facing total. Per-resource rates stay hidden."""
-        workers = max(config['min_workers'], min(int(workers), config['max_workers']))
-        storage = max(config['min_storage'], min(int(storage), config['max_storage']))
-        monthly = (workers * config['worker_price']
-                   + storage * config['storage_price_per_gb'])
-        discount = config['yearly_discount_pct'] / 100.0
-        yearly = monthly * 12 * (1 - discount)
-        yearly_savings = (monthly * 12) - yearly
-        is_yearly = billing == 'yearly'
+    def _public_plan_config(self, cfg):
+        """Strip internal per-unit rates before exposing plan config to the
+        browser. The client only needs limits / discount / currency — the
+        actual price comes from the calculate endpoint (engine), so the
+        rates never leave the server."""
         return {
-            'workers': workers,
-            'storage': storage,
-            'billing': 'yearly' if is_yearly else 'monthly',
-            'total': round(yearly if is_yearly else monthly, 2),
-            'monthly_equivalent': round(yearly / 12 if is_yearly else monthly, 2),
-            'yearly_savings': round(yearly_savings, 2),
-            'savings_percent': int(config['yearly_discount_pct']),
-            'currency': config['currency'],
-            'limits': {
-                'workers': {'min': config['min_workers'], 'max': config['max_workers']},
-                'storage': {'min': config['min_storage'], 'max': config['max_storage']},
-            },
+            k: v for k, v in cfg.items()
+            if k not in ('worker_price', 'storage_price_per_gb')
+        }
+
+    def _price(self, config, workers, storage, billing):
+        """Compute one customer-facing total via the single pricing
+        engine (`saas.pricing.engine`). ``config`` is accepted for
+        backward-compat with callers but no longer used — the engine
+        reads rates itself. Per-resource rates stay hidden."""
+        quote = request.env['saas.pricing.engine'].compute(
+            'services', workers, storage, billing,
+        )
+        # Return exactly the historical key set (the engine returns a
+        # superset; keep this stable for existing SPA consumers).
+        return {
+            'workers': quote['workers'],
+            'storage': quote['storage'],
+            'billing': quote['billing'],
+            'total': quote['total'],
+            'monthly_equivalent': quote['monthly_equivalent'],
+            'yearly_savings': quote['yearly_savings'],
+            'savings_percent': quote['savings_percent'],
+            'currency': quote['currency'],
+            'limits': quote['limits'],
         }
 
     # ==================================================================
