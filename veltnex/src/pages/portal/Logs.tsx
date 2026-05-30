@@ -14,11 +14,14 @@ interface Line {
 }
 
 // Best-effort log-level colouring based on the Odoo log line content.
+// The terminal background is always dark (see bg-[#0b0b0e] below), so these
+// use FIXED light colours rather than the theme tokens (text-foreground /
+// text-muted go dark in light mode and would be invisible on the dark pane).
 function levelClass(text: string): string {
-  if (/\bERROR\b|CRITICAL|Traceback/.test(text)) return "text-danger";
-  if (/\bWARNING\b/.test(text)) return "text-warning";
-  if (/\bDEBUG\b/.test(text)) return "text-muted";
-  return "text-foreground/85";
+  if (/\bERROR\b|CRITICAL|Traceback/.test(text)) return "text-red-400";
+  if (/\bWARNING\b/.test(text)) return "text-amber-400";
+  if (/\bDEBUG\b/.test(text)) return "text-zinc-500";
+  return "text-zinc-200";
 }
 
 export default function Logs() {
@@ -151,7 +154,7 @@ export default function Logs() {
           className="h-[calc(100vh-17rem)] min-h-[420px] overflow-y-auto bg-[#0b0b0e] p-4 font-mono text-xs leading-relaxed"
         >
           {lines.length === 0 ? (
-            <p className="text-muted">
+            <p className="text-zinc-500">
               {paused ? "Stream paused." : "Waiting for log output… (logs stream only while the instance is running)"}
             </p>
           ) : (
