@@ -12,6 +12,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
@@ -84,7 +85,7 @@ export function PortalLayout() {
             Backend
           </a>
         )}
-        <div className="mt-2 flex items-center gap-3 rounded-lg border border-border p-3">
+        <div className="mt-2 flex items-center gap-2 rounded-lg border border-border p-3">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
             {user?.initials}
           </span>
@@ -92,6 +93,7 @@ export function PortalLayout() {
             <p className="truncate text-sm font-medium">{user?.name}</p>
             <p className="truncate text-xs text-muted">{user?.company}</p>
           </div>
+          <ThemeToggle className="size-8" />
           <button
             onClick={handleLogout}
             className="rounded-md p-1.5 text-muted transition-colors hover:bg-border hover:text-danger"
@@ -134,6 +136,7 @@ export function PortalLayout() {
             <Menu className="size-5" />
           </button>
           <Logo />
+          <ThemeToggle className="ml-auto" />
         </header>
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
