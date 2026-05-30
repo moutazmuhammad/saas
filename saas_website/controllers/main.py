@@ -302,11 +302,13 @@ class SaasWebsite(http.Controller):
     # ==================================================================
 
     def _get_custom_plan_config(self):
-        """Return custom plan builder configuration from system parameters."""
+        """Return custom plan builder configuration from system parameters.
+
+        Per-unit rates are intentionally NOT included: pricing is computed
+        server-side by saas.pricing.engine and only totals are exposed.
+        This dict carries limits / discount / currency only."""
         ICP = request.env['ir.config_parameter'].sudo()
         return {
-            'worker_price': float(ICP.get_param('saas_master.worker_price', '15.0')),
-            'storage_price_per_gb': float(ICP.get_param('saas_master.storage_price_per_gb', '0.5')),
             'min_workers': int(ICP.get_param('saas_master.custom_plan_min_workers', '2')),
             'max_workers': int(ICP.get_param('saas_master.custom_plan_max_workers', '8')),
             'min_storage': int(ICP.get_param('saas_master.custom_plan_min_storage', '5')),
@@ -329,8 +331,6 @@ class SaasWebsite(http.Controller):
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
         _q = request.env['saas.pricing.engine'].compute('services', workers, storage)
-        workers_cost = _q['breakdown']['workers_cost']
-        storage_cost = _q['breakdown']['storage_cost']
         monthly_total = _q['monthly']
 
         min_users = workers * config['users_per_worker_min']
@@ -339,8 +339,6 @@ class SaasWebsite(http.Controller):
         return {
             'workers': workers,
             'storage': storage,
-            'workers_cost': workers_cost,
-            'storage_cost': storage_cost,
             'monthly_total': monthly_total,
             'yearly_total': monthly_total * 12,
             'min_users': min_users,
@@ -372,8 +370,6 @@ class SaasWebsite(http.Controller):
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
         _q = request.env['saas.pricing.engine'].compute('services', workers, storage, billing_period)
-        workers_cost = _q['breakdown']['workers_cost']
-        storage_cost = _q['breakdown']['storage_cost']
         monthly_total = _q['monthly']
 
         discount = config['yearly_discount_pct'] / 100.0
@@ -394,8 +390,6 @@ class SaasWebsite(http.Controller):
             'error': error,
             'workers': workers,
             'storage': storage,
-            'workers_cost': workers_cost,
-            'storage_cost': storage_cost,
             'monthly_total': monthly_total,
             'yearly_total': yearly_total,
             'display_total': display_total,
@@ -719,11 +713,13 @@ class SaasWebsite(http.Controller):
     # ==================================================================
 
     def _get_hosting_plan_config(self):
-        """Return hosting plan builder configuration from system parameters."""
+        """Return hosting plan builder configuration from system parameters.
+
+        Per-unit rates are intentionally NOT included: pricing is computed
+        server-side by saas.pricing.engine and only totals are exposed.
+        This dict carries limits / discount / currency only."""
         ICP = request.env['ir.config_parameter'].sudo()
         return {
-            'worker_price': float(ICP.get_param('saas_master.hosting_worker_price', '10.0')),
-            'storage_price_per_gb': float(ICP.get_param('saas_master.hosting_storage_price_per_gb', '0.3')),
             'min_workers': int(ICP.get_param('saas_master.hosting_min_workers', '2')),
             'max_workers': int(ICP.get_param('saas_master.hosting_max_workers', '8')),
             'min_storage': int(ICP.get_param('saas_master.hosting_min_storage', '5')),
@@ -902,8 +898,6 @@ class SaasWebsite(http.Controller):
             'hosting', workers, storage, addon_codes=_addons,
             region=region or None,
         )
-        workers_cost = _q['breakdown']['workers_cost']
-        storage_cost = _q['breakdown']['storage_cost']
         backup_cost = _q['breakdown']['addons_monthly']
         monthly_total = _q['monthly']
         discount = config['yearly_discount_pct'] / 100.0
@@ -935,8 +929,6 @@ class SaasWebsite(http.Controller):
             'error': error,
             'workers': workers,
             'storage': storage,
-            'workers_cost': workers_cost,
-            'storage_cost': storage_cost,
             'backup_cost': backup_cost,
             'daily_backup': daily_backup,
             'monthly_total': monthly_total,
@@ -1125,15 +1117,11 @@ class SaasWebsite(http.Controller):
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
         _q = request.env['saas.pricing.engine'].compute('hosting', workers, storage)
-        workers_cost = _q['breakdown']['workers_cost']
-        storage_cost = _q['breakdown']['storage_cost']
         monthly_total = _q['monthly']
 
         return {
             'workers': workers,
             'storage': storage,
-            'workers_cost': workers_cost,
-            'storage_cost': storage_cost,
             'monthly_total': monthly_total,
             'yearly_total': monthly_total * 12,
             'currency': config['currency'],

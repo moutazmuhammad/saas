@@ -1296,208 +1296,6 @@ function generateStorageTicks(containerId, min, max) {
     });
 }
 
-// ============================================
-// Custom Plan Builder (Pricing Page)
-// ============================================
-
-function initCustomPlanBuilder() {
-    var configEl = document.getElementById('custom-plan-config');
-    if (!configEl) return;
-
-    var config = {
-        workerPrice: parseFloat(configEl.dataset.workerPrice) || 15,
-        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.5,
-        minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
-        maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
-        minStorage: parseInt(configEl.dataset.minStorage) || 5,
-        maxStorage: parseInt(configEl.dataset.maxStorage) || 200,
-        usersPerWorkerMin: parseInt(configEl.dataset.usersPerWorkerMin) || 6,
-        usersPerWorkerMax: parseInt(configEl.dataset.usersPerWorkerMax) || 10,
-        yearlyDiscountPct: parseInt(configEl.dataset.yearlyDiscountPct) || 20,
-        currency: configEl.dataset.currency || 'USD',
-        productId: configEl.dataset.productId || '',
-        minBackups: parseInt(configEl.dataset.minBackups) || 3,
-        maxBackups: parseInt(configEl.dataset.maxBackups) || 14,
-    };
-
-    var workersSlider = document.getElementById('workers-slider');
-    var storageSlider = document.getElementById('storage-slider');
-    if (!workersSlider || !storageSlider) return;
-
-    // Billing state
-    var currentBilling = 'monthly';
-    var YEARLY_DISCOUNT = config.yearlyDiscountPct / 100;
-
-    // Generate tick marks
-    generateTicks('workers-ticks', config.minWorkers, config.maxWorkers, 1);
-    generateStorageTicks('storage-ticks', config.minStorage, config.maxStorage);
-
-    // Update slider track fill
-    function updateSliderTrack(slider) {
-        var min = parseFloat(slider.min);
-        var max = parseFloat(slider.max);
-        var val = parseFloat(slider.value);
-        var pct = ((val - min) / (max - min)) * 100;
-        slider.style.setProperty('--slider-pct', pct + '%');
-    }
-
-    function calculateAndUpdate() {
-        var workers = parseInt(workersSlider.value);
-        var storage = parseInt(storageSlider.value);
-
-        var workersCost = workers * config.workerPrice;
-        var storageCost = storage * config.storagePrice;
-        var monthlyTotal = workersCost + storageCost;
-        var yearlyFullPrice = monthlyTotal * 12;
-        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
-        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
-        var effectiveMonthly = yearlyDiscounted / 12;
-        var minUsers = workers * config.usersPerWorkerMin;
-        var maxUsers = workers * config.usersPerWorkerMax;
-
-        // Sync number inputs with slider values
-        var wInput = document.getElementById('workers-input');
-        var sInput = document.getElementById('storage-input');
-        if (wInput && wInput !== document.activeElement) wInput.value = workers;
-        if (sInput && sInput !== document.activeElement) sInput.value = storage;
-
-        // Update recommendation
-        var recEl = document.querySelector('#workers-recommendation .rec-users');
-        if (recEl) recEl.textContent = '~' + minUsers + '–' + maxUsers;
-
-        // Resource counts only — per-resource pricing is an internal
-        // calculation and is intentionally not shown to the customer.
-        setText('summary-workers', workers);
-        setText('summary-storage', storage);
-
-        // Toggle monthly/yearly display
-        var monthlyDisplay = document.getElementById('summary-monthly-display');
-        var yearlyDisplay = document.getElementById('summary-yearly-display');
-
-        if (currentBilling === 'yearly') {
-            if (monthlyDisplay) monthlyDisplay.style.display = 'none';
-            if (yearlyDisplay) yearlyDisplay.style.display = '';
-            setText('summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
-            setText('summary-effective-monthly', CloudOdoo.formatCurrency(effectiveMonthly, config.currency) + '/mo');
-            setText('summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
-            setText('summary-yearly-original', CloudOdoo.formatCurrency(yearlyFullPrice, config.currency));
-            setText('summary-yearly-discounted', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
-        } else {
-            if (monthlyDisplay) monthlyDisplay.style.display = '';
-            if (yearlyDisplay) yearlyDisplay.style.display = 'none';
-            setText('summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
-            setText('summary-yearly-equiv', CloudOdoo.formatCurrency(yearlyFullPrice, config.currency) + '/yr');
-        }
-
-        setText('summary-min-users', minUsers);
-        setText('summary-max-users', maxUsers);
-
-        // Backups are a separate paid add-on, not bundled into the
-        // plan, so there's no backup-count line on the builder.
-
-        // Update CTA link
-        var ctaEl = document.getElementById('custom-plan-cta');
-        if (ctaEl) {
-            ctaEl.href = '/services/' + config.productId + '/custom/configure?workers=' + workers + '&storage=' + storage + '&billing=' + currentBilling;
-        }
-
-        // Update slider tracks
-        updateSliderTrack(workersSlider);
-        updateSliderTrack(storageSlider);
-
-        // Highlight recommended workers range (4-6)
-        updateWorkersHighlight(workers);
-    }
-
-    function setText(id, value) {
-        var el = document.getElementById(id);
-        if (el) el.textContent = value;
-    }
-
-    function updateWorkersHighlight(currentWorkers) {
-        var rec = document.getElementById('workers-recommendation');
-        if (!rec) return;
-        // Change recommendation style based on range
-        if (currentWorkers >= 4 && currentWorkers <= 6) {
-            rec.classList.add('rec-optimal');
-            rec.classList.remove('rec-normal');
-        } else {
-            rec.classList.remove('rec-optimal');
-            rec.classList.add('rec-normal');
-        }
-    }
-
-    // Event listeners — sliders
-    workersSlider.addEventListener('input', calculateAndUpdate);
-    storageSlider.addEventListener('input', calculateAndUpdate);
-
-    // Event listeners — number inputs sync to sliders
-    var workersInput = document.getElementById('workers-input');
-    var storageInput = document.getElementById('storage-input');
-    if (workersInput) {
-        workersInput.addEventListener('input', function() {
-            var v = Math.max(config.minWorkers, Math.min(config.maxWorkers, parseInt(this.value) || config.minWorkers));
-            workersSlider.value = v;
-            calculateAndUpdate();
-        });
-    }
-    if (storageInput) {
-        storageInput.addEventListener('input', function() {
-            var v = Math.max(config.minStorage, Math.min(config.maxStorage, parseInt(this.value) || config.minStorage));
-            storageSlider.value = v;
-            calculateAndUpdate();
-        });
-    }
-
-    // Custom builder billing toggle
-    var customBillingToggle = document.getElementById('custom-billing-toggle');
-    if (customBillingToggle) {
-        customBillingToggle.querySelectorAll('.toggle-btn').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                customBillingToggle.querySelectorAll('.toggle-btn').forEach(function(b) {
-                    b.classList.remove('active');
-                });
-                btn.classList.add('active');
-                currentBilling = btn.dataset.billing;
-                calculateAndUpdate();
-            });
-        });
-    }
-
-    // "Customize this plan" buttons
-    document.querySelectorAll('.btn-customize-plan').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            var planWorkers = parseInt(btn.dataset.workers) || 4;
-            var planStorage = parseInt(btn.dataset.storage) || 20;
-
-            // Clamp to allowed range
-            planWorkers = Math.max(config.minWorkers, Math.min(planWorkers, config.maxWorkers));
-            planStorage = Math.max(config.minStorage, Math.min(planStorage, config.maxStorage));
-
-            // Set slider values
-            workersSlider.value = planWorkers;
-            storageSlider.value = planStorage;
-
-            // Recalculate
-            calculateAndUpdate();
-
-            // Scroll to builder
-            var builder = document.getElementById('custom-builder');
-            if (builder) {
-                builder.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                // Add a brief highlight animation
-                builder.classList.add('builder-highlight');
-                setTimeout(function() {
-                    builder.classList.remove('builder-highlight');
-                }, 1500);
-            }
-        });
-    });
-
-    // Initial calculation
-    calculateAndUpdate();
-}
 
 // ============================================
 // Upgrade / Change Plan Builder
@@ -1508,8 +1306,10 @@ function initUpgradePlanBuilder() {
     if (!configEl) return;
 
     var config = {
-        workerPrice: parseFloat(configEl.dataset.workerPrice) || 15,
-        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.5,
+        // Pricing is computed SERVER-SIDE by the pricing engine — the
+        // browser never sees per-unit rates. workers/storage are POSTed
+        // to calcUrl and the returned total is rendered.
+        calcUrl: configEl.dataset.calcUrl || '/saas/hosting-plan/calculate',
         minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
         maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
         minStorage: parseInt(configEl.dataset.minStorage) || 5,
@@ -1548,16 +1348,45 @@ function initUpgradePlanBuilder() {
         if (el) el.textContent = value;
     }
 
+    // Fetch the authoritative price from the server (pricing engine).
+    // Debounced so dragging a slider doesn't spam the endpoint. The
+    // browser never computes the price itself.
+    var _priceTimer = null;
+    var _priceSeq = 0;
+    function refreshPrice(workers, storage) {
+        var monthlyEl = document.getElementById('upgrade-summary-monthly-total');
+        var yearlyEl = document.getElementById('upgrade-summary-yearly-total');
+        if (monthlyEl) monthlyEl.textContent = '…';
+        if (yearlyEl) yearlyEl.textContent = '…';
+        if (_priceTimer) clearTimeout(_priceTimer);
+        var seq = ++_priceSeq;
+        _priceTimer = setTimeout(function () {
+            CloudOdoo.jsonRpc(config.calcUrl, { workers: workers, storage: storage })
+                .then(function (r) {
+                    if (seq !== _priceSeq) return;  // a newer request superseded this
+                    var monthly = (r && r.monthly_total) || 0;
+                    var yearlyFull = monthly * 12;
+                    var yearlyDiscounted = yearlyFull * (1 - YEARLY_DISCOUNT);
+                    var yearlySavings = yearlyFull - yearlyDiscounted;
+                    var cur = (r && r.currency) || config.currency;
+                    if (currentBilling === 'yearly') {
+                        setText('upgrade-summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, cur));
+                        setText('upgrade-summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, cur));
+                    } else {
+                        setText('upgrade-summary-monthly-total', CloudOdoo.formatCurrency(monthly, cur));
+                    }
+                })
+                .catch(function () {
+                    if (seq !== _priceSeq) return;
+                    if (monthlyEl) monthlyEl.textContent = '—';
+                    if (yearlyEl) yearlyEl.textContent = '—';
+                });
+        }, 250);
+    }
+
     function calculateAndUpdate() {
         var workers = parseInt(workersSlider.value);
         var storage = parseInt(storageSlider.value);
-
-        var workersCost = workers * config.workerPrice;
-        var storageCost = storage * config.storagePrice;
-        var monthlyTotal = workersCost + storageCost;
-        var yearlyFullPrice = monthlyTotal * 12;
-        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
-        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
 
         // Sync number inputs with slider values
         var wInput = document.getElementById('upgrade-workers-input');
@@ -1574,17 +1403,16 @@ function initUpgradePlanBuilder() {
         // Toggle monthly/yearly display
         var monthlyDisplay = document.getElementById('upgrade-summary-monthly-display');
         var yearlyDisplay = document.getElementById('upgrade-summary-yearly-display');
-
         if (currentBilling === 'yearly') {
             if (monthlyDisplay) monthlyDisplay.style.display = 'none';
             if (yearlyDisplay) yearlyDisplay.style.display = '';
-            setText('upgrade-summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
-            setText('upgrade-summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
         } else {
             if (monthlyDisplay) monthlyDisplay.style.display = '';
             if (yearlyDisplay) yearlyDisplay.style.display = 'none';
-            setText('upgrade-summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
         }
+
+        // The price (monthly/yearly totals) comes from the server.
+        refreshPrice(workers, storage);
 
         // Backups are now a separate paid add-on (configured from the
         // instance's Snapshots page after deployment), not bundled
@@ -1703,141 +1531,6 @@ function initUpgradePlanBuilder() {
     calculateAndUpdate();
 }
 
-// ============================================
-// Hosting Plan Builder
-// ============================================
-
-function initHostingPlanBuilder() {
-    var configEl = document.getElementById('hosting-plan-config');
-    if (!configEl) return;
-
-    var config = {
-        workerPrice: parseFloat(configEl.dataset.workerPrice) || 10,
-        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.3,
-        minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
-        maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
-        minStorage: parseInt(configEl.dataset.minStorage) || 5,
-        maxStorage: parseInt(configEl.dataset.maxStorage) || 200,
-        yearlyDiscountPct: parseInt(configEl.dataset.yearlyDiscountPct) || 20,
-        currency: configEl.dataset.currency || 'USD',
-        minBackups: parseInt(configEl.dataset.minBackups) || 3,
-        maxBackups: parseInt(configEl.dataset.maxBackups) || 14,
-    };
-
-    var workersSlider = document.getElementById('hosting-workers-slider');
-    var storageSlider = document.getElementById('hosting-storage-slider');
-    if (!workersSlider || !storageSlider) return;
-
-    var currentBilling = 'monthly';
-    var YEARLY_DISCOUNT = config.yearlyDiscountPct / 100;
-
-    generateTicks('hosting-workers-ticks', config.minWorkers, config.maxWorkers, 1);
-    generateStorageTicks('hosting-storage-ticks', config.minStorage, config.maxStorage);
-
-    function updateSliderTrack(slider) {
-        var min = parseFloat(slider.min);
-        var max = parseFloat(slider.max);
-        var val = parseFloat(slider.value);
-        var pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
-        slider.style.setProperty('--slider-pct', pct + '%');
-    }
-
-    function setText(id, value) {
-        var el = document.getElementById(id);
-        if (el) el.textContent = value;
-    }
-
-    function calculateAndUpdate() {
-        var workers = parseInt(workersSlider.value);
-        var storage = parseInt(storageSlider.value);
-
-        var workersCost = workers * config.workerPrice;
-        var storageCost = storage * config.storagePrice;
-        var monthlyTotal = workersCost + storageCost;
-        var yearlyFullPrice = monthlyTotal * 12;
-        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
-        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
-
-        // Sync number inputs
-        var wInput = document.getElementById('hosting-workers-input');
-        var sInput = document.getElementById('hosting-storage-input');
-        if (wInput && wInput !== document.activeElement) wInput.value = workers;
-        if (sInput && sInput !== document.activeElement) sInput.value = storage;
-
-        // Resource counts only — per-resource pricing is an internal
-        // calculation and is intentionally not shown to the customer.
-        // Backup count is no longer shown either (backups are a paid
-        // add-on configured separately, not bundled with the plan).
-        setText('hosting-summary-workers', workers);
-        setText('hosting-summary-storage', storage);
-
-        // Toggle monthly/yearly
-        var monthlyDisplay = document.getElementById('hosting-summary-monthly-display');
-        var yearlyDisplay = document.getElementById('hosting-summary-yearly-display');
-        if (currentBilling === 'yearly') {
-            if (monthlyDisplay) monthlyDisplay.style.display = 'none';
-            if (yearlyDisplay) yearlyDisplay.style.display = '';
-            setText('hosting-summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
-            setText('hosting-summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
-        } else {
-            if (monthlyDisplay) monthlyDisplay.style.display = '';
-            if (yearlyDisplay) yearlyDisplay.style.display = 'none';
-            setText('hosting-summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
-        }
-
-        // Update CTA link
-        var ctaEl = document.getElementById('hosting-cta');
-        var versionSelect = document.getElementById('hosting-version-select');
-        var versionId = versionSelect ? versionSelect.value : '';
-        if (ctaEl) {
-            ctaEl.href = '/hosting/configure?workers=' + workers + '&storage=' + storage +
-                         '&billing=' + currentBilling + '&odoo_version_id=' + versionId;
-        }
-
-        updateSliderTrack(workersSlider);
-        updateSliderTrack(storageSlider);
-    }
-
-    workersSlider.addEventListener('input', calculateAndUpdate);
-    storageSlider.addEventListener('input', calculateAndUpdate);
-
-    // Number inputs
-    var wInput = document.getElementById('hosting-workers-input');
-    var sInput = document.getElementById('hosting-storage-input');
-    if (wInput) {
-        wInput.addEventListener('input', function() {
-            workersSlider.value = Math.max(config.minWorkers, Math.min(config.maxWorkers, parseInt(this.value) || config.minWorkers));
-            calculateAndUpdate();
-        });
-    }
-    if (sInput) {
-        sInput.addEventListener('input', function() {
-            storageSlider.value = Math.max(config.minStorage, Math.min(config.maxStorage, parseInt(this.value) || config.minStorage));
-            calculateAndUpdate();
-        });
-    }
-
-    // Version select updates CTA link
-    var versionSelect = document.getElementById('hosting-version-select');
-    if (versionSelect) {
-        versionSelect.addEventListener('change', calculateAndUpdate);
-    }
-
-    // Billing toggle
-    var toggleContainer = document.getElementById('hosting-billing-toggle');
-    if (toggleContainer) {
-        toggleContainer.querySelectorAll('.toggle-btn').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                toggleContainer.querySelectorAll('.toggle-btn').forEach(function(b) { b.classList.remove('active'); });
-                btn.classList.add('active');
-                currentBilling = btn.dataset.billing;
-                calculateAndUpdate();
-            });
-        });
-    }
-
-    calculateAndUpdate();
-}
 
 // ============================================
 // Page Initialization
@@ -1849,9 +1542,7 @@ function initAll() {
     //  removed initThemeToggle note above)
     initBillingToggle();
     initSubdomainCheck();
-    initCustomPlanBuilder();
     initUpgradePlanBuilder();
-    initHostingPlanBuilder();
     initOTPInputs();
     initOTPTimer();
     initPasswordStrength();
