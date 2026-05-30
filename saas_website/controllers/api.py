@@ -303,6 +303,36 @@ class SaasApi(http.Controller):
         config = site._get_custom_plan_config()
         return ok(self._price(config, workers, storage, billing))
 
+    @http.route('/saas/api/v1/tiers', type='json', auth='public')
+    def tiers(self, kind='hosting'):
+        """Public named tiers for the pricing/configure cards (S8 renders
+        them). Returns [] until tiers are configured (S9), so the SPA can
+        fall back to the slider configurator."""
+        plans = request.env['saas.plan'].sudo().search(
+            [('is_public_tier', '=', True)], order='sequence, id',
+        )
+        default_currency = request.env.company.currency_id.name or 'USD'
+        out = []
+        for p in plans:
+            p_kind = 'hosting' if any(
+                prod.is_hosting for prod in p.saas_product_ids
+            ) else 'services'
+            if p_kind != kind:
+                continue
+            out.append({
+                'id': p.id,
+                'name': p.name,
+                'workers': p.workers,
+                'storage': int(p.storage_limit or 0),
+                'monthly': round(p.price, 2),
+                'yearly': round(p.yearly_price, 2),
+                'recommended': p.is_recommended,
+                'badge': p.badge or '',
+                'sequence': p.sequence,
+                'currency': p.currency_id.name or default_currency,
+            })
+        return ok(out)
+
     @http.route('/saas/api/v1/check-subdomain', type='json', auth='public')
     def check_subdomain(self, subdomain='', domain_id=0):
         # Delegate to the canonical implementation.

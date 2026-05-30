@@ -97,6 +97,61 @@ class TestPricingEngine(TransactionCase):
         self.assertEqual(q['workers'], 2)
         self.assertEqual(q['storage'], 5)
 
+    def test_cost_floor_bites_when_set(self):
+        """With floor rates configured, price = max(base, floor)."""
+        self._set({
+            'saas_master.hosting_worker_floor': '12',
+            'saas_master.hosting_storage_floor': '0.5',
+        })
+        # 2w/5gb: base = 2*10 + 5*0.3 = 21.5 ; floor = 2*12 + 5*0.5 = 26.5
+        q = self.engine.compute('hosting', 2, 5, 'monthly')
+        self.assertTrue(q['floored'])
+        self.assertAlmostEqual(q['monthly'], 26.5, places=2)
+        self.assertAlmostEqual(q['breakdown']['cost_floor'], 26.5, places=2)
+
+    def test_plan_price_floor_constraint(self):
+        """A plan priced below its cost floor is rejected."""
+        from odoo.exceptions import ValidationError
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1)
+        if not product:
+            self.skipTest('no hosting product in this DB')
+        self._set({
+            'saas_master.hosting_worker_floor': '12',
+            'saas_master.hosting_storage_floor': '0.5',
+        })
+        with self.assertRaises(ValidationError):
+            self.env['saas.plan'].sudo().create({
+                'name': 'TEST below floor',
+                'is_public_tier': True,
+                'workers': 2, 'storage_limit': 5,
+                'cpu_limit': 1.0, 'ram_limit': '1g',
+                'price': 10.0,  # below floor 26.5
+                'currency_id': self.env.company.currency_id.id,
+                'saas_product_ids': [(6, 0, [product.id])],
+            })
+
+    def test_tier_floor_blocks_undercut(self):
+        """When 'custom >= nearest tier' is on, a custom config that
+        contains a tier can't be priced below that tier."""
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1)
+        if not product:
+            self.skipTest('no hosting product in this DB')
+        self._set({'saas_master.custom_min_is_nearest_tier': 'True'})
+        self.env['saas.plan'].sudo().create({
+            'name': 'TEST Pro tier', 'is_public_tier': True,
+            'workers': 4, 'storage_limit': 50,
+            'cpu_limit': 2.0, 'ram_limit': '2g',
+            'price': 999.0, 'yearly_price': 9990.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])],
+        })
+        # 8w/200gb contains the 4w/50gb tier -> floor up to 999
+        q = self.engine.compute('hosting', 8, 200, 'monthly')
+        self.assertEqual(q['breakdown']['tier_floor'], 999.0)
+        self.assertGreaterEqual(q['monthly'], 999.0)
+
     def test_created_plan_price_matches_engine(self):
         """A custom plan stamped from the engine carries the same price
         the engine quotes — i.e. checkout/plan == preview (consistency)."""

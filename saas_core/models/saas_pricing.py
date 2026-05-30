@@ -72,6 +72,29 @@ class SaasPricingEngine(models.AbstractModel):
         """S3/S4: cost-derived price floor. Default rates 0 -> 0.0."""
         return (workers * cfg['worker_floor']) + (storage * cfg['storage_floor'])
 
+    def _tier_floor(self, kind, workers, storage):
+        """S4: when the 'custom >= nearest tier' policy is ON, a custom
+        config may not be priced below the highest public-tier monthly
+        price whose resources it fully contains (workers AND storage both
+        >= the tier's). Returns 0.0 when the policy is OFF (default) or no
+        tier qualifies -> no-op."""
+        icp = self.env['ir.config_parameter'].sudo()
+        if icp.get_param('saas_master.custom_min_is_nearest_tier', 'False') != 'True':
+            return 0.0
+        tiers = self.env['saas.plan'].sudo().search([
+            ('is_public_tier', '=', True),
+            ('workers', '<=', workers),
+            ('storage_limit', '<=', storage),
+        ])
+        best = 0.0
+        for t in tiers:
+            t_kind = 'hosting' if any(
+                p.is_hosting for p in t.saas_product_ids
+            ) else 'services'
+            if t_kind == kind and t.price > best:
+                best = t.price
+        return best
+
     def _addons_total(self, kind, addon_codes):
         """S5: sum configured add-on monthly prices. No add-on model yet
         -> 0.0 (and no caller passes addon_codes in S1)."""
@@ -111,7 +134,9 @@ class SaasPricingEngine(models.AbstractModel):
         storage = self._clamp(storage, cfg['min_storage'], cfg['max_storage'])
 
         base = (workers * cfg['worker_price']) + (storage * cfg['storage_price_per_gb'])
-        floor = self._cost_floor(cfg, workers, storage)
+        cost_floor = self._cost_floor(cfg, workers, storage)
+        tier_floor = self._tier_floor(kind, workers, storage)
+        floor = max(cost_floor, tier_floor)
         floored = floor > base
         region_factor = self._region_multiplier(region)
 
@@ -144,6 +169,8 @@ class SaasPricingEngine(models.AbstractModel):
             'breakdown': {
                 'base': round(base, 2),
                 'floor': round(floor, 2),
+                'cost_floor': round(cost_floor, 2),
+                'tier_floor': round(tier_floor, 2),
                 'resource_monthly': round(resource_monthly, 2),
                 'addons_monthly': round(addons_monthly, 2),
                 # Per-resource split (pre-floor, pre-region) — kept so the
