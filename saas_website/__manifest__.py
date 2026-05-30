@@ -26,10 +26,13 @@
             'saas_website/static/src/js/veltnex_theme.js',
             'saas_website/static/src/css/cloudodoo.css',
             'saas_website/static/src/js/cloudodoo_app.js',
-            'saas_website/static/src/js/subdomain_check.js',
-            # portal_actions.js / portal_logs.js removed: the portal pages
-            # they drove (instance start/stop, live logs) are now the
-            # VELTNEX SPA, which calls /saas/api/v1 + the log SSE directly.
+            # portal_actions.js / portal_logs.js / subdomain_check.js
+            # removed: the portal pages they drove (instance start/stop,
+            # live logs) are now the VELTNEX SPA (calls /saas/api/v1 + the
+            # log SSE). subdomain_check.js was a dead duplicate — its widget
+            # selector (#subdomain) is in no template; the live subdomain
+            # checker is initSubdomainCheck() in cloudodoo_app.js (targets
+            # #subdomain-input, present on the configure pages).
         ],
     },
     'installable': True,
