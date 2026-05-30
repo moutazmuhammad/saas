@@ -51,7 +51,7 @@ export default function Databases() {
     try {
       const [d, b] = await Promise.all([
         api.databases(instanceId),
-        api.backups(instanceId).catch(() => [] as ApiBackup[]),
+        api.backups(instanceId).then((r) => r.backups).catch(() => [] as ApiBackup[]),
       ]);
       setData(d);
       setBackups(b);

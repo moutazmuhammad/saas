@@ -519,6 +519,36 @@ class SaasApi(http.Controller):
             raise AccessError(_("Database management is only available for hosting."))
         return instance
 
+    # States where the instance is NOT operational: the customer must not
+    # be able to take/restore/enable backups & snapshots, manage databases,
+    # or stream logs. ``stopped`` (paused) and ``suspended`` (e.g. unpaid)
+    # are the explicit blocks; the not-yet-deployed / dead states can't run
+    # these operations either, so they're blocked too. ``running`` is the
+    # only fully-operational state.
+    _BLOCKED_OP_STATES = (
+        'draft', 'pending_payment', 'paid', 'pending_provision',
+        'provisioning', 'stopped', 'failed', 'suspended',
+        'cancelled', 'cancelled_by_client',
+    )
+
+    def _require_running(self, instance):
+        """Raise UserError if the instance can't service backup / snapshot /
+        log / database operations in its current state. Authoritative
+        server-side gate — the SPA hides the controls, but a stopped or
+        suspended instance must reject these calls regardless of the UI."""
+        if instance.state in self._BLOCKED_OP_STATES:
+            if instance.state == 'suspended':
+                msg = _("This instance is suspended. Settle the outstanding "
+                        "invoice to restore access to backups, snapshots and "
+                        "logs.")
+            elif instance.state == 'stopped':
+                msg = _("This instance is stopped. Start it to access "
+                        "backups, snapshots and logs.")
+            else:
+                msg = _("This instance isn't running yet. Backups, snapshots "
+                        "and logs are available once it's running.")
+            raise UserError(msg)
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases',
                 type='json', auth='public')
     def db_list(self, instance_id, access_token=None):
@@ -559,6 +589,7 @@ class SaasApi(http.Controller):
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
+            self._require_running(instance)
             op = instance.hosting_db_create_async(
                 name=name or '', login=login or '',
                 password=password or '', lang='en_US', country_code=None,
@@ -575,6 +606,7 @@ class SaasApi(http.Controller):
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
+            self._require_running(instance)
             op = instance.hosting_db_drop_async(name=name or '')
         except UserError as e:
             return err(str(e), 'drop_failed')
@@ -591,6 +623,7 @@ class SaasApi(http.Controller):
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
+            self._require_running(instance)
             instance.action_purchase_daily_backup()
         except UserError as e:
             return err(str(e), 'enable_failed')
@@ -611,6 +644,7 @@ class SaasApi(http.Controller):
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
+            self._require_running(instance)
             instance.hosting_db_backup(
                 name=name or '',
                 backup_format='dump' if format == 'dump' else 'zip',
@@ -633,6 +667,7 @@ class SaasApi(http.Controller):
         if not new_password or len(new_password) < 6:
             return err(_("Choose a password of at least 6 characters."), 'invalid')
         try:
+            self._require_running(instance)
             reset_login = instance.hosting_db_reset_admin_password(
                 name=name or '', new_password=new_password,
                 login=(login or '').strip() or None,
@@ -652,10 +687,17 @@ class SaasApi(http.Controller):
             instance = self._instance(instance_id, access_token)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
+        # Stopped / suspended / not-yet-running: no snapshot access.
+        if instance.state in self._BLOCKED_OP_STATES:
+            return ok({'backups': [], 'ready': False, 'state': instance.state})
         backups = instance.backup_ids.filtered(
             lambda b: b.state in ('done', 'running')
         ).sorted('create_date', reverse=True)[:30]
-        return ok([self._serialize_backup(b) for b in backups])
+        return ok({
+            'backups': [self._serialize_backup(b) for b in backups],
+            'ready': True,
+            'state': instance.state,
+        })
 
     @http.route('/saas/api/v1/instances/<int:instance_id>/backups/create',
                 type='json', auth='public')
@@ -665,6 +707,7 @@ class SaasApi(http.Controller):
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
+            self._require_running(instance)
             instance.action_create_backup()
         except UserError as e:
             return err(str(e), 'backup_failed')
@@ -686,6 +729,10 @@ class SaasApi(http.Controller):
             instance = self._instance(instance_id, access_token)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
+        try:
+            self._require_running(instance)
+        except UserError as e:
+            return err(str(e), 'not_running')
         backup = instance.backup_ids.filtered(
             lambda b: b.id == backup_id and b.state == 'done'
         )

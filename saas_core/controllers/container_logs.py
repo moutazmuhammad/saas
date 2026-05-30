@@ -39,6 +39,12 @@ class ContainerLogsController(http.Controller):
         if not instance.exists():
             raise NotFound()
         instance.check_access('read')
+        # Only a running instance has a live container to stream. A stopped
+        # or suspended (or not-yet-deployed) instance must not expose logs
+        # to the customer. Managers keep cross-tenant access via the other
+        # route. (Authoritative gate — the SPA also hides the Logs control.)
+        if instance.state != 'running' and not request.env.user.has_group(ADMIN_LOG_GROUP):
+            raise Forbidden("Logs are only available while the instance is running.")
         return self._stream(
             instance.docker_server_id, instance._get_container_name(), tail,
         )

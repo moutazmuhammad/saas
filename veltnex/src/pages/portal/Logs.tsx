@@ -41,9 +41,14 @@ export default function Logs() {
     api.instance(instanceId).then(setInstance).catch(() => {});
   }, [instanceId]);
 
+  // Logs only stream while the instance is running. Stopped / suspended /
+  // not-yet-running instances have no live container — the server rejects
+  // the stream, so don't even open it; show a clear message instead.
+  const logsAvailable = instance ? instance.state === "running" : true;
+
   // Open / close the SSE stream based on pause state.
   React.useEffect(() => {
-    if (paused) {
+    if (paused || (instance && instance.state !== "running")) {
       sourceRef.current?.close();
       sourceRef.current = null;
       return;
@@ -77,7 +82,7 @@ export default function Logs() {
       es.close();
       sourceRef.current = null;
     };
-  }, [paused, instanceId]);
+  }, [paused, instanceId, instance]);
 
   // Auto-scroll to bottom on new lines.
   React.useEffect(() => {
@@ -103,27 +108,44 @@ export default function Logs() {
             Live container stream{instance ? ` · ${instance.name}` : ""}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setPaused((p) => !p)}>
-            {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
-            {paused ? "Resume" : "Pause"}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setAutoScroll((a) => !a)}
-            className={cn(autoScroll && "border-primary/40 text-primary-glow")}
-          >
-            <ArrowDownToLine className="size-4" />
-            Auto-scroll
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setLines([])}>
-            <Trash2 className="size-4" />
-            Clear
-          </Button>
-        </div>
+        {logsAvailable && (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setPaused((p) => !p)}>
+              {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
+              {paused ? "Resume" : "Pause"}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setAutoScroll((a) => !a)}
+              className={cn(autoScroll && "border-primary/40 text-primary-glow")}
+            >
+              <ArrowDownToLine className="size-4" />
+              Auto-scroll
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setLines([])}>
+              <Trash2 className="size-4" />
+              Clear
+            </Button>
+          </div>
+        )}
       </div>
 
+      {!logsAvailable ? (
+        <AlertBanner
+          className="mt-6"
+          variant="warning"
+          title="Logs unavailable"
+          description={
+            instance?.state === "suspended"
+              ? "This instance is suspended. Settle the outstanding invoice to view its logs."
+              : instance?.state === "stopped"
+                ? "This instance is stopped. Start it to view its live logs."
+                : "Live logs become available once the instance is running."
+          }
+        />
+      ) : (
+      <>
       {connError && (
         <AlertBanner className="mt-6" variant="warning" title="Log stream interrupted" description={connError} onDismiss={() => setConnError(null)} />
       )}
@@ -166,6 +188,8 @@ export default function Logs() {
           )}
         </div>
       </Card>
+      </>
+      )}
     </div>
   );
 }
