@@ -1,8 +1,10 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Archive, Download, Clock, ShieldCheck, ShieldAlert, HardDriveDownload } from "lucide-react";
+import { Archive, RotateCcw, Clock, ShieldCheck, ShieldAlert, HardDriveDownload } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input, Label } from "@/components/ui/input";
+import { Dialog } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ActionButton";
 import { AlertBanner } from "@/components/AlertBanner";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -23,6 +25,14 @@ export default function Backups() {
   const [instance, setInstance] = React.useState<ApiInstance | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [enabling, setEnabling] = React.useState(false);
+  const [restoreTarget, setRestoreTarget] = React.useState<ApiBackup | null>(null);
+
+  const handleRestore = async (backup: ApiBackup, confirm: string) => {
+    await api.backupRestore(instanceId, backup.id, confirm);
+    // The instance flips to provisioning while restic restores it —
+    // send the customer to the instance page to watch the progress.
+    navigate(`/my/instances/${id}`);
+  };
 
   const load = React.useCallback(async () => {
     try {
@@ -141,19 +151,15 @@ export default function Backups() {
                   </div>
                   <div className="flex items-center gap-2 sm:justify-end">
                     <StatusBadge status={b.status} />
-                    {b.download_url ? (
-                      <a href={b.download_url} target="_blank" rel="noreferrer">
-                        <Button size="sm" variant="ghost" disabled={b.status !== "available"}>
-                          <Download className="size-4" />
-                          <span className="hidden sm:inline">Download</span>
-                        </Button>
-                      </a>
-                    ) : (
-                      <Button size="sm" variant="ghost" disabled>
-                        <Download className="size-4" />
-                        <span className="hidden sm:inline">Download</span>
-                      </Button>
-                    )}
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={b.status !== "available"}
+                      onClick={() => setRestoreTarget(b)}
+                    >
+                      <RotateCcw className="size-4" />
+                      <span className="hidden sm:inline">Restore</span>
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -161,7 +167,91 @@ export default function Backups() {
           )}
         </>
       ) : null}
+
+      <RestoreSnapshotDialog
+        backup={restoreTarget}
+        instanceName={instance?.name || ""}
+        onClose={() => setRestoreTarget(null)}
+        onRestore={handleRestore}
+      />
     </div>
+  );
+}
+
+function RestoreSnapshotDialog({
+  backup,
+  instanceName,
+  onClose,
+  onRestore,
+}: {
+  backup: ApiBackup | null;
+  instanceName: string;
+  onClose: () => void;
+  onRestore: (backup: ApiBackup, confirm: string) => Promise<void>;
+}) {
+  const [confirm, setConfirm] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (backup) {
+      setConfirm("");
+      setLoading(false);
+      setError(null);
+    }
+  }, [backup]);
+
+  const ok = confirm.trim() === instanceName && !!instanceName;
+
+  const submit = async () => {
+    if (!backup || !ok) return;
+    setError(null);
+    setLoading(true);
+    try {
+      await onRestore(backup, confirm.trim());
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't start the restore.");
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!backup} onClose={onClose} title="Restore from snapshot">
+      {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't restore" description={error} />}
+      <div className="flex gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
+          <RotateCcw className="size-5" />
+        </span>
+        <div className="text-sm">
+          <p className="font-medium text-foreground">Restore this instance to the snapshot?</p>
+          <p className="mt-1 text-muted">
+            This replaces the instance's <strong>current</strong> databases, files, and configuration with the
+            state captured in this snapshot{backup ? ` (${formatDateTime(backup.created)})` : ""}. A fresh
+            pre-restore snapshot is taken first, but anything created since cannot be recovered otherwise.
+          </p>
+        </div>
+      </div>
+      <div className="mt-5 space-y-2">
+        <Label htmlFor="restore-confirm">
+          Type <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">{instanceName}</code> to confirm
+        </Label>
+        <Input
+          id="restore-confirm"
+          autoFocus
+          autoComplete="off"
+          placeholder={instanceName}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && ok && submit()}
+        />
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={loading}>Cancel</Button>
+        <ActionButton variant="danger" loading={loading} loadingText="Starting restore…" disabled={!ok} onClick={submit}>
+          Restore instance
+        </ActionButton>
+      </div>
+    </Dialog>
   );
 }
 

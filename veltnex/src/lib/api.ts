@@ -322,6 +322,8 @@ export const api = {
     }),
 
   backups: (id: number) => rpc<ApiBackup[]>(`/saas/api/v1/instances/${id}/backups`),
+  backupRestore: (id: number, backupId: number, confirm: string) =>
+    rpc<{ state: string }>(`/saas/api/v1/instances/${id}/backups/${backupId}/restore`, { confirm }),
   backupCreate: (id: number) => rpc(`/saas/api/v1/instances/${id}/backups/create`),
 
   invoices: () => rpc<ApiInvoice[]>("/saas/api/v1/invoices"),

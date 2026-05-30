@@ -587,6 +587,39 @@ class SaasApi(http.Controller):
             return err(_("Couldn't start the backup. Please try again."), 'backup_failed')
         return ok({})
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/backups/<int:backup_id>/restore',
+                type='json', auth='public')
+    def backup_restore(self, instance_id, backup_id, confirm=None,
+                       access_token=None, **kw):
+        """Restore the instance from a snapshot. Destructive — replaces
+        the instance's current state with the snapshot. Requires the
+        caller to retype the instance name as confirmation. Runs in the
+        background; the instance flips to ``provisioning`` and the UI
+        polls its status."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        backup = instance.backup_ids.filtered(
+            lambda b: b.id == backup_id and b.state == 'done'
+        )
+        if not backup:
+            return err(_("That snapshot isn't available to restore."), 'invalid')
+        expected = backup.db_name or instance.subdomain or ''
+        if (confirm or '').strip() != expected:
+            return err(_("Type the instance name exactly to confirm the restore."), 'confirm')
+        try:
+            if backup.is_full_instance:
+                instance.action_restore_full_instance(backup.id)
+            else:
+                instance.action_restore_backup(backup.id)
+        except UserError as e:
+            return err(str(e), 'restore_failed')
+        except Exception:
+            _logger.exception("Restore failed for instance %s", instance_id)
+            return err(_("The restore couldn't be started. Please try again."), 'restore_failed')
+        return ok({'state': instance.state})
+
     # ==================================================================
     #  Portal: invoices
     # ==================================================================
