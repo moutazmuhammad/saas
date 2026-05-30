@@ -28,6 +28,75 @@ ONDEMAND_PREFIX = 'ondemand'
 BACKUP_STREAM_READ_TIMEOUT = 3600
 
 
+# Host-side builder for the on-demand ZIP. Streams an Odoo-format zip
+# (manifest.json + dump.sql + filestore/) to STDOUT so Odoo can pipe it
+# straight to object storage — nothing is staged on disk, so DB size is
+# not a constraint. ``dump.sql`` is PLAIN SQL (not -Fc) because that's
+# what Odoo's zip-restore feeds to psql. All inputs arrive via env.
+_HOST_ZIP_BUILDER = r'''
+import os, sys, json, shutil, subprocess, zipfile, tarfile
+
+C = os.environ['SAAS_C']
+DB = os.environ['SAAS_DB']
+H = os.environ['SAAS_H']
+P = os.environ['SAAS_P']
+U = os.environ['SAAS_U']
+PW = os.environ['SAAS_PGPASSWORD']
+MANIFEST = os.environ.get('SAAS_MANIFEST', '{}')
+CHUNK = 4 * 1024 * 1024
+
+out = sys.stdout.buffer
+zf = zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, allowZip64=True)
+zf.writestr('manifest.json', MANIFEST)
+
+# dump.sql — plain SQL streamed from pg_dump inside the container.
+p = subprocess.Popen(
+    ['docker', 'exec', '-e', 'PGPASSWORD=' + PW, C, 'pg_dump',
+     '-h', H, '-p', P, '-U', U, '-d', DB,
+     '--no-owner', '--no-privileges'],
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+with zf.open('dump.sql', 'w') as e:
+    shutil.copyfileobj(p.stdout, e, CHUNK)
+rc = p.wait()
+if rc != 0:
+    sys.stderr.write(p.stderr.read().decode('utf-8', 'replace'))
+    sys.exit(10)
+
+# filestore/ — streamed as a tar from the container, repacked into the zip.
+probe = subprocess.run(
+    ['docker', 'exec', C, 'sh', '-c',
+     'if [ -d /var/lib/odoo/filestore/%s ]; then echo A; '
+     'elif [ -d /var/lib/odoo/.local/share/Odoo/filestore/%s ]; then echo B; '
+     'else echo N; fi' % (DB, DB)],
+    stdout=subprocess.PIPE)
+loc = probe.stdout.decode().strip()
+fspath = None
+if loc == 'A':
+    fspath = '/var/lib/odoo/filestore/%s' % DB
+elif loc == 'B':
+    fspath = '/var/lib/odoo/.local/share/Odoo/filestore/%s' % DB
+if fspath:
+    tp = subprocess.Popen(
+        ['docker', 'exec', C, 'tar', '-C', fspath, '-cf', '-', '.'],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    tar = tarfile.open(fileobj=tp.stdout, mode='r|')
+    for m in tar:
+        if not m.isfile():
+            continue
+        name = m.name[2:] if m.name.startswith('./') else m.name
+        src = tar.extractfile(m)
+        if src is None:
+            continue
+        with zf.open('filestore/' + name, 'w') as e:
+            shutil.copyfileobj(src, e, CHUNK)
+    tar.close()
+    tp.wait()
+
+zf.close()
+out.flush()
+'''
+
+
 class _CountingReader:
     """Wrap a readable file-like and tally bytes read.
 
@@ -100,12 +169,16 @@ class SaasInstanceBackup(models.Model):
              'Restorable as a single unit.',
     )
     format = fields.Selection(
-        [('zip', 'Zip (legacy)'), ('restic', 'Restic (deduplicated)')],
+        [('zip', 'Zip (dump.sql + filestore)'),
+         ('dump', 'SQL dump (pg_dump custom)'),
+         ('restic', 'Restic (deduplicated)')],
         string='Backup Format', default='zip', index=True,
-        help='Storage format. New daily full-instance backups use '
-             'restic for incremental deduplication and per-instance '
-             'encryption; on-demand and pre-restic legacy backups '
-             'remain in single-zip format.',
+        help='Storage format. Daily full-instance backups use restic '
+             '(deduplicated, encrypted). On-demand backups are either '
+             '``zip`` (Odoo zip: dump.sql + filestore, restorable via '
+             "Odoo's database manager) or ``dump`` (pg_dump custom "
+             'format, DB only, restorable via pg_restore) — both '
+             'streamed straight to storage so any DB size works.',
     )
     restic_run_tag = fields.Char(
         string='Restic Run Tag', index=True,
@@ -416,6 +489,86 @@ class SaasInstanceBackup(models.Model):
                 if exit_code != 0:
                     raise UserError(_(
                         "The database backup (pg_dump) failed:\n%s"
+                    ) % (err_tail or 'exit code %s' % exit_code))
+                raise UserError(_(
+                    "Uploading the backup failed:\n%s"
+                ) % upload_error)
+
+        return reader.bytes_read
+
+    def _stream_odoo_zip_to_bucket(self, instance, object_key, db_name):
+        """Stream an Odoo-format zip (manifest + plain dump.sql +
+        filestore) from the instance's container straight to object
+        storage. Returns the uploaded size in bytes.
+
+        Diskless and bounded-memory: a small Python builder runs on the
+        docker host, writes the zip to stdout (pg_dump piped into a zip
+        entry, filestore repacked from a container tar stream), and Odoo
+        pipes that into the SDK's multipart uploader — so DB/filestore
+        size is not a constraint. The result restores via Odoo's
+        database manager (it's the same layout as Odoo's own zip backup).
+        """
+        instance._ensure_can_ssh()
+        container = instance._get_container_name()
+        db_host = instance._get_db_host()
+        db_port = str(instance.db_server_id.psql_port or 5432)
+
+        import json
+        manifest = json.dumps({
+            'odoo_version': instance.odoo_version_id.name or '',
+            'database': db_name,
+            'partner': instance.partner_id.name or '',
+            'timestamp': fields.Datetime.now().isoformat(),
+            'instance': instance.name or '',
+        }, indent=2)
+
+        ts = fields.Datetime.now().strftime('%Y%m%d%H%M%S')
+        script_path = '/tmp/saas_zipbuild_%s_%s.py' % (db_name, ts)
+        env = {
+            'SAAS_C': container,
+            'SAAS_DB': db_name,
+            'SAAS_H': db_host,
+            'SAAS_P': db_port,
+            'SAAS_U': instance.sudo().db_user or '',
+            'SAAS_PGPASSWORD': instance.sudo().db_password or '',
+            'SAAS_MANIFEST': manifest,
+        }
+        env_prefix = ' '.join(
+            '%s=%s' % (k, shlex.quote(str(v))) for k, v in env.items()
+        )
+        with instance.docker_server_id._get_ssh_connection() as ssh:
+            ssh.write_file(script_path, _HOST_ZIP_BUILDER)
+            stdout, stderr = ssh.exec_command_streaming(
+                '%s python3 %s' % (env_prefix, shlex.quote(script_path)),
+                timeout=BACKUP_STREAM_READ_TIMEOUT,
+            )
+            reader = _CountingReader(stdout)
+            upload_error = None
+            try:
+                self._upload_stream_to_bucket(
+                    object_key, reader, content_type='application/zip',
+                )
+            except Exception as e:
+                upload_error = e
+            exit_code = stdout.channel.recv_exit_status()
+            err_tail = ''
+            try:
+                err_tail = stderr.read().decode('utf-8', 'replace')[-2000:]
+            except Exception:
+                pass
+            try:
+                ssh.execute('rm -f %s' % shlex.quote(script_path))
+            except Exception:
+                pass
+
+            if upload_error is not None or exit_code != 0:
+                try:
+                    self._delete_bucket_path(object_key)
+                except Exception:
+                    pass
+                if exit_code != 0:
+                    raise UserError(_(
+                        "The database backup (zip) failed:\n%s"
                     ) % (err_tail or 'exit code %s' % exit_code))
                 raise UserError(_(
                     "Uploading the backup failed:\n%s"
@@ -1605,9 +1758,10 @@ fi
         db_name = self.db_name or instance.subdomain
 
         if self.ephemeral:
-            object_key = '%s/%s/%s/%s/%s.dump' % (
+            ext = 'dump' if self.format == 'dump' else 'zip'
+            object_key = '%s/%s/%s/%s/%s.%s' % (
                 ONDEMAND_PREFIX, partner_folder, instance.subdomain,
-                db_name, self.name,
+                db_name, self.name, ext,
             )
         elif instance.is_hosting:
             object_key = '%s/%s/%s/%s.zip' % (
@@ -1620,11 +1774,16 @@ fi
 
         try:
             if self.ephemeral:
-                # On-demand: stream pg_dump custom format to the bucket —
-                # diskless, multipart, any size.
-                size_bytes = self._stream_pg_dump_to_bucket(
-                    instance, object_key, db_name,
-                )
+                # On-demand: stream straight to the bucket — diskless,
+                # multipart, any size — in the customer's chosen format.
+                if self.format == 'dump':
+                    size_bytes = self._stream_pg_dump_to_bucket(
+                        instance, object_key, db_name,
+                    )
+                else:
+                    size_bytes = self._stream_odoo_zip_to_bucket(
+                        instance, object_key, db_name,
+                    )
             else:
                 size_bytes = self._create_and_upload_backup(
                     instance, object_key, db_name=db_name,

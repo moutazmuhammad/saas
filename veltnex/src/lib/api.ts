@@ -176,6 +176,7 @@ export interface ApiBackup {
   download_url: string;
   is_full_instance: boolean;
   db_name?: string;
+  format?: string;
 }
 
 export interface ApiInvoice {
@@ -305,8 +306,8 @@ export const api = {
     }),
   dbDrop: (id: number, name: string) =>
     rpc<{ db_name: string }>(`/saas/api/v1/instances/${id}/databases/drop`, { name }),
-  dbBackup: (id: number, name: string) =>
-    rpc(`/saas/api/v1/instances/${id}/databases/backup`, { name }),
+  dbBackup: (id: number, name: string, format: "zip" | "dump" = "zip") =>
+    rpc(`/saas/api/v1/instances/${id}/databases/backup`, { name, format }),
   dbResetPassword: (id: number, name: string, new_password: string, login?: string) =>
     rpc<{ login: string }>(`/saas/api/v1/instances/${id}/databases/reset-password`, {
       name,

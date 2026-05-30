@@ -104,8 +104,8 @@ export default function Databases() {
   // Trigger a backup of one database, then reload so it shows up (and
   // becomes downloadable) right inside the per-database backups dialog.
   // Throws on failure so the dialog surfaces the error inline.
-  const handleBackup = async (name: string) => {
-    await api.dbBackup(instanceId, name);
+  const handleBackup = async (name: string, format: "zip" | "dump") => {
+    await api.dbBackup(instanceId, name, format);
     await load();
   };
 
@@ -316,16 +316,18 @@ function DatabaseBackupsDialog({
 }: {
   dbName: string | null;
   backups: ApiBackup[];
-  onBackup: (name: string) => Promise<void>;
+  onBackup: (name: string, format: "zip" | "dump") => Promise<void>;
   onClose: () => void;
 }) {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [format, setFormat] = React.useState<"zip" | "dump">("zip");
 
   React.useEffect(() => {
     if (dbName) {
       setLoading(false);
       setError(null);
+      setFormat("zip");
     }
   }, [dbName]);
 
@@ -334,7 +336,7 @@ function DatabaseBackupsDialog({
     setError(null);
     setLoading(true);
     try {
-      await onBackup(dbName);
+      await onBackup(dbName, format);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Couldn't start the backup.");
     } finally {
@@ -345,7 +347,29 @@ function DatabaseBackupsDialog({
   return (
     <Dialog open={!!dbName} onClose={onClose} title="Backups" description={dbName ? `On-demand backup for “${dbName}”.` : undefined}>
       {error && <AlertBanner className="mb-4" variant="danger" title="Backup" description={error} />}
-      <div className="flex items-center justify-between gap-3">
+      <div className="space-y-2">
+        <Label>Format</Label>
+        <div className="grid grid-cols-2 gap-2">
+          {([
+            { v: "zip", title: "ZIP", hint: "Database + files" },
+            { v: "dump", title: "Dump", hint: "Database only" },
+          ] as const).map((o) => (
+            <button
+              key={o.v}
+              type="button"
+              onClick={() => setFormat(o.v)}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-left transition-colors",
+                format === o.v ? "border-primary bg-primary/10" : "border-border hover:bg-border/40",
+              )}
+            >
+              <p className="text-sm font-medium">{o.title}</p>
+              <p className="text-xs text-muted">{o.hint}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="mt-4 flex items-center justify-between gap-3">
         <p className="text-sm text-muted">
           {backups.length ? "Current backup" : "No on-demand backup yet."}
         </p>
@@ -359,7 +383,14 @@ function DatabaseBackupsDialog({
           {backups.map((b) => (
             <div key={b.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{formatDateTime(b.created)}</p>
+                <p className="flex items-center gap-2 truncate text-sm font-medium">
+                  {formatDateTime(b.created)}
+                  {b.format && (
+                    <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted">
+                      {b.format === "dump" ? "dump" : "zip"}
+                    </span>
+                  )}
+                </p>
                 {b.status === "available" && b.size_mb > 0 && (
                   <p className="text-xs text-muted">{(b.size_mb / 1024).toFixed(2)} GB</p>
                 )}

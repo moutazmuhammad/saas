@@ -496,13 +496,17 @@ class SaasApi(http.Controller):
 
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/backup',
                 type='json', auth='public')
-    def db_backup(self, instance_id, name=None, access_token=None, **kw):
+    def db_backup(self, instance_id, name=None, format=None,
+                  access_token=None, **kw):
         try:
             instance = self._hosting(instance_id, access_token)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
-            instance.hosting_db_backup(name=name or '')
+            instance.hosting_db_backup(
+                name=name or '',
+                backup_format='dump' if format == 'dump' else 'zip',
+            )
         except UserError as e:
             return err(str(e), 'backup_failed')
         except Exception:
@@ -676,6 +680,7 @@ class SaasApi(http.Controller):
             'download_url': b.download_url or '',
             'is_full_instance': b.is_full_instance,
             'db_name': b.db_name or '',
+            'format': b.format or '',
         }
 
     def _serialize_invoice(self, inv, detail=False):

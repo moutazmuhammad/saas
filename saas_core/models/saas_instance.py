@@ -8057,7 +8057,7 @@ class SaasInstance(models.Model):
             )
         return name
 
-    def hosting_db_backup(self, name):
+    def hosting_db_backup(self, name, backup_format='zip'):
         """Create the instance's single on-demand backup of one database.
 
         Triggered from the Databases page. Policy (per customer
@@ -8122,6 +8122,7 @@ class SaasInstance(models.Model):
                 )
             b.unlink()
 
+        fmt = 'dump' if backup_format == 'dump' else 'zip'
         now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         backup = Backup.create({
             'instance_id': self.id,
@@ -8130,6 +8131,7 @@ class SaasInstance(models.Model):
             'state': 'running',
             'is_full_instance': False,
             'ephemeral': True,
+            'format': fmt,
         })
         run_in_background(
             backup, '_run_portal_backup',
