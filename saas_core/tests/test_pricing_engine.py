@@ -429,3 +429,51 @@ class TestPricingEngine(TransactionCase):
         if free:
             inst.support_plan_id = free.id
             self.assertIsNone(inst._support_order_line('monthly', 'Monthly'))
+
+    def test_v2_full_stack_order(self):
+        """Integration lock for P1-P6 in one quote — verifies the order of
+        operations: region scales compute+storage+floor only; add-ons and
+        support are flat (after region); the minimum is the final floor.
+
+            base        = 2*10 + 20*0.3           = 26.0
+            region x2  -> resource                = 52.0
+            backup (storage: 20GB -> 2 blocks*$2) + 4.0   (not region-scaled)
+            support flat                          + 30.0  (not region-scaled)
+            pre_minimum                           = 86.0  (> min 50 -> not floored)
+        """
+        # storage-aware backup: base 0, $2 per 10GB block.
+        self.env['saas.addon'].sudo().create({
+            'name': 'TEST v2 backup', 'code': 'test_v2_backup',
+            'applies_to': 'hosting', 'price_mode': 'storage',
+            'price_per_block': 2.0, 'block_gb': 10,
+        })
+        self.env['saas.support.plan'].sudo().create({
+            'name': 'TEST v2 sup', 'code': 'test_v2_sup', 'monthly_price': 30.0,
+        })
+        region = self.env['saas.region'].sudo().create({
+            'name': 'TEST v2 x2', 'code': 'test_v2_x2', 'price_multiplier': 2.0,
+        })
+        self._set({'saas_master.hosting_minimum_monthly': '50'})
+
+        q = self.engine.compute(
+            'hosting', 2, 20, 'monthly',
+            addon_codes=['test_v2_backup'], region=region.id,
+            support_code='test_v2_sup',
+        )
+        b = q['breakdown']
+        # region scales compute only:
+        self.assertAlmostEqual(b['resource_monthly'], (2 * 10 + 20 * 0.3) * 2, places=2)  # 52.0
+        # backup: 20GB -> 2 blocks -> 4.0 (NOT region-scaled)
+        self.assertAlmostEqual(b['addons_monthly'], 4.0, places=2)
+        # support flat 30 (NOT region-scaled)
+        self.assertAlmostEqual(b['support_monthly'], 30.0, places=2)
+        # pre_minimum = 52 + 4 + 30 = 86 ; above the 50 minimum -> not floored
+        self.assertAlmostEqual(b['pre_minimum'], 86.0, places=2)
+        self.assertFalse(q['minimum_applied'])
+        self.assertAlmostEqual(q['monthly'], 86.0, places=2)
+
+        # Now drop everything tiny so the minimum bites: 1w/5gb, no extras.
+        q2 = self.engine.compute('hosting', 1, 5, 'monthly')
+        self.assertTrue(q2['minimum_applied'])
+        self.assertAlmostEqual(q2['monthly'], 50.0, places=2)
+        self._set({'saas_master.hosting_minimum_monthly': '0'})

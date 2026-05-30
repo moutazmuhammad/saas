@@ -4,6 +4,7 @@
 > backup pricing, (3) support plans as paid add-ons, (4) better tier
 > protection. **Plan only — not implemented yet.** Implement step-by-step
 > (P1→P7) on approval, each phase behaviour-neutral by default.
+> **STATUS: ALL PHASES COMPLETE (P1–P7) — merged to `price`, behaviour-neutral until configured.**
 >
 > Builds on the existing single engine `saas.pricing.engine.compute`. Read
 > `pricing-playbook.md` (how pricing works today) first.
@@ -18,7 +19,7 @@
 - [x] **P4** — Storage-aware backup pricing (extend `saas.addon`)
 - [x] **P5** — Wire support + new backup into recurring billing
 - [x] **P6** — Customer UI (configure/upgrade/reactivate: support picker + line items)
-- [ ] **P7** — Migration + tests + docs
+- [x] **P7** — Migration + tests + docs
 
 ---
 
