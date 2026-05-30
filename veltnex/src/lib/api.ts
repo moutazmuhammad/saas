@@ -241,6 +241,13 @@ export interface ApiInstance {
   invoices?: ApiInvoice[];
   has_unpaid_invoice?: boolean;
   checkout_url?: string;
+  // cancelled-instance reactivation (detail-only)
+  is_cancelled?: boolean;
+  has_retained_snapshot?: boolean;
+  retained_snapshot_date?: string;
+  restoration_fee?: number;
+  currency?: string;
+  reactivate_url?: string;
 }
 
 export interface DashboardData {

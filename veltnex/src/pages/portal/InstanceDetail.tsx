@@ -34,6 +34,18 @@ import { cn } from "@/lib/utils";
 
 const TRANSITIONAL = new Set(["provisioning", "pending_provision", "paid", "pending_payment"]);
 
+function formatMoney(amount: number, currency = "USD") {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${amount} ${currency}`;
+  }
+}
+
 export default function InstanceDetail() {
   const { id = "" } = useParams();
   const instanceId = Number(id);
@@ -247,6 +259,38 @@ export default function InstanceDetail() {
           action={
             <Button size="sm" variant="secondary" onClick={() => navigate("/my/billing")}>
               View invoices
+            </Button>
+          }
+        />
+      )}
+      {!instance.has_unpaid_invoice && instance.is_cancelled && (
+        <AlertBanner
+          className="mt-6"
+          variant="warning"
+          title={
+            instance.has_retained_snapshot
+              ? "This instance is cancelled — your last snapshot is kept"
+              : "This instance is cancelled"
+          }
+          description={
+            instance.has_retained_snapshot
+              ? `We've kept your most recent full snapshot${
+                  instance.retained_snapshot_date
+                    ? ` (${formatDate(instance.retained_snapshot_date)})` : ""
+                }. Reactivate the instance to restore it. Because the instance was deleted, a one-time data-restoration fee${
+                  instance.restoration_fee
+                    ? ` of ${formatMoney(instance.restoration_fee, instance.currency)}`
+                    : ""
+                } applies on top of the new plan.`
+              : "Reactivate to provision a fresh instance. No snapshot was retained, so it will start empty."
+          }
+          action={
+            <Button
+              size="sm"
+              onClick={() => (window.location.href = instance.reactivate_url || `/my/instances/${id}/reactivate`)}
+            >
+              <RotateCw className="size-4" />
+              Reactivate
             </Button>
           }
         />
