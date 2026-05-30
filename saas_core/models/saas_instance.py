@@ -2630,11 +2630,16 @@ class SaasInstance(models.Model):
         self.db_size = self._format_bytes(db_bytes) if db_bytes else ''
         self.db_size_bytes = db_bytes
 
-        # -- Total storage = disk + db (server-side only) --
-        # Cloud backups (S3/GCS) are excluded: they live in external
-        # storage, not on the server, and should not count against the
-        # instance's plan storage limit.
-        total_bytes = disk_bytes + db_bytes
+        # -- Total storage = instance data + db + HALF the snapshot footprint --
+        # Per product policy: the customer's full instance data (the
+        # server-side folder) + their database + HALF of the total
+        # snapshot size count against the plan's storage allowance.
+        # Snapshots are restic (deduplicated): each full-instance backup
+        # record stores the WHOLE repo's current size, so the latest
+        # record is the current total snapshot footprint — we do NOT sum
+        # records (that would multiply the repo by the record count).
+        snapshot_bytes = self._snapshot_total_bytes()
+        total_bytes = disk_bytes + db_bytes + snapshot_bytes // 2
         self.total_storage = self._format_bytes(total_bytes) if total_bytes else ''
         self.total_storage_bytes = total_bytes
 
@@ -2644,6 +2649,29 @@ class SaasInstance(models.Model):
         self.storage_usage_pct = round(storage_pct, 1)
 
         self.usage_last_updated = fields.Datetime.now()
+
+    def _snapshot_total_bytes(self):
+        """Current total snapshot footprint for this instance, in bytes.
+
+        Snapshots are restic (deduplicated), and every full-instance
+        backup record stores the whole repo's size at that run — so the
+        most recent completed record IS the current total footprint.
+        Summing records would over-count by the number of runs. We take
+        the latest, with a small fallback to the max of recent records in
+        case the latest run couldn't capture ``restic stats``.
+        """
+        self.ensure_one()
+        recent = self.env['saas.instance.backup'].sudo().search([
+            ('instance_id', '=', self.id),
+            ('is_full_instance', '=', True),
+            ('state', '=', 'done'),
+        ], order='create_date desc', limit=5)
+        if not recent:
+            return 0
+        size_mb = recent[0].size_mb or 0.0
+        if size_mb <= 0:
+            size_mb = max((b.size_mb or 0.0) for b in recent)
+        return int(size_mb * 1024 * 1024)
 
     # ------------------------------------------------------------------
     # Live metrics: cheap-poll heartbeat + decoupled, batched sampler
