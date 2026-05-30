@@ -635,6 +635,30 @@ class SaasApi(http.Controller):
             'checkout_url': '/my/instances/%s/daily-backup/checkout' % instance.id,
         })
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/invoice/cancel',
+                type='json', auth='public')
+    def invoice_cancel(self, instance_id, access_token=None, **kw):
+        """Decline an optional unpaid invoice instead of paying it. Cancels
+        the invoice (and, if the instance was never deployed, the instance
+        too). Mandatory invoices can't be cancelled here."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        invoice = instance._get_cancellable_unpaid_invoice()
+        if not invoice:
+            return err(_("There's no cancellable invoice for this instance."),
+                       'nothing_to_cancel')
+        try:
+            result = instance.action_client_cancel_invoice(invoice)
+        except UserError as e:
+            return err(str(e), 'cancel_failed')
+        except Exception:
+            _logger.exception("Invoice cancel failed for %s", instance_id)
+            return err(_("We couldn't cancel that invoice. Please try again."),
+                       'cancel_failed')
+        return ok({'result': result, 'state': instance.state})
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/backup',
                 type='json', auth='public')
     def db_backup(self, instance_id, name=None, format=None,
@@ -860,6 +884,10 @@ class SaasApi(http.Controller):
                     and i.amount_residual > 0 for i in invoices
                 ),
                 'checkout_url': '/my/instances/%s/checkout' % instance.id,
+                # An optional unpaid invoice the customer may decline instead
+                # of paying (plan upgrade / add-on). Mandatory invoices
+                # (initial / renewal / restoration) are not cancellable.
+                'cancellable_invoice_id': instance._get_cancellable_unpaid_invoice().id or False,
             })
             # Cancelled instances: surface the retained snapshot (if any) so
             # the customer knows their data is kept and can reactivate to

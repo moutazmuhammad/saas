@@ -241,6 +241,8 @@ export interface ApiInstance {
   invoices?: ApiInvoice[];
   has_unpaid_invoice?: boolean;
   checkout_url?: string;
+  // optional unpaid invoice the customer may decline (0/false if none)
+  cancellable_invoice_id?: number | false;
   // cancelled-instance reactivation (detail-only)
   is_cancelled?: boolean;
   has_retained_snapshot?: boolean;
@@ -340,6 +342,8 @@ export const api = {
     rpc(`/saas/api/v1/instances/${id}/databases/backup`, { name, format }),
   dailyBackupEnable: (id: number) =>
     rpc<{ checkout_url: string }>(`/saas/api/v1/instances/${id}/daily-backup/enable`),
+  invoiceCancel: (id: number) =>
+    rpc<{ result: string; state: string }>(`/saas/api/v1/instances/${id}/invoice/cancel`),
   dbResetPassword: (id: number, name: string, new_password: string, login?: string) =>
     rpc<{ login: string }>(`/saas/api/v1/instances/${id}/databases/reset-password`, {
       name,

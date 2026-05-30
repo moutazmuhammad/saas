@@ -1111,6 +1111,93 @@ class SaasInstance(models.Model):
             return self.env['account.move']
         return sale_orders.mapped('invoice_ids')
 
+    # Invoice origin prefixes the client may NOT cancel — these are
+    # mandatory (the dunning system enforces payment). Everything else
+    # (plan upgrades, the daily-backup add-on, …) is optional and the
+    # client can decline it from the portal.
+    _NON_CANCELLABLE_INVOICE_PREFIXES = (
+        'SAAS:INITIAL:', 'SAAS:RENEWAL:', 'SAAS:RESTORATION:',
+        # Legacy translated prefixes (pre token-based origins).
+        'Renewal:', 'Data restoration:',
+    )
+
+    def _invoice_is_client_cancellable(self, invoice):
+        """True if the client may cancel this unpaid invoice (it's optional,
+        not an initial subscription / renewal / restoration)."""
+        self.ensure_one()
+        if not invoice or invoice.state != 'posted':
+            return False
+        if invoice.payment_state in ('paid', 'in_payment'):
+            return False
+        origins = invoice.line_ids.sale_line_ids.order_id.mapped('origin')
+        return not any(
+            o and any(o.startswith(p) for p in self._NON_CANCELLABLE_INVOICE_PREFIXES)
+            for o in origins
+        )
+
+    def _get_cancellable_unpaid_invoice(self):
+        """The single unpaid, client-cancellable invoice for this instance
+        (or empty recordset). Used to offer a "Decline / Cancel" action
+        instead of nagging the customer to pay forever."""
+        self.ensure_one()
+        for inv in self._get_all_invoices().filtered(
+            lambda i: i.state == 'posted'
+            and i.payment_state not in ('paid', 'in_payment')
+            and i.amount_residual > 0
+        ).sorted('create_date', reverse=True):
+            if self._invoice_is_client_cancellable(inv):
+                return inv
+        return self.env['account.move']
+
+    def action_client_cancel_invoice(self, invoice):
+        """Client declines an optional unpaid invoice: cancel it, undo any
+        pending plan change, and — if the instance was never deployed
+        (draft / pending_payment) — cancel the instance so the subdomain is
+        freed. Returns a short status string: 'cancelled' | 'instance_cancelled'.
+        Raises UserError if the invoice isn't client-cancellable."""
+        self.ensure_one()
+        if not self._invoice_is_client_cancellable(invoice):
+            raise UserError(_(
+                "This invoice is required and can't be cancelled. Please "
+                "complete the payment or contact support."
+            ))
+        from markupsafe import Markup
+        invoice.button_cancel()
+
+        if self.pending_plan_id:
+            self._append_log("Pending upgrade cancelled by client.")
+            self.message_post(body=Markup(
+                "<b>Client cancelled plan upgrade payment</b><br/>"
+                "Was upgrading to: <b>%s</b><br/>Invoice: %s"
+            ) % (self.pending_plan_id.name, invoice.name))
+            try:
+                self._send_notification(
+                    'saas_core.mail_template_saas_payment_cancelled')
+            except Exception:
+                _logger.exception("payment-cancelled notice failed for %s", self.id)
+            self.write({
+                'pending_plan_id': False,
+                'pending_billing_period': False,
+            })
+
+        if self.state in ('pending_payment', 'draft'):
+            subdomain = self.name or self.subdomain
+            self.write({
+                'state': 'cancelled_by_client',
+                'cancellation_reason': (
+                    "Client declined the initial order before payment.\n"
+                    "Invoice: %s\nSubdomain: %s" % (invoice.name, subdomain)
+                ),
+            })
+            self._append_log("Order declined by client. Subdomain released.")
+            try:
+                self._send_notification(
+                    'saas_core.mail_template_saas_payment_cancelled')
+            except Exception:
+                _logger.exception("order-cancelled notice failed for %s", self.id)
+            return 'instance_cancelled'
+        return 'cancelled'
+
     # ========== Sales & Invoicing Actions ==========
 
     def _get_daily_backup_product(self):

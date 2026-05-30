@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ActionButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { AlertBanner } from "@/components/AlertBanner";
@@ -57,6 +58,8 @@ export default function InstanceDetail() {
   const [instance, setInstance] = React.useState<ApiInstance | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState<"start" | "stop" | "restart" | null>(null);
+  const [confirmCancel, setConfirmCancel] = React.useState(false);
+  const [cancelling, setCancelling] = React.useState(false);
   const [live, setLive] = React.useState<{ cpu: number; ram: number } | null>(null);
   const [cpuHist, setCpuHist] = React.useState<number[]>([]);
   const [ramHist, setRamHist] = React.useState<number[]>([]);
@@ -164,6 +167,24 @@ export default function InstanceDetail() {
       toast.error("Action failed", e instanceof ApiError ? e.message : "Please try again.");
     } finally {
       setPending(null);
+    }
+  };
+
+  const cancelInvoice = async () => {
+    setCancelling(true);
+    try {
+      const { result } = await api.invoiceCancel(instanceId);
+      setConfirmCancel(false);
+      toast.success("Invoice cancelled", "The pending charge was removed.");
+      if (result === "instance_cancelled") {
+        navigate("/my/instances");
+      } else {
+        await load();
+      }
+    } catch (e) {
+      toast.error("Couldn't cancel", e instanceof ApiError ? e.message : "Please try again.");
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -300,12 +321,23 @@ export default function InstanceDetail() {
           className="mt-6"
           variant="warning"
           title="You have an unpaid invoice for this instance"
-          description="Complete payment to keep your instance active."
+          description={
+            instance.cancellable_invoice_id
+              ? "Complete the payment to activate this change — or decline it to remove the invoice."
+              : "Complete payment to keep your instance active."
+          }
           action={
-            <Button size="sm" onClick={() => (window.location.href = instance.checkout_url || "/my/billing")}>
-              <CreditCard className="size-4" />
-              Pay now
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => (window.location.href = instance.checkout_url || "/my/billing")}>
+                <CreditCard className="size-4" />
+                Pay now
+              </Button>
+              {instance.cancellable_invoice_id && (
+                <Button size="sm" variant="secondary" onClick={() => setConfirmCancel(true)}>
+                  Decline
+                </Button>
+              )}
+            </div>
           }
         />
       )}
@@ -369,6 +401,26 @@ export default function InstanceDetail() {
           </Link>
         ))}
       </div>
+
+      <Dialog
+        open={confirmCancel}
+        onClose={() => !cancelling && setConfirmCancel(false)}
+        title="Decline this invoice?"
+        description={
+          instance.state === "draft" || instance.state === "pending_payment"
+            ? "This will cancel the pending charge and the new instance order — the subdomain will be released. This can't be undone."
+            : "This will cancel the pending charge and undo the change it was for. Your instance keeps running on its current plan."
+        }
+      >
+        <div className="mt-6 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setConfirmCancel(false)} disabled={cancelling}>
+            Keep it
+          </Button>
+          <Button variant="danger" onClick={cancelInvoice} disabled={cancelling}>
+            {cancelling ? "Cancelling…" : "Yes, decline"}
+          </Button>
+        </div>
+      </Dialog>
     </div>
   );
 }
