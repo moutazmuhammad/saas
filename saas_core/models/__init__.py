@@ -1,4 +1,5 @@
 from . import saas_product
+from . import saas_pricing
 from . import saas_instance
 from . import saas_plan
 from . import account_move
