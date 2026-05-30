@@ -7,6 +7,7 @@ import secrets
 import shlex
 import string
 import threading
+import time
 from dateutil.relativedelta import relativedelta
 from jinja2 import Environment, FileSystemLoader
 
@@ -65,6 +66,21 @@ OPTIONAL_INVOICE_ORIGIN_PREFIXES = (
 # Days past a daily-backup add-on invoice's due date before snapshots are
 # paused. Snapshots resume automatically once the invoice is paid.
 DAILY_BACKUP_SUSPEND_GRACE_DAYS = 3
+
+# ----------------------------------------------------------------------
+# Live metrics sampling — measurement is decoupled from viewing so it
+# scales with the number of *watched instances*, not the number of
+# viewers. The portal polls a cheap cached endpoint (which marks the
+# instance "watched"); a single advisory-locked sampler measures watched
+# instances every few seconds, ONE ssh/`docker stats` per host.
+# ----------------------------------------------------------------------
+LIVE_METRICS_WATCH_TTL = 25          # secs a poll keeps an instance "watched"
+LIVE_METRICS_SAMPLE_INTERVAL = 5     # secs between sampler ticks
+LIVE_METRICS_SAMPLER_MAX_RUN = 50    # secs a single cron run loops before exiting
+LIVE_METRICS_SEED_STALE = 10         # secs of staleness before a poll seeds a sample
+_LIVE_METRICS_LOCK_KEY = 738291014   # pg advisory lock id (single sampler cluster-wide)
+_LIVE_SAMPLE_SEED_AT = {}            # instance_id -> monotonic ts of last seed spawn
+_LIVE_SAMPLE_SEED_GUARD = threading.Lock()
 
 
 class SaasInstance(models.Model):
@@ -611,6 +627,15 @@ class SaasInstance(models.Model):
         string='Usage Last Updated',
         readonly=True,
         help='Last time resource usage statistics were refreshed.',
+    )
+    metrics_watch_until = fields.Datetime(
+        string='Live Metrics Watched Until',
+        readonly=True,
+        copy=False,
+        help='Bumped each time the portal polls live metrics for this '
+             'instance. The live-metrics sampler only measures instances '
+             'watched within this window, so cost scales with viewers '
+             'present, not with the whole fleet.',
     )
 
     # ========== Operations ==========
@@ -2619,6 +2644,162 @@ class SaasInstance(models.Model):
         self.storage_usage_pct = round(storage_pct, 1)
 
         self.usage_last_updated = fields.Datetime.now()
+
+    # ------------------------------------------------------------------
+    # Live metrics: cheap-poll heartbeat + decoupled, batched sampler
+    # ------------------------------------------------------------------
+    def _touch_metrics_watch(self):
+        """Mark this instance as actively watched (called from the cheap
+        poll endpoint) and, if the cached sample is stale, kick a one-off
+        background measurement so the first paint is live without waiting
+        for the next sampler tick."""
+        self.ensure_one()
+        now = fields.Datetime.now()
+        # Extend the watch window, but only write when it would actually
+        # change meaningfully — dedups writes across many concurrent
+        # viewers polling the same instance.
+        cur = self.metrics_watch_until
+        if not cur or cur < now + datetime.timedelta(
+            seconds=LIVE_METRICS_WATCH_TTL - 10,
+        ):
+            self.sudo().metrics_watch_until = now + datetime.timedelta(
+                seconds=LIVE_METRICS_WATCH_TTL,
+            )
+        if self.state != 'running' or not self.docker_server_id:
+            return
+        last = self.usage_last_updated
+        stale = (not last) or (now - last).total_seconds() > LIVE_METRICS_SEED_STALE
+        if stale:
+            self._maybe_seed_live_sample()
+
+    def _maybe_seed_live_sample(self):
+        """Spawn at most one background sample per instance per ~8s (per
+        worker process) to cover the sampler's cold-start gap."""
+        self.ensure_one()
+        with _LIVE_SAMPLE_SEED_GUARD:
+            mono = time.monotonic()
+            if mono - _LIVE_SAMPLE_SEED_AT.get(self.id, 0.0) < 8:
+                return
+            _LIVE_SAMPLE_SEED_AT[self.id] = mono
+        run_in_background(
+            self.sudo(), '_sample_live_metrics_once',
+            thread_name='saas_live_seed_%s' % self.id,
+        )
+
+    def _sample_live_metrics_once(self):
+        """Background one-shot live sample for a single instance."""
+        self.ensure_one()
+        if not self.docker_server_id:
+            return
+        try:
+            self._sample_live_metrics_for_host(self.docker_server_id.sudo())
+            self.env.cr.commit()
+        except Exception:
+            _logger.warning(
+                "One-shot live metrics sample failed for %s", self.subdomain,
+            )
+
+    def _sample_live_metrics_for_host(self, server):
+        """Measure CPU/RAM for ALL instances in ``self`` (which must share
+        ``server``) in a SINGLE ``docker stats`` call, and write the
+        plan-relative percentages onto each record.
+
+        This is the cost-scaling core: one SSH + one docker call per host
+        covers every watched container on it, regardless of how many
+        people are looking. Only CPU/RAM (cheap) — storage/DB stay on the
+        10-minute full-refresh cron.
+        """
+        names = {}
+        for inst in self:
+            try:
+                names[inst._get_container_name()] = inst
+            except Exception:
+                continue
+        if not names:
+            return
+        multiplier = float(self.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.resource_usage_multiplier', '2.0',
+        ) or 2.0)
+        fmt = '{{.Name}}||{{.CPUPerc}}||{{.MemUsage}}'
+        cmd = 'docker stats --no-stream --format %s %s' % (
+            shlex.quote(fmt),
+            ' '.join(shlex.quote(n) for n in names),
+        )
+        with server._get_ssh_connection() as ssh:
+            exit_code, stdout, _stderr = ssh.execute(cmd, timeout=30)
+        if exit_code != 0 or not stdout:
+            return
+        now = fields.Datetime.now()
+        for line in stdout.splitlines():
+            parts = line.strip().split('||')
+            if len(parts) < 3:
+                continue
+            inst = names.get(parts[0].strip())
+            if not inst:
+                continue
+            try:
+                raw_cpu = float(parts[1].replace('%', '').strip())
+            except (ValueError, TypeError):
+                raw_cpu = 0.0
+            ram_used = self._parse_mem_value(parts[2].split('/')[0].strip())
+            plan = inst.plan_id
+            plan_cpu = plan.cpu_limit if plan else 0
+            plan_ram = self._parse_ram_string(plan.ram_limit) if (
+                plan and plan.ram_limit) else 0
+            cpu_pct = 0.0
+            if plan_cpu and raw_cpu > 0:
+                cpu_pct = min((raw_cpu / 100.0) * multiplier / plan_cpu * 100, 999)
+            ram_used_m = ram_used * multiplier
+            ram_pct = 0.0
+            if plan_ram and ram_used_m > 0:
+                ram_pct = min(ram_used_m / plan_ram * 100, 999)
+            inst.cpu_usage_pct = round(cpu_pct, 1)
+            inst.cpu_usage = '%.1f%%' % cpu_pct if cpu_pct else '0%'
+            inst.ram_usage_pct = round(ram_pct, 1)
+            inst.usage_last_updated = now
+
+    @api.model
+    def _cron_sample_live_metrics(self):
+        """Continuously sample watched instances for ~50s, then exit (the
+        1-minute cron re-enters). A Postgres advisory lock guarantees a
+        single sampler across all workers/processes. Exits immediately
+        when nobody is watching, so idle cost is ~zero."""
+        self.env.cr.execute(
+            "SELECT pg_try_advisory_lock(%s)", [_LIVE_METRICS_LOCK_KEY],
+        )
+        if not self.env.cr.fetchone()[0]:
+            return  # another sampler already running
+        try:
+            start = time.monotonic()
+            while time.monotonic() - start < LIVE_METRICS_SAMPLER_MAX_RUN:
+                now = fields.Datetime.now()
+                watched = self.search([
+                    ('state', '=', 'running'),
+                    ('metrics_watch_until', '>', now),
+                    ('docker_server_id', '!=', False),
+                ])
+                if not watched:
+                    break
+                by_host = {}
+                for inst in watched:
+                    by_host.setdefault(inst.docker_server_id, self.browse())
+                    by_host[inst.docker_server_id] |= inst
+                for server, insts in by_host.items():
+                    try:
+                        insts._sample_live_metrics_for_host(server.sudo())
+                    except Exception:
+                        _logger.warning(
+                            "Live metrics sampling failed on host %s",
+                            server.id,
+                        )
+                # Commit each tick so the cheap poll endpoint (separate
+                # transaction) sees fresh values immediately.
+                self.env.cr.commit()
+                time.sleep(LIVE_METRICS_SAMPLE_INTERVAL)
+        finally:
+            self.env.cr.execute(
+                "SELECT pg_advisory_unlock(%s)", [_LIVE_METRICS_LOCK_KEY],
+            )
 
     @staticmethod
     def _parse_mem_value(mem_str):

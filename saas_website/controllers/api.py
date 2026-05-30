@@ -398,6 +398,26 @@ class SaasApi(http.Controller):
         status['usage'] = self._usage(instance)
         return ok(status)
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/metrics',
+                type='json', auth='public')
+    def instance_metrics(self, instance_id, access_token=None):
+        """Cheap, real-time-ish CPU/RAM read for the dashboard.
+
+        Returns the cached live sample (no SSH, no worker held) and marks
+        the instance as "watched" so the background sampler measures it.
+        Poll this every few seconds while viewing an instance."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        instance.sudo()._touch_metrics_watch()
+        return ok({
+            'cpu': round(instance.cpu_usage_pct or 0.0),
+            'ram': round(instance.ram_usage_pct or 0.0),
+            'at': fields.Datetime.to_string(instance.usage_last_updated)
+                  if instance.usage_last_updated else '',
+        })
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/action',
                 type='json', auth='public')
     def instance_action(self, instance_id, action=None, access_token=None):

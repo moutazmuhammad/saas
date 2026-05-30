@@ -28,7 +28,7 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useInstances } from "@/context/InstancesContext";
 import { useToast } from "@/context/ToastContext";
-import { api, ApiError, metricsStreamUrl, type ApiInstance } from "@/lib/api";
+import { api, ApiError, type ApiInstance } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -88,30 +88,35 @@ export default function InstanceDetail() {
     return () => clearInterval(t);
   }, [instance, instanceId]);
 
-  // Real-time CPU/RAM via SSE while the instance is running. Keyed on
-  // the running state (not the whole instance) so it isn't reopened on
-  // every status poll.
+  // Near-real-time CPU/RAM by polling the cheap cached endpoint (which
+  // also marks the instance "watched" so the backend sampler measures
+  // it). No SSH per viewer — measurement is decoupled from viewing.
   const running = instance?.state === "running";
   React.useEffect(() => {
     if (!running) {
       setLive(null);
       return;
     }
-    const es = new EventSource(metricsStreamUrl(instanceId));
-    es.onmessage = (e) => {
+    let cancelled = false;
+    const token = params.get("access_token") || undefined;
+    const tick = async () => {
       try {
-        const m = JSON.parse(e.data) as { cpu: number; ram: number };
-        setLive(m);
+        const m = await api.instanceMetrics(instanceId, token);
+        if (cancelled) return;
+        setLive({ cpu: m.cpu, ram: m.ram });
         setCpuHist((h) => [...h.slice(-39), m.cpu]);
         setRamHist((h) => [...h.slice(-39), m.ram]);
       } catch {
-        /* ignore malformed frame */
+        /* transient */
       }
     };
-    es.addEventListener("done", () => es.close());
-    es.onerror = () => es.close();
-    return () => es.close();
-  }, [running, instanceId]);
+    tick();
+    const t = setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [running, instanceId, params]);
 
   if (error) {
     return (

@@ -298,6 +298,11 @@ export const api = {
   instance: (id: number, accessToken?: string) =>
     rpc<ApiInstance>(`/saas/api/v1/instances/${id}`, accessToken ? { access_token: accessToken } : {}),
   instanceStatus: (id: number) => rpc<StatusData>(`/saas/api/v1/instances/${id}/status`),
+  instanceMetrics: (id: number, accessToken?: string) =>
+    rpc<{ cpu: number; ram: number; at: string }>(
+      `/saas/api/v1/instances/${id}/metrics`,
+      accessToken ? { access_token: accessToken } : {},
+    ),
   instanceAction: (id: number, action: string) =>
     rpc<StatusData>(`/saas/api/v1/instances/${id}/action`, { action }),
 
@@ -335,6 +340,3 @@ export function logStreamUrl(instanceId: number, tail = 100) {
   return `/saas/instance/${instanceId}/logs/stream?tail=${tail}`;
 }
 
-export function metricsStreamUrl(instanceId: number) {
-  return `/saas/instance/${instanceId}/metrics/stream`;
-}
