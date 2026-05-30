@@ -96,9 +96,11 @@ class SaasPricingEngine(models.AbstractModel):
         return best
 
     def _addons_total(self, kind, addon_codes):
-        """S5: sum configured add-on monthly prices. No add-on model yet
-        -> 0.0 (and no caller passes addon_codes in S1)."""
-        return 0.0
+        """Sum effective monthly prices of the given add-on codes that
+        apply to ``kind``. Empty/none -> 0.0 (behaviour-neutral)."""
+        if not addon_codes:
+            return 0.0
+        return self.env['saas.addon']._sum_prices(kind, addon_codes)
 
     @staticmethod
     def _clamp(value, lo, hi):

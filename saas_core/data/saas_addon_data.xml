@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- noupdate so an admin's edits aren't overwritten on module upgrade. -->
+    <data noupdate="1">
+        <!-- Daily Snapshots: the price stays sourced from Settings
+             (saas_master.hosting_daily_backup_price) via price_config_param,
+             so the existing purchase / renewal / suspend billing flow is
+             untouched and there is a single source of truth. -->
+        <record id="saas_addon_daily_snapshots" model="saas.addon">
+            <field name="name">Daily Snapshots</field>
+            <field name="code">daily_snapshots</field>
+            <field name="applies_to">hosting</field>
+            <field name="price_config_param">saas_master.hosting_daily_backup_price</field>
+            <field name="sequence">10</field>
+            <field name="description">Daily deduplicated full-instance snapshots (restic), 7-day retention. Billed monthly.</field>
+        </record>
+    </data>
+</odoo>

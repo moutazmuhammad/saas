@@ -28,3 +28,5 @@ access_saas_instance_package_user,saas.instance.package user,model_saas_instance
 access_saas_instance_package_manager,saas.instance.package manager,model_saas_instance_package,saas_core.group_saas_manager,1,1,1,1
 access_saas_terminal_session_manager,saas.terminal.session manager,model_saas_terminal_session,saas_core.group_saas_manager,1,1,1,1
 access_saas_instance_db_operation_manager,saas.instance.db.operation manager,model_saas_instance_db_operation,saas_core.group_saas_manager,1,1,1,1
+access_saas_addon_user,saas.addon user,model_saas_addon,saas_core.group_saas_user,1,0,0,0
+access_saas_addon_manager,saas.addon manager,model_saas_addon,saas_core.group_saas_manager,1,1,1,1

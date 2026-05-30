@@ -848,11 +848,14 @@ class SaasWebsite(http.Controller):
         # free or not at all (per spec — paid feature only).
         daily_backup = (kw.get('daily_backup') == '1')
 
-        _q = request.env['saas.pricing.engine'].compute('hosting', workers, storage)
+        _addons = ['daily_snapshots'] if daily_backup else []
+        _q = request.env['saas.pricing.engine'].compute(
+            'hosting', workers, storage, addon_codes=_addons,
+        )
         workers_cost = _q['breakdown']['workers_cost']
         storage_cost = _q['breakdown']['storage_cost']
-        backup_cost = config['daily_backup_price'] if daily_backup else 0.0
-        monthly_total = _q['monthly'] + backup_cost
+        backup_cost = _q['breakdown']['addons_monthly']
+        monthly_total = _q['monthly']
         discount = config['yearly_discount_pct'] / 100.0
         yearly_total = monthly_total * 12 * (1 - discount)
 

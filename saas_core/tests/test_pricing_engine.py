@@ -152,6 +152,23 @@ class TestPricingEngine(TransactionCase):
         self.assertEqual(q['breakdown']['tier_floor'], 999.0)
         self.assertGreaterEqual(q['monthly'], 999.0)
 
+    def test_addon_sum(self):
+        """The daily_snapshots add-on adds the Settings price to the quote."""
+        self._set({'saas_master.hosting_daily_backup_price': '7.0'})
+        if not self.env['saas.addon'].sudo().search_count(
+                [('code', '=', 'daily_snapshots')]):
+            self.skipTest('daily_snapshots add-on not seeded in this DB')
+        base = self.engine.compute('hosting', 4, 50, 'monthly')
+        withp = self.engine.compute(
+            'hosting', 4, 50, 'monthly', addon_codes=['daily_snapshots'])
+        self.assertAlmostEqual(
+            withp['monthly'] - base['monthly'], 7.0, places=2)
+        self.assertAlmostEqual(withp['breakdown']['addons_monthly'], 7.0, places=2)
+        # Add-on that doesn't apply to this kind contributes nothing.
+        none = self.engine.compute(
+            'hosting', 4, 50, 'monthly', addon_codes=['nonexistent_code'])
+        self.assertAlmostEqual(none['breakdown']['addons_monthly'], 0.0, places=2)
+
     def test_created_plan_price_matches_engine(self):
         """A custom plan stamped from the engine carries the same price
         the engine quotes — i.e. checkout/plan == preview (consistency)."""

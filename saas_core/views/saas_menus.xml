@@ -52,6 +52,13 @@
               action="saas_plan_action"
               sequence="20"/>
 
+    <!-- Configuration > Add-ons -->
+    <menuitem id="saas_master_menu_addons"
+              name="Add-ons"
+              parent="saas_master_menu_configuration"
+              action="saas_addon_action"
+              sequence="22"/>
+
     <!-- Configuration > Base Domains -->
     <menuitem id="saas_master_menu_based_domain"
               name="Base Domains"
