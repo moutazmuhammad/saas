@@ -44,6 +44,10 @@ class SaasPricingEngine(models.AbstractModel):
                 # => no-op in S1, so prices are unchanged.
                 'worker_floor': float(get('saas_master.hosting_worker_floor', '0')),
                 'storage_floor': float(get('saas_master.hosting_storage_floor', '0')),
+                # Minimum monthly charge (P1). Floor on the FINAL monthly
+                # total so a tiny config still covers fixed business costs
+                # (payment fees, support, CAC). Default 0 => no-op.
+                'minimum_monthly': float(get('saas_master.hosting_minimum_monthly', '0')),
             }
         else:  # 'services' (custom plan builder)
             cfg = {
@@ -56,6 +60,7 @@ class SaasPricingEngine(models.AbstractModel):
                 'yearly_discount_pct': int(get('saas_master.custom_plan_yearly_discount_pct', '20')),
                 'worker_floor': float(get('saas_master.worker_floor', '0')),
                 'storage_floor': float(get('saas_master.storage_floor', '0')),
+                'minimum_monthly': float(get('saas_master.minimum_monthly', '0')),
             }
         cfg['currency'] = self.env.company.currency_id.name or 'USD'
         return cfg
@@ -155,7 +160,15 @@ class SaasPricingEngine(models.AbstractModel):
 
         resource_monthly = max(base, floor) * region_factor
         addons_monthly = self._addons_total(kind, addon_codes)
-        monthly = resource_monthly + addons_monthly
+        pre_minimum = resource_monthly + addons_monthly
+
+        # Minimum monthly charge (P1): the final total never drops below
+        # the configured floor — small configs still cover fixed business
+        # costs. Applied AFTER add-ons (so add-ons count toward the
+        # minimum, never on top of it). Default 0 => no-op.
+        minimum_monthly = cfg.get('minimum_monthly', 0.0) or 0.0
+        monthly = max(pre_minimum, minimum_monthly)
+        minimum_applied = minimum_monthly > pre_minimum
 
         discount = cfg['yearly_discount_pct'] / 100.0
         yearly = monthly * 12 * (1 - discount)
@@ -175,6 +188,7 @@ class SaasPricingEngine(models.AbstractModel):
             'currency': cfg['currency'],
             'region_factor': region_factor,
             'floored': floored,
+            'minimum_applied': minimum_applied,
             'limits': {
                 'workers': {'min': cfg['min_workers'], 'max': cfg['max_workers']},
                 'storage': {'min': cfg['min_storage'], 'max': cfg['max_storage']},
@@ -186,6 +200,11 @@ class SaasPricingEngine(models.AbstractModel):
                 'tier_floor': round(tier_floor, 2),
                 'resource_monthly': round(resource_monthly, 2),
                 'addons_monthly': round(addons_monthly, 2),
+                # P1: the total before the minimum-monthly floor, and the
+                # minimum that was enforced (0 = off). monthly == max of
+                # these two.
+                'pre_minimum': round(pre_minimum, 2),
+                'minimum_monthly': round(minimum_monthly, 2),
                 # Per-resource split (pre-floor, pre-region) — kept so the
                 # legacy display routes can show the same breakdown they
                 # do today. Frontend will stop surfacing these in S8.

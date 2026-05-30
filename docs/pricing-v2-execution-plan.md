@@ -12,7 +12,7 @@
 
 ## 0. Progress checklist
 
-- [ ] **P1** — Minimum monthly charge (engine + setting + breakdown)
+- [x] **P1** — Minimum monthly charge (engine + setting + breakdown)
 - [ ] **P2** — Tier protection redesign (soft-floor %, the lowest-risk win)
 - [ ] **P3** — `saas.support.plan` model + ACL + admin views + seed
 - [ ] **P4** — Storage-aware backup pricing (extend `saas.addon`)

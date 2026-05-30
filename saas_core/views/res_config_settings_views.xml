@@ -227,6 +227,22 @@
                                 </div>
                             </div>
                         </setting>
+                        <setting id="saas_minimum_monthly_setting"
+                                 string="Minimum Monthly Charge"
+                                 help="Floor on the FINAL monthly total. A tiny config still bills at least this much, so every plan covers fixed business costs (payment fees, support, monitoring, CAC) that don't scale down. Shown to the customer as the plan price — no surcharge line. 0 = no minimum.">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_hosting_minimum_monthly" string="Hosting" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_minimum_monthly" class="col-2"/>
+                                    <span class="text-muted ms-1">/ month</span>
+                                </div>
+                                <div class="row mt8">
+                                    <label for="saas_minimum_monthly" string="Services" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_minimum_monthly" class="col-2"/>
+                                    <span class="text-muted ms-1">/ month</span>
+                                </div>
+                            </div>
+                        </setting>
                         <setting id="saas_extra_storage_price_per_gb_setting"
                                  string="Storage Overage: per-GB rate"
                                  help="Price charged per extra GB exceeding the plan storage limit. Added to renewal invoices. Used when no expansion block is configured below. Set to 0 to suspend instances instead of charging.">

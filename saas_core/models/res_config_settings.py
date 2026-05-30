@@ -228,6 +228,23 @@ class ResConfigSettings(models.TransientModel):
         default=0.0,
         help='Minimum monthly cost per GB on services custom configs. 0 = no floor.',
     )
+    saas_hosting_minimum_monthly = fields.Float(
+        string='Hosting: Minimum Monthly Charge',
+        config_parameter='saas_master.hosting_minimum_monthly',
+        default=0.0,
+        help='Floor on the FINAL monthly total for hosting plans. A tiny '
+             'config still bills at least this much, so it covers fixed '
+             'business costs (payment fees, support, monitoring, CAC) that '
+             'don\'t scale down. The customer just sees this as the price '
+             '— no surcharge. 0 = no minimum.',
+    )
+    saas_minimum_monthly = fields.Float(
+        string='Services: Minimum Monthly Charge',
+        config_parameter='saas_master.minimum_monthly',
+        default=0.0,
+        help='Floor on the final monthly total for services custom plans. '
+             '0 = no minimum.',
+    )
     saas_storage_block_gb = fields.Integer(
         string='Storage Expansion Block (GB)',
         config_parameter='saas_master.storage_block_gb',

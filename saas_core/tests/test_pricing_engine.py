@@ -39,6 +39,10 @@ class TestPricingEngine(TransactionCase):
             'saas_master.hosting_storage_floor': '0',
             'saas_master.worker_floor': '0',
             'saas_master.storage_floor': '0',
+            # Minimum monthly charge explicitly 0 -> P1 no-op (keeps the
+            # legacy-formula grid deterministic).
+            'saas_master.hosting_minimum_monthly': '0',
+            'saas_master.minimum_monthly': '0',
         })
 
     def _set(self, mapping):
@@ -87,6 +91,42 @@ class TestPricingEngine(TransactionCase):
         self.assertAlmostEqual(
             q['breakdown']['base'], q['breakdown']['resource_monthly'], places=2,
         )
+
+    def test_minimum_monthly_charge(self):
+        """P1: the final monthly never drops below the configured minimum;
+        default 0 is a no-op; add-ons count toward the minimum, not on top."""
+        # Default off -> no-op.
+        q0 = self.engine.compute('hosting', 2, 5, 'monthly')
+        self.assertFalse(q0['minimum_applied'])
+        self.assertAlmostEqual(q0['monthly'], 21.5, places=2)  # 2*10 + 5*0.3
+        self.assertAlmostEqual(q0['breakdown']['pre_minimum'], 21.5, places=2)
+
+        # Minimum above the computed price -> bumped up, flag set.
+        self._set({'saas_master.hosting_minimum_monthly': '30'})
+        q = self.engine.compute('hosting', 2, 5, 'monthly')
+        self.assertTrue(q['minimum_applied'])
+        self.assertAlmostEqual(q['monthly'], 30.0, places=2)
+        self.assertAlmostEqual(q['breakdown']['pre_minimum'], 21.5, places=2)
+        self.assertAlmostEqual(q['breakdown']['minimum_monthly'], 30.0, places=2)
+        # Yearly applies the discount to the floored monthly.
+        self.assertAlmostEqual(q['yearly'], 30.0 * 12 * 0.8, places=2)
+
+        # A config already above the minimum is unaffected.
+        big = self.engine.compute('hosting', 8, 200, 'monthly')
+        self.assertFalse(big['minimum_applied'])
+        self.assertAlmostEqual(big['monthly'], 8 * 10 + 200 * 0.3, places=2)
+
+        # Add-ons count toward the minimum (no double charge): if an add-on
+        # pushes pre_minimum above the floor, the floor doesn't apply.
+        if self.env['saas.addon'].sudo().search_count(
+                [('code', '=', 'daily_snapshots')]):
+            self._set({'saas_master.hosting_daily_backup_price': '12'})
+            qa = self.engine.compute('hosting', 2, 5, 'monthly',
+                                     addon_codes=['daily_snapshots'])
+            # 21.5 + 12 = 33.5 > 30 minimum -> not floored.
+            self.assertFalse(qa['minimum_applied'])
+            self.assertAlmostEqual(qa['monthly'], 33.5, places=2)
+        self._set({'saas_master.hosting_minimum_monthly': '0'})
 
     def test_clamping(self):
         """Out-of-range workers/storage clamp to plan limits."""
