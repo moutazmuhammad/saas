@@ -1444,6 +1444,27 @@ class SaasInstance(models.Model):
             })
         return product
 
+    def _support_order_line(self, period, period_label):
+        """Sale-order line tuple for the instance's support plan, or None.
+
+        Support is a flat MONTHLY fee billed on the same cycle as the plan;
+        on a yearly plan it's charged x12 (qty=12) so the support term
+        matches the plan term. The free/default plan (price 0) adds nothing,
+        so this is behaviour-neutral until support is priced and picked."""
+        self.ensure_one()
+        support = self.support_plan_id
+        if not support or support.monthly_price <= 0:
+            return None
+        months = 12 if period == 'yearly' else 1
+        return (0, 0, {
+            'product_id': self._get_billing_product().id,
+            'name': _('Support: %s (%s) — %s') % (
+                support.name, period_label, self.name or self.subdomain,
+            ),
+            'product_uom_qty': months,
+            'price_unit': support.monthly_price,
+        })
+
     def action_confirm_and_bill(self):
         """Validate instance, create sale order, confirm it, and generate invoice.
 
@@ -1472,6 +1493,11 @@ class SaasInstance(models.Model):
             'product_uom_qty': 1,
             'price_unit': price,
         })]
+
+        # Support plan (P5): bill it on the initial invoice too.
+        support_line = self._support_order_line(period, period_label)
+        if support_line:
+            order_lines.append(support_line)
 
         # -- Create & confirm sale order --
         order_vals = {
@@ -6918,6 +6944,13 @@ class SaasInstance(models.Model):
         # own monthly cycle driven by ``_cron_renew_daily_backup_addons``
         # so a customer on a yearly plan still pays for backups once a
         # month — see ``_generate_daily_backup_renewal_invoice``.
+
+        # Support plan (P5): a flat monthly fee billed on the SAME cycle as
+        # the plan (see _support_order_line). The free/default plan and
+        # unpriced plans add nothing (behaviour-neutral until configured).
+        support_line = self._support_order_line(period, period_label)
+        if support_line:
+            order_lines.append(support_line)
 
         # Add extra storage charge if usage exceeds the plan limit.
         # Centralised in the pricing engine: block-based when a storage

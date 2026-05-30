@@ -397,3 +397,35 @@ class TestPricingEngine(TransactionCase):
         })
         self.assertAlmostEqual(plan.price, q['monthly'], places=2)
         self.assertAlmostEqual(plan.yearly_price, q['yearly'], places=2)
+
+    def test_support_renewal_line(self):
+        """P5: the support plan produces a recurring sale-order line —
+        qty 1 on monthly, qty 12 on yearly; the free/$0 plan adds none."""
+        Support = self.env['saas.support.plan'].sudo()
+        product = self.env['saas.product'].sudo().search([], limit=1)
+        if not product:
+            self.skipTest('no saas.product available in this DB')
+        plan = self.env['saas.plan'].sudo().search([], limit=1)
+        partner = self.env['res.partner'].sudo().search([], limit=1)
+        pro = Support.create({
+            'name': 'TEST Pro Sup', 'code': 'test_pro_sup',
+            'monthly_price': 40.0, 'response_time': '4h',
+        })
+        free = Support.search([('is_default', '=', True)], limit=1)
+        inst = self.env['saas.instance'].sudo().create({
+            'subdomain': 'zzsup', 'partner_id': partner.id,
+            'saas_product_id': product.id, 'plan_id': plan.id,
+            'support_plan_id': pro.id, 'billing_period': 'monthly',
+        })
+        # monthly -> qty 1 @ 40
+        line = inst._support_order_line('monthly', 'Monthly')
+        self.assertIsNotNone(line)
+        self.assertEqual(line[2]['product_uom_qty'], 1)
+        self.assertAlmostEqual(line[2]['price_unit'], 40.0, places=2)
+        # yearly -> qty 12 @ 40 (support term matches plan term)
+        liney = inst._support_order_line('yearly', 'Yearly')
+        self.assertEqual(liney[2]['product_uom_qty'], 12)
+        # free/$0 plan -> no line.
+        if free:
+            inst.support_plan_id = free.id
+            self.assertIsNone(inst._support_order_line('monthly', 'Monthly'))
