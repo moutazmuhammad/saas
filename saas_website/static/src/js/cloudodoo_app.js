@@ -111,55 +111,6 @@ const CloudOdoo = {
 //   - assets/sync  : veltnex_theme.js (wires .vx-theme-toggle)
 // Do NOT reintroduce a second toggle here.
 
-// ============================================
-// Billing Toggle (Plans Page)
-// ============================================
-
-function initBillingToggle() {
-    const toggle = document.getElementById('billing-toggle');
-    if (!toggle) return;
-
-    toggle.querySelectorAll('.toggle-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            toggle.querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            const billing = btn.dataset.billing;
-
-            // Toggle visibility of monthly/yearly prices
-            document.querySelectorAll('[data-monthly-price]').forEach(el => {
-                const monthly = parseFloat(el.dataset.monthlyPrice) || 0;
-                const yearly = parseFloat(el.dataset.yearlyPrice) || 0;
-                const currency = el.dataset.currency || 'USD';
-                const amountEl = el.querySelector('.plan-amount');
-                const periodEl = el.querySelector('.plan-period');
-                if (!amountEl || !periodEl) return;
-
-                if (billing === 'yearly' && yearly > 0) {
-                    const perMonth = yearly / 12;
-                    amountEl.textContent = CloudOdoo.formatCurrency(perMonth, currency);
-                    periodEl.textContent = '/mo (billed yearly)';
-                    const origEl = el.querySelector('.plan-original');
-                    if (origEl) {
-                        origEl.style.display = perMonth < monthly ? '' : 'none';
-                        origEl.textContent = CloudOdoo.formatCurrency(monthly, currency);
-                    }
-                } else {
-                    amountEl.textContent = CloudOdoo.formatCurrency(monthly, currency);
-                    periodEl.textContent = '/mo';
-                    const origEl = el.querySelector('.plan-original');
-                    if (origEl) origEl.style.display = 'none';
-                }
-            });
-
-            // Update plan links with billing period
-            document.querySelectorAll('a[data-plan-link]').forEach(link => {
-                const base = link.dataset.planLink;
-                const sep = base.includes('?') ? '&' : '?';
-                link.href = base + sep + 'billing=' + billing;
-            });
-        });
-    });
-}
 
 // ============================================
 // Subdomain Validation (Configure Page)
@@ -355,163 +306,15 @@ function initPasswordStrength() {
     }
 }
 
-// ============================================
-// Instance Actions (restart, stop, start)
-// ============================================
 
-function initInstanceActions() {
-    document.querySelectorAll('[data-saas-action]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const action = btn.dataset.saasAction;
-            const instanceId = btn.dataset.instanceId;
-
-            const messages = {
-                restart: { msg: 'Restart this instance? It will be briefly unavailable during restart.', variant: 'warning', yes: 'Yes, restart' },
-                stop:    { msg: 'Stop this instance? It will become unavailable until you start it again.', variant: 'danger', yes: 'Yes, stop instance' },
-                start:   { msg: 'Start this instance?', variant: 'info', yes: 'Yes, start instance' },
-            };
-            const cfg = messages[action] || { msg: 'Proceed with this action?', variant: 'warning', yes: 'Confirm' };
-
-            CloudOdoo.showConfirm(cfg.msg, cfg.variant, cfg.yes, function() {
-                btn.disabled = true;
-                const origHtml = btn.innerHTML;
-                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Processing...';
-
-                CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/' + action, {})
-                    .then(result => {
-                        if (result && result.success) {
-                            CloudOdoo.showToast(result.message || 'Action completed', 'success');
-                        } else if (result && result.error) {
-                            CloudOdoo.showToast(result.error, 'error');
-                        } else {
-                            CloudOdoo.showToast('Action submitted', 'info');
-                        }
-                        setTimeout(() => window.location.reload(), 2000);
-                    })
-                    .catch(err => {
-                        CloudOdoo.showToast(err.message || 'Action failed — reloading...', 'error');
-                        setTimeout(() => window.location.reload(), 2000);
-                    });
-            });
-        });
-    });
-}
-
-// ============================================
-// Resource Usage Refresh
-// ============================================
-
-function initUsageRefresh() {
-    const btn = document.getElementById('refresh-usage');
-    if (!btn) return;
-
-    const instanceId = btn.dataset.instanceId;
-    const INTERVAL = 60; // seconds between auto-refreshes
-    var countdownEl = document.getElementById('usage-countdown');
-    var secondsLeft = INTERVAL;
-    var autoTimer = null;
-    var countdownTimer = null;
-    var refreshing = false;
-
-    function updateUI(result) {
-        if (!result || result.error) return;
-        // Update CPU as percentage
-        const cpuEl = document.getElementById('cpu-usage');
-        if (cpuEl && result.cpu_pct !== undefined) {
-            cpuEl.textContent = Math.round(result.cpu_pct) + '%';
-            const cpuBar = document.getElementById('cpu-bar');
-            if (cpuBar) cpuBar.style.width = Math.round(result.cpu_pct) + '%';
-        }
-        // Update RAM as percentage
-        const ramEl = document.getElementById('ram-usage');
-        if (ramEl && result.ram_pct !== undefined) {
-            ramEl.textContent = Math.round(result.ram_pct) + '%';
-            const ramBar = document.getElementById('ram-bar');
-            if (ramBar) ramBar.style.width = Math.round(result.ram_pct) + '%';
-        }
-        // Update Storage with "X GB / Y GB (Z%)" format
-        const storageEl = document.getElementById('storage-usage');
-        if (storageEl && result.total_storage !== undefined) {
-            var storageTxt = result.total_storage;
-            if (result.storage_limit) {
-                storageTxt += ' / ' + result.storage_limit + ' GB (' + Math.round(result.storage_pct) + '%)';
-            }
-            storageEl.textContent = storageTxt;
-            const storageBar = document.getElementById('storage-bar');
-            if (storageBar) storageBar.style.width = Math.round(result.storage_pct) + '%';
-        }
-    }
-
-    function doRefresh(showToast) {
-        if (refreshing) return;
-        refreshing = true;
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
-
-        CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/refresh-usage', {})
-            .then(function(result) {
-                updateUI(result);
-                if (showToast) CloudOdoo.showToast('Usage data refreshed', 'success');
-            })
-            .catch(function() {
-                if (showToast) CloudOdoo.showToast('Failed to refresh usage data', 'error');
-            })
-            .finally(function() {
-                refreshing = false;
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
-                // Reset countdown
-                secondsLeft = INTERVAL;
-            });
-    }
-
-    // Manual refresh button
-    btn.addEventListener('click', function() {
-        doRefresh(true);
-    });
-
-    // Countdown display
-    function tickCountdown() {
-        secondsLeft--;
-        if (countdownEl) {
-            countdownEl.textContent = secondsLeft + 's';
-        }
-        if (secondsLeft <= 0) {
-            doRefresh(false);
-        }
-    }
-
-    // Start auto-refresh cycle
-    countdownTimer = setInterval(tickCountdown, 1000);
-
-    // Stop auto-refresh when page is hidden (save resources)
-    document.addEventListener('visibilitychange', function() {
-        if (document.hidden) {
-            clearInterval(countdownTimer);
-            countdownTimer = null;
-        } else {
-            if (!countdownTimer) {
-                secondsLeft = 1; // refresh immediately when coming back
-                countdownTimer = setInterval(tickCountdown, 1000);
-            }
-        }
-    });
-}
 
 // ============================================
 // Loading overlay
 // ============================================
-// Blocking spinner that covers the screen while a long-running portal
-// action (create DB, duplicate, drop, repair feature, reset password,
-// Backup Now, restore snapshot, …) is in flight. Two triggers:
-//   1. ``initLoadingOverlay`` — on every page load, if there's a
-//      ``[data-loading-overlay]`` element on the page (rendered by
-//      the template when an op is in flight), show the overlay until
-//      the polling reloads the page.
-//   2. ``initOverlayOnSubmit`` — when a form with ``data-loading-text``
-//      is submitted, show the overlay immediately so the user can't
-//      double-click before the redirect lands.
+// Blocking spinner that covers the screen while a long-running form
+// submit is in flight. Triggered by ``initOverlayOnSubmit``: when a form
+// with ``data-loading-text`` is submitted, the overlay shows immediately
+// so the user can't double-click before the redirect lands.
 
 function showLoadingOverlay(text, subtitle) {
     var existing = document.getElementById('saas-loading-overlay');
@@ -545,21 +348,7 @@ function showLoadingOverlay(text, subtitle) {
     return overlay;
 }
 
-function hideLoadingOverlay() {
-    var el = document.getElementById('saas-loading-overlay');
-    if (el) el.remove();
-    document.body.classList.remove('saas-overlay-locked');
-}
 
-function initLoadingOverlay() {
-    var marker = document.querySelector('[data-loading-overlay]');
-    if (marker) {
-        showLoadingOverlay(
-            marker.getAttribute('data-loading-text'),
-            marker.getAttribute('data-loading-subtitle'),
-        );
-    }
-}
 
 function _setButtonLoading(btn, text) {
     if (btn.dataset.saasOriginalContent === undefined) {
@@ -609,198 +398,10 @@ function initOverlayOnSubmit() {
     }, true);
 }
 
-// ============================================
-// Provisioning Status Polling
-// ============================================
 
-function initStatusPolling() {
-    // Poll for provisioning states (provisioning, pending_provision, paid)
-    var provEl = document.getElementById('provisioning-poll');
-    // Poll for pending_payment state (in case payment is being processed async)
-    var payEl = document.getElementById('payment-poll');
-    // Poll for pending upgrade (awaiting payment then auto-applied)
-    var upgradeEl = document.getElementById('upgrade-poll');
-    // Poll for backup completion
-    var backupEl = document.getElementById('backup-poll');
-    // Poll for restore completion
-    var restoreEl = document.getElementById('restore-progress-poll');
-    // Poll for DB operation completion (create / duplicate / drop)
-    var dbopEl = document.getElementById('dbop-poll');
 
-    var el = provEl || payEl || upgradeEl || backupEl || restoreEl || dbopEl;
-    if (!el) return;
 
-    var instanceId = el.dataset.instanceId;
-    var attempts = 0;
-    var maxAttempts = 60; // 60 * 5s = 5 minutes
 
-    function checkStatus() {
-        attempts++;
-        if (attempts > maxAttempts) {
-            clearInterval(poll);
-            var msgEl = el.querySelector('p');
-            if (msgEl) {
-                msgEl.innerHTML = '<strong style="color:var(--co-warning, #F59E0B);">Taking longer than expected.</strong> ' +
-                    'Please refresh the page to check the status, or contact support if the issue persists.';
-            }
-            return;
-        }
-
-        CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/status', {})
-            .then(function(result) {
-                if (!result) return;
-                var shouldReload = false;
-
-                if (provEl) {
-                    // Polling for provisioning/paid — reload when state changes to running/failed/etc.
-                    var waitingStates = ['provisioning', 'pending_provision', 'paid'];
-                    if (result.state && waitingStates.indexOf(result.state) === -1) {
-                        shouldReload = true;
-                    }
-                } else if (payEl) {
-                    // Polling for pending_payment — reload when payment is confirmed
-                    if (result.state && result.state !== 'pending_payment') {
-                        shouldReload = true;
-                    }
-                } else if (upgradeEl) {
-                    // Polling for pending upgrade — reload when pending_plan_id is cleared
-                    if (!result.pending_plan_id) {
-                        shouldReload = true;
-                    }
-                } else if (backupEl) {
-                    // Polling for backup completion — reload when no backup is running
-                    if (!result.backup_running) {
-                        shouldReload = true;
-                    }
-                } else if (restoreEl) {
-                    // Polling for restore completion — reload when restoration_invoice_id is cleared
-                    if (!result.restoration_pending) {
-                        shouldReload = true;
-                    }
-                } else if (dbopEl) {
-                    // Polling for DB op completion — reload when no create/duplicate/drop is in flight
-                    if (!result.db_ops_running) {
-                        shouldReload = true;
-                    }
-                }
-
-                if (shouldReload) {
-                    clearInterval(poll);
-                    window.location.reload();
-                }
-            })
-            .catch(function() {
-                // Silently retry on network errors
-            });
-    }
-
-    // First check after 3 seconds, then every 5 seconds
-    setTimeout(checkStatus, 3000);
-    var poll = setInterval(checkStatus, 5000);
-}
-
-// ============================================
-// Create Backup
-// ============================================
-
-function initBackupActions() {
-    const createBtn = document.getElementById('create-backup-btn');
-    if (!createBtn) return;
-
-    createBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        if (!confirm('Create a new backup?')) return;
-
-        const instanceId = createBtn.dataset.instanceId;
-        createBtn.disabled = true;
-        createBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Creating...';
-
-        // POST to the backup endpoint
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = '/my/instances/' + instanceId + '/create-backup';
-        const csrf = document.createElement('input');
-        csrf.type = 'hidden';
-        csrf.name = 'csrf_token';
-        csrf.value = CloudOdoo.getCsrfToken();
-        form.appendChild(csrf);
-        document.body.appendChild(form);
-        form.submit();
-    });
-}
-
-// ============================================
-// Sort Instances
-// ============================================
-
-function initInstanceSort() {
-    const sortSelect = document.getElementById('sort-select');
-    if (!sortSelect) return;
-
-    sortSelect.addEventListener('change', () => {
-        const sortby = sortSelect.value;
-        window.location.href = '/my/instances?sortby=' + sortby;
-    });
-}
-
-// ============================================
-// Login Form Handler
-// ============================================
-
-function initLoginForm() {
-    const form = document.getElementById('login-form');
-    if (!form) return;
-
-    form.addEventListener('submit', function () {
-        const btn = this.querySelector('button[type="submit"]');
-        if (btn) {
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Signing in...';
-            btn.disabled = true;
-        }
-    });
-}
-
-// ============================================
-// Trial Countdown
-// ============================================
-
-function initTrialCountdown() {
-    var alert = document.getElementById('trial-alert');
-    if (!alert) return;
-    var endStr = alert.dataset.trialEnd;
-    if (!endStr) return;
-
-    var end = new Date(endStr + 'T23:59:59');
-    var now = new Date();
-    var diffMs = end - now;
-    var days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    if (days < 0) days = 0;
-
-    var badge = document.getElementById('trial-countdown');
-    var icon = document.getElementById('trial-alert-icon');
-    if (!badge) return;
-
-    badge.style.display = '';
-    if (days === 0) {
-        badge.textContent = 'Expires today!';
-    } else if (days === 1) {
-        badge.textContent = '1 day left';
-    } else {
-        badge.textContent = days + ' days left';
-    }
-
-    if (days <= 2) {
-        badge.className = 'trial-countdown-badge urgent ms-2';
-        alert.className = alert.className.replace('alert-info', 'alert-danger');
-        if (icon) icon.className = 'fas fa-exclamation-triangle';
-    } else if (days <= 7) {
-        badge.className = 'trial-countdown-badge warning ms-2';
-        alert.className = alert.className.replace('alert-info', 'alert-warning');
-        if (icon) icon.className = 'fas fa-exclamation-circle';
-    } else {
-        badge.className = 'trial-countdown-badge normal ms-2';
-    }
-}
 
 // ============================================
 // Global Form Loading States
@@ -831,412 +432,10 @@ function initFormLoadingStates() {
 
 var _coInputOnConfirm = null;
 
-function _coShowInputModal(title, placeholder, value, confirmText, onConfirm) {
-    var modal = document.getElementById('co-input-modal');
-    if (!modal) {
-        document.body.insertAdjacentHTML('beforeend',
-            '<div id="co-input-modal" class="co-modal-overlay">' +
-            '  <div class="co-modal-dialog">' +
-            '    <div class="co-modal-content">' +
-            '      <div class="co-modal-header">' +
-            '        <div style="display:flex;align-items:center;gap:12px;">' +
-            '          <div id="co-input-icon" class="co-modal-icon" style="background:rgba(59,130,246,0.15);color:#3B82F6;">' +
-            '            <i class="fas fa-folder-plus"></i>' +
-            '          </div>' +
-            '          <h5 id="co-input-title" style="margin:0;font-size:1.1rem;"></h5>' +
-            '        </div>' +
-            '        <button type="button" class="co-modal-close" id="co-input-close">&times;</button>' +
-            '      </div>' +
-            '      <div class="co-modal-body">' +
-            '        <input type="text" id="co-input-field" class="form-control"' +
-            '               style="background:var(--bg-tertiary,#1a1a1d);border-color:var(--border-color,#27272A);color:var(--text-primary,#FAFAFA);"' +
-            '               maxlength="80" autocomplete="off"/>' +
-            '      </div>' +
-            '      <div class="co-modal-footer">' +
-            '        <button type="button" class="btn btn-outline-secondary" id="co-input-cancel">' +
-            '          <i class="fas fa-times me-1"></i>Cancel' +
-            '        </button>' +
-            '        <button type="button" class="btn btn-primary" id="co-input-ok">' +
-            '          <i class="fas fa-check me-1"></i>Create' +
-            '        </button>' +
-            '      </div>' +
-            '    </div>' +
-            '  </div>' +
-            '</div>');
-        modal = document.getElementById('co-input-modal');
 
-        var hideInput = function () {
-            modal.classList.remove('co-show');
-            var b = document.getElementById('co-confirm-backdrop');
-            if (b) b.classList.remove('co-show');
-            setTimeout(function () {
-                modal.style.display = 'none';
-                if (b) b.style.display = 'none';
-            }, 200);
-            _coInputOnConfirm = null;
-        };
 
-        document.getElementById('co-input-close').addEventListener('click', hideInput);
-        document.getElementById('co-input-cancel').addEventListener('click', hideInput);
-        document.getElementById('co-input-ok').addEventListener('click', function () {
-            var val = document.getElementById('co-input-field').value.trim();
-            var fn = _coInputOnConfirm;
-            hideInput();
-            if (fn && val) setTimeout(function () { fn(val); }, 50);
-        });
-        document.getElementById('co-input-field').addEventListener('keydown', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                document.getElementById('co-input-ok').click();
-            }
-        });
-        modal.addEventListener('click', function (e) {
-            if (e.target === modal) hideInput();
-        });
-    }
 
-    document.getElementById('co-input-title').textContent = title;
-    document.getElementById('co-input-field').setAttribute('placeholder', placeholder || '');
-    document.getElementById('co-input-field').value = value || '';
-    document.getElementById('co-input-ok').innerHTML = '<i class="fas fa-check me-1"></i>' + (confirmText || 'OK');
-    _coInputOnConfirm = onConfirm;
 
-    // Reuse the shared backdrop
-    var b = document.getElementById('co-confirm-backdrop');
-    if (!b) {
-        b = document.createElement('div');
-        b.id = 'co-confirm-backdrop';
-        document.body.appendChild(b);
-    }
-    b.style.display = 'block';
-    modal.style.display = 'flex';
-    requestAnimationFrame(function () {
-        b.classList.add('co-show');
-        modal.classList.add('co-show');
-        document.getElementById('co-input-field').focus();
-        document.getElementById('co-input-field').select();
-    });
-}
-
-// ============================================
-// Installed Packages List
-// ============================================
-
-function initPackageList() {
-    var btn = document.getElementById('btn-list-packages');
-    if (!btn) return;
-
-    var instanceId = btn.dataset.instanceId;
-    var listDiv = document.getElementById('installed-packages-list');
-    var loadingDiv = document.getElementById('packages-loading');
-    var contentDiv = document.getElementById('packages-content');
-    var errorDiv = document.getElementById('packages-error');
-    var tbody = document.getElementById('packages-tbody');
-    var countDiv = document.getElementById('packages-count');
-    var loaded = false;
-
-    btn.addEventListener('click', function() {
-        if (listDiv.style.display === 'none') {
-            listDiv.style.display = '';
-            btn.innerHTML = '<i class="fas fa-times me-1"></i>Hide';
-
-            if (!loaded) {
-                loadingDiv.style.display = '';
-                contentDiv.style.display = 'none';
-                errorDiv.style.display = 'none';
-
-                CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/installed-packages', {})
-                    .then(function(result) {
-                        loadingDiv.style.display = 'none';
-                        if (result.error) {
-                            errorDiv.style.display = '';
-                            errorDiv.textContent = result.error;
-                            return;
-                        }
-                        contentDiv.style.display = '';
-                        tbody.innerHTML = '';
-                        (result.packages || []).forEach(function(pkg) {
-                            var tr = document.createElement('tr');
-                            tr.innerHTML = '<td style="padding:0.4rem 0.5rem;">' +
-                                pkg.name + '</td><td style="padding:0.4rem 0.5rem;color:var(--co-text-muted,#71717A);">' +
-                                pkg.version + '</td>';
-                            tbody.appendChild(tr);
-                        });
-                        countDiv.textContent = result.count + ' packages installed';
-                        loaded = true;
-                    })
-                    .catch(function() {
-                        loadingDiv.style.display = 'none';
-                        errorDiv.style.display = '';
-                        errorDiv.textContent = 'Failed to load packages';
-                    });
-            }
-        } else {
-            listDiv.style.display = 'none';
-            btn.innerHTML = '<i class="fas fa-list me-1"></i>View All';
-        }
-    });
-}
-
-// ============================================
-// Instance Folders
-// ============================================
-
-function initRestoreBanner() {
-    var requestBtn = document.getElementById('btn-request-restore');
-    var dismissBtn = document.getElementById('btn-dismiss-restore');
-    if (!requestBtn) return;
-
-    var instanceId = requestBtn.dataset.instanceId;
-
-    requestBtn.addEventListener('click', function () {
-        _coShowInputModal(
-            'Request Data Restore',
-            'Add a note for support (optional)',
-            '',
-            'Send Request',
-            function (note) {
-                requestBtn.disabled = true;
-                requestBtn.innerHTML = '<span class="spinner-sm"></span> Sending...';
-                CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/request-restore', { note: note })
-                    .then(function (res) {
-                        if (res.error) {
-                            CloudOdoo.showToast(res.error, 'error');
-                            requestBtn.disabled = false;
-                            requestBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i>Request Data Restore';
-                        } else {
-                            CloudOdoo.showToast(res.message, 'success');
-                            var banner = document.getElementById('restore-banner');
-                            if (banner) {
-                                banner.innerHTML = '<div class="text-center p-3" style="color:var(--success);">' +
-                                    '<i class="fas fa-check-circle me-2"></i>' +
-                                    '<strong>Request sent!</strong> Our support team will contact you shortly.</div>';
-                            }
-                        }
-                    })
-                    .catch(function (e) {
-                        CloudOdoo.showToast(e.message || 'Failed to send request', 'error');
-                        requestBtn.disabled = false;
-                        requestBtn.innerHTML = '<i class="fas fa-paper-plane me-1"></i>Request Data Restore';
-                    });
-            }
-        );
-    });
-
-    if (dismissBtn) {
-        dismissBtn.addEventListener('click', function () {
-            CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/dismiss-restore-banner', {})
-                .then(function () {
-                    var banner = document.getElementById('restore-banner');
-                    if (banner) banner.remove();
-                })
-                .catch(function () {});
-        });
-    }
-
-    // Decline restore (cancel invoice, keep fresh data)
-    var declineBtn = document.getElementById('btn-decline-restore');
-    if (declineBtn) {
-        declineBtn.addEventListener('click', function () {
-            var declineInstanceId = declineBtn.dataset.instanceId;
-            _coSetupModal(
-                'Decline data restoration? The restoration invoice will be cancelled and your old backup will be removed. You will keep the fresh instance data.',
-                'warning', 'Yes, decline restore', 'No, keep option',
-                function () {
-                    declineBtn.disabled = true;
-                    CloudOdoo.jsonRpc('/my/instances/' + declineInstanceId + '/decline-restore', {})
-                        .then(function (res) {
-                            if (res.error) {
-                                CloudOdoo.showToast(res.error, 'error');
-                                declineBtn.disabled = false;
-                            } else {
-                                CloudOdoo.showToast(res.message, 'success');
-                                window.location.reload();
-                            }
-                        })
-                        .catch(function (e) {
-                            CloudOdoo.showToast(e.message || 'Failed', 'error');
-                            declineBtn.disabled = false;
-                        });
-                }
-            );
-        });
-    }
-}
-
-function initBackupButton() {
-    var btn = document.getElementById('btn-create-backup');
-    if (!btn) return;
-
-    btn.addEventListener('click', function () {
-        var instanceId = btn.dataset.instanceId;
-        _coSetupModal(
-            'Create a new backup of your instance?',
-            'info', 'Yes, create backup', 'Cancel',
-            function () {
-                btn.disabled = true;
-                btn.innerHTML = '<span class="spinner-sm"></span> Creating...';
-                CloudOdoo.jsonRpc('/my/instances/' + instanceId + '/create-backup', {})
-                    .then(function (res) {
-                        if (res.error) {
-                            CloudOdoo.showToast(res.error, 'error');
-                            btn.disabled = false;
-                            btn.innerHTML = '<i class="fas fa-plus me-1"></i>Create Backup';
-                        } else {
-                            CloudOdoo.showToast('Backup started', 'success');
-                            window.location.reload();
-                        }
-                    })
-                    .catch(function (e) {
-                        CloudOdoo.showToast(e.message || 'Failed', 'error');
-                        btn.disabled = false;
-                        btn.innerHTML = '<i class="fas fa-plus me-1"></i>Create Backup';
-                    });
-            }
-        );
-    });
-}
-
-function initInstanceFolders() {
-    var createBtn = document.getElementById('btn-create-folder');
-    if (!createBtn) return;
-
-    // Create folder
-    createBtn.addEventListener('click', function () {
-        _coShowInputModal('New Folder', 'Folder name', '', 'Create', function (name) {
-            CloudOdoo.jsonRpc('/my/instances/folder/create', { name: name })
-                .then(function (res) {
-                    if (res.error) {
-                        CloudOdoo.showToast(res.error, 'error');
-                    } else {
-                        window.location.reload();
-                    }
-                })
-                .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
-        });
-    });
-
-    // Rename folder
-    document.querySelectorAll('.folder-rename-btn').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            e.preventDefault();
-            var folderId = parseInt(this.dataset.folderId);
-            var currentName = this.dataset.folderName;
-            _coShowInputModal('Rename Folder', 'Folder name', currentName, 'Rename', function (name) {
-                if (name === currentName) return;
-                CloudOdoo.jsonRpc('/my/instances/folder/' + folderId + '/rename', { name: name })
-                    .then(function (res) {
-                        if (res.error) {
-                            CloudOdoo.showToast(res.error, 'error');
-                        } else {
-                            window.location.reload();
-                        }
-                    })
-                    .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
-            });
-        });
-    });
-
-    // Delete folder
-    document.querySelectorAll('.folder-delete-btn').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            e.preventDefault();
-            var folderId = parseInt(this.dataset.folderId);
-            var folderName = this.dataset.folderName;
-            _coSetupModal(
-                'Delete folder "' + folderName + '"? Instances will be moved to Unfiled.',
-                'danger', 'Delete', 'Cancel',
-                function () {
-                    CloudOdoo.jsonRpc('/my/instances/folder/' + folderId + '/delete', {})
-                        .then(function (res) {
-                            if (res.error) {
-                                CloudOdoo.showToast(res.error, 'error');
-                            } else {
-                                // If currently viewing the deleted folder, go to all
-                                var params = new URLSearchParams(window.location.search);
-                                if (params.get('folder') === String(folderId)) {
-                                    window.location.href = '/my/instances';
-                                } else {
-                                    window.location.reload();
-                                }
-                            }
-                        })
-                        .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
-                }
-            );
-        });
-    });
-
-    // Add subfolder
-    document.querySelectorAll('.folder-add-sub-btn').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            e.preventDefault();
-            var parentId = parseInt(this.dataset.folderId);
-            var parentName = this.dataset.folderName;
-            _coShowInputModal('New Subfolder in "' + parentName + '"', 'Subfolder name', '', 'Create', function (name) {
-                CloudOdoo.jsonRpc('/my/instances/folder/create', { name: name, parent_id: parentId })
-                    .then(function (res) {
-                        if (res.error) {
-                            CloudOdoo.showToast(res.error, 'error');
-                        } else {
-                            window.location.reload();
-                        }
-                    })
-                    .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
-            });
-        });
-    });
-
-    // Checkbox selection & bulk actions
-    var selectAll = document.getElementById('select-all-instances');
-    var bulkBar = document.getElementById('bulk-actions');
-    var countEl = document.getElementById('selected-count');
-    var checkboxes = document.querySelectorAll('.instance-checkbox');
-
-    function updateBulkBar() {
-        var checked = document.querySelectorAll('.instance-checkbox:checked');
-        if (countEl) countEl.textContent = checked.length;
-        if (bulkBar) {
-            bulkBar.classList.toggle('d-none', checked.length === 0);
-            bulkBar.classList.toggle('d-flex', checked.length > 0);
-        }
-    }
-
-    if (selectAll) {
-        selectAll.addEventListener('change', function () {
-            checkboxes.forEach(function (cb) { cb.checked = selectAll.checked; });
-            updateBulkBar();
-        });
-    }
-    checkboxes.forEach(function (cb) {
-        cb.addEventListener('change', updateBulkBar);
-    });
-
-    // Move to folder
-    document.querySelectorAll('.move-to-folder').forEach(function (item) {
-        item.addEventListener('click', function (e) {
-            e.preventDefault();
-            var folderId = parseInt(this.dataset.folderId) || false;
-            var checked = document.querySelectorAll('.instance-checkbox:checked');
-            var ids = [];
-            checked.forEach(function (cb) { ids.push(parseInt(cb.value)); });
-            if (!ids.length) return;
-            CloudOdoo.jsonRpc('/my/instances/move', {
-                instance_ids: ids,
-                folder_id: folderId,
-            })
-                .then(function (res) {
-                    if (res.error) {
-                        CloudOdoo.showToast(res.error, 'error');
-                    } else {
-                        CloudOdoo.showToast('Moved ' + ids.length + ' instance(s)', 'success');
-                        setTimeout(function () { window.location.reload(); }, 500);
-                    }
-                })
-                .catch(function (e) { CloudOdoo.showToast(e.message, 'error'); });
-        });
-    });
-}
 
 // ============================================
 // Shared Slider Helpers
@@ -1296,208 +495,6 @@ function generateStorageTicks(containerId, min, max) {
     });
 }
 
-// ============================================
-// Custom Plan Builder (Pricing Page)
-// ============================================
-
-function initCustomPlanBuilder() {
-    var configEl = document.getElementById('custom-plan-config');
-    if (!configEl) return;
-
-    var config = {
-        workerPrice: parseFloat(configEl.dataset.workerPrice) || 15,
-        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.5,
-        minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
-        maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
-        minStorage: parseInt(configEl.dataset.minStorage) || 5,
-        maxStorage: parseInt(configEl.dataset.maxStorage) || 200,
-        usersPerWorkerMin: parseInt(configEl.dataset.usersPerWorkerMin) || 6,
-        usersPerWorkerMax: parseInt(configEl.dataset.usersPerWorkerMax) || 10,
-        yearlyDiscountPct: parseInt(configEl.dataset.yearlyDiscountPct) || 20,
-        currency: configEl.dataset.currency || 'USD',
-        productId: configEl.dataset.productId || '',
-        minBackups: parseInt(configEl.dataset.minBackups) || 3,
-        maxBackups: parseInt(configEl.dataset.maxBackups) || 14,
-    };
-
-    var workersSlider = document.getElementById('workers-slider');
-    var storageSlider = document.getElementById('storage-slider');
-    if (!workersSlider || !storageSlider) return;
-
-    // Billing state
-    var currentBilling = 'monthly';
-    var YEARLY_DISCOUNT = config.yearlyDiscountPct / 100;
-
-    // Generate tick marks
-    generateTicks('workers-ticks', config.minWorkers, config.maxWorkers, 1);
-    generateStorageTicks('storage-ticks', config.minStorage, config.maxStorage);
-
-    // Update slider track fill
-    function updateSliderTrack(slider) {
-        var min = parseFloat(slider.min);
-        var max = parseFloat(slider.max);
-        var val = parseFloat(slider.value);
-        var pct = ((val - min) / (max - min)) * 100;
-        slider.style.setProperty('--slider-pct', pct + '%');
-    }
-
-    function calculateAndUpdate() {
-        var workers = parseInt(workersSlider.value);
-        var storage = parseInt(storageSlider.value);
-
-        var workersCost = workers * config.workerPrice;
-        var storageCost = storage * config.storagePrice;
-        var monthlyTotal = workersCost + storageCost;
-        var yearlyFullPrice = monthlyTotal * 12;
-        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
-        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
-        var effectiveMonthly = yearlyDiscounted / 12;
-        var minUsers = workers * config.usersPerWorkerMin;
-        var maxUsers = workers * config.usersPerWorkerMax;
-
-        // Sync number inputs with slider values
-        var wInput = document.getElementById('workers-input');
-        var sInput = document.getElementById('storage-input');
-        if (wInput && wInput !== document.activeElement) wInput.value = workers;
-        if (sInput && sInput !== document.activeElement) sInput.value = storage;
-
-        // Update recommendation
-        var recEl = document.querySelector('#workers-recommendation .rec-users');
-        if (recEl) recEl.textContent = '~' + minUsers + '–' + maxUsers;
-
-        // Resource counts only — per-resource pricing is an internal
-        // calculation and is intentionally not shown to the customer.
-        setText('summary-workers', workers);
-        setText('summary-storage', storage);
-
-        // Toggle monthly/yearly display
-        var monthlyDisplay = document.getElementById('summary-monthly-display');
-        var yearlyDisplay = document.getElementById('summary-yearly-display');
-
-        if (currentBilling === 'yearly') {
-            if (monthlyDisplay) monthlyDisplay.style.display = 'none';
-            if (yearlyDisplay) yearlyDisplay.style.display = '';
-            setText('summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
-            setText('summary-effective-monthly', CloudOdoo.formatCurrency(effectiveMonthly, config.currency) + '/mo');
-            setText('summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
-            setText('summary-yearly-original', CloudOdoo.formatCurrency(yearlyFullPrice, config.currency));
-            setText('summary-yearly-discounted', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
-        } else {
-            if (monthlyDisplay) monthlyDisplay.style.display = '';
-            if (yearlyDisplay) yearlyDisplay.style.display = 'none';
-            setText('summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
-            setText('summary-yearly-equiv', CloudOdoo.formatCurrency(yearlyFullPrice, config.currency) + '/yr');
-        }
-
-        setText('summary-min-users', minUsers);
-        setText('summary-max-users', maxUsers);
-
-        // Backups are a separate paid add-on, not bundled into the
-        // plan, so there's no backup-count line on the builder.
-
-        // Update CTA link
-        var ctaEl = document.getElementById('custom-plan-cta');
-        if (ctaEl) {
-            ctaEl.href = '/services/' + config.productId + '/custom/configure?workers=' + workers + '&storage=' + storage + '&billing=' + currentBilling;
-        }
-
-        // Update slider tracks
-        updateSliderTrack(workersSlider);
-        updateSliderTrack(storageSlider);
-
-        // Highlight recommended workers range (4-6)
-        updateWorkersHighlight(workers);
-    }
-
-    function setText(id, value) {
-        var el = document.getElementById(id);
-        if (el) el.textContent = value;
-    }
-
-    function updateWorkersHighlight(currentWorkers) {
-        var rec = document.getElementById('workers-recommendation');
-        if (!rec) return;
-        // Change recommendation style based on range
-        if (currentWorkers >= 4 && currentWorkers <= 6) {
-            rec.classList.add('rec-optimal');
-            rec.classList.remove('rec-normal');
-        } else {
-            rec.classList.remove('rec-optimal');
-            rec.classList.add('rec-normal');
-        }
-    }
-
-    // Event listeners — sliders
-    workersSlider.addEventListener('input', calculateAndUpdate);
-    storageSlider.addEventListener('input', calculateAndUpdate);
-
-    // Event listeners — number inputs sync to sliders
-    var workersInput = document.getElementById('workers-input');
-    var storageInput = document.getElementById('storage-input');
-    if (workersInput) {
-        workersInput.addEventListener('input', function() {
-            var v = Math.max(config.minWorkers, Math.min(config.maxWorkers, parseInt(this.value) || config.minWorkers));
-            workersSlider.value = v;
-            calculateAndUpdate();
-        });
-    }
-    if (storageInput) {
-        storageInput.addEventListener('input', function() {
-            var v = Math.max(config.minStorage, Math.min(config.maxStorage, parseInt(this.value) || config.minStorage));
-            storageSlider.value = v;
-            calculateAndUpdate();
-        });
-    }
-
-    // Custom builder billing toggle
-    var customBillingToggle = document.getElementById('custom-billing-toggle');
-    if (customBillingToggle) {
-        customBillingToggle.querySelectorAll('.toggle-btn').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                customBillingToggle.querySelectorAll('.toggle-btn').forEach(function(b) {
-                    b.classList.remove('active');
-                });
-                btn.classList.add('active');
-                currentBilling = btn.dataset.billing;
-                calculateAndUpdate();
-            });
-        });
-    }
-
-    // "Customize this plan" buttons
-    document.querySelectorAll('.btn-customize-plan').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            var planWorkers = parseInt(btn.dataset.workers) || 4;
-            var planStorage = parseInt(btn.dataset.storage) || 20;
-
-            // Clamp to allowed range
-            planWorkers = Math.max(config.minWorkers, Math.min(planWorkers, config.maxWorkers));
-            planStorage = Math.max(config.minStorage, Math.min(planStorage, config.maxStorage));
-
-            // Set slider values
-            workersSlider.value = planWorkers;
-            storageSlider.value = planStorage;
-
-            // Recalculate
-            calculateAndUpdate();
-
-            // Scroll to builder
-            var builder = document.getElementById('custom-builder');
-            if (builder) {
-                builder.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                // Add a brief highlight animation
-                builder.classList.add('builder-highlight');
-                setTimeout(function() {
-                    builder.classList.remove('builder-highlight');
-                }, 1500);
-            }
-        });
-    });
-
-    // Initial calculation
-    calculateAndUpdate();
-}
 
 // ============================================
 // Upgrade / Change Plan Builder
@@ -1508,8 +505,10 @@ function initUpgradePlanBuilder() {
     if (!configEl) return;
 
     var config = {
-        workerPrice: parseFloat(configEl.dataset.workerPrice) || 15,
-        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.5,
+        // Pricing is computed SERVER-SIDE by the pricing engine — the
+        // browser never sees per-unit rates. workers/storage are POSTed
+        // to calcUrl and the returned total is rendered.
+        calcUrl: configEl.dataset.calcUrl || '/saas/hosting-plan/calculate',
         minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
         maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
         minStorage: parseInt(configEl.dataset.minStorage) || 5,
@@ -1548,16 +547,45 @@ function initUpgradePlanBuilder() {
         if (el) el.textContent = value;
     }
 
+    // Fetch the authoritative price from the server (pricing engine).
+    // Debounced so dragging a slider doesn't spam the endpoint. The
+    // browser never computes the price itself.
+    var _priceTimer = null;
+    var _priceSeq = 0;
+    function refreshPrice(workers, storage) {
+        var monthlyEl = document.getElementById('upgrade-summary-monthly-total');
+        var yearlyEl = document.getElementById('upgrade-summary-yearly-total');
+        if (monthlyEl) monthlyEl.textContent = '…';
+        if (yearlyEl) yearlyEl.textContent = '…';
+        if (_priceTimer) clearTimeout(_priceTimer);
+        var seq = ++_priceSeq;
+        _priceTimer = setTimeout(function () {
+            CloudOdoo.jsonRpc(config.calcUrl, { workers: workers, storage: storage })
+                .then(function (r) {
+                    if (seq !== _priceSeq) return;  // a newer request superseded this
+                    var monthly = (r && r.monthly_total) || 0;
+                    var yearlyFull = monthly * 12;
+                    var yearlyDiscounted = yearlyFull * (1 - YEARLY_DISCOUNT);
+                    var yearlySavings = yearlyFull - yearlyDiscounted;
+                    var cur = (r && r.currency) || config.currency;
+                    if (currentBilling === 'yearly') {
+                        setText('upgrade-summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, cur));
+                        setText('upgrade-summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, cur));
+                    } else {
+                        setText('upgrade-summary-monthly-total', CloudOdoo.formatCurrency(monthly, cur));
+                    }
+                })
+                .catch(function () {
+                    if (seq !== _priceSeq) return;
+                    if (monthlyEl) monthlyEl.textContent = '—';
+                    if (yearlyEl) yearlyEl.textContent = '—';
+                });
+        }, 250);
+    }
+
     function calculateAndUpdate() {
         var workers = parseInt(workersSlider.value);
         var storage = parseInt(storageSlider.value);
-
-        var workersCost = workers * config.workerPrice;
-        var storageCost = storage * config.storagePrice;
-        var monthlyTotal = workersCost + storageCost;
-        var yearlyFullPrice = monthlyTotal * 12;
-        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
-        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
 
         // Sync number inputs with slider values
         var wInput = document.getElementById('upgrade-workers-input');
@@ -1574,17 +602,16 @@ function initUpgradePlanBuilder() {
         // Toggle monthly/yearly display
         var monthlyDisplay = document.getElementById('upgrade-summary-monthly-display');
         var yearlyDisplay = document.getElementById('upgrade-summary-yearly-display');
-
         if (currentBilling === 'yearly') {
             if (monthlyDisplay) monthlyDisplay.style.display = 'none';
             if (yearlyDisplay) yearlyDisplay.style.display = '';
-            setText('upgrade-summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
-            setText('upgrade-summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
         } else {
             if (monthlyDisplay) monthlyDisplay.style.display = '';
             if (yearlyDisplay) yearlyDisplay.style.display = 'none';
-            setText('upgrade-summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
         }
+
+        // The price (monthly/yearly totals) comes from the server.
+        refreshPrice(workers, storage);
 
         // Backups are now a separate paid add-on (configured from the
         // instance's Snapshots page after deployment), not bundled
@@ -1703,141 +730,6 @@ function initUpgradePlanBuilder() {
     calculateAndUpdate();
 }
 
-// ============================================
-// Hosting Plan Builder
-// ============================================
-
-function initHostingPlanBuilder() {
-    var configEl = document.getElementById('hosting-plan-config');
-    if (!configEl) return;
-
-    var config = {
-        workerPrice: parseFloat(configEl.dataset.workerPrice) || 10,
-        storagePrice: parseFloat(configEl.dataset.storagePrice) || 0.3,
-        minWorkers: parseInt(configEl.dataset.minWorkers) || 2,
-        maxWorkers: parseInt(configEl.dataset.maxWorkers) || 8,
-        minStorage: parseInt(configEl.dataset.minStorage) || 5,
-        maxStorage: parseInt(configEl.dataset.maxStorage) || 200,
-        yearlyDiscountPct: parseInt(configEl.dataset.yearlyDiscountPct) || 20,
-        currency: configEl.dataset.currency || 'USD',
-        minBackups: parseInt(configEl.dataset.minBackups) || 3,
-        maxBackups: parseInt(configEl.dataset.maxBackups) || 14,
-    };
-
-    var workersSlider = document.getElementById('hosting-workers-slider');
-    var storageSlider = document.getElementById('hosting-storage-slider');
-    if (!workersSlider || !storageSlider) return;
-
-    var currentBilling = 'monthly';
-    var YEARLY_DISCOUNT = config.yearlyDiscountPct / 100;
-
-    generateTicks('hosting-workers-ticks', config.minWorkers, config.maxWorkers, 1);
-    generateStorageTicks('hosting-storage-ticks', config.minStorage, config.maxStorage);
-
-    function updateSliderTrack(slider) {
-        var min = parseFloat(slider.min);
-        var max = parseFloat(slider.max);
-        var val = parseFloat(slider.value);
-        var pct = max > min ? ((val - min) / (max - min)) * 100 : 0;
-        slider.style.setProperty('--slider-pct', pct + '%');
-    }
-
-    function setText(id, value) {
-        var el = document.getElementById(id);
-        if (el) el.textContent = value;
-    }
-
-    function calculateAndUpdate() {
-        var workers = parseInt(workersSlider.value);
-        var storage = parseInt(storageSlider.value);
-
-        var workersCost = workers * config.workerPrice;
-        var storageCost = storage * config.storagePrice;
-        var monthlyTotal = workersCost + storageCost;
-        var yearlyFullPrice = monthlyTotal * 12;
-        var yearlyDiscounted = yearlyFullPrice * (1 - YEARLY_DISCOUNT);
-        var yearlySavings = yearlyFullPrice - yearlyDiscounted;
-
-        // Sync number inputs
-        var wInput = document.getElementById('hosting-workers-input');
-        var sInput = document.getElementById('hosting-storage-input');
-        if (wInput && wInput !== document.activeElement) wInput.value = workers;
-        if (sInput && sInput !== document.activeElement) sInput.value = storage;
-
-        // Resource counts only — per-resource pricing is an internal
-        // calculation and is intentionally not shown to the customer.
-        // Backup count is no longer shown either (backups are a paid
-        // add-on configured separately, not bundled with the plan).
-        setText('hosting-summary-workers', workers);
-        setText('hosting-summary-storage', storage);
-
-        // Toggle monthly/yearly
-        var monthlyDisplay = document.getElementById('hosting-summary-monthly-display');
-        var yearlyDisplay = document.getElementById('hosting-summary-yearly-display');
-        if (currentBilling === 'yearly') {
-            if (monthlyDisplay) monthlyDisplay.style.display = 'none';
-            if (yearlyDisplay) yearlyDisplay.style.display = '';
-            setText('hosting-summary-yearly-total', CloudOdoo.formatCurrency(yearlyDiscounted, config.currency));
-            setText('hosting-summary-yearly-savings', CloudOdoo.formatCurrency(yearlySavings, config.currency));
-        } else {
-            if (monthlyDisplay) monthlyDisplay.style.display = '';
-            if (yearlyDisplay) yearlyDisplay.style.display = 'none';
-            setText('hosting-summary-monthly-total', CloudOdoo.formatCurrency(monthlyTotal, config.currency));
-        }
-
-        // Update CTA link
-        var ctaEl = document.getElementById('hosting-cta');
-        var versionSelect = document.getElementById('hosting-version-select');
-        var versionId = versionSelect ? versionSelect.value : '';
-        if (ctaEl) {
-            ctaEl.href = '/hosting/configure?workers=' + workers + '&storage=' + storage +
-                         '&billing=' + currentBilling + '&odoo_version_id=' + versionId;
-        }
-
-        updateSliderTrack(workersSlider);
-        updateSliderTrack(storageSlider);
-    }
-
-    workersSlider.addEventListener('input', calculateAndUpdate);
-    storageSlider.addEventListener('input', calculateAndUpdate);
-
-    // Number inputs
-    var wInput = document.getElementById('hosting-workers-input');
-    var sInput = document.getElementById('hosting-storage-input');
-    if (wInput) {
-        wInput.addEventListener('input', function() {
-            workersSlider.value = Math.max(config.minWorkers, Math.min(config.maxWorkers, parseInt(this.value) || config.minWorkers));
-            calculateAndUpdate();
-        });
-    }
-    if (sInput) {
-        sInput.addEventListener('input', function() {
-            storageSlider.value = Math.max(config.minStorage, Math.min(config.maxStorage, parseInt(this.value) || config.minStorage));
-            calculateAndUpdate();
-        });
-    }
-
-    // Version select updates CTA link
-    var versionSelect = document.getElementById('hosting-version-select');
-    if (versionSelect) {
-        versionSelect.addEventListener('change', calculateAndUpdate);
-    }
-
-    // Billing toggle
-    var toggleContainer = document.getElementById('hosting-billing-toggle');
-    if (toggleContainer) {
-        toggleContainer.querySelectorAll('.toggle-btn').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                toggleContainer.querySelectorAll('.toggle-btn').forEach(function(b) { b.classList.remove('active'); });
-                btn.classList.add('active');
-                currentBilling = btn.dataset.billing;
-                calculateAndUpdate();
-            });
-        });
-    }
-
-    calculateAndUpdate();
-}
 
 // ============================================
 // Page Initialization
@@ -1847,29 +739,14 @@ function initAll() {
     // Initialize all interactive components
     // (theme is handled by the veltnex-theme system, not here — see the
     //  removed initThemeToggle note above)
-    initBillingToggle();
     initSubdomainCheck();
-    initCustomPlanBuilder();
     initUpgradePlanBuilder();
-    initHostingPlanBuilder();
     initOTPInputs();
     initOTPTimer();
     initPasswordStrength();
-    initInstanceActions();
-    initUsageRefresh();
-    initStatusPolling();
-    initLoadingOverlay();
     initOverlayOnSubmit();
-    initBackupActions();
-    initInstanceSort();
-    initLoginForm();
-    initTrialCountdown();
     initConfirmModals();
     initFormLoadingStates();
-    initPackageList();
-    initInstanceFolders();
-    initBackupButton();
-    initRestoreBanner();
 
     // Update nav active state
     const path = window.location.pathname;
