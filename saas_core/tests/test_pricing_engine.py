@@ -246,6 +246,36 @@ class TestPricingEngine(TransactionCase):
             'hosting', 4, 50, 'monthly', addon_codes=['nonexistent_code'])
         self.assertAlmostEqual(none['breakdown']['addons_monthly'], 0.0, places=2)
 
+    def test_addon_storage_aware_pricing(self):
+        """P4: an add-on can scale with storage (flat / storage / hybrid)
+        billed per block. Flat mode is unchanged."""
+        Addon = self.env['saas.addon'].sudo()
+        a = Addon.create({
+            'name': 'TEST Scaled Backup', 'code': 'test_scaled_backup',
+            'applies_to': 'hosting', 'price_mode': 'hybrid',
+            'monthly_price': 5.0,        # base fee
+            'price_per_block': 1.0, 'block_gb': 10,
+        })
+        # 50 GB -> ceil(50/10)=5 blocks -> 5 + 5*1 = 10
+        self.assertAlmostEqual(a.effective_monthly_price(storage_gb=50), 10.0, places=2)
+        # 0 GB -> just the base.
+        self.assertAlmostEqual(a.effective_monthly_price(storage_gb=0), 5.0, places=2)
+        # 21 GB -> ceil(21/10)=3 blocks -> 5 + 3 = 8
+        self.assertAlmostEqual(a.effective_monthly_price(storage_gb=21), 8.0, places=2)
+        # storage-only mode: no base.
+        a.write({'price_mode': 'storage'})
+        self.assertAlmostEqual(a.effective_monthly_price(storage_gb=50), 5.0, places=2)
+        # flat mode: storage ignored (back-compat).
+        a.write({'price_mode': 'flat'})
+        self.assertAlmostEqual(a.effective_monthly_price(storage_gb=999), 5.0, places=2)
+        self.assertAlmostEqual(a.effective_monthly_price(), 5.0, places=2)
+        # Through the engine: storage flows into the add-on sum.
+        a.write({'price_mode': 'hybrid'})
+        q = self.engine.compute('hosting', 4, 200, 'monthly',
+                                addon_codes=['test_scaled_backup'])
+        # 200 GB -> 20 blocks -> 5 + 20 = 25
+        self.assertAlmostEqual(q['breakdown']['addons_monthly'], 25.0, places=2)
+
     def test_storage_overage_per_gb_and_block(self):
         """Overage: legacy per-GB by default; block-based when configured."""
         GB = 1024 ** 3

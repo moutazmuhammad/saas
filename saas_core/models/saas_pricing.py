@@ -128,12 +128,13 @@ class SaasPricingEngine(models.AbstractModel):
         buffer_pct = min(max(buffer_pct, 0.0), 100.0)
         return best * (1.0 - buffer_pct / 100.0)
 
-    def _addons_total(self, kind, addon_codes):
+    def _addons_total(self, kind, addon_codes, storage_gb=0):
         """Sum effective monthly prices of the given add-on codes that
-        apply to ``kind``. Empty/none -> 0.0 (behaviour-neutral)."""
+        apply to ``kind``. ``storage_gb`` lets storage-aware add-ons (P4)
+        scale; flat ones ignore it. Empty/none -> 0.0 (behaviour-neutral)."""
         if not addon_codes:
             return 0.0
-        return self.env['saas.addon']._sum_prices(kind, addon_codes)
+        return self.env['saas.addon']._sum_prices(kind, addon_codes, storage_gb)
 
     @staticmethod
     def _clamp(value, lo, hi):
@@ -178,7 +179,7 @@ class SaasPricingEngine(models.AbstractModel):
         region_factor = self._region_multiplier(region)
 
         resource_monthly = max(base, floor) * region_factor
-        addons_monthly = self._addons_total(kind, addon_codes)
+        addons_monthly = self._addons_total(kind, addon_codes, storage)
         # Support plan (P3): flat monthly fee, NOT scaled by region, added
         # after infra. 0 when no plan / the free default / unknown code.
         support_monthly = self.env['saas.support.plan']._price_for_code(support_code)

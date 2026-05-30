@@ -419,6 +419,16 @@ class SaasInstance(models.Model):
         help='Monthly add-on price charged for this instance when daily '
              'backups are enabled. Pulled from SaaS settings at compute time.',
     )
+    backup_price_locked_until = fields.Date(
+        string='Backup Price Locked Until',
+        copy=False,
+        help='Grandfathering (P4): while set and in the future, the daily '
+             'backup add-on keeps its FLAT settings price even after the '
+             'add-on is switched to storage-based pricing — so an existing '
+             "subscriber's recurring charge doesn't jump mid-subscription. "
+             'Set on migration to the next backup-invoice date; cleared once '
+             'past. New activations price with the current model immediately.',
+    )
     # Backup billing runs on its own monthly cycle, independent of the
     # main subscription's billing_period. This way a customer on a
     # yearly plan still pays the backup add-on once a month.
@@ -1232,8 +1242,9 @@ class SaasInstance(models.Model):
             })
         return product
 
-    def _get_daily_backup_price(self):
-        """Monthly price of the backup add-on from SaaS settings."""
+    def _backup_flat_price(self):
+        """The flat daily-backup price from SaaS settings (the legacy /
+        grandfathered amount)."""
         try:
             return float(
                 self.env['ir.config_parameter'].sudo().get_param(
@@ -1242,6 +1253,32 @@ class SaasInstance(models.Model):
             )
         except (TypeError, ValueError):
             return 0.0
+
+    def _get_daily_backup_price(self):
+        """Monthly price of the daily-backup add-on for THIS instance.
+
+        Storage-aware (P4): delegates to the ``daily_snapshots`` add-on so
+        an admin can switch it to storage/hybrid pricing and heavy
+        instances pay proportionally. Falls back to the flat settings price
+        when the add-on isn't configured for scaling.
+
+        Grandfathering: while ``backup_price_locked_until`` is set and in
+        the future, the FLAT price is kept regardless of the add-on mode,
+        so an existing subscriber's recurring charge doesn't jump
+        mid-subscription.
+        """
+        self.ensure_one()
+        flat = self._backup_flat_price()
+        lock = self.backup_price_locked_until
+        if lock and lock >= fields.Date.today():
+            return flat
+        addon = self.env['saas.addon'].sudo().search(
+            [('code', '=', 'daily_snapshots'), ('active', '=', True)], limit=1,
+        )
+        if not addon or (addon.price_mode or 'flat') == 'flat':
+            return flat
+        storage_gb = (self.total_storage_bytes or 0) / (1024 ** 3)
+        return addon.effective_monthly_price(storage_gb=storage_gb)
 
     def _get_snapshot_retention_surcharge(self):
         """One-time fee for keeping a snapshot through cancellation.

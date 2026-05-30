@@ -15,7 +15,7 @@
 - [x] **P1** — Minimum monthly charge (engine + setting + breakdown)
 - [x] **P2** — Tier protection redesign (soft-floor %, the lowest-risk win)
 - [x] **P3** — `saas.support.plan` model + ACL + admin views + seed
-- [ ] **P4** — Storage-aware backup pricing (extend `saas.addon`)
+- [x] **P4** — Storage-aware backup pricing (extend `saas.addon`)
 - [ ] **P5** — Wire support + new backup into recurring billing
 - [ ] **P6** — Customer UI (configure/upgrade/reactivate: support picker + line items)
 - [ ] **P7** — Migration + tests + docs
