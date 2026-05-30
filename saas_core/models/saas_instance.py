@@ -172,6 +172,18 @@ class SaasInstance(models.Model):
         help='Physical server where the Docker container for this instance runs. '
              'Leave empty for automatic allocation based on server capacity.',
     )
+    region_id = fields.Many2one(
+        'saas.region',
+        string='Region',
+        index=True,
+        ondelete='restrict',
+        default=lambda self: self.env['saas.region']._get_default(),
+        help='Region the instance is hosted in. Chosen at creation and '
+             'fixed thereafter — drives region pricing and constrains '
+             'server allocation (proxy/docker/db all in this region). '
+             'Empty on legacy instances (treated as the default region, '
+             'multiplier 1.0).',
+    )
     db_server_id = fields.Many2one(
         'saas.server',
         string='Database Server',
