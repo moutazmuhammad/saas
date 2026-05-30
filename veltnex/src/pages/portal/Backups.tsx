@@ -22,6 +22,9 @@ export default function Backups() {
   const navigate = useNavigate();
   const toast = useToast();
   const [backups, setBackups] = React.useState<ApiBackup[] | null>(null);
+  // Snapshots are only accessible while the instance is running. When it's
+  // stopped/suspended the endpoint returns ready=false (backups=[]).
+  const [ready, setReady] = React.useState(true);
   const [instance, setInstance] = React.useState<ApiInstance | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [enabling, setEnabling] = React.useState(false);
@@ -40,7 +43,8 @@ export default function Backups() {
         api.backups(instanceId),
         api.instance(instanceId).catch(() => null),
       ]);
-      setBackups(b);
+      setBackups(b.backups);
+      setReady(b.ready);
       setInstance(inst);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load snapshots.");
@@ -93,19 +97,34 @@ export default function Backups() {
         </p>
       </div>
 
-      {instance && (
-        <DailyBackupCard
-          instance={instance}
-          enabling={enabling}
-          onEnable={enableDailyBackup}
-          onCheckout={() => (window.location.href = `/my/instances/${id}/daily-backup/checkout`)}
-          onBilling={() => navigate("/my/billing")}
+      {!ready ? (
+        <AlertBanner
+          className="mt-6"
+          variant="warning"
+          title="Snapshots unavailable"
+          description={
+            instance?.state === "suspended"
+              ? "This instance is suspended. Settle the outstanding invoice to access snapshots and daily backups."
+              : instance?.state === "stopped"
+                ? "This instance is stopped. Start it to access snapshots and daily backups."
+                : "Snapshots and daily backups become available once the instance is running."
+          }
         />
-      )}
+      ) : (
+        <>
+          {instance && (
+            <DailyBackupCard
+              instance={instance}
+              enabling={enabling}
+              onEnable={enableDailyBackup}
+              onCheckout={() => (window.location.href = `/my/instances/${id}/daily-backup/checkout`)}
+              onBilling={() => navigate("/my/billing")}
+            />
+          )}
 
-      {error && <AlertBanner className="mt-6" variant="danger" title="Snapshots" description={error} />}
+          {error && <AlertBanner className="mt-6" variant="danger" title="Snapshots" description={error} />}
 
-      {!backups && !error ? (
+          {!backups && !error ? (
         <div className="mt-20 flex justify-center">
           <Spinner size="lg" label="Loading snapshots…" />
         </div>
@@ -164,6 +183,8 @@ export default function Backups() {
           )}
         </>
       ) : null}
+        </>
+      )}
 
       <RestoreSnapshotDialog
         backup={restoreTarget}

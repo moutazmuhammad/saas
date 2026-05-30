@@ -14,11 +14,14 @@ interface Line {
 }
 
 // Best-effort log-level colouring based on the Odoo log line content.
+// The terminal background is always dark (see bg-[#0b0b0e] below), so these
+// use FIXED light colours rather than the theme tokens (text-foreground /
+// text-muted go dark in light mode and would be invisible on the dark pane).
 function levelClass(text: string): string {
-  if (/\bERROR\b|CRITICAL|Traceback/.test(text)) return "text-danger";
-  if (/\bWARNING\b/.test(text)) return "text-warning";
-  if (/\bDEBUG\b/.test(text)) return "text-muted";
-  return "text-foreground/85";
+  if (/\bERROR\b|CRITICAL|Traceback/.test(text)) return "text-red-400";
+  if (/\bWARNING\b/.test(text)) return "text-amber-400";
+  if (/\bDEBUG\b/.test(text)) return "text-zinc-500";
+  return "text-zinc-200";
 }
 
 export default function Logs() {
@@ -38,9 +41,14 @@ export default function Logs() {
     api.instance(instanceId).then(setInstance).catch(() => {});
   }, [instanceId]);
 
+  // Logs only stream while the instance is running. Stopped / suspended /
+  // not-yet-running instances have no live container — the server rejects
+  // the stream, so don't even open it; show a clear message instead.
+  const logsAvailable = instance ? instance.state === "running" : true;
+
   // Open / close the SSE stream based on pause state.
   React.useEffect(() => {
-    if (paused) {
+    if (paused || (instance && instance.state !== "running")) {
       sourceRef.current?.close();
       sourceRef.current = null;
       return;
@@ -74,7 +82,7 @@ export default function Logs() {
       es.close();
       sourceRef.current = null;
     };
-  }, [paused, instanceId]);
+  }, [paused, instanceId, instance]);
 
   // Auto-scroll to bottom on new lines.
   React.useEffect(() => {
@@ -100,27 +108,44 @@ export default function Logs() {
             Live container stream{instance ? ` · ${instance.name}` : ""}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setPaused((p) => !p)}>
-            {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
-            {paused ? "Resume" : "Pause"}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setAutoScroll((a) => !a)}
-            className={cn(autoScroll && "border-primary/40 text-primary-glow")}
-          >
-            <ArrowDownToLine className="size-4" />
-            Auto-scroll
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => setLines([])}>
-            <Trash2 className="size-4" />
-            Clear
-          </Button>
-        </div>
+        {logsAvailable && (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setPaused((p) => !p)}>
+              {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
+              {paused ? "Resume" : "Pause"}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setAutoScroll((a) => !a)}
+              className={cn(autoScroll && "border-primary/40 text-primary-glow")}
+            >
+              <ArrowDownToLine className="size-4" />
+              Auto-scroll
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setLines([])}>
+              <Trash2 className="size-4" />
+              Clear
+            </Button>
+          </div>
+        )}
       </div>
 
+      {!logsAvailable ? (
+        <AlertBanner
+          className="mt-6"
+          variant="warning"
+          title="Logs unavailable"
+          description={
+            instance?.state === "suspended"
+              ? "This instance is suspended. Settle the outstanding invoice to view its logs."
+              : instance?.state === "stopped"
+                ? "This instance is stopped. Start it to view its live logs."
+                : "Live logs become available once the instance is running."
+          }
+        />
+      ) : (
+      <>
       {connError && (
         <AlertBanner className="mt-6" variant="warning" title="Log stream interrupted" description={connError} onDismiss={() => setConnError(null)} />
       )}
@@ -151,7 +176,7 @@ export default function Logs() {
           className="h-[calc(100vh-17rem)] min-h-[420px] overflow-y-auto bg-[#0b0b0e] p-4 font-mono text-xs leading-relaxed"
         >
           {lines.length === 0 ? (
-            <p className="text-muted">
+            <p className="text-zinc-500">
               {paused ? "Stream paused." : "Waiting for log output… (logs stream only while the instance is running)"}
             </p>
           ) : (
@@ -163,6 +188,8 @@ export default function Logs() {
           )}
         </div>
       </Card>
+      </>
+      )}
     </div>
   );
 }

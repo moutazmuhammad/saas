@@ -726,8 +726,6 @@ class SaasWebsite(http.Controller):
             'max_storage': int(ICP.get_param('saas_master.hosting_max_storage', '200')),
             'cpu_per_worker': float(ICP.get_param('saas_master.hosting_cpu_per_worker', '0.5')),
             'ram_per_worker': int(ICP.get_param('saas_master.hosting_ram_per_worker', '512')),
-            'min_backups': int(ICP.get_param('saas_master.hosting_min_backups', '3')),
-            'max_backups': int(ICP.get_param('saas_master.hosting_max_backups', '14')),
             'yearly_discount_pct': int(ICP.get_param('saas_master.hosting_yearly_discount_pct', '20')),
             'daily_backup_price': float(ICP.get_param(
                 'saas_master.hosting_daily_backup_price', '5.0',
@@ -807,15 +805,6 @@ class SaasWebsite(http.Controller):
 
             yearly_price = _q['yearly']
 
-            w_range = max(1, config['max_workers'] - config['min_workers'])
-            s_range = max(1, config['max_storage'] - config['min_storage'])
-            w_pct = (workers - config['min_workers']) / w_range
-            s_pct = (storage - config['min_storage']) / s_range
-            plan_size = (w_pct + s_pct) / 2.0
-            backup_count = max(config['min_backups'], min(config['max_backups'],
-                config['min_backups'] + round(plan_size * (config['max_backups'] - config['min_backups']))
-            ))
-
             plan = Plan.create({
                 'name': plan_name,
                 'is_custom': True,
@@ -825,7 +814,9 @@ class SaasWebsite(http.Controller):
                 'storage_limit': float(storage),
                 'cpu_limit': cpu_limit,
                 'ram_limit': ram_limit,
-                'max_backups': backup_count,
+                # Hosting snapshot retention is fixed (HOSTING_MAX_SNAPSHOTS=7
+                # in saas.instance.backup); plan.max_backups is not consulted
+                # for hosting, so we don't compute a per-plan backup count.
                 'saas_product_ids': [(4, product.id)],
                 'sequence': 999,
             })
@@ -912,14 +903,6 @@ class SaasWebsite(http.Controller):
         if show_region_picker and region:
             domains = domains.filtered(lambda d: self._region_domain_ok(d, region))
 
-        # Compute backup count
-        w_range = max(1, config['max_workers'] - config['min_workers'])
-        s_range = max(1, config['max_storage'] - config['min_storage'])
-        plan_size = ((workers - config['min_workers']) / w_range + (storage - config['min_storage']) / s_range) / 2.0
-        backup_count = max(config['min_backups'], min(config['max_backups'],
-            config['min_backups'] + round(plan_size * (config['max_backups'] - config['min_backups']))
-        ))
-
         return request.render('saas_website.hosting_configure_form', {
             'domains': domains,
             'versions': versions,
@@ -933,7 +916,6 @@ class SaasWebsite(http.Controller):
             'daily_backup': daily_backup,
             'monthly_total': monthly_total,
             'yearly_total': yearly_total,
-            'backup_count': backup_count,
             'billing_period': billing_period,
             'config': config,
             'odoo_version_id': int(odoo_version_id or 0),

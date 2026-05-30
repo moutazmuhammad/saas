@@ -340,7 +340,12 @@ export const api = {
       login: login || undefined,
     }),
 
-  backups: (id: number) => rpc<ApiBackup[]>(`/saas/api/v1/instances/${id}/backups`),
+  backups: (id: number) =>
+    // The endpoint returns {backups, ready, state}; when the instance is
+    // stopped/suspended/not-running, ready=false and backups=[].
+    rpc<{ backups: ApiBackup[]; ready: boolean; state: string }>(
+      `/saas/api/v1/instances/${id}/backups`,
+    ),
   backupRestore: (id: number, backupId: number, confirm: string) =>
     rpc<{ state: string }>(`/saas/api/v1/instances/${id}/backups/${backupId}/restore`, { confirm }),
   backupCreate: (id: number) => rpc(`/saas/api/v1/instances/${id}/backups/create`),
