@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Archive, RotateCcw, Clock, ShieldCheck, ShieldAlert, HardDriveDownload } from "lucide-react";
+import { Archive, RotateCcw, Clock, ShieldCheck, ShieldAlert } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiBackup, type ApiInstance } from "@/lib/api";
-import { formatDate, formatDateTime, formatSizeMb } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
 
 export default function Backups() {
   const { id = "" } = useParams();
@@ -75,7 +75,6 @@ export default function Backups() {
   }, [hasRunning, load]);
 
   const lastDone = snapshots?.find((b) => b.status === "available");
-  const totalGb = (((snapshots?.reduce((a, b) => a + b.size_mb, 0)) || 0) / 1024).toFixed(1);
 
   return (
     <div className="animate-fade-in">
@@ -112,9 +111,8 @@ export default function Backups() {
         </div>
       ) : snapshots ? (
         <>
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          <div className="mt-6 grid gap-4 sm:grid-cols-2">
             <InfoCard label="Snapshots" value={snapshots.length} icon={Archive} />
-            <InfoCard label="Storage used" value={`${totalGb} GB`} icon={HardDriveDownload} />
             <InfoCard
               label="Latest"
               value={<span className="text-base">{lastDone ? formatDateTime(lastDone.created).split(",")[0] : "—"}</span>}
@@ -145,7 +143,6 @@ export default function Backups() {
                       <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
                         <Clock className="size-3" />
                         Full snapshot
-                        {b.status === "available" && b.size_mb > 0 && ` · ${formatSizeMb(b.size_mb)}`}
                       </p>
                     </div>
                   </div>
