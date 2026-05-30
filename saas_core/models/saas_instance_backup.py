@@ -435,6 +435,20 @@ class SaasInstanceBackup(models.Model):
                 Config=transfer,
             )
 
+    def _bucket_object_size(self, object_key):
+        """Return the byte size of a bucket object (0 if unknown)."""
+        cfg = self._get_backup_config()
+        try:
+            if cfg['provider'] == 'gcs':
+                client, bucket_name = self._get_gcs_client()
+                blob = client.bucket(bucket_name).get_blob(object_key)
+                return blob.size if blob and blob.size else 0
+            client, bucket = self._get_s3_client()
+            head = client.head_object(Bucket=bucket, Key=object_key)
+            return head.get('ContentLength', 0) or 0
+        except Exception:
+            return 0
+
     def _stream_pg_dump_to_bucket(self, instance, object_key, db_name):
         """Stream ``pg_dump -Fc`` from the instance's container straight
         to object storage. Returns the uploaded size in bytes.
@@ -1758,10 +1772,10 @@ fi
         db_name = self.db_name or instance.subdomain
 
         if self.ephemeral:
-            ext = 'dump' if self.format == 'dump' else 'zip'
-            object_key = '%s/%s/%s/%s/%s.%s' % (
+            # ``self.name`` already carries the .zip/.dump extension.
+            object_key = '%s/%s/%s/%s/%s' % (
                 ONDEMAND_PREFIX, partner_folder, instance.subdomain,
-                db_name, self.name, ext,
+                db_name, self.name,
             )
         elif instance.is_hosting:
             object_key = '%s/%s/%s/%s.zip' % (
@@ -1788,6 +1802,11 @@ fi
                 size_bytes = self._create_and_upload_backup(
                     instance, object_key, db_name=db_name,
                 )
+            # Belt-and-braces: if the streamed byte count came back zero
+            # for any reason, read the real object size from the bucket
+            # so the customer never sees a bogus 0 MB.
+            if not size_bytes:
+                size_bytes = self._bucket_object_size(object_key)
             ttl = ONDEMAND_URL_EXPIRY if self.ephemeral else PRESIGNED_URL_EXPIRY
             url = self._generate_presigned_url(expiry=ttl)
             now = fields.Datetime.now()

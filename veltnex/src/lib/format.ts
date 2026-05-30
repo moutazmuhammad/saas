@@ -21,3 +21,11 @@ export function formatBytes(gb: number) {
   if (gb >= 1024) return `${(gb / 1024).toFixed(1)} TB`;
   return `${gb} GB`;
 }
+
+/** Human-readable size from a value in megabytes (KB / MB / GB). */
+export function formatSizeMb(mb: number) {
+  if (!mb || mb <= 0) return "—";
+  if (mb < 1) return `${Math.max(1, Math.round(mb * 1024))} KB`;
+  if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}

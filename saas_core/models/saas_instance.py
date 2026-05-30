@@ -8124,10 +8124,12 @@ class SaasInstance(models.Model):
 
         fmt = 'dump' if backup_format == 'dump' else 'zip'
         now_str = fields.Datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        # Extension in the name makes the format obvious in the list and
+        # in the downloaded filename (e.g. ``backup_acme_test_…​.dump``).
         backup = Backup.create({
             'instance_id': self.id,
             'db_name': full,
-            'name': 'backup_%s_%s' % (full, now_str),
+            'name': 'backup_%s_%s.%s' % (full, now_str, fmt),
             'state': 'running',
             'is_full_instance': False,
             'ephemeral': True,

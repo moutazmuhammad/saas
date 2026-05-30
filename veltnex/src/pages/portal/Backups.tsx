@@ -12,7 +12,7 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiBackup } from "@/lib/api";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatSizeMb } from "@/lib/format";
 
 export default function Backups() {
   const { id = "" } = useParams();
@@ -122,7 +122,7 @@ export default function Backups() {
                       <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
                         <Clock className="size-3" />
                         {formatDateTime(b.created)}
-                        {b.status === "available" && b.size_mb > 0 && ` · ${(b.size_mb / 1024).toFixed(2)} GB`}
+                        {b.status === "available" && b.size_mb > 0 && ` · ${formatSizeMb(b.size_mb)}`}
                       </p>
                     </div>
                   </div>

@@ -25,7 +25,7 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type DbListData, type ApiBackup } from "@/lib/api";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTime, formatSizeMb } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function Databases() {
@@ -392,7 +392,7 @@ function DatabaseBackupsDialog({
                   )}
                 </p>
                 {b.status === "available" && b.size_mb > 0 && (
-                  <p className="text-xs text-muted">{(b.size_mb / 1024).toFixed(2)} GB</p>
+                  <p className="text-xs text-muted">{formatSizeMb(b.size_mb)}</p>
                 )}
               </div>
               <div className="flex shrink-0 items-center gap-2">
