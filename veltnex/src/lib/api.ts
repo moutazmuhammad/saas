@@ -334,3 +334,7 @@ export const api = {
 export function logStreamUrl(instanceId: number, tail = 100) {
   return `/saas/instance/${instanceId}/logs/stream?tail=${tail}`;
 }
+
+export function metricsStreamUrl(instanceId: number) {
+  return `/my/instances/${instanceId}/metrics/stream`;
+}

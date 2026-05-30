@@ -28,7 +28,7 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useInstances } from "@/context/InstancesContext";
 import { useToast } from "@/context/ToastContext";
-import { api, ApiError, type ApiInstance } from "@/lib/api";
+import { api, ApiError, metricsStreamUrl, type ApiInstance } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +45,9 @@ export default function InstanceDetail() {
   const [instance, setInstance] = React.useState<ApiInstance | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [pending, setPending] = React.useState<"start" | "stop" | "restart" | null>(null);
+  const [live, setLive] = React.useState<{ cpu: number; ram: number } | null>(null);
+  const [cpuHist, setCpuHist] = React.useState<number[]>([]);
+  const [ramHist, setRamHist] = React.useState<number[]>([]);
 
   const load = React.useCallback(async () => {
     try {
@@ -84,6 +87,31 @@ export default function InstanceDetail() {
     }, fast ? 4000 : 10000);
     return () => clearInterval(t);
   }, [instance, instanceId]);
+
+  // Real-time CPU/RAM via SSE while the instance is running. Keyed on
+  // the running state (not the whole instance) so it isn't reopened on
+  // every status poll.
+  const running = instance?.state === "running";
+  React.useEffect(() => {
+    if (!running) {
+      setLive(null);
+      return;
+    }
+    const es = new EventSource(metricsStreamUrl(instanceId));
+    es.onmessage = (e) => {
+      try {
+        const m = JSON.parse(e.data) as { cpu: number; ram: number };
+        setLive(m);
+        setCpuHist((h) => [...h.slice(-39), m.cpu]);
+        setRamHist((h) => [...h.slice(-39), m.ram]);
+      } catch {
+        /* ignore malformed frame */
+      }
+    };
+    es.addEventListener("done", () => es.close());
+    es.onerror = () => es.close();
+    return () => es.close();
+  }, [running, instanceId]);
 
   if (error) {
     return (
@@ -234,8 +262,8 @@ export default function InstanceDetail() {
       )}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
-        <UsageCard icon={Cpu} label="CPU" value={instance.usage.cpu} active={isRunning} />
-        <UsageCard icon={MemoryStick} label="Memory" value={instance.usage.ram} active={isRunning} />
+        <UsageCard icon={Cpu} label="CPU" value={live?.cpu ?? instance.usage.cpu} active={isRunning} live={isRunning && !!live} history={cpuHist} />
+        <UsageCard icon={MemoryStick} label="Memory" value={live?.ram ?? instance.usage.ram} active={isRunning} live={isRunning && !!live} history={ramHist} />
         <UsageCard icon={HardDrive} label="Storage" value={instance.usage.storage} active />
       </div>
 
@@ -301,28 +329,60 @@ function UsageCard({
   label,
   value,
   active,
+  live,
+  history,
 }: {
   icon: typeof Cpu;
   label: string;
   value: number;
   active: boolean;
+  live?: boolean;
+  history?: number[];
 }) {
   const tone = value >= 85 ? "bg-danger" : value >= 65 ? "bg-warning" : "bg-primary-glow";
+  const lineTone = value >= 85 ? "text-danger" : value >= 65 ? "text-warning" : "text-primary-glow";
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm text-muted">
           <Icon className="size-4" />
           {label}
+          {live && (
+            <span className="ml-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-success">
+              <span className="size-1.5 rounded-full bg-success animate-pulse-soft" />
+              live
+            </span>
+          )}
         </div>
         <span className="text-sm font-semibold tabular-nums">{active ? `${value}%` : "—"}</span>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-background">
         <div
           className={cn("h-full rounded-full transition-all duration-700 ease-out", active ? tone : "bg-border")}
-          style={{ width: active ? `${value}%` : "0%" }}
+          style={{ width: active ? `${Math.min(value, 100)}%` : "0%" }}
         />
       </div>
+      {active && history && history.length > 1 && (
+        <Sparkline data={history} className={cn("mt-3", lineTone)} />
+      )}
     </Card>
+  );
+}
+
+function Sparkline({ data, className }: { data: number[]; className?: string }) {
+  const w = 100;
+  const h = 24;
+  const max = Math.max(100, ...data);
+  const pts = data
+    .map((v, i) => {
+      const x = data.length > 1 ? (i / (data.length - 1)) * w : 0;
+      const y = h - (Math.min(v, max) / max) * h;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={cn("h-7 w-full", className)}>
+      <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+    </svg>
   );
 }
