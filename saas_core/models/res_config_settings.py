@@ -281,6 +281,17 @@ class ResConfigSettings(models.TransientModel):
              'the nearest public tier with equal-or-greater resources — '
              'protects tier value. Wired in S4.',
     )
+    saas_tier_floor_buffer_pct = fields.Float(
+        string='Custom-vs-Tier Buffer %',
+        config_parameter='saas_master.tier_floor_buffer_pct',
+        default=0.0,
+        help='Soft floor (P2): with the "Custom Price >= Nearest Tier" '
+             'switch ON, a custom config may be priced up to this % BELOW '
+             'the nearest tier instead of pinned to it. e.g. 10 lets a '
+             '3w/95GB config sit ~10% under the 4w/100GB Pro tier — cheaper '
+             'for the customer, but the tier is still the better value per '
+             'resource. 0 = the original hard floor (no discount allowed).',
+    )
 
     # ========== Support ==========
     saas_support_email = fields.Char(

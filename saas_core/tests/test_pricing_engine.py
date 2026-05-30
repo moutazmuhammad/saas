@@ -43,6 +43,8 @@ class TestPricingEngine(TransactionCase):
             # legacy-formula grid deterministic).
             'saas_master.hosting_minimum_monthly': '0',
             'saas_master.minimum_monthly': '0',
+            # Tier soft-floor buffer 0 -> P2 = original hard floor.
+            'saas_master.tier_floor_buffer_pct': '0',
         })
 
     def _set(self, mapping):
@@ -191,6 +193,41 @@ class TestPricingEngine(TransactionCase):
         q = self.engine.compute('hosting', 8, 200, 'monthly')
         self.assertEqual(q['breakdown']['tier_floor'], 999.0)
         self.assertGreaterEqual(q['monthly'], 999.0)
+
+    def test_tier_floor_soft_buffer(self):
+        """P2: the buffer % lets a custom config sit below the nearest tier
+        instead of being pinned to it. 0 = hard floor (unchanged)."""
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1)
+        if not product:
+            self.skipTest('no hosting product in this DB')
+        self._set({'saas_master.custom_min_is_nearest_tier': 'True'})
+        self.env['saas.plan'].sudo().create({
+            'name': 'TEST Pro 1000', 'is_public_tier': True,
+            'workers': 4, 'storage_limit': 50,
+            'cpu_limit': 2.0, 'ram_limit': '2g',
+            'price': 1000.0, 'yearly_price': 10000.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])],
+        })
+        # buffer 0 -> hard floor at the full tier price.
+        self._set({'saas_master.tier_floor_buffer_pct': '0'})
+        q0 = self.engine.compute('hosting', 8, 200, 'monthly')
+        self.assertAlmostEqual(q0['breakdown']['tier_floor'], 1000.0, places=2)
+
+        # buffer 10 -> floor relaxes to 90% of the tier (900).
+        self._set({'saas_master.tier_floor_buffer_pct': '10'})
+        q10 = self.engine.compute('hosting', 8, 200, 'monthly')
+        self.assertAlmostEqual(q10['breakdown']['tier_floor'], 900.0, places=2)
+        self.assertGreaterEqual(q10['monthly'], 900.0)
+        self.assertLess(q10['monthly'], 1000.0)
+
+        # buffer is clamped to 0..100 (a silly 150 can't go negative).
+        self._set({'saas_master.tier_floor_buffer_pct': '150'})
+        qmax = self.engine.compute('hosting', 8, 200, 'monthly')
+        self.assertAlmostEqual(qmax['breakdown']['tier_floor'], 0.0, places=2)
+        self._set({'saas_master.tier_floor_buffer_pct': '0',
+                   'saas_master.custom_min_is_nearest_tier': 'False'})
 
     def test_addon_sum(self):
         """The daily_snapshots add-on adds the Settings price to the quote."""

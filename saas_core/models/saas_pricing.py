@@ -89,11 +89,18 @@ class SaasPricingEngine(models.AbstractModel):
         return (workers * cfg['worker_floor']) + (storage * cfg['storage_floor'])
 
     def _tier_floor(self, kind, workers, storage):
-        """S4: when the 'custom >= nearest tier' policy is ON, a custom
-        config may not be priced below the highest public-tier monthly
-        price whose resources it fully contains (workers AND storage both
-        >= the tier's). Returns 0.0 when the policy is OFF (default) or no
-        tier qualifies -> no-op."""
+        """Tier protection (S4 + P2 soft floor): when the 'custom >= nearest
+        tier' policy is ON, a custom config may not be priced below the
+        highest public-tier monthly price whose resources it fully contains
+        (workers AND storage both >= the tier's) — minus a configurable
+        buffer.
+
+        ``tier_floor_buffer_pct`` (default 0 = the original hard floor)
+        lets a custom config sit up to N% under the nearest tier, so e.g.
+        a 3w/95GB config can be a bit cheaper than the 4w/100GB Pro tier
+        instead of pinned to it (which felt rigged). The tier is still the
+        better value per resource. Returns 0.0 when the policy is OFF
+        (default) or no tier qualifies -> no-op."""
         icp = self.env['ir.config_parameter'].sudo()
         if icp.get_param('saas_master.custom_min_is_nearest_tier', 'False') != 'True':
             return 0.0
@@ -109,7 +116,17 @@ class SaasPricingEngine(models.AbstractModel):
             ) else 'services'
             if t_kind == kind and t.price > best:
                 best = t.price
-        return best
+        if not best:
+            return 0.0
+        try:
+            buffer_pct = float(icp.get_param(
+                'saas_master.tier_floor_buffer_pct', '0') or 0)
+        except (TypeError, ValueError):
+            buffer_pct = 0.0
+        # Clamp to a sane 0..100 range; the floor is the tier price less
+        # the allowed buffer.
+        buffer_pct = min(max(buffer_pct, 0.0), 100.0)
+        return best * (1.0 - buffer_pct / 100.0)
 
     def _addons_total(self, kind, addon_codes):
         """Sum effective monthly prices of the given add-on codes that
