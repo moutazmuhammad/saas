@@ -281,6 +281,21 @@ class ResConfigSettings(models.TransientModel):
              'the nearest public tier with equal-or-greater resources — '
              'protects tier value. Wired in S4.',
     )
+    saas_merge_snapshot_into_renewal_invoice = fields.Boolean(
+        string='Merge Snapshot into Renewal Invoice',
+        default=False,
+        help='When ON, the monthly Daily Backups charge is added as a line '
+             'on the main renewal invoice whenever the backup month falls '
+             'due on the same date as the renewal — so the customer gets a '
+             'single invoice (Plan + Support + Snapshot + Overage). The '
+             'snapshot stays MONTHLY (one month at a time, never prepaid): '
+             'on a monthly plan it merges every month; on a yearly plan it '
+             'merges once a year and bills separately the other 11 months. '
+             'When the backup is not due on the renewal date it is NOT shown '
+             'on the renewal (the customer is already billed for it that '
+             'month). OFF (default) = separate backup billing cycle '
+             '(current behaviour).',
+    )
     saas_tier_floor_buffer_pct = fields.Float(
         string='Custom-vs-Tier Buffer %',
         config_parameter='saas_master.tier_floor_buffer_pct',
@@ -408,6 +423,10 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.custom_min_is_nearest_tier',
             'True' if self.saas_custom_min_is_nearest_tier else 'False',
         )
+        ICP.set_param(
+            'saas_master.merge_snapshot_into_renewal_invoice',
+            'True' if self.saas_merge_snapshot_into_renewal_invoice else 'False',
+        )
         if self.saas_backup_service_account_key_file:
             import base64
             key_json = base64.b64decode(self.saas_backup_service_account_key_file).decode('utf-8')
@@ -429,6 +448,9 @@ class ResConfigSettings(models.TransientModel):
         ) != 'False'
         res['saas_custom_min_is_nearest_tier'] = ICP.get_param(
             'saas_master.custom_min_is_nearest_tier', 'False',
+        ) == 'True'
+        res['saas_merge_snapshot_into_renewal_invoice'] = ICP.get_param(
+            'saas_master.merge_snapshot_into_renewal_invoice', 'False',
         ) == 'True'
         sa_key = ICP.get_param('saas_backup.service_account_key', '')
         if sa_key:

@@ -273,6 +273,11 @@
                                  help="ON (current): half the deduplicated snapshot footprint counts against the plan storage allowance. OFF (recommended): snapshots are covered solely by the Daily Backups add-on. Wired in S6.">
                             <field name="saas_snapshots_count_toward_storage"/>
                         </setting>
+                        <setting id="saas_merge_snapshot_into_renewal_invoice_setting"
+                                 string="Merge Snapshot into Renewal Invoice"
+                                 help="ON: the monthly Daily Backups charge rides on the main renewal invoice whenever the backup month is due on the same date as the renewal — one invoice (Plan + Support + Snapshot + Overage). The snapshot stays monthly (one month at a time): monthly plans merge every month; yearly plans merge once a year and bill separately the other 11. OFF (default): separate monthly backup billing cycle (current behaviour).">
+                            <field name="saas_merge_snapshot_into_renewal_invoice"/>
+                        </setting>
                         <setting id="saas_custom_min_is_nearest_tier_setting"
                                  string="Custom Price >= Nearest Tier"
                                  help="When on, a custom (slider) configuration can't be priced below the nearest public tier with equal-or-greater resources. Protects tier value. The buffer below softens it.">

@@ -1242,6 +1242,16 @@ class SaasInstance(models.Model):
             })
         return product
 
+    def _merge_snapshot_billing(self):
+        """True when the daily-backup charge should be merged into the main
+        renewal invoice (M1 toggle). Default False = the separate monthly
+        backup cycle (current behaviour). When ON, the merge is still only
+        applied on a renewal where the snapshot month is actually due — see
+        ``_generate_renewal_invoice`` (M3)."""
+        return self.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.merge_snapshot_into_renewal_invoice', 'False',
+        ) == 'True'
+
     def _backup_flat_price(self):
         """The flat daily-backup price from SaaS settings (the legacy /
         grandfathered amount)."""
