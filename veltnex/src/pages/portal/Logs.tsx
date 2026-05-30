@@ -148,7 +148,7 @@ export default function Logs() {
             const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
             if (!atBottom && autoScroll) setAutoScroll(false);
           }}
-          className="h-[480px] overflow-y-auto bg-[#0b0b0e] p-4 font-mono text-xs leading-relaxed"
+          className="h-[calc(100vh-17rem)] min-h-[420px] overflow-y-auto bg-[#0b0b0e] p-4 font-mono text-xs leading-relaxed"
         >
           {lines.length === 0 ? (
             <p className="text-muted">
