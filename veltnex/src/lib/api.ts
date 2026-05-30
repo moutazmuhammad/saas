@@ -336,5 +336,5 @@ export function logStreamUrl(instanceId: number, tail = 100) {
 }
 
 export function metricsStreamUrl(instanceId: number) {
-  return `/my/instances/${instanceId}/metrics/stream`;
+  return `/saas/instance/${instanceId}/metrics/stream`;
 }
