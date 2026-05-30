@@ -328,9 +328,10 @@ class SaasWebsite(http.Controller):
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
-        workers_cost = workers * config['worker_price']
-        storage_cost = storage * config['storage_price_per_gb']
-        monthly_total = workers_cost + storage_cost
+        _q = request.env['saas.pricing.engine'].compute('services', workers, storage)
+        workers_cost = _q['breakdown']['workers_cost']
+        storage_cost = _q['breakdown']['storage_cost']
+        monthly_total = _q['monthly']
 
         min_users = workers * config['users_per_worker_min']
         max_users = workers * config['users_per_worker_max']
@@ -370,9 +371,10 @@ class SaasWebsite(http.Controller):
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
-        workers_cost = workers * config['worker_price']
-        storage_cost = storage * config['storage_price_per_gb']
-        monthly_total = workers_cost + storage_cost
+        _q = request.env['saas.pricing.engine'].compute('services', workers, storage, billing_period)
+        workers_cost = _q['breakdown']['workers_cost']
+        storage_cost = _q['breakdown']['storage_cost']
+        monthly_total = _q['monthly']
 
         discount = config['yearly_discount_pct'] / 100.0
         if billing_period == 'yearly':
@@ -523,7 +525,9 @@ class SaasWebsite(http.Controller):
         Plan = request.env['saas.plan'].sudo()
         plan_name = 'Custom (%dW / %dGB)' % (workers, storage)
 
-        monthly_price = (workers * config['worker_price']) + (storage * config['storage_price_per_gb'])
+        # Single source of truth: saas.pricing.engine. Behaviour-neutral.
+        _q = request.env['saas.pricing.engine'].compute('services', workers, storage)
+        monthly_price = _q['monthly']
 
         # Search for existing matching custom plan
         plan = Plan.search([
@@ -543,8 +547,7 @@ class SaasWebsite(http.Controller):
             else:
                 ram_limit = '%dm' % ram_mb
 
-            discount = config['yearly_discount_pct'] / 100.0
-            yearly_price = monthly_price * 12 * (1 - discount)
+            yearly_price = _q['yearly']
             recommended_users = workers * config['users_per_worker_max']
 
             # Scale backups based on plan size (0.0 = smallest, 1.0 = largest)
@@ -749,7 +752,9 @@ class SaasWebsite(http.Controller):
     def _get_or_create_hosting_plan(self, product, workers, storage, config):
         """Find or create a plan matching the hosting configuration."""
         Plan = request.env['saas.plan'].sudo()
-        monthly_price = (workers * config['worker_price']) + (storage * config['storage_price_per_gb'])
+        # Single source of truth: saas.pricing.engine. Behaviour-neutral.
+        _q = request.env['saas.pricing.engine'].compute('hosting', workers, storage)
+        monthly_price = _q['monthly']
         plan_name = 'Hosting (%dW / %dGB)' % (workers, storage)
 
         plan = Plan.search([
@@ -765,8 +770,7 @@ class SaasWebsite(http.Controller):
             ram_mb = workers * config['ram_per_worker']
             ram_limit = '%dg' % (ram_mb // 1024) if ram_mb >= 1024 else '%dm' % ram_mb
 
-            discount = config['yearly_discount_pct'] / 100.0
-            yearly_price = monthly_price * 12 * (1 - discount)
+            yearly_price = _q['yearly']
 
             w_range = max(1, config['max_workers'] - config['min_workers'])
             s_range = max(1, config['max_storage'] - config['min_storage'])
@@ -844,10 +848,11 @@ class SaasWebsite(http.Controller):
         # free or not at all (per spec — paid feature only).
         daily_backup = (kw.get('daily_backup') == '1')
 
-        workers_cost = workers * config['worker_price']
-        storage_cost = storage * config['storage_price_per_gb']
+        _q = request.env['saas.pricing.engine'].compute('hosting', workers, storage)
+        workers_cost = _q['breakdown']['workers_cost']
+        storage_cost = _q['breakdown']['storage_cost']
         backup_cost = config['daily_backup_price'] if daily_backup else 0.0
-        monthly_total = workers_cost + storage_cost + backup_cost
+        monthly_total = _q['monthly'] + backup_cost
         discount = config['yearly_discount_pct'] / 100.0
         yearly_total = monthly_total * 12 * (1 - discount)
 
@@ -1040,9 +1045,10 @@ class SaasWebsite(http.Controller):
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
-        workers_cost = workers * config['worker_price']
-        storage_cost = storage * config['storage_price_per_gb']
-        monthly_total = workers_cost + storage_cost
+        _q = request.env['saas.pricing.engine'].compute('hosting', workers, storage)
+        workers_cost = _q['breakdown']['workers_cost']
+        storage_cost = _q['breakdown']['storage_cost']
+        monthly_total = _q['monthly']
 
         return {
             'workers': workers,

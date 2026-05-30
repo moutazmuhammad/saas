@@ -146,6 +146,11 @@ class SaasPricingEngine(models.AbstractModel):
                 'floor': round(floor, 2),
                 'resource_monthly': round(resource_monthly, 2),
                 'addons_monthly': round(addons_monthly, 2),
+                # Per-resource split (pre-floor, pre-region) — kept so the
+                # legacy display routes can show the same breakdown they
+                # do today. Frontend will stop surfacing these in S8.
+                'workers_cost': round(workers * cfg['worker_price'], 2),
+                'storage_cost': round(storage * cfg['storage_price_per_gb'], 2),
             },
         }
 
