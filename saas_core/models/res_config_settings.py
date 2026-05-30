@@ -204,6 +204,74 @@ class ResConfigSettings(models.TransientModel):
              'Set to 0 to suspend instances instead of charging.',
     )
 
+    # ========== Pricing Engine: cost floor & storage blocks ==========
+    # The pricing engine (saas.pricing.engine) charges custom configs as
+    # max(rate_formula, floor). Floor rates are cost-derived: they protect
+    # margin and block "cheap workers + huge storage" abuse. Defaults are 0
+    # => no floor, so behaviour is unchanged until you set them.
+    saas_hosting_worker_floor = fields.Float(
+        string='Hosting: Worker Cost Floor',
+        config_parameter='saas_master.hosting_worker_floor',
+        default=0.0,
+        help='Minimum monthly cost per worker on hosting custom configs '
+             '(cost-derived floor). The engine charges max(rate, floor). '
+             '0 = no floor.',
+    )
+    saas_hosting_storage_floor = fields.Float(
+        string='Hosting: Storage Cost Floor (per GB)',
+        config_parameter='saas_master.hosting_storage_floor',
+        default=0.0,
+        help='Minimum monthly cost per GB on hosting custom configs. 0 = no floor.',
+    )
+    saas_worker_floor = fields.Float(
+        string='Services: Worker Cost Floor',
+        config_parameter='saas_master.worker_floor',
+        default=0.0,
+        help='Minimum monthly cost per worker on services custom configs. 0 = no floor.',
+    )
+    saas_storage_floor = fields.Float(
+        string='Services: Storage Cost Floor (per GB)',
+        config_parameter='saas_master.storage_floor',
+        default=0.0,
+        help='Minimum monthly cost per GB on services custom configs. 0 = no floor.',
+    )
+    saas_storage_block_gb = fields.Integer(
+        string='Storage Expansion Block (GB)',
+        config_parameter='saas_master.storage_block_gb',
+        default=50,
+        help='Size of one storage-expansion block (GB). Storage above the '
+             'plan allowance is sold/billed in whole blocks of this size '
+             '(wired from S6). Keeps storage pricing predictable for users.',
+    )
+    saas_storage_block_price = fields.Float(
+        string='Storage Expansion Block Price (monthly)',
+        config_parameter='saas_master.storage_block_price',
+        default=0.0,
+        help='Monthly price for one storage-expansion block. 0 = not yet '
+             'configured (no block-based charging until set).',
+    )
+
+    # ========== Pricing Policy (Booleans) ==========
+    # NOTE: like the website-section toggles above, these intentionally do
+    # NOT use ``config_parameter=`` — see the note there. We read/write the
+    # ir.config_parameter rows by hand in get_values / set_values, storing
+    # the literal strings 'True'/'False'.
+    saas_snapshots_count_toward_storage = fields.Boolean(
+        string='Count Snapshots Toward Storage',
+        default=True,
+        help='When ON (current behaviour), half the deduplicated snapshot '
+             'footprint counts against the plan storage allowance. When OFF '
+             '(recommended), snapshots are covered solely by the Daily '
+             'Backups add-on and do NOT consume storage. Wired in S6.',
+    )
+    saas_custom_min_is_nearest_tier = fields.Boolean(
+        string='Custom Price >= Nearest Tier',
+        default=False,
+        help='When ON, a custom (slider) configuration is never priced below '
+             'the nearest public tier with equal-or-greater resources — '
+             'protects tier value. Wired in S4.',
+    )
+
     # ========== Support ==========
     saas_support_email = fields.Char(
         string='Support Email',
@@ -311,6 +379,14 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.show_hosting_section',
             'True' if self.saas_show_hosting_section else 'False',
         )
+        ICP.set_param(
+            'saas_master.snapshots_count_toward_storage',
+            'True' if self.saas_snapshots_count_toward_storage else 'False',
+        )
+        ICP.set_param(
+            'saas_master.custom_min_is_nearest_tier',
+            'True' if self.saas_custom_min_is_nearest_tier else 'False',
+        )
         if self.saas_backup_service_account_key_file:
             import base64
             key_json = base64.b64decode(self.saas_backup_service_account_key_file).decode('utf-8')
@@ -327,6 +403,12 @@ class ResConfigSettings(models.TransientModel):
         res['saas_show_hosting_section'] = ICP.get_param(
             'saas_master.show_hosting_section', 'True',
         ) != 'False'
+        res['saas_snapshots_count_toward_storage'] = ICP.get_param(
+            'saas_master.snapshots_count_toward_storage', 'True',
+        ) != 'False'
+        res['saas_custom_min_is_nearest_tier'] = ICP.get_param(
+            'saas_master.custom_min_is_nearest_tier', 'False',
+        ) == 'True'
         sa_key = ICP.get_param('saas_backup.service_account_key', '')
         if sa_key:
             import base64

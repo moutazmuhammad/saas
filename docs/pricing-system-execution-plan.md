@@ -14,7 +14,7 @@ Implementation order (details in §6). Tick when fully done + tested.
 
 - [x] **S1** — Pricing engine model (single source of truth), reproduces current linear price. **Signature includes `region`.** → `saas_core/models/saas_pricing.py` (`saas.pricing.engine`, AbstractModel). Additive only; no caller repointed. Floor/region/add-ons wired as no-ops (defaults reproduce today's numbers). Deploy needs `-u saas_core` (new model). **Next: S2.**
 - [x] **S2** — Repoint all callers (4× `main.py`, 1× `api.py`) to the engine. Add consistency test. → `custom_plan_calculate`, `hosting_calculate`, `_get_or_create_custom_plan`, `_get_or_create_hosting_plan` (main.py) + `_price` (api.py) all delegate to `saas.pricing.engine`; no inline `workers*rate + storage*rate` remains. Test: `saas_core/tests/test_pricing_engine.py` (engine == legacy formula across a grid; S1 no-ops; clamping; plan.price == engine). Behaviour-neutral. **Next: S3.**
-- [ ] **S3** — New config params (floor rates, storage block, policy flags) + `res_config_settings` UI.
+- [x] **S3** — New config params (floor rates, storage block, policy flags) + `res_config_settings` UI. → `res_config_settings.py`: floor Floats (`hosting_worker_floor`, `hosting_storage_floor`, `worker_floor`, `storage_floor`), `storage_block_gb`(50)/`storage_block_price`(0), and two Booleans (`snapshots_count_toward_storage` default True = current, `custom_min_is_nearest_tier` default False) via manual get/set (Boolean trap). New "Pricing Engine" block in `res_config_settings_views.xml`. All defaults behaviour-neutral; engine already reads the floor keys (still 0 ⇒ no-op). **Next: S4.**
 - [ ] **S4** — `saas.plan` tier fields (`is_public_tier`, `is_recommended`, `badge`) + price≥floor validation + tiers API endpoint.
 - [ ] **S5** — `saas.addon` model; migrate Daily Snapshots onto it; checkout sums add-ons via engine.
 - [ ] **S6** — Snapshot policy flag; revert ½-snapshot from `total_storage_bytes`; overage uses block rate via engine.
@@ -23,10 +23,14 @@ Implementation order (details in §6). Tick when fully done + tested.
 - [ ] **S9** — Seed example tiers (Starter/Pro/Business) + seed regions (with multipliers) as data records, placeholder values.
 
 **Open decisions (answer before the dependent step):**
-1. *(before S8, ideally S4)* Is the **custom slider** available to all customers (primary path) or limited to the top/Business tier (power-user fallback)? Changes configurator UX + the "custom ≥ tier" rule. Default assumption: **custom available to all, guarded so it can never price below the nearest tier.**2
+1. *(before S8, ideally S4)* Is the **custom slider** available to all customers (primary path) or limited to the top/Business tier (power-user fallback)? Changes configurator UX + the "custom ≥ tier" rule. Default assumption: **custom available to all, guarded so it can never price below the nearest tier.**
 2. *(before S7)* **Region pricing scope:** does the region multiplier apply to (a) only the resource/compute+storage portion of the price, or (b) the whole price including add-ons? Default assumption: **(a)** — region scales compute+storage+floor; add-on prices (e.g. snapshots, which live in object storage) stay region-agnostic unless an add-on opts in.
 3. *(before S7)* **Region after purchase:** is region fixed at create (changing it = a migration flow, out of scope here), or changeable later? Default assumption: **fixed at create.**
 
+**Answers**
+1. Custom Slider: ALL users (bounded by tiers)
+2. Region Scope: compute + storage only
+3. Region Mutability: fixed at creation
 ---
 
 ## 1. Current System Overview
