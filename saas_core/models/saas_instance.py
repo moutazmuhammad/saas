@@ -2638,8 +2638,15 @@ class SaasInstance(models.Model):
         # record stores the WHOLE repo's current size, so the latest
         # record is the current total snapshot footprint — we do NOT sum
         # records (that would multiply the repo by the record count).
-        snapshot_bytes = self._snapshot_total_bytes()
-        total_bytes = disk_bytes + db_bytes + snapshot_bytes // 2
+        # Half the snapshot footprint counts toward storage only when the
+        # policy flag is ON (default ON = current behaviour). Turn it OFF
+        # in Settings so snapshots are covered solely by the Daily Backups
+        # add-on and don't consume the plan allowance (recommended — avoids
+        # double-charging).
+        total_bytes = disk_bytes + db_bytes
+        if self.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.snapshots_count_toward_storage', 'True') != 'False':
+            total_bytes += self._snapshot_total_bytes() // 2
         self.total_storage = self._format_bytes(total_bytes) if total_bytes else ''
         self.total_storage_bytes = total_bytes
 
@@ -6758,27 +6765,22 @@ class SaasInstance(models.Model):
         # so a customer on a yearly plan still pays for backups once a
         # month — see ``_generate_daily_backup_renewal_invoice``.
 
-        # Add extra storage charge if usage exceeds plan limit
-        extra_storage_price = float(
-            self.env['ir.config_parameter'].sudo().get_param(
-                'saas_master.extra_storage_price_per_gb', '0'
-            )
+        # Add extra storage charge if usage exceeds the plan limit.
+        # Centralised in the pricing engine: block-based when a storage
+        # block price is configured, else the legacy per-GB rate.
+        overage = self.env['saas.pricing.engine'].storage_overage(
+            self.total_storage_bytes, plan.storage_limit,
         )
-        if extra_storage_price > 0 and plan.storage_limit > 0:
-            total_bytes = self.total_storage_bytes
-            limit_bytes = int(round(plan.storage_limit * (1024 ** 3)))
-            if total_bytes > limit_bytes:
-                extra_gb = math.ceil((total_bytes - limit_bytes) / (1024 ** 3))
-                extra_charge = extra_gb * extra_storage_price
-                order_lines.append((0, 0, {
-                    'product_id': self._get_billing_product().id,
-                    'name': _('Extra storage: %d GB over %s limit (%s)') % (
-                        extra_gb, '%.2f GB' % plan.storage_limit,
-                        self.name or self.subdomain,
-                    ),
-                    'product_uom_qty': 1,
-                    'price_unit': extra_charge,
-                }))
+        if overage['charge'] > 0:
+            order_lines.append((0, 0, {
+                'product_id': self._get_billing_product().id,
+                'name': _('Extra storage: %d GB over %s limit (%s)') % (
+                    overage['over_gb'], '%.2f GB' % plan.storage_limit,
+                    self.name or self.subdomain,
+                ),
+                'product_uom_qty': 1,
+                'price_unit': overage['charge'],
+            }))
 
         order_vals = {
             'partner_id': self.partner_id.id,

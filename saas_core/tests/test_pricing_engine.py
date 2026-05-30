@@ -169,6 +169,33 @@ class TestPricingEngine(TransactionCase):
             'hosting', 4, 50, 'monthly', addon_codes=['nonexistent_code'])
         self.assertAlmostEqual(none['breakdown']['addons_monthly'], 0.0, places=2)
 
+    def test_storage_overage_per_gb_and_block(self):
+        """Overage: legacy per-GB by default; block-based when configured."""
+        GB = 1024 ** 3
+        self._set({
+            'saas_master.extra_storage_price_per_gb': '0.5',
+            'saas_master.storage_block_gb': '0',
+            'saas_master.storage_block_price': '0',
+        })
+        # 60GB used over a 50GB limit -> 10GB * 0.5 = 5.0 (per-gb)
+        o = self.engine.storage_overage(60 * GB, 50)
+        self.assertEqual(o['mode'], 'per_gb')
+        self.assertEqual(o['over_gb'], 10)
+        self.assertAlmostEqual(o['charge'], 5.0, places=2)
+        # Configure blocks: 50GB block @ 9 -> 10GB over = 1 block = 9.0
+        self._set({
+            'saas_master.storage_block_gb': '50',
+            'saas_master.storage_block_price': '9',
+        })
+        o2 = self.engine.storage_overage(60 * GB, 50)
+        self.assertEqual(o2['mode'], 'block')
+        self.assertEqual(o2['blocks'], 1)
+        self.assertAlmostEqual(o2['charge'], 9.0, places=2)
+        # Under the limit -> nothing.
+        o3 = self.engine.storage_overage(40 * GB, 50)
+        self.assertEqual(o3['mode'], 'none')
+        self.assertAlmostEqual(o3['charge'], 0.0, places=2)
+
     def test_created_plan_price_matches_engine(self):
         """A custom plan stamped from the engine carries the same price
         the engine quotes — i.e. checkout/plan == preview (consistency)."""

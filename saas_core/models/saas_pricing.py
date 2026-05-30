@@ -184,6 +184,36 @@ class SaasPricingEngine(models.AbstractModel):
         }
 
     @api.model
+    def storage_overage(self, total_bytes, plan_storage_limit_gb):
+        """Monthly charge for storage above the plan allowance.
+
+        Block-based when configured (storage_block_gb>0 AND
+        storage_block_price>0) — storage above the limit is billed in
+        whole blocks. Otherwise falls back to the legacy per-GB rate
+        (``extra_storage_price_per_gb``), so this is behaviour-neutral
+        until a block price is set. Returns
+        ``{mode, over_gb, blocks?, charge}``.
+        """
+        import math
+        icp = self.env['ir.config_parameter'].sudo()
+        limit_gb = plan_storage_limit_gb or 0
+        if limit_gb <= 0:
+            return {'mode': 'none', 'over_gb': 0, 'charge': 0.0}
+        limit_bytes = int(round(limit_gb * (1024 ** 3)))
+        if (total_bytes or 0) <= limit_bytes:
+            return {'mode': 'none', 'over_gb': 0, 'charge': 0.0}
+        over_gb = math.ceil((total_bytes - limit_bytes) / (1024 ** 3))
+        block_gb = int(icp.get_param('saas_master.storage_block_gb', '0') or 0)
+        block_price = float(icp.get_param('saas_master.storage_block_price', '0') or 0)
+        if block_gb > 0 and block_price > 0:
+            blocks = math.ceil(over_gb / block_gb)
+            return {'mode': 'block', 'over_gb': over_gb, 'blocks': blocks,
+                    'charge': round(blocks * block_price, 2)}
+        per_gb = float(icp.get_param('saas_master.extra_storage_price_per_gb', '0') or 0)
+        return {'mode': 'per_gb', 'over_gb': over_gb,
+                'charge': round(over_gb * per_gb, 2)}
+
+    @api.model
     def monthly_price(self, kind, workers, storage, region=None):
         """Convenience: just the monthly figure used when stamping a
         ``saas.plan.price`` at custom-plan creation (S2 will use this)."""
