@@ -148,7 +148,7 @@ class SaasPricingEngine(models.AbstractModel):
     # ------------------------------------------------------------------
     @api.model
     def compute(self, kind, workers, storage, billing='monthly',
-                addon_codes=(), region=None):
+                addon_codes=(), region=None, support_code=None):
         """Return one fully-resolved price quote.
 
         Args:
@@ -157,6 +157,8 @@ class SaasPricingEngine(models.AbstractModel):
             billing: 'monthly' or 'yearly'.
             addon_codes: iterable of add-on codes (S5; ignored in S1).
             region: region record/id (S7; multiplier is 1.0 in S1).
+            support_code: optional saas.support.plan code (P3). A flat
+                monthly fee added after infra/region; 0 if None/unknown.
 
         Returns a dict (superset of the current ``_price`` shape so
         callers can be repointed in S2 without changing their output):
@@ -177,7 +179,10 @@ class SaasPricingEngine(models.AbstractModel):
 
         resource_monthly = max(base, floor) * region_factor
         addons_monthly = self._addons_total(kind, addon_codes)
-        pre_minimum = resource_monthly + addons_monthly
+        # Support plan (P3): flat monthly fee, NOT scaled by region, added
+        # after infra. 0 when no plan / the free default / unknown code.
+        support_monthly = self.env['saas.support.plan']._price_for_code(support_code)
+        pre_minimum = resource_monthly + addons_monthly + support_monthly
 
         # Minimum monthly charge (P1): the final total never drops below
         # the configured floor — small configs still cover fixed business
@@ -217,6 +222,8 @@ class SaasPricingEngine(models.AbstractModel):
                 'tier_floor': round(tier_floor, 2),
                 'resource_monthly': round(resource_monthly, 2),
                 'addons_monthly': round(addons_monthly, 2),
+                # P3: flat support-plan fee (not region-scaled).
+                'support_monthly': round(support_monthly, 2),
                 # P1: the total before the minimum-monthly floor, and the
                 # minimum that was enforced (0 = off). monthly == max of
                 # these two.

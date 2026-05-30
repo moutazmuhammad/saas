@@ -184,6 +184,16 @@ class SaasInstance(models.Model):
              'Empty on legacy instances (treated as the default region, '
              'multiplier 1.0).',
     )
+    support_plan_id = fields.Many2one(
+        'saas.support.plan',
+        string='Support Plan',
+        ondelete='restrict',
+        default=lambda self: self.env['saas.support.plan']._get_default(),
+        help='Paid support tier for this instance (P3). A flat monthly fee '
+             'billed alongside the plan; not scaled by region. Defaults to '
+             'the free best-effort tier; the customer can pick a higher one '
+             'at create / upgrade.',
+    )
     db_server_id = fields.Many2one(
         'saas.server',
         string='Database Server',

@@ -273,6 +273,39 @@ class TestPricingEngine(TransactionCase):
         self.assertEqual(o3['mode'], 'none')
         self.assertAlmostEqual(o3['charge'], 0.0, places=2)
 
+    def test_support_plan_flat_not_region_scaled(self):
+        """P3: a support plan adds a flat monthly fee, after infra, and is
+        NOT scaled by region. No/unknown/default code adds 0."""
+        Support = self.env['saas.support.plan'].sudo()
+        pro = Support.create({
+            'name': 'TEST Pro', 'code': 'test_pro', 'monthly_price': 50.0,
+            'response_time': '4h',
+        })
+        base = self.engine.compute('hosting', 4, 50, 'monthly')
+        withs = self.engine.compute('hosting', 4, 50, 'monthly',
+                                    support_code='test_pro')
+        self.assertAlmostEqual(
+            withs['monthly'] - base['monthly'], 50.0, places=2)
+        self.assertAlmostEqual(withs['breakdown']['support_monthly'], 50.0, places=2)
+        # Unknown / no code -> 0.
+        none = self.engine.compute('hosting', 4, 50, 'monthly',
+                                   support_code='does_not_exist')
+        self.assertAlmostEqual(none['breakdown']['support_monthly'], 0.0, places=2)
+        self.assertAlmostEqual(
+            self.engine.compute('hosting', 4, 50, 'monthly')
+            ['breakdown']['support_monthly'], 0.0, places=2)
+        # Region multiplier does NOT scale support.
+        region = Support.env['saas.region'].sudo().create({
+            'name': 'TEST sx2', 'code': 'test_sx2', 'price_multiplier': 2.0,
+        })
+        regs = self.engine.compute('hosting', 4, 50, 'monthly',
+                                   support_code='test_pro', region=region.id)
+        self.assertAlmostEqual(regs['breakdown']['support_monthly'], 50.0, places=2)
+        # compute+storage doubled, support flat:
+        self.assertAlmostEqual(
+            regs['monthly'],
+            base['breakdown']['resource_monthly'] * 2 + 50.0, places=2)
+
     def test_region_multiplier_scales_compute_not_addons(self):
         """Region multiplier scales compute+storage only; add-ons unaffected."""
         region = self.env['saas.region'].sudo().create({
