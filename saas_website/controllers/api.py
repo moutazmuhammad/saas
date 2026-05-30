@@ -861,7 +861,45 @@ class SaasApi(http.Controller):
                 ),
                 'checkout_url': '/my/instances/%s/checkout' % instance.id,
             })
+            # Cancelled instances: surface the retained snapshot (if any) so
+            # the customer knows their data is kept and can reactivate to
+            # restore it. Restoring after cancellation carries a one-time fee.
+            data.update(self._reactivation_info(instance))
         return data
+
+    def _reactivation_info(self, instance):
+        """Reactivation + retained-snapshot details for a cancelled instance.
+
+        Empty (is_cancelled False) for any non-cancelled instance. When the
+        instance was cancelled we keep the most recent full-instance snapshot
+        in cold storage; restoring it requires reactivating the subscription
+        and pays a one-time data-restoration fee."""
+        if instance.state not in ('cancelled', 'cancelled_by_client'):
+            return {'is_cancelled': False}
+        Backup = request.env['saas.instance.backup'].sudo()
+        retained = Backup.search([
+            ('instance_id', '=', instance.id),
+            ('is_full_instance', '=', True),
+            ('state', '=', 'done'),
+        ], order='create_date desc', limit=1)
+        has_retained = bool(retained) or bool(instance.retained_backup_path)
+        icp = request.env['ir.config_parameter'].sudo()
+        try:
+            fee = float(icp.get_param('saas_master.data_restoration_fee', '0') or 0)
+        except (TypeError, ValueError):
+            fee = 0.0
+        return {
+            'is_cancelled': True,
+            'has_retained_snapshot': has_retained,
+            'retained_snapshot_date': (
+                fields.Datetime.to_string(retained.create_date)
+                if retained and retained.create_date else ''
+            ),
+            'restoration_fee': round(fee, 2),
+            'currency': instance.plan_id.currency_id.name
+                or request.env.company.currency_id.name or 'USD',
+            'reactivate_url': '/my/instances/%s/reactivate' % instance.id,
+        }
 
     def _serialize_backup(self, b):
         return {
