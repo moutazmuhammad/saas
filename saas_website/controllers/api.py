@@ -309,28 +309,25 @@ class SaasApi(http.Controller):
         return ok(SaasWebsite().check_subdomain(subdomain=subdomain, domain_id=domain_id))
 
     def _price(self, config, workers, storage, billing):
-        """Compute one customer-facing total. Per-resource rates stay hidden."""
-        workers = max(config['min_workers'], min(int(workers), config['max_workers']))
-        storage = max(config['min_storage'], min(int(storage), config['max_storage']))
-        monthly = (workers * config['worker_price']
-                   + storage * config['storage_price_per_gb'])
-        discount = config['yearly_discount_pct'] / 100.0
-        yearly = monthly * 12 * (1 - discount)
-        yearly_savings = (monthly * 12) - yearly
-        is_yearly = billing == 'yearly'
+        """Compute one customer-facing total via the single pricing
+        engine (`saas.pricing.engine`). ``config`` is accepted for
+        backward-compat with callers but no longer used — the engine
+        reads rates itself. Per-resource rates stay hidden."""
+        quote = request.env['saas.pricing.engine'].compute(
+            'services', workers, storage, billing,
+        )
+        # Return exactly the historical key set (the engine returns a
+        # superset; keep this stable for existing SPA consumers).
         return {
-            'workers': workers,
-            'storage': storage,
-            'billing': 'yearly' if is_yearly else 'monthly',
-            'total': round(yearly if is_yearly else monthly, 2),
-            'monthly_equivalent': round(yearly / 12 if is_yearly else monthly, 2),
-            'yearly_savings': round(yearly_savings, 2),
-            'savings_percent': int(config['yearly_discount_pct']),
-            'currency': config['currency'],
-            'limits': {
-                'workers': {'min': config['min_workers'], 'max': config['max_workers']},
-                'storage': {'min': config['min_storage'], 'max': config['max_storage']},
-            },
+            'workers': quote['workers'],
+            'storage': quote['storage'],
+            'billing': quote['billing'],
+            'total': quote['total'],
+            'monthly_equivalent': quote['monthly_equivalent'],
+            'yearly_savings': quote['yearly_savings'],
+            'savings_percent': quote['savings_percent'],
+            'currency': quote['currency'],
+            'limits': quote['limits'],
         }
 
     # ==================================================================
