@@ -913,6 +913,10 @@ class SaasWebsite(http.Controller):
             [('is_hosting_version', '=', True)], order='name desc',
         )
         domains = request.env['saas.based.domain'].sudo().search([])
+        # Proxy co-location: when the customer can pick a region, only offer
+        # domains whose reverse proxy lives in that region (S8c).
+        if show_region_picker and region:
+            domains = domains.filtered(lambda d: self._region_domain_ok(d, region))
 
         # Compute backup count
         w_range = max(1, config['max_workers'] - config['min_workers'])
