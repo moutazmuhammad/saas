@@ -123,7 +123,8 @@ class SaasRegistration(http.Controller):
         # Hosting flow
         if post.get('hosting') == '1':
             params = []
-            for key in ('workers', 'storage', 'billing', 'odoo_version_id'):
+            for key in ('workers', 'storage', 'billing', 'odoo_version_id',
+                        'region_id'):
                 val = post.get(key)
                 if val:
                     params.append('%s=%s' % (key, val))
