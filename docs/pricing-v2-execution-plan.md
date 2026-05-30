@@ -17,7 +17,7 @@
 - [x] **P3** — `saas.support.plan` model + ACL + admin views + seed
 - [x] **P4** — Storage-aware backup pricing (extend `saas.addon`)
 - [x] **P5** — Wire support + new backup into recurring billing
-- [ ] **P6** — Customer UI (configure/upgrade/reactivate: support picker + line items)
+- [x] **P6** — Customer UI (configure/upgrade/reactivate: support picker + line items)
 - [ ] **P7** — Migration + tests + docs
 
 ---

@@ -863,6 +863,8 @@ class SaasWebsite(http.Controller):
             )
             if region_id and str(region_id) != '0':
                 params += '&region_id=%s' % region_id
+            if kw.get('support_code'):
+                params += '&support_code=%s' % kw['support_code']
             if kw.get('is_trial') == '1':
                 params += '&is_trial=1'
             return request.redirect('/services/register?%s' % params)
@@ -889,12 +891,23 @@ class SaasWebsite(http.Controller):
             region = regions[:1] or Region.browse()
         show_region_picker = len(regions) > 1
 
+        # Support plan (P6): offer active plans; the picker is only shown
+        # when there's a real choice (>1). Trials don't get paid support.
+        Support = request.env['saas.support.plan'].sudo()
+        support_plans = Support.search([('active', '=', True)], order='sequence, monthly_price, id')
+        support_code = (kw.get('support_code') or '').strip() or None
+        sel_support = support_plans.filtered(lambda s: s.code == support_code)[:1] \
+            or support_plans.filtered(lambda s: s.is_default)[:1]
+        support_code = sel_support.code if sel_support else None
+        show_support_picker = len(support_plans) > 1
+
         _addons = ['daily_snapshots'] if daily_backup else []
         _q = request.env['saas.pricing.engine'].compute(
             'hosting', workers, storage, addon_codes=_addons,
-            region=region or None,
+            region=region or None, support_code=support_code,
         )
         backup_cost = _q['breakdown']['addons_monthly']
+        support_cost = _q['breakdown']['support_monthly']
         monthly_total = _q['monthly']
         discount = config['yearly_discount_pct'] / 100.0
         yearly_total = monthly_total * 12 * (1 - discount)
@@ -919,6 +932,10 @@ class SaasWebsite(http.Controller):
             'storage': storage,
             'backup_cost': backup_cost,
             'daily_backup': daily_backup,
+            'support_plans': support_plans,
+            'selected_support_code': support_code or '',
+            'support_cost': support_cost,
+            'show_support_picker': show_support_picker,
             'monthly_total': monthly_total,
             'yearly_total': yearly_total,
             'billing_period': billing_period,
@@ -1067,6 +1084,16 @@ class SaasWebsite(http.Controller):
             # drives co-located server allocation.
             if region:
                 vals['region_id'] = region.id
+            # Support plan (P6): a paid add-on chosen at checkout. Trials
+            # don't get paid support. Falls back to the default plan.
+            if not is_trial:
+                Support = request.env['saas.support.plan'].sudo()
+                sup = Support.search([
+                    ('code', '=', (post.get('support_code') or '').strip()),
+                    ('active', '=', True),
+                ], limit=1)
+                if sup:
+                    vals['support_plan_id'] = sup.id
             if is_trial:
                 vals['is_trial'] = True
 

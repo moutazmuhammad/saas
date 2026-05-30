@@ -124,7 +124,7 @@ class SaasRegistration(http.Controller):
         if post.get('hosting') == '1':
             params = []
             for key in ('workers', 'storage', 'billing', 'odoo_version_id',
-                        'region_id'):
+                        'region_id', 'support_code'):
                 val = post.get(key)
                 if val:
                     params.append('%s=%s' % (key, val))
