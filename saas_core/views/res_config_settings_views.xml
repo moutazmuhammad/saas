@@ -84,207 +84,120 @@
                         </setting>
                     </block>
 
-                    <!-- ==================== Custom Plan Builder ==================== -->
-                    <block title="Custom Plan Builder" name="saas_custom_plan_container">
-                        <setting id="saas_worker_price_setting"
-                                 string="Worker Pricing"
-                                 help="Monthly price per Odoo worker for the custom plan builder on the pricing page.">
+                    <!-- ==================== Plan Pricing & Limits ====================
+                         Hosting and Services share the same set of knobs, so
+                         they're shown side-by-side (Hosting | Services) instead
+                         of two near-identical blocks. -->
+                    <block title="Plan Pricing &amp; Limits" name="saas_plan_pricing_container">
+                        <setting id="saas_plan_rates_setting"
+                                 string="Base rates"
+                                 help="Monthly price per worker and per GB of storage. These feed the pricing engine for the public configurator.">
                             <div class="content-group">
                                 <div class="row mt8">
-                                    <label for="saas_worker_price" string="Price per Worker" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_worker_price" class="col-2"/>
-                                    <span class="text-muted ms-1">/ month</span>
+                                    <label for="saas_hosting_worker_price" string="Per worker" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_worker_price" class="col-2" string="Hosting"/>
+                                    <field name="saas_worker_price" class="col-2" string="Services"/>
+                                    <span class="text-muted ms-1">/ mo (Hosting · Services)</span>
                                 </div>
-                            </div>
-                        </setting>
-                        <setting id="saas_storage_price_per_gb_setting_custom"
-                                 string="Storage Pricing"
-                                 help="Monthly price per GB of storage for the custom plan builder.">
-                            <div class="content-group">
                                 <div class="row mt8">
-                                    <label for="saas_storage_price_per_gb" string="Price per GB" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_storage_price_per_gb" string="Per GB" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_storage_price_per_gb" class="col-2"/>
                                     <field name="saas_storage_price_per_gb" class="col-2"/>
-                                    <span class="text-muted ms-1">/ month</span>
+                                    <span class="text-muted ms-1">/ mo (Hosting · Services)</span>
                                 </div>
                             </div>
                         </setting>
-                        <setting id="saas_custom_plan_workers_range_setting"
-                                 string="Workers Range"
-                                 help="Min/max workers allowed in the custom plan builder.">
+                        <setting id="saas_plan_workers_setting"
+                                 string="Worker limits"
+                                 help="Min / max workers selectable in the configurator (Hosting · Services).">
                             <div class="content-group">
                                 <div class="row mt8">
-                                    <label for="saas_custom_plan_min_workers" string="Min Workers" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_min_workers" string="Min workers" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_min_workers" class="col-2"/>
                                     <field name="saas_custom_plan_min_workers" class="col-2"/>
                                 </div>
                                 <div class="row mt8">
-                                    <label for="saas_custom_plan_max_workers" string="Max Workers" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_max_workers" string="Max workers" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_max_workers" class="col-2"/>
                                     <field name="saas_custom_plan_max_workers" class="col-2"/>
                                 </div>
                             </div>
                         </setting>
-                        <setting id="saas_custom_plan_storage_range_setting"
-                                 string="Storage Range"
-                                 help="Min/max storage (GB) allowed in the custom plan builder.">
+                        <setting id="saas_plan_storage_setting"
+                                 string="Storage limits (GB)"
+                                 help="Min / max storage selectable in the configurator (Hosting · Services).">
                             <div class="content-group">
                                 <div class="row mt8">
-                                    <label for="saas_custom_plan_min_storage" string="Min Storage (GB)" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_min_storage" string="Min storage" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_min_storage" class="col-2"/>
                                     <field name="saas_custom_plan_min_storage" class="col-2"/>
                                 </div>
                                 <div class="row mt8">
-                                    <label for="saas_custom_plan_max_storage" string="Max Storage (GB)" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_max_storage" string="Max storage" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_max_storage" class="col-2"/>
                                     <field name="saas_custom_plan_max_storage" class="col-2"/>
                                 </div>
                             </div>
                         </setting>
-                        <setting id="saas_custom_plan_resource_allocation_setting"
-                                 string="Resource Allocation per Worker"
-                                 help="How much CPU and RAM each worker gets in custom plans. These values are used when auto-creating plan records.">
+                        <setting id="saas_plan_resources_setting"
+                                 string="Resource allocation per worker"
+                                 help="CPU (vCPU) and RAM (MB) each worker gets when a plan record is auto-created (Hosting · Services).">
                             <div class="content-group">
                                 <div class="row mt8">
-                                    <label for="saas_custom_plan_cpu_per_worker" string="CPU per Worker" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_cpu_per_worker" string="CPU / worker" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_cpu_per_worker" class="col-2"/>
                                     <field name="saas_custom_plan_cpu_per_worker" class="col-2"/>
                                     <span class="text-muted ms-1">vCPU</span>
                                 </div>
                                 <div class="row mt8">
-                                    <label for="saas_custom_plan_ram_per_worker" string="RAM per Worker" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_ram_per_worker" string="RAM / worker" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_ram_per_worker" class="col-2"/>
                                     <field name="saas_custom_plan_ram_per_worker" class="col-2"/>
                                     <span class="text-muted ms-1">MB</span>
                                 </div>
                             </div>
                         </setting>
-                        <setting id="saas_custom_plan_backups_setting"
-                                 string="Backups (scales with plan size)"
-                                 help="Backups scale dynamically: smallest plan gets min, largest gets max. Plans in between are interpolated.">
+                        <setting id="saas_plan_discount_setting"
+                                 string="Yearly discount"
+                                 help="Percentage discount applied for yearly billing (Hosting · Services).">
                             <div class="content-group">
                                 <div class="row mt8">
-                                    <label for="saas_custom_plan_min_backups" string="Smallest plan" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_custom_plan_min_backups" class="col-2"/>
-                                    <span class="text-muted ms-1">backups</span>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_custom_plan_max_backups" string="Largest plan" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_custom_plan_max_backups" class="col-2"/>
-                                    <span class="text-muted ms-1">backups</span>
-                                </div>
-                            </div>
-                        </setting>
-                        <setting id="saas_custom_plan_user_estimate_setting"
-                                 string="User Estimate per Worker"
-                                 help="Concurrent users each worker can handle. Shown as recommendation on the pricing page.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_custom_plan_users_per_worker_min" string="Min (light usage)" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_custom_plan_users_per_worker_min" class="col-2"/>
-                                    <span class="text-muted ms-1">users</span>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_custom_plan_users_per_worker_max" string="Max (heavy usage)" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_custom_plan_users_per_worker_max" class="col-2"/>
-                                    <span class="text-muted ms-1">users</span>
-                                </div>
-                            </div>
-                        </setting>
-                        <setting id="saas_custom_plan_yearly_discount_setting"
-                                 string="Yearly Discount"
-                                 help="Percentage discount for yearly billing on custom plans.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_custom_plan_yearly_discount_pct" string="Discount" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_custom_plan_yearly_discount_pct" class="col-2"/>
-                                    <span class="text-muted ms-1">%</span>
-                                </div>
-                            </div>
-                        </setting>
-                    </block>
-
-                    <!-- ==================== Hosting Plan Builder ==================== -->
-                    <block title="Hosting Plan Builder" name="saas_hosting_plan_container">
-                        <setting id="saas_hosting_pricing_setting"
-                                 string="Hosting Pricing"
-                                 help="Price per worker and per GB for self-managed hosting plans.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_hosting_worker_price" string="Price per Worker" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_hosting_worker_price" class="col-2"/>
-                                    <span class="text-muted ms-1">/ month</span>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_storage_price_per_gb" string="Price per GB" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_hosting_storage_price_per_gb" class="col-2"/>
-                                    <span class="text-muted ms-1">/ month</span>
-                                </div>
-                            </div>
-                        </setting>
-                        <setting id="saas_hosting_workers_setting"
-                                 string="Worker Limits"
-                                 help="Min/max workers selectable by hosting customers.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_hosting_min_workers" string="Min Workers" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_hosting_min_workers" class="col-2"/>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_max_workers" string="Max Workers" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_hosting_max_workers" class="col-2"/>
-                                </div>
-                            </div>
-                        </setting>
-                        <setting id="saas_hosting_storage_setting"
-                                 string="Storage Limits"
-                                 help="Min/max storage (GB) selectable by hosting customers.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_hosting_min_storage" string="Min Storage" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_hosting_min_storage" class="col-2"/>
-                                    <span class="text-muted ms-1">GB</span>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_max_storage" string="Max Storage" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_hosting_max_storage" class="col-2"/>
-                                    <span class="text-muted ms-1">GB</span>
-                                </div>
-                            </div>
-                        </setting>
-                        <setting id="saas_hosting_resources_setting"
-                                 string="Resource Allocation"
-                                 help="CPU and RAM allocated per worker for hosting plans.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_hosting_cpu_per_worker" string="CPU per Worker" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_hosting_cpu_per_worker" class="col-2"/>
-                                    <span class="text-muted ms-1">vCPU</span>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_ram_per_worker" string="RAM per Worker" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_hosting_ram_per_worker" class="col-2"/>
-                                    <span class="text-muted ms-1">MB</span>
-                                </div>
-                            </div>
-                        </setting>
-                        <setting id="saas_hosting_yearly_discount_setting"
-                                 string="Yearly Discount"
-                                 help="Percentage discount for yearly billing on hosting plans.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_hosting_yearly_discount_pct" string="Discount" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_yearly_discount_pct" string="Discount" class="col-4 col-lg-4 o_light_label"/>
                                     <field name="saas_hosting_yearly_discount_pct" class="col-2"/>
-                                    <span class="text-muted ms-1">%</span>
+                                    <field name="saas_custom_plan_yearly_discount_pct" class="col-2"/>
+                                    <span class="text-muted ms-1">% (Hosting · Services)</span>
+                                </div>
+                            </div>
+                        </setting>
+                        <setting id="saas_services_extras_setting"
+                                 string="Services: backups &amp; user estimate"
+                                 help="Services-only knobs. Backups scale with plan size (smallest→min, largest→max). User estimate is the concurrent users per worker shown as a recommendation. (Hosting snapshot retention is fixed; hosting backups are a paid add-on below.)">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_custom_plan_min_backups" string="Backups: smallest → largest plan" class="col-5 col-lg-5 o_light_label"/>
+                                    <field name="saas_custom_plan_min_backups" class="col-2"/>
+                                    <field name="saas_custom_plan_max_backups" class="col-2"/>
+                                </div>
+                                <div class="row mt8">
+                                    <label for="saas_custom_plan_users_per_worker_min" string="Users / worker: light → heavy" class="col-5 col-lg-5 o_light_label"/>
+                                    <field name="saas_custom_plan_users_per_worker_min" class="col-2"/>
+                                    <field name="saas_custom_plan_users_per_worker_max" class="col-2"/>
                                 </div>
                             </div>
                         </setting>
                         <setting id="saas_hosting_daily_backup_price_setting"
-                                 string="Daily Backup Add-on"
+                                 string="Hosting: daily backup add-on"
                                  help="Optional add-on selectable at hosting checkout. Backs up every database on the instance daily; keeps the last 7 days per database.">
                             <div class="content-group">
                                 <div class="row mt8">
-                                    <label for="saas_hosting_daily_backup_price" string="Monthly price" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_daily_backup_price" string="Monthly price" class="col-5 col-lg-5 o_light_label"/>
                                     <field name="saas_hosting_daily_backup_price" class="col-2"/>
                                     <span class="text-muted ms-1">/ month</span>
                                 </div>
                                 <div class="row mt8">
-                                    <label for="saas_hosting_snapshot_retention_surcharge" string="Retention surcharge" class="col-3 col-lg-3 o_light_label"/>
+                                    <label for="saas_hosting_snapshot_retention_surcharge" string="Retention surcharge" class="col-5 col-lg-5 o_light_label"/>
                                     <field name="saas_hosting_snapshot_retention_surcharge" class="col-2"/>
-                                    <span class="text-muted ms-1">one-time on first activation after reactivation</span>
+                                    <span class="text-muted ms-1">one-time, on first activation after reactivation</span>
                                 </div>
                             </div>
                         </setting>
