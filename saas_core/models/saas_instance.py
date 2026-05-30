@@ -6966,17 +6966,36 @@ class SaasInstance(models.Model):
             'price_unit': price,
         })]
 
-        # NB: the daily-backup add-on is NOT billed here. It has its
-        # own monthly cycle driven by ``_cron_renew_daily_backup_addons``
-        # so a customer on a yearly plan still pays for backups once a
-        # month — see ``_generate_daily_backup_renewal_invoice``.
-
         # Support plan (P5): a flat monthly fee billed on the SAME cycle as
         # the plan (see _support_order_line). The free/default plan and
         # unpriced plans add nothing (behaviour-neutral until configured).
         support_line = self._support_order_line(period, period_label)
         if support_line:
             order_lines.append(support_line)
+
+        # Daily-backup add-on (M3): the snapshot stays MONTHLY and is
+        # normally billed on its own cycle (_cron_renew_daily_backup_addons).
+        # When the merge toggle is ON *and* the snapshot's monthly charge is
+        # due on/before this renewal date, fold ONE month of it into this
+        # invoice so the customer gets a single bill. If it's not due (e.g.
+        # 11 of 12 months on a yearly plan, or a mismatched monthly date),
+        # nothing is added here and the standalone cron bills it — so it's
+        # never shown twice. ``merge_snapshot_month`` is advanced together
+        # with next_invoice_date below (pre-post, atomic).
+        merge_snapshot_month = (
+            self._merge_snapshot_billing()
+            and self.daily_backup_enabled
+            and self.daily_backup_next_invoice_date
+            and self.daily_backup_next_invoice_date <= self.next_invoice_date
+        )
+        if merge_snapshot_month:
+            snapshot_line = self._snapshot_order_line()
+            if snapshot_line:
+                order_lines.append(snapshot_line)
+            else:
+                # price 0 / backups off between the check and here — don't
+                # advance the backup date for a line we didn't add.
+                merge_snapshot_month = False
 
         # Add extra storage charge if usage exceeds the plan limit.
         # Centralised in the pricing engine: block-based when a storage
@@ -7016,11 +7035,22 @@ class SaasInstance(models.Model):
             interval = relativedelta(years=1)
         else:
             interval = relativedelta(months=1)
-        self.write({
+        renewal_vals = {
             'next_invoice_date': self.next_invoice_date + interval,
             'last_invoice_date': fields.Date.today(),
             'suspension_warning_sent': False,
-        })
+        }
+        # M3: if this invoice merged the snapshot month, advance the
+        # backup's own monthly date by ONE month (it's always monthly) so
+        # the standalone backup cron sees it as not-due and never re-bills
+        # the same month. Done in the same pre-post write as next_invoice_date
+        # for atomicity + idempotency.
+        if merge_snapshot_month:
+            renewal_vals['daily_backup_last_invoice_date'] = fields.Date.today()
+            renewal_vals['daily_backup_next_invoice_date'] = (
+                self.daily_backup_next_invoice_date + relativedelta(months=1)
+            )
+        self.write(renewal_vals)
         invoice.action_post()
         self._append_log(
             "Renewal invoice %s created for %s period."
