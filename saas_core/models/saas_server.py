@@ -266,14 +266,37 @@ class SaasServer(models.Model):
         return True
 
     @api.model
-    def _allocate_docker_server(self, plan=None, raise_on_failure=False):
+    def _region_match_domain(self, region):
+        """Domain fragment matching servers in ``region``.
+
+        Co-location + behaviour-neutral migration: a server with no
+        ``region_id`` is treated as belonging to the DEFAULT region, so a
+        fleet that has not yet been assigned regions keeps allocating
+        exactly as before. A non-default region matches only servers
+        explicitly assigned to it. ``region`` falsy/unknown -> no
+        constraint (today's behaviour)."""
+        if not region:
+            return []
+        if isinstance(region, int):
+            region = self.env['saas.region'].sudo().browse(region)
+        if not (region and region.exists()):
+            return []
+        if region.is_default:
+            return ['|', ('region_id', '=', region.id), ('region_id', '=', False)]
+        return [('region_id', '=', region.id)]
+
+    @api.model
+    def _allocate_docker_server(self, plan=None, raise_on_failure=False,
+                               region=None):
         """Level 1 — Ideal allocation: least-loaded host with capacity.
 
         Returns a saas.server record, or None if no host qualifies.
         When *raise_on_failure* is True, raises ValidationError instead of
-        returning None (used by strict provisioning mode).
-        """
-        candidates = self.search([('is_docker_host', '=', True)])
+        returning None (used by strict provisioning mode). When *region*
+        is set, only hosts in that region are considered (co-location)."""
+        candidates = self.search(
+            [('is_docker_host', '=', True)] + self._region_match_domain(region)
+        )
         if not candidates:
             if raise_on_failure:
                 raise ValidationError(
@@ -294,18 +317,19 @@ class SaasServer(models.Model):
         return min(eligible, key=lambda s: s.instance_count)
 
     @api.model
-    def _allocate_overcommit_server(self, plan=None):
+    def _allocate_overcommit_server(self, plan=None, region=None):
         """Level 2 — Overcommit fallback: least-loaded host that allows overcommit.
 
         Ignores capacity limits, but only considers servers that have
-        ``allow_overcommit`` enabled.
+        ``allow_overcommit`` enabled. When *region* is set, stays within
+        that region (co-location).
 
         Returns a saas.server record, or None.
         """
         candidates = self.search([
             ('is_docker_host', '=', True),
             ('allow_overcommit', '=', True),
-        ])
+        ] + self._region_match_domain(region))
         if not candidates:
             return None
         return min(candidates, key=lambda s: s.instance_count)

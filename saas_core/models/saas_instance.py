@@ -2001,17 +2001,21 @@ class SaasInstance(models.Model):
         if not self.docker_server_id:
             plan = self.plan_id
 
+            # Region the instance must stay within (co-location). Legacy
+            # instances have no region -> no constraint (today's behaviour).
+            region = self.region_id
+
             # Level 1 — Ideal allocation (respect capacity)
             if mode == 'strict':
                 self.docker_server_id = Server._allocate_docker_server(
-                    plan=plan, raise_on_failure=True,
+                    plan=plan, raise_on_failure=True, region=region,
                 )
                 self._append_log(
                     "Allocated Docker server (strict): %s"
                     % self.docker_server_id.name
                 )
             else:
-                server = Server._allocate_docker_server(plan=plan)
+                server = Server._allocate_docker_server(plan=plan, region=region)
                 if server:
                     self.docker_server_id = server
                     self._append_log(
@@ -2019,7 +2023,7 @@ class SaasInstance(models.Model):
                     )
                 else:
                     # Level 2 — Overcommit fallback
-                    server = Server._allocate_overcommit_server(plan=plan)
+                    server = Server._allocate_overcommit_server(plan=plan, region=region)
                     if server:
                         self.docker_server_id = server
                         self.is_overcommitted = True
@@ -2058,8 +2062,12 @@ class SaasInstance(models.Model):
         elif docker_srv.is_db_server:
             self.db_server_id = docker_srv
         else:
+            # Co-location: stay within the instance's region for the
+            # generic DB-server fallback (the topology branches above are
+            # already pinned to the chosen docker host).
             db_srv = Server.search(
-                [('is_db_server', '=', True)], limit=1,
+                [('is_db_server', '=', True)]
+                + Server._region_match_domain(self.region_id), limit=1,
             )
             if not db_srv:
                 if self.provisioning_mode == 'flexible':

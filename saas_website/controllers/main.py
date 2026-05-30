@@ -520,13 +520,17 @@ class SaasWebsite(http.Controller):
                 **post,
             )
 
-    def _get_or_create_custom_plan(self, product, workers, storage, config):
-        """Find or create a plan matching the custom configuration."""
+    def _get_or_create_custom_plan(self, product, workers, storage, config, region=None):
+        """Find or create a plan matching the custom configuration.
+
+        ``region`` (optional) applies the region price multiplier; None =>
+        x1.0 (default region / behaviour-neutral)."""
         Plan = request.env['saas.plan'].sudo()
         plan_name = 'Custom (%dW / %dGB)' % (workers, storage)
 
         # Single source of truth: saas.pricing.engine. Behaviour-neutral.
-        _q = request.env['saas.pricing.engine'].compute('services', workers, storage)
+        _q = request.env['saas.pricing.engine'].compute(
+            'services', workers, storage, region=region)
         monthly_price = _q['monthly']
 
         # Search for existing matching custom plan
@@ -749,11 +753,15 @@ class SaasWebsite(http.Controller):
             })
         return product
 
-    def _get_or_create_hosting_plan(self, product, workers, storage, config):
-        """Find or create a plan matching the hosting configuration."""
+    def _get_or_create_hosting_plan(self, product, workers, storage, config, region=None):
+        """Find or create a plan matching the hosting configuration.
+
+        ``region`` (optional) applies the region price multiplier; None =>
+        x1.0 (default region / behaviour-neutral)."""
         Plan = request.env['saas.plan'].sudo()
         # Single source of truth: saas.pricing.engine. Behaviour-neutral.
-        _q = request.env['saas.pricing.engine'].compute('hosting', workers, storage)
+        _q = request.env['saas.pricing.engine'].compute(
+            'hosting', workers, storage, region=region)
         monthly_price = _q['monthly']
         plan_name = 'Hosting (%dW / %dGB)' % (workers, storage)
 

@@ -341,12 +341,25 @@ class SaasApi(http.Controller):
         regs = request.env['saas.region'].sudo().search(
             [('active', '=', True)], order='sequence, id',
         )
+        Server = request.env['saas.server'].sudo()
+
+        def _available(region):
+            # Selectable only if the region has BOTH a docker host and a
+            # db server (co-location prerequisite). Null-region servers
+            # count as the default region (see _region_match_domain).
+            dom = Server._region_match_domain(region)
+            return bool(
+                Server.search_count([('is_docker_host', '=', True)] + dom)
+                and Server.search_count([('is_db_server', '=', True)] + dom)
+            )
+
         return ok([{
             'id': r.id,
             'code': r.code,
             'name': r.name,
             'multiplier': r.price_multiplier or 1.0,
             'default': r.is_default,
+            'available': _available(r),
         } for r in regs])
 
     @http.route('/saas/api/v1/check-subdomain', type='json', auth='public')

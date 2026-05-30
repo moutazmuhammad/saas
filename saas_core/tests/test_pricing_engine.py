@@ -219,6 +219,23 @@ class TestPricingEngine(TransactionCase):
             self.assertAlmostEqual(
                 rega['breakdown']['addons_monthly'], 7.0, places=2)
 
+    def test_region_match_domain_treats_null_as_default(self):
+        """Null-region servers belong to the default region (behaviour-
+        neutral); a non-default region matches only assigned servers."""
+        Server = self.env['saas.server'].sudo()
+        default = self.env['saas.region']._get_default()
+        # No region -> no constraint.
+        self.assertEqual(Server._region_match_domain(None), [])
+        if default:
+            dom = Server._region_match_domain(default)
+            # default region includes the region itself OR null
+            self.assertIn(('region_id', '=', False), dom)
+        other = self.env['saas.region'].sudo().create({
+            'name': 'TEST other', 'code': 'test_other', 'price_multiplier': 1.5,
+        })
+        self.assertEqual(
+            Server._region_match_domain(other), [('region_id', '=', other.id)])
+
     def test_created_plan_price_matches_engine(self):
         """A custom plan stamped from the engine carries the same price
         the engine quotes — i.e. checkout/plan == preview (consistency)."""
