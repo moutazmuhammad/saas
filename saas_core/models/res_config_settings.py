@@ -183,16 +183,9 @@ class ResConfigSettings(models.TransientModel):
              'cloud storage through the cancellation period. Covers the '
              'storage cost. Set to 0 to disable.',
     )
-    saas_hosting_min_backups = fields.Integer(
-        string='Hosting: Min Backups',
-        config_parameter='saas_master.hosting_min_backups',
-        default=3,
-    )
-    saas_hosting_max_backups = fields.Integer(
-        string='Hosting: Max Backups',
-        config_parameter='saas_master.hosting_max_backups',
-        default=14,
-    )
+    # Hosting snapshot retention is fixed (HOSTING_MAX_SNAPSHOTS=7 in
+    # saas.instance.backup); there is no per-plan hosting backup count, so
+    # no hosting_min_backups / hosting_max_backups settings here.
 
     # ========== Extra Storage Pricing ==========
     saas_extra_storage_price_per_gb = fields.Float(
