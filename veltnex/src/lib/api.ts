@@ -99,8 +99,8 @@ export interface PriceResult {
 }
 
 export interface PlanConfigMeta {
-  worker_price: number;
-  storage_price_per_gb: number;
+  // Per-unit rates are intentionally NOT exposed to the client; pricing
+  // comes from the calculate endpoint (server-side engine).
   min_workers: number;
   max_workers: number;
   min_storage: number;

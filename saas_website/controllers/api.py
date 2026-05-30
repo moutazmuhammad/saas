@@ -257,8 +257,8 @@ class SaasApi(http.Controller):
         svc_trial, trial_days = site._get_trial_info()
         host_trial, _hd = site._get_trial_info(hosting=True)
         return ok({
-            'hosting_config': site._get_hosting_plan_config(),
-            'custom_config': site._get_custom_plan_config(),
+            'hosting_config': self._public_plan_config(site._get_hosting_plan_config()),
+            'custom_config': self._public_plan_config(site._get_custom_plan_config()),
             'trial': {
                 'days': trial_days,
                 'services_available': svc_trial,
@@ -366,6 +366,16 @@ class SaasApi(http.Controller):
     def check_subdomain(self, subdomain='', domain_id=0):
         # Delegate to the canonical implementation.
         return ok(SaasWebsite().check_subdomain(subdomain=subdomain, domain_id=domain_id))
+
+    def _public_plan_config(self, cfg):
+        """Strip internal per-unit rates before exposing plan config to the
+        browser. The client only needs limits / discount / currency — the
+        actual price comes from the calculate endpoint (engine), so the
+        rates never leave the server."""
+        return {
+            k: v for k, v in cfg.items()
+            if k not in ('worker_price', 'storage_price_per_gb')
+        }
 
     def _price(self, config, workers, storage, billing):
         """Compute one customer-facing total via the single pricing
