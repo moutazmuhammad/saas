@@ -139,12 +139,12 @@ export default function Backups() {
                     </span>
                     <div>
                       <div className="flex items-center gap-2">
-                        <p className="font-medium">Full snapshot</p>
+                        <p className="font-medium">{formatDateTime(b.created)}</p>
                         <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">Automatic</span>
                       </div>
                       <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
                         <Clock className="size-3" />
-                        {formatDateTime(b.created)}
+                        Full snapshot
                         {b.status === "available" && b.size_mb > 0 && ` · ${formatSizeMb(b.size_mb)}`}
                       </p>
                     </div>
