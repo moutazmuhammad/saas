@@ -58,3 +58,30 @@ class SaasRegion(models.Model):
         ) or self.sudo().search(
             [('active', '=', True)], order='sequence, id', limit=1,
         )
+
+    def has_capacity(self):
+        """True when this region can actually host an instance: it must
+        have a proxy, a Docker host AND a DB server in-region (the three
+        co-located servers an instance needs). A region with no servers
+        is empty and must not be offered to customers.
+
+        Servers with no region count as the default region (see
+        ``saas.server._region_match_domain``), so the default region is
+        served by an un-regioned fleet too."""
+        self.ensure_one()
+        Server = self.env['saas.server'].sudo()
+        dom = Server._region_match_domain(self)
+        return bool(
+            Server.search_count([('is_proxy_server', '=', True)] + dom)
+            and Server.search_count([('is_docker_host', '=', True)] + dom)
+            and Server.search_count([('is_db_server', '=', True)] + dom)
+        )
+
+    @api.model
+    def _available_regions(self):
+        """Active regions that can actually host an instance (have proxy +
+        docker + db). Empty regions are excluded — they must not be shown
+        to or selectable by customers."""
+        return self.sudo().search(
+            [('active', '=', True)], order='sequence, id',
+        ).filtered(lambda r: r.has_capacity())

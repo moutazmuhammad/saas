@@ -876,12 +876,17 @@ class SaasWebsite(http.Controller):
         # free or not at all (per spec — paid feature only).
         daily_backup = (kw.get('daily_backup') == '1')
 
-        # Region (S8c). Resolve the picked/default region; the picker is
-        # only shown when there's a genuine choice (>1 active region), so
-        # single-region / unconfigured fleets behave exactly as before.
+        # Region (S8c). Only offer regions that can actually host an
+        # instance (proxy + docker + db in-region); empty regions are
+        # hidden. The picker is shown only when there's a genuine choice
+        # (>1 available region), so single-region / unconfigured fleets
+        # behave exactly as before.
         Region = request.env['saas.region'].sudo()
-        regions = Region.search([('active', '=', True)], order='sequence, id')
+        regions = Region._available_regions()
         region = self._resolve_region(region_id)
+        # If the resolved region has no capacity, don't pre-select it.
+        if region and not region.has_capacity():
+            region = regions[:1] or Region.browse()
         show_region_picker = len(regions) > 1
 
         _addons = ['daily_snapshots'] if daily_backup else []
@@ -998,19 +1003,21 @@ class SaasWebsite(http.Controller):
             if active_count >= max_instances:
                 return request.redirect(err_redirect % ('Maximum+instances+reached'))
 
-        # Infrastructure validation (region-aware: a region needs both a
-        # Docker host and a DB server to be provisionable — co-location).
-        Server = request.env['saas.server'].sudo()
-        region_dom = Server._region_match_domain(region)
-        docker_servers = Server.search(
-            [('is_docker_host', '=', True)] + region_dom, limit=1,
-        )
-        db_servers = Server.search(
-            [('is_db_server', '=', True)] + region_dom, limit=1,
-        )
-        if not docker_servers or not db_servers:
+        # Infrastructure validation (region-aware): the chosen region must
+        # have capacity — a proxy + Docker host + DB server in-region
+        # (co-location). Empty regions can't be ordered. Defends against a
+        # POSTed region_id that the picker would never have offered.
+        if region and not region.has_capacity():
             return request.redirect(err_redirect % (
                 'Service+temporarily+unavailable+in+the+selected+region'))
+        if not region:
+            # No region configured at all: fall back to the legacy global
+            # capacity check (any docker host + any db server).
+            Server = request.env['saas.server'].sudo()
+            if not Server.search([('is_docker_host', '=', True)], limit=1) or \
+               not Server.search([('is_db_server', '=', True)], limit=1):
+                return request.redirect(err_redirect % (
+                    'Service+temporarily+unavailable'))
 
         # Validate repo URL format (if provided)
         if repo_url:
