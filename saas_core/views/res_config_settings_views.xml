@@ -306,21 +306,6 @@
                         </setting>
                     </block>
 
-                    <!-- ==================== Billing ==================== -->
-                    <block title="Billing" name="saas_billing_container">
-                        <setting id="saas_extra_storage_price_per_gb_setting"
-                                 string="Extra Storage Pricing"
-                                 help="Price charged per extra GB exceeding the plan storage limit. Added to renewal invoices. Set to 0 to suspend instances instead of charging.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_extra_storage_price_per_gb" string="Price per GB" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_extra_storage_price_per_gb" class="col-2"/>
-                                    <span class="text-muted ms-1">/ billing cycle</span>
-                                </div>
-                            </div>
-                        </setting>
-                    </block>
-
                     <!-- ==================== Pricing Engine ==================== -->
                     <block title="Pricing Engine" name="saas_pricing_engine_container">
                         <setting id="saas_cost_floor_setting"
@@ -345,9 +330,20 @@
                                 </div>
                             </div>
                         </setting>
+                        <setting id="saas_extra_storage_price_per_gb_setting"
+                                 string="Storage Overage: per-GB rate"
+                                 help="Price charged per extra GB exceeding the plan storage limit. Added to renewal invoices. Used when no expansion block is configured below. Set to 0 to suspend instances instead of charging.">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_extra_storage_price_per_gb" string="Price per GB" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_extra_storage_price_per_gb" class="col-2"/>
+                                    <span class="text-muted ms-1">/ billing cycle</span>
+                                </div>
+                            </div>
+                        </setting>
                         <setting id="saas_storage_block_setting"
-                                 string="Storage Expansion Block"
-                                 help="Storage above the plan allowance is sold/billed in whole blocks of this size (wired from S6) — keeps storage pricing predictable. Price 0 = not configured.">
+                                 string="Storage Overage: expansion block"
+                                 help="When set, storage above the plan allowance is billed in whole blocks of this size instead of the per-GB rate above — keeps overage predictable. Price 0 = use the per-GB rate.">
                             <div class="content-group">
                                 <div class="row mt8">
                                     <label for="saas_storage_block_gb" string="Block size (GB)" class="col-4 col-lg-4 o_light_label"/>
