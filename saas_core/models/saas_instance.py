@@ -1475,6 +1475,28 @@ class SaasInstance(models.Model):
             'price_unit': support.monthly_price,
         })
 
+    def _snapshot_order_line(self):
+        """Sale-order line tuple for ONE month of the daily-backup add-on,
+        or None. The snapshot is ALWAYS billed monthly (qty 1) — never
+        prepaid — so this is period-independent. Used both by the
+        standalone monthly backup invoice and, when merging is on and the
+        snapshot month is due, by the renewal invoice. Price is
+        storage-aware + lock-aware via ``_get_daily_backup_price``."""
+        self.ensure_one()
+        if not (self.is_hosting and self.daily_backup_enabled):
+            return None
+        price = self._get_daily_backup_price()
+        if price <= 0:
+            return None
+        return (0, 0, {
+            'product_id': self._get_daily_backup_product().id,
+            'name': _('Daily Backups Add-on (monthly) — %s') % (
+                self.name or self.subdomain,
+            ),
+            'product_uom_qty': 1,
+            'price_unit': price,
+        })
+
     def action_confirm_and_bill(self):
         """Validate instance, create sale order, confirm it, and generate invoice.
 
@@ -6820,30 +6842,24 @@ class SaasInstance(models.Model):
         self.ensure_one()
         if not (self.is_hosting and self.daily_backup_enabled):
             return
-        monthly_price = self._get_daily_backup_price()
-        if monthly_price <= 0:
+        # One reusable definition of the snapshot line (M2). Returns None
+        # when backups are off or the price isn't configured.
+        snapshot_line = self._snapshot_order_line()
+        if not snapshot_line:
             _logger.warning(
                 "Skipping daily-backup renewal for %s: monthly price is "
                 "not configured (saas_master.hosting_daily_backup_price).",
                 self.subdomain,
             )
             return
+        monthly_price = snapshot_line[2]['price_unit']
 
         today = fields.Date.today()
-        line_name = _(
-            'Daily Backups Add-on (monthly) — %s'
-        ) % (self.name or self.subdomain)
-        product = self._get_daily_backup_product()
         pricelist = self.partner_id.property_product_pricelist
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': ORIGIN_BACKUP_ADDON % (self.name or self.subdomain),
-            'order_line': [(0, 0, {
-                'product_id': product.id,
-                'name': line_name,
-                'product_uom_qty': 1,
-                'price_unit': monthly_price,
-            })],
+            'order_line': [snapshot_line],
         }
         if pricelist:
             order_vals['pricelist_id'] = pricelist.id
