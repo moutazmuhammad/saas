@@ -1,27 +1,37 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Archive, Download, Clock, ShieldCheck, HardDriveDownload } from "lucide-react";
+import { Archive, Download, Clock, ShieldCheck, ShieldAlert, HardDriveDownload } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ActionButton } from "@/components/ActionButton";
 import { AlertBanner } from "@/components/AlertBanner";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
 import { InfoCard } from "@/components/InfoCard";
 import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
-import { api, ApiError, type ApiBackup } from "@/lib/api";
-import { formatDateTime, formatSizeMb } from "@/lib/format";
+import { useToast } from "@/context/ToastContext";
+import { api, ApiError, type ApiBackup, type ApiInstance } from "@/lib/api";
+import { formatDate, formatDateTime, formatSizeMb } from "@/lib/format";
 
 export default function Backups() {
   const { id = "" } = useParams();
   const instanceId = Number(id);
   const navigate = useNavigate();
+  const toast = useToast();
   const [backups, setBackups] = React.useState<ApiBackup[] | null>(null);
+  const [instance, setInstance] = React.useState<ApiInstance | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [enabling, setEnabling] = React.useState(false);
 
   const load = React.useCallback(async () => {
     try {
-      setBackups(await api.backups(instanceId));
+      const [b, inst] = await Promise.all([
+        api.backups(instanceId),
+        api.instance(instanceId).catch(() => null),
+      ]);
+      setBackups(b);
+      setInstance(inst);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load snapshots.");
     }
@@ -30,6 +40,17 @@ export default function Backups() {
   React.useEffect(() => {
     load();
   }, [load]);
+
+  const enableDailyBackup = async () => {
+    setEnabling(true);
+    try {
+      const { checkout_url } = await api.dailyBackupEnable(instanceId);
+      window.location.href = checkout_url;
+    } catch (e) {
+      toast.error("Couldn't start checkout", e instanceof ApiError ? e.message : "Please try again.");
+      setEnabling(false);
+    }
+  };
 
   // This page is for FULL-INSTANCE snapshots only. On-demand,
   // per-database backups live on the Databases page.
@@ -62,6 +83,16 @@ export default function Backups() {
           Automatic daily full-instance snapshots. On-demand, per-database backups are on the Databases page.
         </p>
       </div>
+
+      {instance && (
+        <DailyBackupCard
+          instance={instance}
+          enabling={enabling}
+          onEnable={enableDailyBackup}
+          onCheckout={() => (window.location.href = `/my/instances/${id}/daily-backup/checkout`)}
+          onBilling={() => navigate("/my/billing")}
+        />
+      )}
 
       {error && <AlertBanner className="mt-6" variant="danger" title="Snapshots" description={error} />}
 
@@ -131,5 +162,104 @@ export default function Backups() {
         </>
       ) : null}
     </div>
+  );
+}
+
+function DailyBackupCard({
+  instance,
+  enabling,
+  onEnable,
+  onCheckout,
+  onBilling,
+}: {
+  instance: ApiInstance;
+  enabling: boolean;
+  onEnable: () => void;
+  onCheckout: () => void;
+  onBilling: () => void;
+}) {
+  const price = instance.daily_backup_price || 0;
+  const next = instance.daily_backup_next_invoice_date;
+
+  // Active and paid up.
+  if (instance.daily_backup_enabled && !instance.daily_backup_suspended) {
+    return (
+      <Card className="mt-6 flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
+            <ShieldCheck className="size-5" />
+          </span>
+          <div>
+            <p className="font-medium">Daily snapshots are on</p>
+            <p className="text-xs text-muted">
+              Billed monthly{next ? ` · next charge ${formatDate(next)}` : ""}.
+            </p>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  // Subscribed but paused for non-payment.
+  if (instance.daily_backup_enabled && instance.daily_backup_suspended) {
+    return (
+      <Card className="mt-6 flex flex-col gap-3 border-warning/40 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-warning/10 text-warning">
+            <ShieldAlert className="size-5" />
+          </span>
+          <div>
+            <p className="font-medium">Daily snapshots paused</p>
+            <p className="text-xs text-muted">
+              Your monthly backup invoice is overdue. Snapshots resume automatically once it's paid.
+            </p>
+          </div>
+        </div>
+        <Button variant="secondary" className="shrink-0" onClick={onBilling}>
+          Go to billing
+        </Button>
+      </Card>
+    );
+  }
+
+  // Activation invoice issued, awaiting payment.
+  if (instance.daily_backup_pending) {
+    return (
+      <Card className="mt-6 flex flex-col gap-3 border-info/40 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
+            <Clock className="size-5" />
+          </span>
+          <div>
+            <p className="font-medium">Payment pending</p>
+            <p className="text-xs text-muted">Finish checkout to turn on daily snapshots.</p>
+          </div>
+        </div>
+        <Button className="shrink-0" onClick={onCheckout}>
+          Complete checkout
+        </Button>
+      </Card>
+    );
+  }
+
+  // Off — offer to enable.
+  return (
+    <Card className="mt-6 flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-muted">
+          <ShieldAlert className="size-5" />
+        </span>
+        <div>
+          <p className="font-medium">Daily snapshots are off</p>
+          <p className="text-xs text-muted">
+            Automatic daily full-instance snapshots{price > 0 ? `, billed ${price}/month` : ""}. Renews monthly; pauses if a renewal goes unpaid.
+          </p>
+        </div>
+      </div>
+      <ActionButton className="shrink-0" loading={enabling} loadingText="Starting…" onClick={onEnable}>
+        <ShieldCheck className="size-4" />
+        Enable daily snapshots
+      </ActionButton>
+    </Card>
   );
 }

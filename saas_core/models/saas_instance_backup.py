@@ -1642,6 +1642,10 @@ fi
                 if instance.is_hosting:
                     if not instance.daily_backup_enabled:
                         continue
+                    # Paused because the monthly add-on invoice is
+                    # overdue — skip until the customer renews.
+                    if instance.daily_backup_suspended:
+                        continue
                     # One full-instance snapshot per night, not per DB —
                     # so restoring is a single atomic action that brings
                     # back every database, the filestore, custom code,

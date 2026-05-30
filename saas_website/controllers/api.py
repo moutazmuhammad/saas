@@ -494,6 +494,28 @@ class SaasApi(http.Controller):
             return err(str(e), 'drop_failed')
         return ok({'db_name': op.db_name})
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/daily-backup/enable',
+                type='json', auth='public')
+    def daily_backup_enable(self, instance_id, access_token=None, **kw):
+        """Create the daily-backup add-on activation invoice and return
+        the checkout URL for the customer to pay. Enabling itself happens
+        once that invoice is paid (account_move hook)."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        try:
+            instance.action_purchase_daily_backup()
+        except UserError as e:
+            return err(str(e), 'enable_failed')
+        except Exception:
+            _logger.exception("Daily-backup enable failed for %s", instance_id)
+            return err(_("We couldn't start the daily-backup checkout. "
+                         "Please try again."), 'enable_failed')
+        return ok({
+            'checkout_url': '/my/instances/%s/daily-backup/checkout' % instance.id,
+        })
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/backup',
                 type='json', auth='public')
     def db_backup(self, instance_id, name=None, format=None,
@@ -657,6 +679,12 @@ class SaasApi(http.Controller):
                 'next_invoice_date': fields.Date.to_string(instance.next_invoice_date)
                     if instance.next_invoice_date else '',
                 'daily_backup_enabled': instance.daily_backup_enabled,
+                'daily_backup_suspended': instance.daily_backup_suspended,
+                'daily_backup_pending': bool(instance.daily_backup_pending_invoice_id),
+                'daily_backup_price': instance._get_daily_backup_price(),
+                'daily_backup_next_invoice_date': fields.Date.to_string(
+                    instance.daily_backup_next_invoice_date
+                ) if instance.daily_backup_next_invoice_date else '',
                 'pending_plan': instance.pending_plan_id.name if instance.pending_plan_id else '',
                 'scheduled_plan': instance.scheduled_plan_id.name if instance.scheduled_plan_id else '',
                 'backups': [self._serialize_backup(b) for b in backups],

@@ -218,6 +218,10 @@ export interface ApiInstance {
   plan_name?: string;
   next_invoice_date?: string;
   daily_backup_enabled?: boolean;
+  daily_backup_suspended?: boolean;
+  daily_backup_pending?: boolean;
+  daily_backup_price?: number;
+  daily_backup_next_invoice_date?: string;
   pending_plan?: string;
   scheduled_plan?: string;
   backups?: ApiBackup[];
@@ -308,6 +312,8 @@ export const api = {
     rpc<{ db_name: string }>(`/saas/api/v1/instances/${id}/databases/drop`, { name }),
   dbBackup: (id: number, name: string, format: "zip" | "dump" = "zip") =>
     rpc(`/saas/api/v1/instances/${id}/databases/backup`, { name, format }),
+  dailyBackupEnable: (id: number) =>
+    rpc<{ checkout_url: string }>(`/saas/api/v1/instances/${id}/daily-backup/enable`),
   dbResetPassword: (id: number, name: string, new_password: string, login?: string) =>
     rpc<{ login: string }>(`/saas/api/v1/instances/${id}/databases/reset-password`, {
       name,

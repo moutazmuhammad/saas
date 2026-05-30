@@ -96,6 +96,18 @@ class AccountMove(models.Model):
                 "invoices will be issued monthly."
             ))
 
+        # --- Resume paused snapshots when a renewal is paid ---
+        # A monthly add-on invoice going unpaid pauses snapshots
+        # (daily_backup_suspended). When any payment lands, re-evaluate
+        # currently-paused instances so they resume immediately rather
+        # than waiting for the next daily cron tick.
+        paused = self.env['saas.instance'].search([
+            ('daily_backup_enabled', '=', True),
+            ('daily_backup_suspended', '=', True),
+        ])
+        for instance in paused:
+            instance._sync_daily_backup_suspension()
+
         # --- Handle restoration fee payments ---
         _logger.info(
             "Checking restoration invoices among paid: %s",

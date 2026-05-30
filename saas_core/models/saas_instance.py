@@ -62,6 +62,9 @@ ORIGIN_BACKUP_ADDON = 'SAAS:BACKUP-ADDON:%s'
 OPTIONAL_INVOICE_ORIGIN_PREFIXES = (
     'SAAS:SUBSCRIPTION:', 'SAAS:UPGRADE:', 'SAAS:BACKUP-ADDON:',
 )
+# Days past a daily-backup add-on invoice's due date before snapshots are
+# paused. Snapshots resume automatically once the invoice is paid.
+DAILY_BACKUP_SUSPEND_GRACE_DAYS = 3
 
 
 class SaasInstance(models.Model):
@@ -349,6 +352,18 @@ class SaasInstance(models.Model):
         related='daily_backup_pending_invoice_id.payment_state',
         string='Daily Backup Pending Payment State',
         readonly=True,
+    )
+    daily_backup_suspended = fields.Boolean(
+        string='Daily Backups Paused',
+        default=False,
+        copy=False,
+        tracking=True,
+        help='Set when the monthly daily-backup add-on invoice is '
+             'overdue: the nightly snapshot is skipped until the '
+             'invoice is paid, at which point snapshots resume '
+             'automatically. The add-on stays subscribed (we do not '
+             'lose the next-invoice anchor) — it is paused, not '
+             'cancelled.',
     )
     restic_password = fields.Char(
         string='Restic Repository Password',
@@ -6302,31 +6317,90 @@ class SaasInstance(models.Model):
                 )
 
     @api.model
+    def _daily_backup_unpaid_invoices(self):
+        """Posted, still-unpaid daily-backup add-on invoices for this
+        instance (activation + renewals), newest first."""
+        self.ensure_one()
+        origin = ORIGIN_BACKUP_ADDON % (self.name or self.subdomain)
+        orders = self.env['sale.order'].sudo().search([('origin', '=', origin)])
+        invs = orders.invoice_ids.filtered(
+            lambda m: m.state == 'posted'
+            and m.payment_state not in (
+                'paid', 'in_payment', 'reversed', 'invoicing_legacy',
+            )
+            and m.amount_residual > 0
+        )
+        return invs.sorted('invoice_date_due')
+
+    def _sync_daily_backup_suspension(self):
+        """Pause snapshots when the monthly add-on invoice is overdue;
+        resume them once it's paid. Idempotent — safe to call from the
+        renewal cron and from the payment hook."""
+        self.ensure_one()
+        if not (self.is_hosting and self.daily_backup_enabled):
+            return
+        cutoff = fields.Date.today() - relativedelta(
+            days=DAILY_BACKUP_SUSPEND_GRACE_DAYS,
+        )
+        overdue = self._daily_backup_unpaid_invoices().filtered(
+            lambda m: m.invoice_date_due and m.invoice_date_due < cutoff
+        )
+        should_suspend = bool(overdue)
+        if should_suspend and not self.daily_backup_suspended:
+            self.daily_backup_suspended = True
+            self._append_log(
+                "Daily snapshots PAUSED — the monthly backup add-on "
+                "invoice is overdue. They resume automatically once it's "
+                "paid."
+            )
+            self.message_post(body=_(
+                "Daily snapshots paused: the monthly backup add-on "
+                "invoice is overdue. Snapshots resume automatically as "
+                "soon as the invoice is paid."
+            ))
+        elif not should_suspend and self.daily_backup_suspended:
+            self.daily_backup_suspended = False
+            self._append_log(
+                "Daily snapshots RESUMED — backup add-on is paid up."
+            )
+            self.message_post(body=_(
+                "Daily snapshots resumed — your backup add-on is paid up."
+            ))
+
     def _cron_renew_daily_backup_addons(self):
-        """Generate monthly renewal invoices for the daily-backup add-on.
+        """Maintain the daily-backup add-on: pause/resume snapshots on
+        the payment state, and issue monthly renewal invoices.
 
         Independent of the main subscription cycle so a customer on a
-        yearly plan still pays for the backup add-on once a month at
-        the monthly rate. Skips trials and instances whose backup flag
-        was turned off (which only happens via admin since the portal
-        disable path is blocked).
+        yearly plan still pays for the backup add-on once a month at the
+        monthly rate. Skips trials and instances whose backup flag was
+        turned off.
         """
         today = fields.Date.today()
         instances = self.search([
             ('state', '=', 'running'),
             ('is_trial', '=', False),
             ('daily_backup_enabled', '=', True),
-            ('daily_backup_next_invoice_date', '!=', False),
-            ('daily_backup_next_invoice_date', '<=', today),
         ])
         for instance in instances:
             try:
-                instance._generate_daily_backup_renewal_invoice()
+                # 1) Pause/resume based on whether the add-on is paid up.
+                instance._sync_daily_backup_suspension()
+                # 2) Issue the next monthly invoice if due — but never
+                #    stack a second invoice while one is still unpaid
+                #    (the customer just owes the one; snapshots stay
+                #    paused until it's settled).
+                due = (
+                    instance.daily_backup_next_invoice_date
+                    and instance.daily_backup_next_invoice_date <= today
+                )
+                if due and not instance._daily_backup_unpaid_invoices():
+                    instance._generate_daily_backup_renewal_invoice()
                 self.env.cr.commit()
             except Exception:
                 self.env.cr.rollback()
                 _logger.exception(
-                    "Failed to generate daily-backup renewal invoice for %s",
+                    "Daily-backup add-on maintenance failed for %s",
                     instance.subdomain,
                 )
 
