@@ -167,6 +167,7 @@
                                         <input type="hidden" name="storage" t-att-value="form_values.get('storage', '')"/>
                                         <input type="hidden" name="billing" t-att-value="form_values.get('billing', '')"/>
                                         <input type="hidden" name="odoo_version_id" t-att-value="form_values.get('odoo_version_id', '')"/>
+                                        <input type="hidden" name="region_id" t-att-value="form_values.get('region_id', '')"/>
 
                                         <div class="row g-3">
                                             <div class="col-12">
