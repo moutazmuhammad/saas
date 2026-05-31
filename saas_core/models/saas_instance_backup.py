@@ -673,16 +673,42 @@ class SaasInstanceBackup(models.Model):
             origins = ['%s://%s' % (parsed.scheme, parsed.netloc)]
 
         client, bucket = self._get_s3_client()
-        client.put_bucket_cors(
-            Bucket=bucket,
-            CORSConfiguration={'CORSRules': [{
-                'AllowedOrigins': origins,
-                'AllowedMethods': ['PUT', 'GET'],
-                'AllowedHeaders': ['*'],
-                'ExposeHeaders': ['ETag'],
-                'MaxAgeSeconds': 3600,
-            }]},
-        )
+        try:
+            client.put_bucket_cors(
+                Bucket=bucket,
+                CORSConfiguration={'CORSRules': [{
+                    'AllowedOrigins': origins,
+                    'AllowedMethods': ['PUT', 'GET'],
+                    'AllowedHeaders': ['*'],
+                    'ExposeHeaders': ['ETag'],
+                    'MaxAgeSeconds': 3600,
+                }]},
+            )
+        except Exception as e:
+            msg = str(e)
+            _logger.warning("put_bucket_cors failed: %s", msg)
+            if 'AccessDenied' in msg or 'Forbidden' in msg or '403' in msg:
+                # The backup key is least-privilege (object read/write); it
+                # can't change bucket-level config. Tell the admin exactly
+                # how to fix it — either widen the key, or set the rule
+                # once by hand (the values they'd need are right here).
+                raise UserError(_(
+                    "Your storage key isn't allowed to change the bucket's "
+                    "CORS policy (Access Denied on PutBucketCORS).\n\n"
+                    "Pick one:\n\n"
+                    "1) Grant the key the 's3:PutBucketCORS' permission "
+                    "(AWS), or use a Spaces key with full access "
+                    "(DigitalOcean), then click this button again.\n\n"
+                    "2) Or add this CORS rule once in your provider's "
+                    "console:\n"
+                    "   • Allowed origins: %s\n"
+                    "   • Allowed methods: PUT, GET\n"
+                    "   • Allowed headers: *\n"
+                    "   • Max age: 3600 seconds"
+                ) % ', '.join(origins))
+            raise UserError(_(
+                "Couldn't set the bucket CORS policy: %s"
+            ) % msg)
         _logger.info("Applied bucket CORS for origins %s", origins)
         return origins
 
