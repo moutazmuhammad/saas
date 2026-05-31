@@ -92,15 +92,9 @@ class SaasRegistration(http.Controller):
                 "Please log in or use a different email."
             )
 
-        # Check phone uniqueness — on the CANONICAL (E.164) form so a
-        # reformatted number can't slip past to farm another free trial.
-        # Match both the normalized and raw value to catch legacy rows
-        # stored before normalization.
-        phone_norm = request.env['res.partner'].sudo()._saas_normalize_phone(
-            phone, country_id,
-        )
+        # Check phone uniqueness
         existing_phone = request.env['res.partner'].sudo().search([
-            ('phone', 'in', list({phone, phone_norm})),
+            ('phone', '=', phone),
         ], limit=1)
         if existing_phone:
             return _("This phone number is already registered to another account.")
@@ -255,14 +249,11 @@ class SaasRegistration(http.Controller):
                     ),
                 )
 
-            # Create partner with full contact details. Store the phone
-            # in canonical E.164 form so dedup (above) stays effective.
+            # Create partner with full contact details
             partner_vals = {
                 'name': name,
                 'email': email,
-                'phone': request.env['res.partner'].sudo()._saas_normalize_phone(
-                    phone, country_id,
-                ),
+                'phone': phone,
                 'city': city,
                 'function': job_title or False,
             }

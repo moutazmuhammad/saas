@@ -148,10 +148,7 @@ class SaasApi(http.Controller):
         Partner = request.env['res.partner'].sudo()
         if Partner.search([('email', '=ilike', email)], limit=1):
             return _("This email address is already registered.")
-        # Phone dedup on the canonical E.164 form (stops trial farming via
-        # a reformatted number); match raw too for legacy rows.
-        phone_norm = Partner._saas_normalize_phone(phone, p.get('country_id'))
-        if Partner.search([('phone', 'in', list({phone, phone_norm}))], limit=1):
+        if Partner.search([('phone', '=', phone)], limit=1):
             return _("This phone number is already registered.")
         return None
 
@@ -210,10 +207,7 @@ class SaasApi(http.Controller):
             partner_vals = {
                 'name': p.get('name').strip(),
                 'email': email,
-                # Canonical E.164 so dedup stays effective.
-                'phone': request.env['res.partner'].sudo()._saas_normalize_phone(
-                    phone, p.get('country_id'),
-                ),
+                'phone': phone,
                 'city': (p.get('city') or '').strip(),
             }
             if p.get('company_name'):
