@@ -521,9 +521,9 @@ class SaasPortal(CustomerPortal):
             currency_id=invoice.currency_id.id,
             report=availability_report,
         )
-        tokens_sudo = request.env['payment.token'].sudo()._get_available_tokens(
-            providers_sudo.ids, partner_sudo.id
-        )
+        # We do NOT retain customer card data: never offer saved cards to
+        # reuse, and (below) never show the "Save my card" checkbox.
+        tokens_sudo = request.env['payment.token'].sudo().browse()
 
         # Get the invoice's portal access token
         invoice_access_token = invoice._portal_ensure_token()
@@ -568,9 +568,8 @@ class SaasPortal(CustomerPortal):
             'transaction_route': '/invoice/transaction/%d' % invoice.id,
             'landing_route': landing_route,
             'access_token': invoice_access_token,
-            'show_tokenize_input_mapping': PaymentPortal._compute_show_tokenize_input_mapping(
-                providers_sudo
-            ),
+            # Empty mapping -> no "Save my card" checkbox is rendered.
+            'show_tokenize_input_mapping': {},
             'company_mismatch': not PaymentPortal._can_partner_pay_in_company(
                 partner_sudo, invoice_company
             ),
@@ -1050,9 +1049,8 @@ class SaasPortal(CustomerPortal):
             currency_id=invoice.currency_id.id,
             report=availability_report,
         )
-        tokens_sudo = request.env['payment.token'].sudo()._get_available_tokens(
-            providers_sudo.ids, partner_sudo.id,
-        )
+        # We do NOT retain customer card data — no saved cards offered.
+        tokens_sudo = request.env['payment.token'].sudo().browse()
         invoice_access_token = invoice._portal_ensure_token()
 
         # No proration on activation: snapshot subscription is a flat
@@ -1081,9 +1079,8 @@ class SaasPortal(CustomerPortal):
             'providers_sudo': providers_sudo,
             'payment_methods_sudo': payment_methods_sudo,
             'tokens_sudo': tokens_sudo,
-            'show_tokenize_input_mapping': PaymentPortal._compute_show_tokenize_input_mapping(
-                providers_sudo
-            ),
+            # Empty mapping -> no "Save my card" checkbox is rendered.
+            'show_tokenize_input_mapping': {},
             'amount': invoice.amount_residual,
             'currency': invoice.currency_id,
             'partner_id': partner_sudo.id,

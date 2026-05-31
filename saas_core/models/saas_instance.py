@@ -6771,7 +6771,12 @@ class SaasInstance(models.Model):
         pending tx that ultimately fails won't be silently used.
         """
         self.ensure_one()
-        if not invoice or self.payment_token_id:
+        # Card retention is disabled as a matter of policy: we never store
+        # a customer's card token (the "Save my card" option is removed
+        # from every checkout). Bail out before persisting anything, even
+        # if a token somehow reaches us from another payment entry point.
+        return
+        if not invoice or self.payment_token_id:  # pragma: no cover
             # Don't overwrite an existing token here — switching
             # cards is an explicit portal action.
             return
