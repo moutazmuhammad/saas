@@ -48,7 +48,11 @@ export default function Databases() {
   // — which happened when a single short row left no room below it.
   const [menuPos, setMenuPos] = React.useState<{ top: number; right: number }>({ top: 0, right: 0 });
 
-  const load = React.useCallback(async () => {
+  // `background` = a poll/refresh (not the first load). On a background
+  // failure we keep what's already on screen and retry silently — a
+  // transient blip while a create is in flight (or the instance is busy)
+  // must NOT replace the page with an error banner.
+  const load = React.useCallback(async (background = false) => {
     try {
       const [d, b] = await Promise.all([
         api.databases(instanceId),
@@ -58,7 +62,9 @@ export default function Databases() {
       setBackups(b);
       setError(null);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not load databases.");
+      if (!background) {
+        setError(e instanceof ApiError ? e.message : "Could not load databases.");
+      }
     }
   }, [instanceId]);
 
@@ -89,7 +95,7 @@ export default function Databases() {
   const isCreating = (data?.pending_ops ?? []).some((o) => o.operation === "create");
   React.useEffect(() => {
     if (!hasPending) return;
-    const t = setInterval(load, 5000);
+    const t = setInterval(() => load(true), 5000);
     return () => clearInterval(t);
   }, [hasPending, load]);
 
@@ -99,7 +105,7 @@ export default function Databases() {
   // the create flow.
   const handleDrop = async (name: string) => {
     await api.dbDrop(instanceId, name);
-    await load();
+    await load(true);
   };
 
   // Trigger a backup of one database, then reload so it shows up (and
@@ -107,7 +113,7 @@ export default function Databases() {
   // Throws on failure so the dialog surfaces the error inline.
   const handleBackup = async (name: string, format: "zip" | "dump") => {
     await api.dbBackup(instanceId, name, format);
-    await load();
+    await load(true);
   };
 
   return (
@@ -279,7 +285,7 @@ export default function Databases() {
           await api.dbCreate(instanceId, name, login, password);
           // No banner/toast — the new DB now shows as a live "Creating…"
           // row in the list, and the Create button locks until it's done.
-          await load();
+          await load(true);
         }}
       />
 
