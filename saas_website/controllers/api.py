@@ -862,6 +862,9 @@ class SaasApi(http.Controller):
                 'daily_backup_next_invoice_date': fields.Date.to_string(
                     instance.daily_backup_next_invoice_date
                 ) if instance.daily_backup_next_invoice_date else '',
+                # Hidden safety layer surfaces only a soft upgrade nudge —
+                # never a GB number, never a charge.
+                'backup_upgrade_recommended': instance.backup_upgrade_recommended,
                 'pending_plan': instance.pending_plan_id.name if instance.pending_plan_id else '',
                 'scheduled_plan': instance.scheduled_plan_id.name if instance.scheduled_plan_id else '',
                 'backups': [self._serialize_backup(b) for b in backups],

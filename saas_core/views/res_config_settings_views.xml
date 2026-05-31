@@ -234,29 +234,27 @@
                     <block title="Backups &amp; Snapshots" name="saas_backups_container">
                         <setting id="saas_hosting_daily_backup_price_setting"
                                  string="Daily backup add-on (hosting)"
-                                 help="Optional add-on at hosting checkout. Backs up every database on the instance daily and keeps the last 7 days. Billed monthly.">
+                                 help="Optional add-on at hosting checkout. Backs up every database on the instance daily and keeps the last 7 days. Billed monthly. Price = a fixed % of the instance's plan price (predictable, scales with the plan). The flat price is only used when the % is 0 or for grandfathered instances.">
                             <div class="content-group">
                                 <div class="mt8">
-                                    <label for="saas_hosting_daily_backup_price" string="Monthly price" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <label for="saas_backup_price_pct" string="Price (% of plan)" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <field name="saas_backup_price_pct" class="oe_inline" style="max-width:6rem;"/>
+                                    <span class="text-muted ms-2">% of the instance's monthly plan price</span>
+                                </div>
+                                <div class="mt8">
+                                    <label for="saas_backup_price_min" string="Minimum / month" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <field name="saas_backup_price_min" class="oe_inline" style="max-width:7rem;"/>
+                                    <span class="text-muted ms-2">flat floor (0 = none)</span>
+                                </div>
+                                <div class="mt8">
+                                    <label for="saas_hosting_daily_backup_price" string="Flat price (legacy)" class="o_light_label" style="display:inline-block;min-width:160px;"/>
                                     <field name="saas_hosting_daily_backup_price" class="oe_inline" style="max-width:7rem;"/>
-                                    <span class="text-muted ms-2">/ month</span>
+                                    <span class="text-muted ms-2">used only when % = 0 / grandfathered</span>
                                 </div>
                                 <div class="mt8">
                                     <label for="saas_hosting_snapshot_retention_surcharge" string="Retention surcharge" class="o_light_label" style="display:inline-block;min-width:160px;"/>
                                     <field name="saas_hosting_snapshot_retention_surcharge" class="oe_inline" style="max-width:7rem;"/>
                                     <span class="text-muted ms-2">one-time, on first activation after reactivation</span>
-                                </div>
-                            </div>
-                        </setting>
-                        <setting id="saas_services_backups_setting"
-                                 string="Services: backup count"
-                                 help="How many backups a Services plan keeps. Scales with plan size: the smallest plan keeps the first number, the largest keeps the second. (Hosting retention is fixed at 7 days.)">
-                            <div class="content-group">
-                                <div class="mt8">
-                                    <label for="saas_custom_plan_min_backups" string="Backups: smallest → largest plan" class="o_light_label" style="display:inline-block;min-width:230px;"/>
-                                    <field name="saas_custom_plan_min_backups" class="oe_inline" style="max-width:5rem;"/>
-                                    <span class="text-muted mx-2">→</span>
-                                    <field name="saas_custom_plan_max_backups" class="oe_inline" style="max-width:5rem;"/>
                                 </div>
                             </div>
                         </setting>
@@ -269,6 +267,21 @@
                                  string="Count snapshots toward storage allowance"
                                  help="ON (current): half the deduplicated snapshot footprint counts against the plan's storage allowance. OFF (recommended): snapshots are covered solely by the Daily Backups add-on and don't eat into storage.">
                             <field name="saas_snapshots_count_toward_storage"/>
+                        </setting>
+                        <setting id="saas_backup_internal_tuning_setting"
+                                 string="Internal tuning (cost &amp; storage churn)"
+                                 help="Backend-only guards — never shown to customers. Budget factor caps worst-case backup cost per instance (footprint ceiling = provisioned storage × factor) and drives the upgrade nudge. Prune interval spaces out the heavy restic prune to cut object-storage churn at scale (nightly 7-day retention is unaffected).">
+                            <div class="content-group">
+                                <div class="mt8">
+                                    <label for="saas_backup_budget_factor" string="Budget factor (× storage)" class="o_light_label" style="display:inline-block;min-width:200px;"/>
+                                    <field name="saas_backup_budget_factor" class="oe_inline" style="max-width:6rem;"/>
+                                </div>
+                                <div class="mt8">
+                                    <label for="saas_restic_prune_interval_days" string="Prune interval" class="o_light_label" style="display:inline-block;min-width:200px;"/>
+                                    <field name="saas_restic_prune_interval_days" class="oe_inline" style="max-width:6rem;"/>
+                                    <span class="text-muted ms-2">days (1 = every night)</span>
+                                </div>
+                            </div>
                         </setting>
                     </block>
 
