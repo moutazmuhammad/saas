@@ -1,7 +1,9 @@
 import { Routes, Route, Navigate } from "react-router-dom";
+import * as React from "react";
 import { PublicLayout } from "./components/layout/PublicLayout";
 import { PortalLayout } from "./components/layout/PortalLayout";
 import { ProtectedRoute } from "./components/layout/ProtectedRoute";
+import { useSections } from "./lib/useSections";
 
 import Home from "./pages/Home";
 import Services from "./pages/Services";
@@ -21,16 +23,31 @@ import Backups from "./pages/portal/Backups";
 import Invoices from "./pages/portal/Invoices";
 import InvoiceDetail from "./pages/portal/InvoiceDetail";
 
+// Hard guard: a disabled section's pages aren't reachable even by typing
+// the URL. Sections default to enabled while loading, so we never flash a
+// redirect before the config arrives.
+function RequireSection({
+  section,
+  children,
+}: {
+  section: "services" | "hosting";
+  children: React.ReactNode;
+}) {
+  const sections = useSections();
+  if (!sections[section]) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <Routes>
       {/* Public */}
       <Route element={<PublicLayout />}>
         <Route path="/" element={<Home />} />
-        <Route path="/services" element={<Services />} />
-        <Route path="/services/register" element={<Register />} />
-        <Route path="/services/:id" element={<ServiceDetail />} />
-        <Route path="/hosting" element={<Hosting />} />
+        <Route path="/services" element={<RequireSection section="services"><Services /></RequireSection>} />
+        <Route path="/services/register" element={<RequireSection section="services"><Register /></RequireSection>} />
+        <Route path="/services/:id" element={<RequireSection section="services"><ServiceDetail /></RequireSection>} />
+        <Route path="/hosting" element={<RequireSection section="hosting"><Hosting /></RequireSection>} />
         <Route path="/docs" element={<Docs />} />
         <Route path="/login" element={<Login />} />
       </Route>

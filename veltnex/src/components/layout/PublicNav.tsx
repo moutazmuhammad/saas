@@ -15,12 +15,13 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useAuth } from "@/context/AuthContext";
+import { useSections } from "@/lib/useSections";
 import { cn } from "@/lib/utils";
 
-const LINKS = [
-  { to: "/services", label: "Services" },
-  { to: "/hosting", label: "Hosting" },
-  { to: "/docs", label: "Docs" },
+const ALL_LINKS = [
+  { to: "/services", label: "Services", section: "services" as const },
+  { to: "/hosting", label: "Hosting", section: "hosting" as const },
+  { to: "/docs", label: "Docs", section: null },
 ];
 
 type MenuItem = { label: string; icon: LucideIcon; to: string; external: boolean };
@@ -48,6 +49,11 @@ export function PublicNav() {
   const [open, setOpen] = React.useState(false);
   const [scrolled, setScrolled] = React.useState(false);
   const { isAuthenticated, user, logout } = useAuth();
+  const sections = useSections();
+  const LINKS = ALL_LINKS.filter((l) => !l.section || sections[l.section]);
+  // "Get started" sends people to whichever section is live (services
+  // first, else hosting).
+  const getStartedTo = sections.services ? "/services/register" : "/hosting";
   const navigate = useNavigate();
   const location = useLocation();
   // Remember where the user is so signing in returns them here instead
@@ -122,7 +128,7 @@ export function PublicNav() {
               >
                 Sign in
               </Link>
-              <Button size="sm" onClick={() => navigate("/services/register")}>
+              <Button size="sm" onClick={() => navigate(getStartedTo)}>
                 Get started
               </Button>
             </>
@@ -193,7 +199,7 @@ export function PublicNav() {
                   <Button variant="secondary" onClick={() => navigate("/login", { state: loginState })}>
                     Sign in
                   </Button>
-                  <Button onClick={() => navigate("/services/register")}>
+                  <Button onClick={() => navigate(getStartedTo)}>
                     Get started
                   </Button>
                 </>

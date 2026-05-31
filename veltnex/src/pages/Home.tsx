@@ -25,6 +25,7 @@ import { Card } from "@/components/ui/card";
 import { ServiceIcon } from "@/components/ServiceIcon";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { api, type ApiService, type TrialInfo } from "@/lib/api";
+import { useSections } from "@/lib/useSections";
 
 // Lazy-loaded so three.js (~210KB gzipped) lives in its own chunk and
 // is only fetched on the home page — keeping login/portal lean.
@@ -119,6 +120,7 @@ const SectionHeading = ({
 
 export default function Home() {
   const navigate = useNavigate();
+  const sections = useSections();
   const [services, setServices] = React.useState<ApiService[]>([]);
   const [trial, setTrial] = React.useState<TrialInfo | null>(null);
 
@@ -178,17 +180,21 @@ export default function Home() {
           </p>
 
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button size="lg" onClick={() => navigate("/hosting")}>
-              Host Your Project
-              <ArrowRight />
-            </Button>
-            <Button
-              size="lg"
-              variant="secondary"
-              onClick={() => navigate("/services")}
-            >
-              Ready-Made Services
-            </Button>
+            {sections.hosting && (
+              <Button size="lg" onClick={() => navigate("/hosting")}>
+                Host Your Project
+                <ArrowRight />
+              </Button>
+            )}
+            {sections.services && (
+              <Button
+                size="lg"
+                variant={sections.hosting ? "secondary" : "default"}
+                onClick={() => navigate("/services")}
+              >
+                Ready-Made Services
+              </Button>
+            )}
           </div>
 
           <div className="mt-5 flex justify-center">
@@ -203,8 +209,11 @@ export default function Home() {
       {/* ============================================================== */}
       {/* TWO WAYS TO LAUNCH — positions Hosting vs Ready-Made Services  */}
       {/* upfront so every visitor sees both product lines, even when    */}
-      {/* the dynamic services list at the bottom is empty.              */}
+      {/* the dynamic services list at the bottom is empty. Only shown    */}
+      {/* when BOTH sections are live — the "two ways" framing makes no    */}
+      {/* sense with one offering disabled.                               */}
       {/* ============================================================== */}
+      {sections.services && sections.hosting && (
       <section className="border-y border-border bg-card/20">
         <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 lg:px-8">
           <SectionHeading
@@ -300,6 +309,7 @@ export default function Home() {
           </div>
         </div>
       </section>
+      )}
 
       {/* ============================================================== */}
       {/* BUILT FOR THE ODOO ECOSYSTEM — header + dashboard preview +    */}
@@ -790,7 +800,7 @@ export default function Home() {
       {/* ============================================================== */}
       {/* SERVICES STRIP — Ready-Made Services                           */}
       {/* ============================================================== */}
-      {services.length > 0 && (
+      {sections.services && services.length > 0 && (
         <section className="border-b border-border">
           <div className="mx-auto max-w-7xl px-4 py-24 sm:px-6 lg:px-8">
             <div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-end">
