@@ -10,6 +10,7 @@ import Services from "./pages/Services";
 import ServiceDetail from "./pages/ServiceDetail";
 import Hosting from "./pages/Hosting";
 import Docs from "./pages/Docs";
+import DocArticle from "./pages/DocArticle";
 import Help from "./pages/Help";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="/services/:id" element={<RequireSection section="services"><ServiceDetail /></RequireSection>} />
         <Route path="/hosting" element={<RequireSection section="hosting"><Hosting /></RequireSection>} />
         <Route path="/docs" element={<Docs />} />
+        <Route path="/docs/:slug" element={<DocArticle />} />
         <Route path="/help" element={<Help />} />
         <Route path="/login" element={<Login />} />
       </Route>
