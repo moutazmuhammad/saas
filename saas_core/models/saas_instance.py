@@ -6746,18 +6746,49 @@ class SaasInstance(models.Model):
 
     @api.model
     def _daily_backup_unpaid_invoices(self):
-        """Posted, still-unpaid daily-backup add-on invoices for this
-        instance (activation + renewals), newest first."""
+        """Posted, still-unpaid invoices that cover this instance's daily
+        backups, newest first. Two sources:
+
+        1. Standalone backup add-on invoices (origin SAAS:BACKUP-ADDON) —
+           the separate monthly cycle.
+        2. **Merged renewals (M4):** when the snapshot month is folded into
+           the main renewal (M3), the snapshot charge lives on a
+           SAAS:RENEWAL invoice as a daily-backup product line. An unpaid
+           such renewal means the backup month is unpaid, so it must pause
+           snapshots exactly like an unpaid standalone backup invoice.
+        """
         self.ensure_one()
-        origin = ORIGIN_BACKUP_ADDON % (self.name or self.subdomain)
-        orders = self.env['sale.order'].sudo().search([('origin', '=', origin)])
-        invs = orders.invoice_ids.filtered(
-            lambda m: m.state == 'posted'
-            and m.payment_state not in (
-                'paid', 'in_payment', 'reversed', 'invoicing_legacy',
+        sub_ref = self.name or self.subdomain
+
+        def _unpaid(moves):
+            return moves.filtered(
+                lambda m: m.state == 'posted'
+                and m.payment_state not in (
+                    'paid', 'in_payment', 'reversed', 'invoicing_legacy',
+                )
+                and m.amount_residual > 0
             )
-            and m.amount_residual > 0
-        )
+
+        SO = self.env['sale.order'].sudo()
+        # 1) standalone backup add-on invoices
+        backup_orders = SO.search([
+            ('origin', '=', ORIGIN_BACKUP_ADDON % sub_ref)])
+        invs = _unpaid(backup_orders.invoice_ids)
+
+        # 2) renewal invoices carrying a merged daily-backup line
+        backup_product = self.env['product.product'].sudo().search(
+            [('default_code', '=', 'SAAS-BACKUP-ADDON')], limit=1)
+        if backup_product:
+            renewal_orders = SO.search([
+                ('origin', '=', ORIGIN_RENEWAL % sub_ref)])
+            merged = _unpaid(renewal_orders.invoice_ids).filtered(
+                lambda m: any(
+                    line.product_id == backup_product
+                    for line in m.invoice_line_ids
+                )
+            )
+            invs |= merged
+
         return invs.sorted('invoice_date_due')
 
     def _sync_daily_backup_suspension(self):
