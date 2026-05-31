@@ -146,13 +146,18 @@ class SaasPlan(models.Model):
                     "max_backups = 0. Plan: %s"
                 ) % rec.name)
 
-    @api.constrains('price', 'workers', 'storage_limit', 'is_trial_plan',
-                    'saas_product_ids')
+    @api.constrains('price', 'yearly_price', 'workers', 'storage_limit',
+                    'is_trial_plan', 'saas_product_ids')
     def _check_price_floor(self):
-        """A plan's monthly price may not fall below the engine's
-        cost-derived floor for its resources (margin protection / abuse
-        prevention). Skipped for trials and when no floor is configured
-        (floor 0 => no constraint, i.e. behaviour-neutral by default)."""
+        """A plan's price may not fall below the engine's cost-derived
+        floor for its resources (margin protection / abuse prevention).
+
+        Checks BOTH the monthly price (>= cost floor) and the yearly
+        price (>= 12 months of cost) — a yearly figure below 12× the
+        monthly floor would still sell the whole year at a loss even
+        though the monthly number looks fine. Skipped for trials and
+        when no floor is configured (floor 0 => no constraint, i.e.
+        behaviour-neutral by default)."""
         engine = self.env['saas.pricing.engine']
         for rec in self:
             if rec.is_trial_plan or not rec.workers:
@@ -162,13 +167,58 @@ class SaasPlan(models.Model):
             ) else 'services'
             cfg = engine._rate_config(kind)
             floor = engine._cost_floor(cfg, rec.workers, int(rec.storage_limit or 0))
-            if floor > 0 and rec.price + 0.01 < floor:
+            if floor <= 0:
+                continue
+            if rec.price + 0.01 < floor:
                 raise ValidationError(_(
                     "Plan '%s': monthly price %.2f is below the cost floor "
                     "%.2f for %d workers / %d GB. Raise the price, or lower "
                     "the cost floor in Settings."
                 ) % (rec.name, rec.price, floor, rec.workers,
                      int(rec.storage_limit or 0)))
+            if rec.yearly_price and rec.yearly_price + 0.01 < floor * 12:
+                raise ValidationError(_(
+                    "Plan '%s': yearly price %.2f is below 12 months of "
+                    "cost (%.2f) for %d workers / %d GB. Raise the yearly "
+                    "price, or lower the cost floor in Settings."
+                ) % (rec.name, rec.yearly_price, floor * 12, rec.workers,
+                     int(rec.storage_limit or 0)))
+
+    @api.constrains('price', 'workers', 'storage_limit', 'is_public_tier',
+                    'is_trial_plan', 'saas_product_ids')
+    def _check_tier_not_below_linear(self):
+        """A published tier must not be cheaper than the plain linear
+        price of its OWN resources.
+
+        Without this a "marketing" tier could be set, say, $30 for
+        4w/160GB while the linear rate for that same size (or even a
+        SMALLER custom config) is $88 — so buying the bigger named tier
+        would be cheaper than a smaller slider config (price inversion),
+        and the tier itself would undercut your own rate card. Only
+        enforced for public tiers; custom/auto plans are exempt (they
+        ARE the linear price). No-op if base rates are 0.
+        """
+        engine = self.env['saas.pricing.engine']
+        for rec in self:
+            if (rec.is_trial_plan or not rec.is_public_tier
+                    or not rec.workers or not rec.price):
+                continue
+            kind = 'hosting' if any(
+                p.is_hosting for p in rec.saas_product_ids
+            ) else 'services'
+            cfg = engine._rate_config(kind)
+            linear = (rec.workers * cfg['worker_price']) + (
+                int(rec.storage_limit or 0) * cfg['storage_price_per_gb'])
+            if linear > 0 and rec.price + 0.01 < linear:
+                raise ValidationError(_(
+                    "Tier '%s' is priced at %.2f/mo but its resources "
+                    "(%d workers / %d GB) cost %.2f at the standard rate. "
+                    "A tier priced below the rate card would be cheaper "
+                    "than a smaller custom plan (price inversion). Raise "
+                    "the tier price to at least %.2f, or lower the base "
+                    "rates in Settings."
+                ) % (rec.name, rec.price, rec.workers,
+                     int(rec.storage_limit or 0), linear, linear))
 
     @api.depends('price', 'yearly_price')
     def _compute_yearly_discount_pct(self):

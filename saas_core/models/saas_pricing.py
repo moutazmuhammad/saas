@@ -128,6 +128,30 @@ class SaasPricingEngine(models.AbstractModel):
         buffer_pct = min(max(buffer_pct, 0.0), 100.0)
         return best * (1.0 - buffer_pct / 100.0)
 
+    def _exact_public_tier(self, kind, workers, storage):
+        """The published public tier whose resources EXACTLY match this
+        config, if any.
+
+        When a customer's config matches a named tier, that tier's
+        advertised price IS the price — so the pricing card, the
+        configurator, and the invoice all quote the same number (one
+        source of truth). Any non-matching (custom slider) config falls
+        back to the linear rate. Returns an empty recordset when nothing
+        matches.
+        """
+        tiers = self.env['saas.plan'].sudo().search([
+            ('is_public_tier', '=', True),
+            ('workers', '=', workers),
+            ('storage_limit', '=', float(storage)),
+        ])
+        for t in tiers:
+            t_kind = 'hosting' if any(
+                p.is_hosting for p in t.saas_product_ids
+            ) else 'services'
+            if t_kind == kind:
+                return t
+        return self.env['saas.plan'].browse()
+
     def _addons_total(self, kind, addon_codes, storage_gb=0):
         """Sum effective monthly prices of the given add-on codes that
         apply to ``kind``. ``storage_gb`` lets storage-aware add-ons (P4)
@@ -172,13 +196,20 @@ class SaasPricingEngine(models.AbstractModel):
         storage = self._clamp(storage, cfg['min_storage'], cfg['max_storage'])
 
         base = (workers * cfg['worker_price']) + (storage * cfg['storage_price_per_gb'])
+        # Named-tier override (single source of truth): when this EXACT
+        # config is a published public tier, its advertised price is the
+        # resource price — so the pricing card, the configurator and the
+        # invoice all quote the same number. Custom configs keep the
+        # linear ``base``.
+        exact_tier = self._exact_public_tier(kind, workers, storage)
+        resource_base = exact_tier.price if exact_tier else base
         cost_floor = self._cost_floor(cfg, workers, storage)
         tier_floor = self._tier_floor(kind, workers, storage)
         floor = max(cost_floor, tier_floor)
-        floored = floor > base
+        floored = floor > resource_base
         region_factor = self._region_multiplier(region)
 
-        resource_monthly = max(base, floor) * region_factor
+        resource_monthly = max(resource_base, floor) * region_factor
         addons_monthly = self._addons_total(kind, addon_codes, storage)
         # Support plan (P3): flat monthly fee, NOT scaled by region, added
         # after infra. 0 when no plan / the free default / unknown code.
@@ -194,7 +225,22 @@ class SaasPricingEngine(models.AbstractModel):
         minimum_applied = minimum_monthly > pre_minimum
 
         discount = cfg['yearly_discount_pct'] / 100.0
-        yearly = monthly * 12 * (1 - discount)
+        if exact_tier:
+            # Honor the tier's STORED yearly price so the engine matches
+            # the pricing card (which shows ``plan.yearly_price``). Without
+            # this, an exact-tier quote re-derived yearly from the global
+            # discount and diverged from the advertised yearly figure.
+            # Region scales it like monthly; add-ons/support get the
+            # standard yearly discount on top so a configured tier still
+            # reconciles with the bare card.
+            resource_yearly = max(
+                exact_tier._get_price_for_period('yearly'), floor * 12,
+            ) * region_factor
+            other_yearly = (addons_monthly + support_monthly) * 12 * (1 - discount)
+            pre_minimum_yearly = resource_yearly + other_yearly
+            yearly = max(pre_minimum_yearly, minimum_monthly * 12 * (1 - discount))
+        else:
+            yearly = monthly * 12 * (1 - discount)
         yearly_savings = (monthly * 12) - yearly
         is_yearly = billing == 'yearly'
 
@@ -207,7 +253,13 @@ class SaasPricingEngine(models.AbstractModel):
             'total': round(yearly if is_yearly else monthly, 2),
             'monthly_equivalent': round(yearly / 12 if is_yearly else monthly, 2),
             'yearly_savings': round(yearly_savings, 2),
-            'savings_percent': int(cfg['yearly_discount_pct']),
+            # Derived from the ACTUAL monthly vs yearly (a named tier can
+            # carry its own yearly_price, so the real saving may differ
+            # from the global discount). Falls back to the config pct.
+            'savings_percent': (
+                int(round(yearly_savings / (monthly * 12) * 100))
+                if monthly else int(cfg['yearly_discount_pct'])
+            ),
             'currency': cfg['currency'],
             'region_factor': region_factor,
             'floored': floored,
@@ -218,6 +270,10 @@ class SaasPricingEngine(models.AbstractModel):
             },
             'breakdown': {
                 'base': round(base, 2),
+                # Linear vs named-tier: when an exact public tier matched,
+                # its price replaced the linear base as the resource cost.
+                'tier_price': round(exact_tier.price, 2) if exact_tier else 0.0,
+                'resource_base': round(resource_base, 2),
                 'floor': round(floor, 2),
                 'cost_floor': round(cost_floor, 2),
                 'tier_floor': round(tier_floor, 2),
