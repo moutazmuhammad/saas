@@ -268,6 +268,21 @@
                                  help="ON (current): half the deduplicated snapshot footprint counts against the plan's storage allowance. OFF (recommended): snapshots are covered solely by the Daily Backups add-on and don't eat into storage.">
                             <field name="saas_snapshots_count_toward_storage"/>
                         </setting>
+                        <setting id="saas_backup_internal_tuning_setting"
+                                 string="Internal tuning (cost &amp; storage churn)"
+                                 help="Backend-only guards — never shown to customers. Budget factor caps worst-case backup cost per instance (footprint ceiling = provisioned storage × factor) and drives the upgrade nudge. Prune interval spaces out the heavy restic prune to cut object-storage churn at scale (nightly 7-day retention is unaffected).">
+                            <div class="content-group">
+                                <div class="mt8">
+                                    <label for="saas_backup_budget_factor" string="Budget factor (× storage)" class="o_light_label" style="display:inline-block;min-width:200px;"/>
+                                    <field name="saas_backup_budget_factor" class="oe_inline" style="max-width:6rem;"/>
+                                </div>
+                                <div class="mt8">
+                                    <label for="saas_restic_prune_interval_days" string="Prune interval" class="o_light_label" style="display:inline-block;min-width:200px;"/>
+                                    <field name="saas_restic_prune_interval_days" class="oe_inline" style="max-width:6rem;"/>
+                                    <span class="text-muted ms-2">days (1 = every night)</span>
+                                </div>
+                            </div>
+                        </setting>
                     </block>
 
                     <!-- ==================== 5. Storage Overage ====================

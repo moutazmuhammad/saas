@@ -178,6 +178,15 @@ class ResConfigSettings(models.TransientModel):
              'cloud storage through the cancellation period. Covers the '
              'storage cost. Set to 0 to disable.',
     )
+    saas_restic_prune_interval_days = fields.Integer(
+        string='Restic Prune Interval (days)',
+        config_parameter='saas_master.restic_prune_interval_days',
+        default=7,
+        help='How often the heavy restic prune (repack + re-upload) runs '
+             'per instance. Nightly retention (keep last 7) is unaffected; '
+             'this only spaces out space reclamation to cut object-storage '
+             'churn at scale. 1 = prune every night (old behaviour).',
+    )
     saas_backup_budget_factor = fields.Float(
         string='Backup Budget Factor (internal cost guard)',
         config_parameter='saas_master.backup_budget_factor',

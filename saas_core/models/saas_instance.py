@@ -429,6 +429,14 @@ class SaasInstance(models.Model):
              'Set on migration to the next backup-invoice date; cleared once '
              'past. New activations price with the current model immediately.',
     )
+    last_restic_prune = fields.Date(
+        string='Last Restic Prune',
+        copy=False,
+        help='When the heavy restic prune last reclaimed space for this '
+             'instance. Nightly forget keeps retention at 7; prune is '
+             'gated to saas_master.restic_prune_interval_days (default 7) '
+             'to cut object-storage churn at scale.',
+    )
     # --- Hidden safety layer: bound backup storage cost per instance. ---
     # The backup repo footprint is compared (internally only) against a
     # per-instance ceiling derived from the provisioned storage. Over the
