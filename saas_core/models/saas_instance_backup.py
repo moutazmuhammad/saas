@@ -10,15 +10,16 @@ _logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BACKUPS = 7
 PRESIGNED_URL_EXPIRY = 7 * 24 * 3600
-# On-demand backups: bucket object lives 24 hours, and the presigned
-# download URL is signed for the same 24-hour window. Beyond that the
-# cleanup cron reaps both the bucket object and the local record. We
-# render the bucket URL directly into the Databases page so the
-# customer's Download button is a one-click link to DigitalOcean
-# (or whichever S3-compatible bucket is configured) — no extra
-# round-trip through Odoo.
-ONDEMAND_URL_EXPIRY = 24 * 3600
-ONDEMAND_DOWNLOAD_GRACE = 600  # seconds the link stays alive after click
+# On-demand backups are transient: the customer clicks "Download", we
+# build + upload to the bucket, hand back a presigned URL the browser
+# downloads from directly, and then the object is reaped — it is NOT
+# retained on the bucket. The object lives just long enough for the
+# download to complete (1 hour), and the presigned URL is signed for
+# the same window so the link dies with the object. The cleanup cron
+# then removes both the bucket object and the local record. Combined
+# with the single-slot policy (a new on-demand backup wipes the prior
+# one) the bucket never accumulates customer backups.
+ONDEMAND_URL_EXPIRY = 1 * 3600
 ONDEMAND_PREFIX = 'ondemand'
 
 # Per-read socket timeout while streaming a backup. Must exceed the
@@ -1786,8 +1787,9 @@ fi
         storage (diskless, multipart) so it works at ANY database size —
         it produces Odoo's native "dump" custom format, restorable with
         ``pg_restore`` or Odoo's Restore. On-demand backups also get a
-        24h presigned URL and an ``expires_at`` so the cleanup cron
-        reaps them.
+        short-lived (1 hour) presigned URL and a matching ``expires_at``
+        so the cleanup cron reaps them right after the download — they
+        are not retained on the bucket.
         """
         self.ensure_one()
         instance = self.instance_id

@@ -344,7 +344,7 @@ export const api = {
   dbDrop: (id: number, name: string) =>
     rpc<{ db_name: string }>(`/saas/api/v1/instances/${id}/databases/drop`, { name }),
   dbBackup: (id: number, name: string, format: "zip" | "dump" = "zip") =>
-    rpc(`/saas/api/v1/instances/${id}/databases/backup`, { name, format }),
+    rpc<{ backup_id: number }>(`/saas/api/v1/instances/${id}/databases/backup`, { name, format }),
   dailyBackupEnable: (id: number) =>
     rpc<{ checkout_url: string }>(`/saas/api/v1/instances/${id}/daily-backup/enable`),
   setRepo: (

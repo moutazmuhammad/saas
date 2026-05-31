@@ -26,7 +26,7 @@ import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { HelpHint } from "@/components/HelpHint";
 import { api, ApiError, type DbListData, type ApiBackup } from "@/lib/api";
-import { formatDateTime, formatSizeMb } from "@/lib/format";
+import { formatSizeMb } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function Databases() {
@@ -108,13 +108,43 @@ export default function Databases() {
     await load(true);
   };
 
-  // Trigger a backup of one database, then reload so it shows up (and
-  // becomes downloadable) right inside the per-database backups dialog.
-  // Throws on failure so the dialog surfaces the error inline.
-  const handleBackup = async (name: string, format: "zip" | "dump") => {
-    await api.dbBackup(instanceId, name, format);
-    await load(true);
-  };
+  // One-click backup download: trigger a fresh on-demand backup, poll
+  // until it's built + uploaded to the bucket, then start the browser
+  // download straight from the (short-lived) bucket URL. The customer
+  // sees a single "Download backup" action — the build/upload happen
+  // transparently, and the bucket object is reaped within the hour so
+  // nothing is retained. Throws on failure so the dialog surfaces it.
+  const downloadBackup = React.useCallback(
+    async (name: string, format: "zip" | "dump") => {
+      const { backup_id } = await api.dbBackup(instanceId, name, format);
+      // Poll for the build to finish (ceiling ~5 min; large DBs upload
+      // multipart so this is generous). Refresh the list as we go so the
+      // dialog shows progress and a manual fallback link.
+      for (let i = 0; i < 100; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        let b: ApiBackup | undefined;
+        try {
+          const r = await api.backups(instanceId);
+          setBackups(r.backups);
+          b = r.backups.find((x) => x.id === backup_id);
+        } catch {
+          continue; // transient blip — keep polling
+        }
+        if (b?.status === "failed") {
+          throw new ApiError("The backup couldn't be created. Please try again.");
+        }
+        if (b?.status === "available" && b.download_url) {
+          triggerBrowserDownload(b.download_url);
+          void load(true);
+          return;
+        }
+      }
+      throw new ApiError(
+        "Your backup is taking longer than expected — it'll be ready shortly. Try Download again in a moment.",
+      );
+    },
+    [instanceId, load],
+  );
 
   return (
     <div className="animate-fade-in">
@@ -258,7 +288,7 @@ export default function Databases() {
                                   className="fixed z-40 w-44 overflow-hidden rounded-lg border border-border bg-card shadow-card animate-scale-in"
                                   style={{ top: menuPos.top, right: menuPos.right }}
                                 >
-                                  <MenuItem icon={Archive} label="Backups" onClick={() => { setOpenMenu(null); setBackupsTarget(db.name); }} />
+                                  <MenuItem icon={Download} label="Download backup" onClick={() => { setOpenMenu(null); setBackupsTarget(db.name); }} />
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
                                   <div className="border-t border-border" />
                                   <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpenMenu(null); setDropTarget(db.name); }} />
@@ -308,52 +338,87 @@ export default function Databases() {
       <DatabaseBackupsDialog
         dbName={backupsTarget}
         backups={backupsTarget ? backupsFor(backupsTarget) : []}
-        onBackup={handleBackup}
+        onDownload={downloadBackup}
         onClose={() => setBackupsTarget(null)}
       />
     </div>
   );
 }
 
+// Start a browser download from a (cross-origin) bucket URL without
+// navigating the SPA away. A hidden anchor click downloads the file in
+// place — the object is a .zip/.dump, so the browser saves rather than
+// renders it.
+function triggerBrowserDownload(url: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.rel = "noopener";
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function DatabaseBackupsDialog({
   dbName,
   backups,
-  onBackup,
+  onDownload,
   onClose,
 }: {
   dbName: string | null;
   backups: ApiBackup[];
-  onBackup: (name: string, format: "zip" | "dump") => Promise<void>;
+  onDownload: (name: string, format: "zip" | "dump") => Promise<void>;
   onClose: () => void;
 }) {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [done, setDone] = React.useState(false);
   const [format, setFormat] = React.useState<"zip" | "dump">("zip");
 
   React.useEffect(() => {
     if (dbName) {
       setLoading(false);
       setError(null);
+      setDone(false);
       setFormat("zip");
     }
   }, [dbName]);
 
+  // The most recent ready backup (if the customer wants to re-trigger
+  // the save from the same short-lived link).
+  const ready = backups.find((b) => b.status === "available" && b.download_url);
+
   const start = async () => {
     if (!dbName) return;
     setError(null);
+    setDone(false);
     setLoading(true);
     try {
-      await onBackup(dbName, format);
+      await onDownload(dbName, format);
+      setDone(true);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Couldn't start the backup.");
+      setError(e instanceof ApiError ? e.message : "Couldn't prepare the backup.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Dialog open={!!dbName} onClose={onClose} title="Backups" description={dbName ? `On-demand backup for “${dbName}”.` : undefined}>
+    <Dialog
+      open={!!dbName}
+      onClose={onClose}
+      title="Download backup"
+      description={dbName ? `Take a fresh backup of “${dbName}” and download it.` : undefined}
+    >
       {error && <AlertBanner className="mb-4" variant="danger" title="Backup" description={error} />}
+      {done && !error && (
+        <AlertBanner
+          className="mb-4"
+          variant="success"
+          title="Your download has started"
+          description="If it didn't begin automatically, use the link below. The file is removed from our storage shortly after."
+        />
+      )}
       <div className="space-y-2">
         <Label>Format</Label>
         <div className="grid grid-cols-2 gap-2">
@@ -364,9 +429,10 @@ function DatabaseBackupsDialog({
             <button
               key={o.v}
               type="button"
+              disabled={loading}
               onClick={() => setFormat(o.v)}
               className={cn(
-                "rounded-lg border px-3 py-2 text-left transition-colors",
+                "rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50",
                 format === o.v ? "border-primary bg-primary/10" : "border-border hover:bg-border/40",
               )}
             >
@@ -376,54 +442,35 @@ function DatabaseBackupsDialog({
           ))}
         </div>
       </div>
+
+      <p className="mt-4 text-xs text-muted">
+        We build the backup, then your download starts automatically. Larger
+        databases take a little longer — keep this window open.
+      </p>
+
       <div className="mt-4 flex items-center justify-between gap-3">
-        <p className="text-sm text-muted">
-          {backups.length ? "Current backup" : "No on-demand backup yet."}
-        </p>
-        <ActionButton loading={loading} loadingText="Starting…" onClick={start}>
+        {ready && ready.download_url ? (
+          <a
+            href={ready.download_url}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-primary-glow underline-offset-2 hover:underline"
+          >
+            <Download className="size-4" />
+            Download last backup
+            {ready.size_mb > 0 && (
+              <span className="text-muted">({formatSizeMb(ready.size_mb)})</span>
+            )}
+          </a>
+        ) : (
+          <span className="text-sm text-muted">No backup yet.</span>
+        )}
+        <ActionButton loading={loading} loadingText="Preparing…" onClick={start}>
           <Archive className="size-4" />
-          Back up now
+          Download backup
         </ActionButton>
       </div>
-      {backups.length > 0 && (
-        <div className="mt-4 divide-y divide-border overflow-hidden rounded-lg border border-border">
-          {backups.map((b) => (
-            <div key={b.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-              <div className="min-w-0">
-                <p className="flex items-center gap-2 truncate text-sm font-medium">
-                  {formatDateTime(b.created)}
-                  {b.format && (
-                    <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted">
-                      {b.format === "dump" ? "dump" : "zip"}
-                    </span>
-                  )}
-                </p>
-                {b.status === "available" && b.size_mb > 0 && (
-                  <p className="text-xs text-muted">{formatSizeMb(b.size_mb)}</p>
-                )}
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <StatusBadge status={b.status} />
-                {b.status === "available" && b.download_url ? (
-                  <a href={b.download_url} target="_blank" rel="noreferrer">
-                    <Button size="sm" variant="ghost">
-                      <Download className="size-4" />
-                      <span className="hidden sm:inline">Download</span>
-                    </Button>
-                  </a>
-                ) : (
-                  <Button size="sm" variant="ghost" disabled>
-                    <Download className="size-4" />
-                    <span className="hidden sm:inline">Download</span>
-                  </Button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+
       <div className="mt-6 flex justify-end">
-        <Button variant="secondary" onClick={onClose}>Close</Button>
+        <Button variant="secondary" onClick={onClose} disabled={loading}>Close</Button>
       </div>
     </Dialog>
   );
