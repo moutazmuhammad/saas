@@ -917,8 +917,13 @@ class SaasApi(http.Controller):
             'name': instance.subdomain or instance.name,
             'domain': instance.name or '',
             'url': instance.url or '',
-            'region': instance.docker_server_id.name or (
-                instance.domain_id.name or ''
+            # The customer-facing region name — NEVER the internal server
+            # name. Prefer the instance's own region; fall back to the
+            # docker server's region (legacy instances with no region_id).
+            'region': (
+                instance.region_id.name
+                or instance.docker_server_id.region_id.name
+                or ''
             ),
             'version': instance.odoo_version_id.name or '',
             'state': instance.state,
