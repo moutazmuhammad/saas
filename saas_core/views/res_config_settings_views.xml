@@ -45,91 +45,107 @@
                         <setting id="saas_plan_rates_setting"
                                  string="Base rates (per month)"
                                  help="Monthly price per worker and per GB of storage. These are the core rates the pricing engine multiplies by the chosen configuration.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <div class="col-4 col-lg-4"/>
-                                    <div class="col-2 o_light_label fw-bold">Hosting</div>
-                                    <div class="col-2 o_light_label fw-bold">Services</div>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_worker_price" string="Per worker" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_worker_price" class="col-2"/>
-                                    <field name="saas_worker_price" class="col-2"/>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_storage_price_per_gb" string="Per GB storage" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_storage_price_per_gb" class="col-2"/>
-                                    <field name="saas_storage_price_per_gb" class="col-2"/>
-                                </div>
-                            </div>
+                            <table class="table table-sm table-borderless mb-0 mt8" style="max-width:460px;">
+                                <thead>
+                                    <tr class="o_light_label">
+                                        <th style="width:48%;"/>
+                                        <th class="text-center fw-bold">Hosting</th>
+                                        <th class="text-center fw-bold">Services</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_worker_price" string="Per worker"/></td>
+                                        <td><field name="saas_hosting_worker_price"/></td>
+                                        <td><field name="saas_worker_price"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_storage_price_per_gb" string="Per GB storage"/></td>
+                                        <td><field name="saas_hosting_storage_price_per_gb"/></td>
+                                        <td><field name="saas_storage_price_per_gb"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </setting>
                         <setting id="saas_plan_limits_setting"
                                  string="Configurator limits"
                                  help="The min / max the customer can pick on the slider for workers and storage (GB).">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <div class="col-4 col-lg-4"/>
-                                    <div class="col-2 o_light_label fw-bold">Hosting</div>
-                                    <div class="col-2 o_light_label fw-bold">Services</div>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_min_workers" string="Min workers" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_min_workers" class="col-2"/>
-                                    <field name="saas_custom_plan_min_workers" class="col-2"/>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_max_workers" string="Max workers" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_max_workers" class="col-2"/>
-                                    <field name="saas_custom_plan_max_workers" class="col-2"/>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_min_storage" string="Min storage (GB)" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_min_storage" class="col-2"/>
-                                    <field name="saas_custom_plan_min_storage" class="col-2"/>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_max_storage" string="Max storage (GB)" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_max_storage" class="col-2"/>
-                                    <field name="saas_custom_plan_max_storage" class="col-2"/>
-                                </div>
-                            </div>
+                            <table class="table table-sm table-borderless mb-0 mt8" style="max-width:460px;">
+                                <thead>
+                                    <tr class="o_light_label">
+                                        <th style="width:48%;"/>
+                                        <th class="text-center fw-bold">Hosting</th>
+                                        <th class="text-center fw-bold">Services</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_min_workers" string="Min workers"/></td>
+                                        <td><field name="saas_hosting_min_workers"/></td>
+                                        <td><field name="saas_custom_plan_min_workers"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_max_workers" string="Max workers"/></td>
+                                        <td><field name="saas_hosting_max_workers"/></td>
+                                        <td><field name="saas_custom_plan_max_workers"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_min_storage" string="Min storage (GB)"/></td>
+                                        <td><field name="saas_hosting_min_storage"/></td>
+                                        <td><field name="saas_custom_plan_min_storage"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_max_storage" string="Max storage (GB)"/></td>
+                                        <td><field name="saas_hosting_max_storage"/></td>
+                                        <td><field name="saas_custom_plan_max_storage"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </setting>
                         <setting id="saas_plan_resources_setting"
                                  string="Resources per worker"
                                  help="CPU (vCPU) and RAM (MB) each worker is allocated when a plan record is auto-created.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <div class="col-4 col-lg-4"/>
-                                    <div class="col-2 o_light_label fw-bold">Hosting</div>
-                                    <div class="col-2 o_light_label fw-bold">Services</div>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_cpu_per_worker" string="CPU / worker (vCPU)" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_cpu_per_worker" class="col-2"/>
-                                    <field name="saas_custom_plan_cpu_per_worker" class="col-2"/>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_ram_per_worker" string="RAM / worker (MB)" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_ram_per_worker" class="col-2"/>
-                                    <field name="saas_custom_plan_ram_per_worker" class="col-2"/>
-                                </div>
-                            </div>
+                            <table class="table table-sm table-borderless mb-0 mt8" style="max-width:460px;">
+                                <thead>
+                                    <tr class="o_light_label">
+                                        <th style="width:48%;"/>
+                                        <th class="text-center fw-bold">Hosting</th>
+                                        <th class="text-center fw-bold">Services</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_cpu_per_worker" string="CPU / worker (vCPU)"/></td>
+                                        <td><field name="saas_hosting_cpu_per_worker"/></td>
+                                        <td><field name="saas_custom_plan_cpu_per_worker"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_ram_per_worker" string="RAM / worker (MB)"/></td>
+                                        <td><field name="saas_hosting_ram_per_worker"/></td>
+                                        <td><field name="saas_custom_plan_ram_per_worker"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </setting>
                         <setting id="saas_plan_discount_setting"
                                  string="Yearly discount (%)"
                                  help="Percentage taken off when the customer chooses yearly billing. Baked into the stored yearly price.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <div class="col-4 col-lg-4"/>
-                                    <div class="col-2 o_light_label fw-bold">Hosting</div>
-                                    <div class="col-2 o_light_label fw-bold">Services</div>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_yearly_discount_pct" string="Discount" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_yearly_discount_pct" class="col-2"/>
-                                    <field name="saas_custom_plan_yearly_discount_pct" class="col-2"/>
-                                </div>
-                            </div>
+                            <table class="table table-sm table-borderless mb-0 mt8" style="max-width:460px;">
+                                <thead>
+                                    <tr class="o_light_label">
+                                        <th style="width:48%;"/>
+                                        <th class="text-center fw-bold">Hosting</th>
+                                        <th class="text-center fw-bold">Services</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_yearly_discount_pct" string="Discount"/></td>
+                                        <td><field name="saas_hosting_yearly_discount_pct"/></td>
+                                        <td><field name="saas_custom_plan_yearly_discount_pct"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </setting>
                         <setting id="saas_services_estimate_setting"
                                  string="Services: sizing recommendation"
@@ -152,39 +168,47 @@
                         <setting id="saas_minimum_monthly_setting"
                                  string="Minimum monthly charge"
                                  help="Floor on the FINAL monthly total, so even a tiny config covers fixed business costs (payment fees, support, monitoring). The customer just sees this as the price — there is no surcharge line. 0 = no minimum.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <div class="col-4 col-lg-4"/>
-                                    <div class="col-2 o_light_label fw-bold">Hosting</div>
-                                    <div class="col-2 o_light_label fw-bold">Services</div>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_minimum_monthly" string="Minimum / month" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_minimum_monthly" class="col-2"/>
-                                    <field name="saas_minimum_monthly" class="col-2"/>
-                                </div>
-                            </div>
+                            <table class="table table-sm table-borderless mb-0 mt8" style="max-width:460px;">
+                                <thead>
+                                    <tr class="o_light_label">
+                                        <th style="width:48%;"/>
+                                        <th class="text-center fw-bold">Hosting</th>
+                                        <th class="text-center fw-bold">Services</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_minimum_monthly" string="Minimum / month"/></td>
+                                        <td><field name="saas_hosting_minimum_monthly"/></td>
+                                        <td><field name="saas_minimum_monthly"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </setting>
                         <setting id="saas_cost_floor_setting"
                                  string="Cost floors"
                                  help="Minimum monthly cost charged per worker / per GB. The engine charges max(rate, floor), so a 'cheap workers + huge storage' config can't be sold below cost. 0 = no floor.">
-                            <div class="content-group">
-                                <div class="row mt8">
-                                    <div class="col-4 col-lg-4"/>
-                                    <div class="col-2 o_light_label fw-bold">Hosting</div>
-                                    <div class="col-2 o_light_label fw-bold">Services</div>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_worker_floor" string="Floor per worker" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_worker_floor" class="col-2"/>
-                                    <field name="saas_worker_floor" class="col-2"/>
-                                </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_storage_floor" string="Floor per GB" class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_hosting_storage_floor" class="col-2"/>
-                                    <field name="saas_storage_floor" class="col-2"/>
-                                </div>
-                            </div>
+                            <table class="table table-sm table-borderless mb-0 mt8" style="max-width:460px;">
+                                <thead>
+                                    <tr class="o_light_label">
+                                        <th style="width:48%;"/>
+                                        <th class="text-center fw-bold">Hosting</th>
+                                        <th class="text-center fw-bold">Services</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_worker_floor" string="Floor per worker"/></td>
+                                        <td><field name="saas_hosting_worker_floor"/></td>
+                                        <td><field name="saas_worker_floor"/></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="o_light_label align-middle"><label for="saas_hosting_storage_floor" string="Floor per GB"/></td>
+                                        <td><field name="saas_hosting_storage_floor"/></td>
+                                        <td><field name="saas_storage_floor"/></td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </setting>
                         <setting id="saas_custom_min_is_nearest_tier_setting"
                                  string="Custom price can't undercut a tier"
