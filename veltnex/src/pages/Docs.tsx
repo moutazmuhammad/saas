@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Link } from "react-router-dom";
 import { Search, FileText, Clock, BookOpen, ArrowRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -55,7 +56,7 @@ export default function Docs() {
               <ul className="mt-4 divide-y divide-border">
                 {folder.articles.map((a) => (
                   <li key={a.id}>
-                    <button className="group flex w-full items-center justify-between gap-3 py-3 text-left">
+                    <Link to={`/docs/${a.id}`} className="group flex w-full items-center justify-between gap-3 py-3 text-left">
                       <span className="flex items-center gap-3">
                         <FileText className="size-4 text-muted" />
                         <span className="text-sm transition-colors group-hover:text-primary-glow">
@@ -69,7 +70,7 @@ export default function Docs() {
                         </span>
                         <ArrowRight className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
                       </span>
-                    </button>
+                    </Link>
                   </li>
                 ))}
               </ul>

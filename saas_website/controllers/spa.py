@@ -146,6 +146,11 @@ class SaasWebsiteSpa(SaasWebsite):
     def docs_page(self, **kw):
         return spa_shell()
 
+    @http.route('/docs/<string:slug>', type='http', auth='public',
+                website=True, sitemap=False)
+    def docs_article(self, slug, **kw):
+        return spa_shell()
+
     @http.route('/help', type='http', auth='public', website=True, sitemap=True)
     def help_page(self, **kw):
         return spa_shell()
