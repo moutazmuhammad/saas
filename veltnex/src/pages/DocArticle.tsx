@@ -100,6 +100,18 @@ export default function DocArticle() {
         </p>
       </div>
 
+      {article.image && (
+        <img
+          src={`/saas_website/static/spa/docs-img/${article.image}`}
+          alt={article.title}
+          loading="lazy"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+          className="mt-8 w-full rounded-xl border border-border shadow-card"
+        />
+      )}
+
       <div className="mt-8 space-y-4 text-[15px] leading-relaxed">
         {renderBody(article.body)}
       </div>
