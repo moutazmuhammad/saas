@@ -429,6 +429,26 @@ class SaasInstance(models.Model):
              'Set on migration to the next backup-invoice date; cleared once '
              'past. New activations price with the current model immediately.',
     )
+    # --- Hidden safety layer: bound backup storage cost per instance. ---
+    # The backup repo footprint is compared (internally only) against a
+    # per-instance ceiling derived from the provisioned storage. Over the
+    # ceiling => recommend an instance upgrade. Never metered to the
+    # customer, never a surprise charge.
+    backup_over_budget = fields.Boolean(
+        string='Backup Over Budget (internal)',
+        default=False, copy=False,
+        help='Internal: the deduplicated backup footprint exceeded the '
+             'hidden per-instance ceiling (provisioned storage × '
+             'saas_master.backup_budget_factor). Drives an upgrade '
+             'recommendation; never exposed as a charge.',
+    )
+    backup_upgrade_recommended = fields.Boolean(
+        string='Backup Upgrade Recommended',
+        default=False, copy=False,
+        help='Set when backups have outgrown the instance plan. The '
+             'dashboard surfaces a soft "time to upgrade" nudge; backups '
+             'keep running at full quality regardless.',
+    )
     # Backup billing runs on its own monthly cycle, independent of the
     # main subscription's billing_period. This way a customer on a
     # yearly plan still pays the backup add-on once a month.
@@ -1267,28 +1287,46 @@ class SaasInstance(models.Model):
     def _get_daily_backup_price(self):
         """Monthly price of the daily-backup add-on for THIS instance.
 
-        Storage-aware (P4): delegates to the ``daily_snapshots`` add-on so
-        an admin can switch it to storage/hybrid pricing and heavy
-        instances pay proportionally. Falls back to the flat settings price
-        when the add-on isn't configured for scaling.
+        Percentage model: the price is a fixed % of the instance's monthly
+        plan price (``saas_master.backup_price_pct``, e.g. 20%). Because the
+        plan price already embeds workers + storage, this scales with the
+        instance's value/cost without exposing any per-GB metering — and
+        it's fully deterministic (the customer always pays the same share
+        of their plan). An optional flat floor
+        (``saas_master.backup_price_min``) keeps tiny plans above fixed
+        overhead.
 
         Grandfathering: while ``backup_price_locked_until`` is set and in
-        the future, the FLAT price is kept regardless of the add-on mode,
-        so an existing subscriber's recurring charge doesn't jump
-        mid-subscription.
+        the future, the FLAT legacy price is kept, so an existing
+        subscriber's recurring charge doesn't jump mid-subscription.
+
+        Fallback: when the percentage is 0 (not configured), the flat
+        legacy price (``hosting_daily_backup_price``) is used — so the
+        behaviour is unchanged until a percentage is set.
         """
         self.ensure_one()
         flat = self._backup_flat_price()
         lock = self.backup_price_locked_until
         if lock and lock >= fields.Date.today():
             return flat
-        addon = self.env['saas.addon'].sudo().search(
-            [('code', '=', 'daily_snapshots'), ('active', '=', True)], limit=1,
+        icp = self.env['ir.config_parameter'].sudo()
+        try:
+            pct = float(icp.get_param('saas_master.backup_price_pct', '20') or 0)
+        except (TypeError, ValueError):
+            pct = 0.0
+        if pct <= 0:
+            return flat  # percentage disabled → legacy flat price
+        try:
+            minimum = float(icp.get_param('saas_master.backup_price_min', '0') or 0)
+        except (TypeError, ValueError):
+            minimum = 0.0
+        plan_monthly = (
+            self.plan_id._get_price_for_period('monthly') if self.plan_id else 0.0
         )
-        if not addon or (addon.price_mode or 'flat') == 'flat':
-            return flat
-        storage_gb = (self.total_storage_bytes or 0) / (1024 ** 3)
-        return addon.effective_monthly_price(storage_gb=storage_gb)
+        price = plan_monthly * pct / 100.0
+        if minimum > 0:
+            price = max(price, minimum)
+        return round(price, 2)
 
     def _get_snapshot_retention_surcharge(self):
         """One-time fee for keeping a snapshot through cancellation.
@@ -6810,6 +6848,60 @@ class SaasInstance(models.Model):
             self.message_post(body=_(
                 "Daily snapshots resumed — your backup add-on is paid up."
             ))
+
+    def _backup_budget_bytes(self):
+        """Hidden per-instance backup ceiling in bytes: provisioned
+        storage × the configured factor. 0 = no plan/limit → no ceiling."""
+        self.ensure_one()
+        limit_gb = (self.plan_id.storage_limit or 0) if self.plan_id else 0
+        if limit_gb <= 0:
+            return 0
+        try:
+            factor = float(self.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.backup_budget_factor', '2.5') or 0)
+        except (TypeError, ValueError):
+            factor = 0.0
+        if factor <= 0:
+            return 0
+        return int(limit_gb * factor * (1024 ** 3))
+
+    def _cron_check_backup_budgets(self):
+        """Hidden safety monitor (point 2): flag instances whose backup
+        footprint outgrew their plan, so the dashboard can nudge an
+        upgrade. Pure internal check against the already-collected restic
+        footprint — no extra metering, no customer-facing GB, no charge.
+        Backups keep running at full quality regardless of the flag.
+        """
+        instances = self.search([
+            ('state', '=', 'running'),
+            ('is_hosting', '=', True),
+            ('daily_backup_enabled', '=', True),
+        ])
+        for inst in instances:
+            try:
+                ceiling = inst._backup_budget_bytes()
+                over = bool(ceiling) and inst._snapshot_total_bytes() > ceiling
+                vals = {}
+                if inst.backup_over_budget != over:
+                    vals['backup_over_budget'] = over
+                # Recommendation latches on; it only clears when the
+                # instance is no longer over budget (e.g. after upgrade).
+                if over and not inst.backup_upgrade_recommended:
+                    vals['backup_upgrade_recommended'] = True
+                    inst._append_log(
+                        "Backups have outgrown the plan — upgrade "
+                        "recommended (backups continue at full quality)."
+                    )
+                elif not over and inst.backup_upgrade_recommended:
+                    vals['backup_upgrade_recommended'] = False
+                if vals:
+                    inst.write(vals)
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Backup budget check failed for %s", inst.subdomain,
+                )
 
     def _cron_renew_daily_backup_addons(self):
         """Maintain the daily-backup add-on: pause/resume snapshots on

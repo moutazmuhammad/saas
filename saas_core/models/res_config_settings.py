@@ -144,13 +144,30 @@ class ResConfigSettings(models.TransientModel):
         config_parameter='saas_master.hosting_yearly_discount_pct',
         default=20,
     )
+    saas_backup_price_pct = fields.Float(
+        string='Backup Price (% of instance price)',
+        config_parameter='saas_master.backup_price_pct',
+        default=20.0,
+        help='Daily-backup add-on price as a percentage of the instance\'s '
+             'monthly plan price (DigitalOcean-style). Deterministic and '
+             'predictable: the customer always pays this fixed share of '
+             'their plan. Set to 0 to fall back to the flat price below.',
+    )
+    saas_backup_price_min = fields.Float(
+        string='Backup Price: Minimum (monthly)',
+        config_parameter='saas_master.backup_price_min',
+        default=0.0,
+        help='Optional flat floor on the percentage price, so tiny plans '
+             'still cover fixed backup overhead. 0 = no minimum.',
+    )
     saas_hosting_daily_backup_price = fields.Float(
-        string='Hosting: Daily Backup Add-on Price',
+        string='Hosting: Daily Backup Flat Price (legacy / grandfathered)',
         config_parameter='saas_master.hosting_daily_backup_price',
         default=5.0,
-        help='Monthly add-on price for daily database backups on hosting '
-             'instances. Charged in addition to workers / storage. Retention '
-             'is fixed at 7 days per database.',
+        help='Flat monthly price used only when the percentage above is 0, '
+             'or for instances whose price is grandfathered '
+             '(backup_price_locked_until in the future). Retention is fixed '
+             'at 7 days per database.',
     )
     saas_hosting_snapshot_retention_surcharge = fields.Float(
         string='Hosting: Snapshot Retention Surcharge (post-cancellation)',
@@ -160,6 +177,17 @@ class ResConfigSettings(models.TransientModel):
              'invoice AFTER a reactivation, only when we kept a snapshot in '
              'cloud storage through the cancellation period. Covers the '
              'storage cost. Set to 0 to disable.',
+    )
+    saas_backup_budget_factor = fields.Float(
+        string='Backup Budget Factor (internal cost guard)',
+        config_parameter='saas_master.backup_budget_factor',
+        default=2.5,
+        help='Hidden safety ceiling: an instance\'s backup footprint may '
+             'reach provisioned storage × this factor before the system '
+             'flags an upgrade recommendation. Bounds worst-case backup '
+             'cost per instance. Never shown to customers, never billed '
+             'per-GB. 7-day restic dedup means ~1.5–2x is typical, so 2.5 '
+             'leaves headroom.',
     )
     # Hosting snapshot retention is fixed (HOSTING_MAX_SNAPSHOTS=7 in
     # saas.instance.backup); there is no per-plan hosting backup count, so

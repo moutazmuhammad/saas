@@ -234,12 +234,22 @@
                     <block title="Backups &amp; Snapshots" name="saas_backups_container">
                         <setting id="saas_hosting_daily_backup_price_setting"
                                  string="Daily backup add-on (hosting)"
-                                 help="Optional add-on at hosting checkout. Backs up every database on the instance daily and keeps the last 7 days. Billed monthly.">
+                                 help="Optional add-on at hosting checkout. Backs up every database on the instance daily and keeps the last 7 days. Billed monthly. Price = a fixed % of the instance's plan price (predictable, scales with the plan). The flat price is only used when the % is 0 or for grandfathered instances.">
                             <div class="content-group">
                                 <div class="mt8">
-                                    <label for="saas_hosting_daily_backup_price" string="Monthly price" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <label for="saas_backup_price_pct" string="Price (% of plan)" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <field name="saas_backup_price_pct" class="oe_inline" style="max-width:6rem;"/>
+                                    <span class="text-muted ms-2">% of the instance's monthly plan price</span>
+                                </div>
+                                <div class="mt8">
+                                    <label for="saas_backup_price_min" string="Minimum / month" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <field name="saas_backup_price_min" class="oe_inline" style="max-width:7rem;"/>
+                                    <span class="text-muted ms-2">flat floor (0 = none)</span>
+                                </div>
+                                <div class="mt8">
+                                    <label for="saas_hosting_daily_backup_price" string="Flat price (legacy)" class="o_light_label" style="display:inline-block;min-width:160px;"/>
                                     <field name="saas_hosting_daily_backup_price" class="oe_inline" style="max-width:7rem;"/>
-                                    <span class="text-muted ms-2">/ month</span>
+                                    <span class="text-muted ms-2">used only when % = 0 / grandfathered</span>
                                 </div>
                                 <div class="mt8">
                                     <label for="saas_hosting_snapshot_retention_surcharge" string="Retention surcharge" class="o_light_label" style="display:inline-block;min-width:160px;"/>
