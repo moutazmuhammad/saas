@@ -301,8 +301,14 @@ class SaasInstanceBackup(models.Model):
             'service_account_key': ICP.get_param('saas_backup.service_account_key', ''),
         }
 
-    def _get_s3_client(self):
-        """Return a boto3 S3-compatible client configured from settings."""
+    def _get_s3_client(self, access_key=None, secret_key=None):
+        """Return a boto3 S3-compatible client configured from settings.
+
+        ``access_key`` / ``secret_key`` override the stored backup
+        credentials — used by the CORS button, which runs under a
+        separate, broader-privilege key than the least-privilege key
+        used for object read/write.
+        """
         try:
             import boto3
             from botocore.config import Config as BotoConfig
@@ -310,7 +316,9 @@ class SaasInstanceBackup(models.Model):
             raise UserError(_("The 'boto3' Python package is required. Install it with: pip install boto3"))
 
         cfg = self._get_backup_config()
-        if not cfg['access_key'] or not cfg['secret_key']:
+        ak = access_key or cfg['access_key']
+        sk = secret_key or cfg['secret_key']
+        if not ak or not sk:
             raise UserError(_(
                 "Access Key and Secret Key are required for %s. "
                 "Go to SaaS Manager > Configuration > Settings."
@@ -318,8 +326,8 @@ class SaasInstanceBackup(models.Model):
 
         region = cfg['region'] or 'us-east-1'
         kwargs = {
-            'aws_access_key_id': cfg['access_key'],
-            'aws_secret_access_key': cfg['secret_key'],
+            'aws_access_key_id': ak,
+            'aws_secret_access_key': sk,
             'region_name': region,
         }
 
@@ -672,7 +680,16 @@ class SaasInstanceBackup(models.Model):
                 ))
             origins = ['%s://%s' % (parsed.scheme, parsed.netloc)]
 
-        client, bucket = self._get_s3_client()
+        # The CORS button runs under a dedicated, broader-privilege key
+        # (it needs PutBucketCORS) kept separate from the least-privilege
+        # key used for object read/write. Fall back to the backup key
+        # only if no dedicated key is configured.
+        ICP = self.env['ir.config_parameter'].sudo()
+        cors_ak = ICP.get_param('saas_backup.cors_access_key', '') or None
+        cors_sk = ICP.get_param('saas_backup.cors_secret_key', '') or None
+        client, bucket = self._get_s3_client(
+            access_key=cors_ak, secret_key=cors_sk,
+        )
         try:
             client.put_bucket_cors(
                 Bucket=bucket,
