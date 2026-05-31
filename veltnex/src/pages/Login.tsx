@@ -8,11 +8,14 @@ import { AlertBanner } from "@/components/AlertBanner";
 import { Logo } from "@/components/Logo";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
+import { useSections } from "@/lib/useSections";
 import { ApiError } from "@/lib/api";
 
 export default function Login() {
   const { login } = useAuth();
   const toast = useToast();
+  const sections = useSections();
+  const registerTo = sections.services ? "/services/register" : "/hosting";
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -134,7 +137,7 @@ export default function Login() {
 
           <p className="mt-6 text-center text-sm text-muted">
             New to VELTNEX?{" "}
-            <Link to="/services/register" className="font-medium text-primary-glow hover:underline">
+            <Link to={registerTo} className="font-medium text-primary-glow hover:underline">
               Create an account
             </Link>
           </p>
