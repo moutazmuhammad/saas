@@ -3851,25 +3851,17 @@ footer.bg-light.o_footer a:hover {
    Mirrors the SPA <HelpHint> affordance on the QWeb funnel.
    ============================================================ */
 .saas-help {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 1rem;
-    height: 1rem;
-    margin-left: 0.35rem;
-    border-radius: 50%;
-    border: 1px solid currentColor;
-    color: #8a94a6;
-    font-size: 0.7rem;
-    font-weight: 700;
+    margin-left: 0.3rem;
+    color: #9aa3b2;
+    font-size: 0.8rem;
     line-height: 1;
     text-decoration: none;
-    cursor: help;
+    cursor: inherit;
     vertical-align: middle;
-    transition: color .15s, border-color .15s;
+    transition: color .15s;
 }
-.saas-help:hover {
+.saas-help:hover,
+.saas-help:focus {
     color: #203c86;
-    border-color: #203c86;
     text-decoration: none;
 }

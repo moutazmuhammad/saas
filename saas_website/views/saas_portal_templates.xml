@@ -298,7 +298,7 @@
                                                        t-att-max="custom_config.get('max_workers', 8)"
                                                        step="1" t-att-value="custom_config.get('min_workers', 2)"
                                                        />
-                                                <span>Workers<a href="/help#workers" target="_blank" rel="noopener" class="saas-help" title="How many requests your instance handles at once — more workers = more simultaneous users." aria-label="Learn more">?</a></span>
+                                                <span>Workers<a href="/help#workers" target="_blank" rel="noopener" class="saas-help" title="How many requests your instance handles at once — more workers = more simultaneous users." aria-label="Learn more"><i class="fas fa-question-circle"></i></a></span>
                                             </div>
                                         </div>
                                         <div class="slider-container">
@@ -314,7 +314,7 @@
                                     <div class="slider-group mt-4" id="upgrade-storage-slider-group">
                                         <div class="slider-header">
                                             <div class="slider-label">
-                                                <i class="fas fa-hdd me-2"></i>Storage<a href="/help#storage" target="_blank" rel="noopener" class="saas-help" title="Total space for your database and files. Backups count toward it too." aria-label="Learn more">?</a>
+                                                <i class="fas fa-hdd me-2"></i>Storage<a href="/help#storage" target="_blank" rel="noopener" class="saas-help" title="Total space for your database and files. Backups count toward it too." aria-label="Learn more"><i class="fas fa-question-circle"></i></a>
                                             </div>
                                             <div class="slider-value" id="upgrade-storage-value">
                                                 <input type="number" class="slider-input" id="upgrade-storage-input"
@@ -547,7 +547,7 @@
                                                     <t t-if="original_plan_name">
                                                         on <t t-esc="original_plan_name"/>
                                                     </t>
-                                                    <a href="/help#proration" target="_blank" rel="noopener" class="saas-help" title="When you upgrade mid-cycle, you're credited for the unused days of your current plan." aria-label="Learn more">?</a>
+                                                    <a href="/help#proration" target="_blank" rel="noopener" class="saas-help" title="When you upgrade mid-cycle, you're credited for the unused days of your current plan." aria-label="Learn more"><i class="fas fa-question-circle"></i></a>
                                                 </td>
                                                 <td class="text-end">
                                                     -<t t-esc="'${:,.2f}'.format(proration_credit)"/>
@@ -748,7 +748,7 @@
                                                        t-att-max="custom_config.get('max_workers', 8)"
                                                        step="1" t-att-value="current_workers"
                                                        />
-                                                <span>Workers<a href="/help#workers" target="_blank" rel="noopener" class="saas-help" title="How many requests your instance handles at once — more workers = more simultaneous users." aria-label="Learn more">?</a></span>
+                                                <span>Workers<a href="/help#workers" target="_blank" rel="noopener" class="saas-help" title="How many requests your instance handles at once — more workers = more simultaneous users." aria-label="Learn more"><i class="fas fa-question-circle"></i></a></span>
                                             </div>
                                         </div>
                                         <div class="slider-container">
@@ -772,7 +772,7 @@
                                     <div class="slider-group mt-4" id="upgrade-storage-slider-group">
                                         <div class="slider-header">
                                             <div class="slider-label">
-                                                <i class="fas fa-hdd me-2"></i>Storage<a href="/help#storage" target="_blank" rel="noopener" class="saas-help" title="Total space for your database and files. Backups count toward it too." aria-label="Learn more">?</a>
+                                                <i class="fas fa-hdd me-2"></i>Storage<a href="/help#storage" target="_blank" rel="noopener" class="saas-help" title="Total space for your database and files. Backups count toward it too." aria-label="Learn more"><i class="fas fa-question-circle"></i></a>
                                             </div>
                                             <div class="slider-value" id="upgrade-storage-value">
                                                 <input type="number" class="slider-input" id="upgrade-storage-input"
@@ -957,7 +957,7 @@
                                                        t-att-min="current_workers"
                                                        t-att-max="custom_config.get('max_workers', 8)"
                                                        step="1" t-att-value="current_workers"/>
-                                                <span>Workers<a href="/help#workers" target="_blank" rel="noopener" class="saas-help" title="How many requests your instance handles at once — more workers = more simultaneous users." aria-label="Learn more">?</a></span>
+                                                <span>Workers<a href="/help#workers" target="_blank" rel="noopener" class="saas-help" title="How many requests your instance handles at once — more workers = more simultaneous users." aria-label="Learn more"><i class="fas fa-question-circle"></i></a></span>
                                             </div>
                                         </div>
                                         <div class="slider-container">
@@ -976,7 +976,7 @@
                                     <div class="slider-group mt-4" id="upgrade-storage-slider-group">
                                         <div class="slider-header">
                                             <div class="slider-label">
-                                                <i class="fas fa-hdd me-2"></i>Storage<a href="/help#storage" target="_blank" rel="noopener" class="saas-help" title="Total space for your database and files. Backups count toward it too." aria-label="Learn more">?</a>
+                                                <i class="fas fa-hdd me-2"></i>Storage<a href="/help#storage" target="_blank" rel="noopener" class="saas-help" title="Total space for your database and files. Backups count toward it too." aria-label="Learn more"><i class="fas fa-question-circle"></i></a>
                                             </div>
                                             <div class="slider-value" id="upgrade-storage-value">
                                                 <input type="number" class="slider-input" id="upgrade-storage-input"
