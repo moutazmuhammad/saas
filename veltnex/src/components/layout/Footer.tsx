@@ -1,38 +1,41 @@
 import { Link } from "react-router-dom";
 import { Github, Twitter, Linkedin } from "lucide-react";
 import { Logo } from "@/components/Logo";
-
-const COLUMNS = [
-  {
-    title: "Product",
-    links: [
-      { label: "Services", to: "/services" },
-      { label: "Hosting", to: "/hosting" },
-      { label: "Configure", to: "/hosting/configure" },
-      { label: "Docs", to: "/docs" },
-    ],
-  },
-  {
-    title: "Company",
-    links: [
-      { label: "About", to: "/" },
-      { label: "Customers", to: "/" },
-      { label: "Careers", to: "/" },
-      { label: "Contact", to: "/" },
-    ],
-  },
-  {
-    title: "Account",
-    links: [
-      { label: "Sign in", to: "/login" },
-      { label: "Get started", to: "/services/register" },
-      { label: "Dashboard", to: "/my" },
-      { label: "Invoices", to: "/my/invoices" },
-    ],
-  },
-];
+import { useSections } from "@/lib/useSections";
 
 export function Footer() {
+  const sections = useSections();
+  // "Get started" lands on whichever section is live.
+  const getStartedTo = sections.services ? "/services/register" : "/hosting";
+  const COLUMNS = [
+    {
+      title: "Product",
+      links: [
+        sections.services && { label: "Services", to: "/services" },
+        sections.hosting && { label: "Hosting", to: "/hosting" },
+        sections.hosting && { label: "Configure", to: "/hosting/configure" },
+        { label: "Docs", to: "/docs" },
+      ].filter(Boolean) as { label: string; to: string }[],
+    },
+    {
+      title: "Company",
+      links: [
+        { label: "About", to: "/" },
+        { label: "Customers", to: "/" },
+        { label: "Careers", to: "/" },
+        { label: "Contact", to: "/" },
+      ],
+    },
+    {
+      title: "Account",
+      links: [
+        { label: "Sign in", to: "/login" },
+        { label: "Get started", to: getStartedTo },
+        { label: "Dashboard", to: "/my" },
+        { label: "Invoices", to: "/my/invoices" },
+      ],
+    },
+  ];
   return (
     <footer className="border-t border-border bg-background">
       <div className="mx-auto max-w-7xl px-4 py-14 sm:px-6 lg:px-8">

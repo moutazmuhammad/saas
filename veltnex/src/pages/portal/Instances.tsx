@@ -9,12 +9,16 @@ import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { AlertBanner } from "@/components/AlertBanner";
 import { useInstances } from "@/context/InstancesContext";
+import { useSections } from "@/lib/useSections";
 import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function Instances() {
   const { instances, loading, error } = useInstances();
   const navigate = useNavigate();
+  const sections = useSections();
+  // Send "Create instance" to whichever offering is live.
+  const createTo = sections.hosting ? "/hosting" : "/services";
   const [query, setQuery] = React.useState("");
 
   const filtered = instances.filter(
@@ -30,7 +34,7 @@ export default function Instances() {
           <h1 className="text-2xl font-bold tracking-tight">Instances</h1>
           <p className="mt-1 text-sm text-muted">Manage and monitor all your Odoo deployments.</p>
         </div>
-        <Button onClick={() => navigate("/hosting")}>
+        <Button onClick={() => navigate(createTo)}>
           <Plus className="size-4" />
           New instance
         </Button>
@@ -58,7 +62,7 @@ export default function Instances() {
           icon={Server}
           title={query ? "No matching instances" : "No instances yet"}
           description={query ? "Try a different search term." : "Deploy your first Odoo instance to get started."}
-          action={!query && <Button onClick={() => navigate("/hosting")}>Create instance</Button>}
+          action={!query && <Button onClick={() => navigate(createTo)}>Create instance</Button>}
         />
       ) : (
         <div className="mt-6 grid gap-4 md:grid-cols-2">

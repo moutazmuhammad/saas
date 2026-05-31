@@ -17,6 +17,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { AlertBanner } from "@/components/AlertBanner";
 import { useAuth } from "@/context/AuthContext";
+import { useSections } from "@/lib/useSections";
 import { api, ApiError, type DashboardData } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 
@@ -27,6 +28,8 @@ function money(n: number, c = "USD") {
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const sections = useSections();
+  const createTo = sections.hosting ? "/hosting" : "/services";
   const [data, setData] = React.useState<DashboardData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -48,7 +51,7 @@ export default function Dashboard() {
             Here's what's happening across your {user?.company} workspace.
           </p>
         </div>
-        <Button onClick={() => navigate("/hosting")}>
+        <Button onClick={() => navigate(createTo)}>
           <Plus className="size-4" />
           New instance
         </Button>
@@ -95,7 +98,7 @@ export default function Dashboard() {
                     icon={Server}
                     title="No instances yet"
                     description="Deploy your first Odoo instance to get started."
-                    action={<Button onClick={() => navigate("/hosting")}>Create instance</Button>}
+                    action={<Button onClick={() => navigate(createTo)}>Create instance</Button>}
                   />
                 </div>
               ) : (

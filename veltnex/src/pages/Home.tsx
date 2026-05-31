@@ -495,10 +495,12 @@ export default function Home() {
                 ))}
               </ul>
               <div className="mt-10">
+                {sections.hosting && (
                 <Button onClick={() => navigate("/hosting")}>
                   Start hosting your code
                   <ArrowRight />
                 </Button>
+                )}
               </div>
             </div>
 
@@ -866,10 +868,17 @@ export default function Home() {
                 required to explore the console.
               </p>
               <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                {sections.hosting ? (
                 <Button size="lg" onClick={() => navigate("/hosting")}>
                   Configure your plan
                   <ArrowRight />
                 </Button>
+                ) : sections.services ? (
+                <Button size="lg" onClick={() => navigate("/services")}>
+                  Browse services
+                  <ArrowRight />
+                </Button>
+                ) : null}
                 <Button
                   size="lg"
                   variant="outline"
