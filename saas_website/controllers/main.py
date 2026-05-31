@@ -858,7 +858,10 @@ class SaasWebsite(http.Controller):
                 params += '&support_code=%s' % kw['support_code']
             if kw.get('is_trial') == '1':
                 params += '&is_trial=1'
-            return request.redirect('/services/register?%s' % params)
+            # Use the generic (ungated) sign-up route — /services/register
+            # is gated by the services section, so a hosting-only setup
+            # would bounce the buyer to home.
+            return request.redirect('/register?%s' % params)
 
         billing_period = billing if billing in ('monthly', 'yearly') else 'monthly'
         config = self._get_hosting_plan_config()
