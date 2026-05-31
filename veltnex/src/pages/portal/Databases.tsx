@@ -24,6 +24,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
+import { HelpHint } from "@/components/HelpHint";
 import { api, ApiError, type DbListData, type ApiBackup } from "@/lib/api";
 import { formatDateTime, formatSizeMb } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -121,7 +122,7 @@ export default function Databases() {
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Databases</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Databases<HelpHint anchor="create-database" className="ml-1.5" /></h1>
           <p className="mt-1 text-sm text-muted">Create, back up, and manage your databases.</p>
         </div>
         <Button
