@@ -45,12 +45,6 @@ export default function Databases() {
   const [duplicateTarget, setDuplicateTarget] = React.useState<string | null>(null);
   const [upgradeTarget, setUpgradeTarget] = React.useState<string | null>(null);
   const [restoreOpen, setRestoreOpen] = React.useState(false);
-  // A restore briefly flips the whole instance to "provisioning"; we
-  // keep the customer on this page and show a banner instead of bouncing
-  // them to the instance screen. `sawProvisioning` makes the "finished"
-  // detection robust against the first poll racing the state flip.
-  const [restoring, setRestoring] = React.useState(false);
-  const sawProvisioning = React.useRef(false);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [backupsTarget, setBackupsTarget] = React.useState<string | null>(null);
   const [backups, setBackups] = React.useState<ApiBackup[]>([]);
@@ -100,39 +94,21 @@ export default function Databases() {
   // in `databases` (mid-create), its own row carries the spinner — so
   // exclude those here to avoid a duplicate row.
   const existingNames = new Set((data?.databases ?? []).map((d) => d.name));
-  // A create OR duplicate produces a brand-new database that doesn't
-  // appear in the list until it's built — surface those as synthetic
-  // in-flight rows so the customer sees the work immediately.
+  // A create / duplicate / restore-into-new-name produces a database
+  // that isn't in the list yet (or is mid-replacement) — surface those
+  // as synthetic in-flight rows so the customer sees the work.
   const creatingOps = (data?.pending_ops ?? []).filter(
     (o) =>
-      (o.operation === "create" || o.operation === "duplicate") &&
+      (o.operation === "create" || o.operation === "duplicate" || o.operation === "restore") &&
       !existingNames.has(o.db_name),
   );
   // Any create in flight (existing-in-list or not) locks the button.
   const isCreating = (data?.pending_ops ?? []).some((o) => o.operation === "create");
-  // Poll while anything is in flight: pending DB ops, a running backup,
-  // or a restore (instance provisioning).
-  const provisioning = data?.state === "provisioning";
-  const shouldPoll = hasPending || restoring || provisioning;
   React.useEffect(() => {
-    if (!shouldPoll) return;
+    if (!hasPending) return;
     const t = setInterval(() => load(true), 5000);
     return () => clearInterval(t);
-  }, [shouldPoll, load]);
-
-  // Clear the restore banner once the instance is back up — but only
-  // after we've actually seen it go into provisioning, so a stray first
-  // poll can't dismiss it prematurely.
-  React.useEffect(() => {
-    if (!restoring) return;
-    if (data && !data.ready) sawProvisioning.current = true;
-    if (data?.ready && sawProvisioning.current) {
-      setRestoring(false);
-      sawProvisioning.current = false;
-      toast.success("Restore complete", "Your database has been restored.");
-      void load(true);
-    }
-  }, [restoring, data, load, toast]);
+  }, [hasPending, load]);
 
   // Runs the actual delete once confirmed in the dialog. Throws on
   // failure so the dialog can surface the error inline. No banner —
@@ -236,33 +212,18 @@ export default function Databases() {
 
       {error && <AlertBanner className="mt-6" variant="danger" title="Database management" description={error} />}
 
-      {(restoring || provisioning) && (
-        <AlertBanner
-          className="mt-6"
-          variant="info"
-          title="Restoring your database…"
-          description="Your instance is provisioning while the restore runs — this can take a few minutes for large backups. This page refreshes automatically, so you can stay here. Your other databases remain online."
-        />
-      )}
-
       {!data && !error ? (
         <div className="mt-20 flex justify-center">
           <Spinner size="lg" label="Loading databases…" />
         </div>
       ) : data && !data.ready ? (
-        restoring || provisioning ? (
-          <div className="mt-12 flex justify-center">
-            <Spinner size="lg" label="Restore in progress…" />
-          </div>
-        ) : (
-          <EmptyState
-            className="mt-8"
-            icon={Database}
-            title="Instance not ready"
-            description="Database management becomes available once your instance is running."
-            action={<Button variant="secondary" onClick={() => navigate(`/my/instances/${id}`)}>Back to instance</Button>}
-          />
-        )
+        <EmptyState
+          className="mt-8"
+          icon={Database}
+          title="Instance not ready"
+          description="Database management becomes available once your instance is running."
+          action={<Button variant="secondary" onClick={() => navigate(`/my/instances/${id}`)}>Back to instance</Button>}
+        />
       ) : data && data.databases.length === 0 && !isCreating ? (
         <EmptyState
           className="mt-8"
@@ -295,7 +256,7 @@ export default function Databases() {
                     <td className="hidden px-5 py-4 text-muted sm:table-cell">—</td>
                     <td className="px-5 py-4">
                       <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                        <Loader2 className="size-3.5 animate-spin" /> {op.operation === "duplicate" ? "Duplicating…" : "Creating…"}
+                        <Loader2 className="size-3.5 animate-spin" /> {op.operation === "duplicate" ? "Duplicating…" : op.operation === "restore" ? "Restoring…" : "Creating…"}
                       </span>
                     </td>
                     <td className="px-5 py-4" />
@@ -316,7 +277,7 @@ export default function Databases() {
                       <td className="px-5 py-4">
                         {pending ? (
                           <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : op === "duplicate" ? "Duplicating…" : op === "upgrade" ? "Upgrading…" : "Creating…"}
+                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : op === "duplicate" ? "Duplicating…" : op === "upgrade" ? "Upgrading…" : op === "restore" ? "Restoring…" : "Creating…"}
                           </span>
                         ) : (
                           <StatusBadge status="running" label="Active" />
@@ -423,9 +384,9 @@ export default function Databases() {
         existing={data?.databases.map((d) => d.name) || []}
         onClose={() => setRestoreOpen(false)}
         onDone={() => {
+          // The target DB now shows a live "Restoring…" row; the instance
+          // stays running and the page keeps working.
           setRestoreOpen(false);
-          sawProvisioning.current = false;
-          setRestoring(true);
           void load(true);
         }}
       />
@@ -857,7 +818,6 @@ function RestoreDatabaseDialog({
   const [file, setFile] = React.useState<File | null>(null);
   const [fileError, setFileError] = React.useState<string | null>(null);
   const [target, setTarget] = React.useState("");
-  const [ack, setAck] = React.useState(false);
   const [phase, setPhase] = React.useState<"idle" | "uploading" | "starting" | "done">("idle");
   const [progress, setProgress] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
@@ -867,7 +827,6 @@ function RestoreDatabaseDialog({
       setFile(null);
       setFileError(null);
       setTarget("");
-      setAck(false);
       setPhase("idle");
       setProgress(0);
       setError(null);
@@ -876,9 +835,11 @@ function RestoreDatabaseDialog({
 
   const busy = phase === "uploading" || phase === "starting";
   const validName = /^[a-z][a-z0-9_]{2,40}$/.test(target);
-  // existing holds full names ("acme_prod"); the customer types a suffix.
-  const overwrite = !!target && existing.some((n) => n === target || n.endsWith("_" + target));
-  const canSubmit = !!file && !fileError && validName && (!overwrite || ack) && !busy;
+  // Restore always creates a NEW database, so reject a name already in
+  // use. (existing holds full names like "acme_prod"; the customer types
+  // a suffix.)
+  const nameTaken = !!target && existing.some((n) => n === target || n.endsWith("_" + target));
+  const canSubmit = !!file && !fileError && validName && !nameTaken && !busy;
 
   const pickFile = async (f: File | null) => {
     setError(null);
@@ -921,7 +882,7 @@ function RestoreDatabaseDialog({
       {error && <AlertBanner className="mb-4" variant="danger" title="Restore" description={error} />}
 
       <div className="space-y-2">
-        <Label htmlFor="restore-file">Backup file</Label>
+        <Label htmlFor="restore-file">Backup file (.zip)</Label>
         <Input
           id="restore-file"
           type="file"
@@ -929,19 +890,11 @@ function RestoreDatabaseDialog({
           disabled={busy}
           onChange={(e) => pickFile(e.target.files?.[0] || null)}
         />
-        {fileError ? (
-          <p className="text-xs text-danger">{fileError}</p>
-        ) : (
-          <p className="text-xs text-muted">
-            An Odoo backup in <code className="rounded bg-border/60 px-1 font-mono">.zip</code> format
-            (database + filestore). It uploads straight to secure storage — large backups
-            are fine and won't time out. We verify the file before changing anything.
-          </p>
-        )}
+        {fileError && <p className="text-xs text-danger">{fileError}</p>}
       </div>
 
       <div className="mt-4 space-y-2">
-        <Label htmlFor="restore-target">Restore into database</Label>
+        <Label htmlFor="restore-target">New database name</Label>
         <Input
           id="restore-target"
           placeholder="e.g. production"
@@ -949,29 +902,12 @@ function RestoreDatabaseDialog({
           disabled={busy}
           onChange={(e) => setTarget(e.target.value.toLowerCase())}
         />
-        <p className="text-xs text-muted">
-          Type a new name to create a database from the backup, or an existing
-          one to replace it. Your instance prefix is added automatically.
-        </p>
+        {nameTaken ? (
+          <p className="text-xs text-danger">That name is already in use. Pick a different one.</p>
+        ) : (
+          <p className="text-xs text-muted">Your backup is restored into a new database with this name.</p>
+        )}
       </div>
-
-      {overwrite && (
-        <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={ack}
-            disabled={busy}
-            onChange={(e) => setAck(e.target.checked)}
-          />
-          <span>
-            A database matching <span className="font-medium">{target}</span> already
-            exists. Restoring <span className="font-medium">replaces it entirely</span> —
-            its current data is overwritten and can't be recovered. Other databases
-            stay online.
-          </span>
-        </label>
-      )}
 
       {phase === "uploading" && (
         <div className="mt-4">
@@ -991,7 +927,6 @@ function RestoreDatabaseDialog({
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
         <ActionButton
-          variant={overwrite ? "danger" : "default"}
           loading={busy}
           loadingText={phase === "starting" ? "Starting…" : "Uploading…"}
           disabled={!canSubmit}
