@@ -26,7 +26,7 @@ import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { HelpHint } from "@/components/HelpHint";
 import { api, ApiError, type DbListData, type ApiBackup } from "@/lib/api";
-import { formatSizeMb } from "@/lib/format";
+import { formatDateTime, formatSizeMb } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function Databases() {
@@ -467,16 +467,19 @@ function DatabaseBackupsDialog({
 
       <div className="mt-4 flex items-center justify-between gap-3">
         {ready && ready.download_url ? (
-          <a
-            href={ready.download_url}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-primary-glow underline-offset-2 hover:underline"
-          >
-            <Download className="size-4" />
-            Download last backup
-            {ready.size_mb > 0 && (
-              <span className="text-muted">({formatSizeMb(ready.size_mb)})</span>
-            )}
-          </a>
+          <div className="min-w-0">
+            <a
+              href={ready.download_url}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary-glow underline-offset-2 hover:underline"
+            >
+              <Download className="size-4" />
+              Download last backup
+            </a>
+            <p className="mt-0.5 text-xs text-muted">
+              {formatDateTime(ready.created)}
+              {ready.size_mb > 0 && <> · {formatSizeMb(ready.size_mb)}</>}
+            </p>
+          </div>
         ) : (
           <span className="text-sm text-muted">No backup yet.</span>
         )}
