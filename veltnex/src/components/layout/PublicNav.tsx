@@ -51,9 +51,8 @@ export function PublicNav() {
   const { isAuthenticated, user, logout } = useAuth();
   const sections = useSections();
   const LINKS = ALL_LINKS.filter((l) => !l.section || sections[l.section]);
-  // "Get started" sends people to whichever section is live (services
-  // first, else hosting).
-  const getStartedTo = sections.services ? "/services/register" : "/hosting";
+  // "Get started" sends people to sign up (works hosting-only too).
+  const getStartedTo = "/register";
   const navigate = useNavigate();
   const location = useLocation();
   // Remember where the user is so signing in returns them here instead

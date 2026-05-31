@@ -48,6 +48,8 @@ export default function App() {
       <Route element={<PublicLayout />}>
         <Route path="/" element={<Home />} />
         <Route path="/services" element={<RequireSection section="services"><Services /></RequireSection>} />
+        {/* Generic sign-up — not section-gated, so it works hosting-only. */}
+        <Route path="/register" element={<Register />} />
         <Route path="/services/register" element={<RequireSection section="services"><Register /></RequireSection>} />
         <Route path="/services/:id" element={<RequireSection section="services"><ServiceDetail /></RequireSection>} />
         <Route path="/hosting" element={<RequireSection section="hosting"><Hosting /></RequireSection>} />

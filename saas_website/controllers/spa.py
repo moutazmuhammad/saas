@@ -170,6 +170,16 @@ class SaasRegistrationSpa(SaasRegistration):
             return spa_shell()
         return super().register_form(**post)
 
+    @http.route('/register', type='http', auth='public',
+                website=True, methods=['GET'], sitemap=False)
+    def spa_register(self, **kw):
+        # Generic sign-up entry point — NOT gated by the services
+        # section, so "Create an account" / "Get started" works even when
+        # only hosting is enabled.
+        if not request.env.user._is_public():
+            return request.redirect('/my')
+        return spa_shell()
+
 
 class SaasPortalSpa(SaasPortal):
 
