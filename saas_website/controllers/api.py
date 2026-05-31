@@ -555,18 +555,29 @@ class SaasApi(http.Controller):
                 type='json', auth='public')
     def instance_set_packages(self, instance_id, access_token=None,
                               pip_packages='', **kw):
-        """Replace the instance's Python packages (newline-separated) and
-        redeploy so they're (un)installed. The SPA sends the full list, so
-        removing a package is just sending the list without it."""
+        """Replace the instance's Python packages (newline-separated), then
+        force-install them now and surface any failure to the customer. The
+        SPA sends the full list, so removing a package drops it from the
+        list (uninstalled on the forced reinstall of the remaining set)."""
         try:
             instance = self._hosting(instance_id, access_token)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
+        # Installing happens via docker exec, so the container must be up.
+        if instance.state != 'running':
+            return err(_("Start the instance first — packages are installed "
+                         "into the running container."), 'invalid_state')
         inst = instance.sudo()
         try:
-            self._require_redeployable(instance)
             inst.pip_packages = (pip_packages or '').strip() or False
-            instance.action_redeploy()
+            ok_install, output = inst._deploy_pip_packages()
+            if not ok_install:
+                # Saved, but the install failed — show the customer why.
+                return err(
+                    _("Some packages failed to install:\n\n%s")
+                    % (output[-1500:] or _("pip reported an error.")),
+                    'pip_failed',
+                )
         except UserError as e:
             return err(str(e), 'deploy_failed')
         except Exception:
@@ -946,6 +957,7 @@ class SaasApi(http.Controller):
                 'backup_upgrade_recommended': instance.backup_upgrade_recommended,
                 # Post-purchase custom code & packages (hosting only).
                 'pip_packages': instance.pip_packages or '',
+                'pip_install_error': instance.pip_install_error or '',
                 'repo': ({
                     'url': instance.repo_ids[:1].repo_url or '',
                     'branch': instance.repo_ids[:1].branch or 'main',

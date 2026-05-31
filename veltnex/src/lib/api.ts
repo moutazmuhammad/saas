@@ -237,6 +237,7 @@ export interface ApiInstance {
   daily_backup_next_invoice_date?: string;
   backup_upgrade_recommended?: boolean;
   pip_packages?: string;
+  pip_install_error?: string;
   repo?: { url: string; branch: string; has_token: boolean; state: string };
   pending_plan?: string;
   scheduled_plan?: string;

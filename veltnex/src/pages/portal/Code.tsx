@@ -83,7 +83,7 @@ export default function Code() {
       )}
 
       <RepoSection instance={instance} disabled={!canDeploy} onDeployed={() => navigate(`/my/instances/${id}`)} />
-      <PackagesSection instance={instance} disabled={!canDeploy} onDeployed={() => navigate(`/my/instances/${id}`)} />
+      <PackagesSection instance={instance} disabled={!canDeploy} reload={load} />
     </div>
   );
 }
@@ -204,17 +204,18 @@ function RepoSection({
 function PackagesSection({
   instance,
   disabled,
-  onDeployed,
+  reload,
 }: {
   instance: ApiInstance;
   disabled: boolean;
-  onDeployed: () => void;
+  reload: () => Promise<void> | void;
 }) {
   const toast = useToast();
   const initial = React.useMemo(() => parsePkgs(instance.pip_packages), [instance.pip_packages]);
   const [pkgs, setPkgs] = React.useState<string[]>(initial);
   const [draft, setDraft] = React.useState("");
   const [saving, setSaving] = React.useState(false);
+  const [installError, setInstallError] = React.useState<string>(instance.pip_install_error || "");
 
   const dirty = pkgs.join("\n") !== initial.join("\n");
 
@@ -228,12 +229,17 @@ function PackagesSection({
 
   const apply = async () => {
     setSaving(true);
+    setInstallError("");
     try {
       await api.setPackages(instance.id, pkgs.join("\n"));
-      toast.success("Deploying…", "Installing your packages and restarting the instance.");
-      onDeployed();
+      toast.success("Packages installed", "Your packages were installed and the instance restarted.");
+      await reload();
     } catch (e) {
-      toast.error("Couldn't deploy", e instanceof ApiError ? e.message : "Please try again.");
+      // pip_failed carries the install output — show it inline, not just a toast.
+      const msg = e instanceof ApiError ? e.message : "Please try again.";
+      setInstallError(msg);
+      toast.error("Package install failed", "See the details below.");
+    } finally {
       setSaving(false);
     }
   };
@@ -249,6 +255,21 @@ function PackagesSection({
           <p className="text-xs text-muted">Extra pip packages your modules need. Remove any to uninstall it.</p>
         </div>
       </div>
+
+      {installError && (
+        <div className="mt-4">
+          <AlertBanner
+            variant="danger"
+            title="Package install failed"
+            description={
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-background/60 p-3 font-mono text-xs">
+                {installError}
+              </pre>
+            }
+            onDismiss={() => setInstallError("")}
+          />
+        </div>
+      )}
 
       <div className="mt-5 flex gap-2">
         <Input
