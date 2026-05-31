@@ -958,6 +958,7 @@ class SaasApi(http.Controller):
                 # Post-purchase custom code & packages (hosting only).
                 'pip_packages': instance.pip_packages or '',
                 'pip_install_error': instance.pip_install_error or '',
+                'last_error': instance.last_error or '',
                 'repo': ({
                     'url': instance.repo_ids[:1].repo_url or '',
                     'branch': instance.repo_ids[:1].branch or 'main',
