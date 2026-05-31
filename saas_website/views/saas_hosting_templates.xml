@@ -108,6 +108,33 @@
                                         <input type="hidden" name="region_id" t-att-value="selected_region_id"/>
                                     </t>
 
+                                    <!-- Support plan (P6). Paid add-on; hidden for trials.
+                                         Changing it reloads the funnel so the total
+                                         recomputes server-side (single source of truth). -->
+                                    <t t-if="form_values.get('is_trial') != '1' and show_support_picker">
+                                        <div class="mb-3">
+                                            <label class="form-label">Support plan</label>
+                                            <select name="support_code" class="form-select"
+                                                    id="support-select"
+                                                    onchange="(function(s){var f=s.form;var p=new URLSearchParams();['workers','storage','billing','odoo_version_id','subdomain','domain_id','repo_url','repo_branch','region_id'].forEach(function(n){var el=f.elements[n];if(el &amp;&amp; el.value)p.set(n,el.value);});p.set('support_code',s.value);var db=f.elements['daily_backup'];if(db &amp;&amp; db.checked)p.set('daily_backup','1');var tr=f.elements['is_trial'];if(tr &amp;&amp; tr.value)p.set('is_trial',tr.value);window.location='/hosting/configure?'+p.toString();})(this)">
+                                                <t t-foreach="support_plans" t-as="sp">
+                                                    <option t-att-value="sp.code"
+                                                            t-att-selected="sp.code == selected_support_code">
+                                                        <t t-esc="sp.name"/>
+                                                        <t t-if="sp.response_time"> — <t t-esc="sp.response_time"/></t>
+                                                        <t t-if="sp.monthly_price &gt; 0"> (+<t t-esc="'${:,.2f}'.format(sp.monthly_price)"/>/mo)</t>
+                                                    </option>
+                                                </t>
+                                            </select>
+                                            <div class="form-text text-muted">
+                                                Faster response times for mission-critical workloads. Billed monthly.
+                                            </div>
+                                        </div>
+                                    </t>
+                                    <t t-elif="form_values.get('is_trial') != '1'">
+                                        <input type="hidden" name="support_code" t-att-value="selected_support_code"/>
+                                    </t>
+
                                     <!-- Daily backup add-on (paid only — hidden for trials) -->
                                     <t t-if="form_values.get('is_trial') != '1' and config.get('daily_backup_price', 0) &gt; 0">
                                         <div class="mb-3 p-3"
@@ -234,6 +261,10 @@
                                                  t-att-style="'' if daily_backup else 'display:none;'">
                                                 <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Daily Backups</span>
                                                 <span class="breakdown-value">Included</span>
+                                            </div>
+                                            <div class="breakdown-row" t-if="support_cost &gt; 0">
+                                                <span class="breakdown-label"><i class="fas fa-headset me-2"></i>Support</span>
+                                                <span class="breakdown-value">+<t t-esc="'${:,.2f}'.format(support_cost)"/>/mo</span>
                                             </div>
                                             <div class="breakdown-divider"></div>
                                             <div class="breakdown-total">

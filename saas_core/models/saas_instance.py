@@ -184,6 +184,16 @@ class SaasInstance(models.Model):
              'Empty on legacy instances (treated as the default region, '
              'multiplier 1.0).',
     )
+    support_plan_id = fields.Many2one(
+        'saas.support.plan',
+        string='Support Plan',
+        ondelete='restrict',
+        default=lambda self: self.env['saas.support.plan']._get_default(),
+        help='Paid support tier for this instance (P3). A flat monthly fee '
+             'billed alongside the plan; not scaled by region. Defaults to '
+             'the free best-effort tier; the customer can pick a higher one '
+             'at create / upgrade.',
+    )
     db_server_id = fields.Many2one(
         'saas.server',
         string='Database Server',
@@ -408,6 +418,16 @@ class SaasInstance(models.Model):
         compute='_compute_daily_backup_monthly_price',
         help='Monthly add-on price charged for this instance when daily '
              'backups are enabled. Pulled from SaaS settings at compute time.',
+    )
+    backup_price_locked_until = fields.Date(
+        string='Backup Price Locked Until',
+        copy=False,
+        help='Grandfathering (P4): while set and in the future, the daily '
+             'backup add-on keeps its FLAT settings price even after the '
+             'add-on is switched to storage-based pricing — so an existing '
+             "subscriber's recurring charge doesn't jump mid-subscription. "
+             'Set on migration to the next backup-invoice date; cleared once '
+             'past. New activations price with the current model immediately.',
     )
     # Backup billing runs on its own monthly cycle, independent of the
     # main subscription's billing_period. This way a customer on a
@@ -1222,8 +1242,19 @@ class SaasInstance(models.Model):
             })
         return product
 
-    def _get_daily_backup_price(self):
-        """Monthly price of the backup add-on from SaaS settings."""
+    def _merge_snapshot_billing(self):
+        """True when the daily-backup charge should be merged into the main
+        renewal invoice (M1 toggle). Default False = the separate monthly
+        backup cycle (current behaviour). When ON, the merge is still only
+        applied on a renewal where the snapshot month is actually due — see
+        ``_generate_renewal_invoice`` (M3)."""
+        return self.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.merge_snapshot_into_renewal_invoice', 'False',
+        ) == 'True'
+
+    def _backup_flat_price(self):
+        """The flat daily-backup price from SaaS settings (the legacy /
+        grandfathered amount)."""
         try:
             return float(
                 self.env['ir.config_parameter'].sudo().get_param(
@@ -1232,6 +1263,32 @@ class SaasInstance(models.Model):
             )
         except (TypeError, ValueError):
             return 0.0
+
+    def _get_daily_backup_price(self):
+        """Monthly price of the daily-backup add-on for THIS instance.
+
+        Storage-aware (P4): delegates to the ``daily_snapshots`` add-on so
+        an admin can switch it to storage/hybrid pricing and heavy
+        instances pay proportionally. Falls back to the flat settings price
+        when the add-on isn't configured for scaling.
+
+        Grandfathering: while ``backup_price_locked_until`` is set and in
+        the future, the FLAT price is kept regardless of the add-on mode,
+        so an existing subscriber's recurring charge doesn't jump
+        mid-subscription.
+        """
+        self.ensure_one()
+        flat = self._backup_flat_price()
+        lock = self.backup_price_locked_until
+        if lock and lock >= fields.Date.today():
+            return flat
+        addon = self.env['saas.addon'].sudo().search(
+            [('code', '=', 'daily_snapshots'), ('active', '=', True)], limit=1,
+        )
+        if not addon or (addon.price_mode or 'flat') == 'flat':
+            return flat
+        storage_gb = (self.total_storage_bytes or 0) / (1024 ** 3)
+        return addon.effective_monthly_price(storage_gb=storage_gb)
 
     def _get_snapshot_retention_surcharge(self):
         """One-time fee for keeping a snapshot through cancellation.
@@ -1397,6 +1454,49 @@ class SaasInstance(models.Model):
             })
         return product
 
+    def _support_order_line(self, period, period_label):
+        """Sale-order line tuple for the instance's support plan, or None.
+
+        Support is a flat MONTHLY fee billed on the same cycle as the plan;
+        on a yearly plan it's charged x12 (qty=12) so the support term
+        matches the plan term. The free/default plan (price 0) adds nothing,
+        so this is behaviour-neutral until support is priced and picked."""
+        self.ensure_one()
+        support = self.support_plan_id
+        if not support or support.monthly_price <= 0:
+            return None
+        months = 12 if period == 'yearly' else 1
+        return (0, 0, {
+            'product_id': self._get_billing_product().id,
+            'name': _('Support: %s (%s) — %s') % (
+                support.name, period_label, self.name or self.subdomain,
+            ),
+            'product_uom_qty': months,
+            'price_unit': support.monthly_price,
+        })
+
+    def _snapshot_order_line(self):
+        """Sale-order line tuple for ONE month of the daily-backup add-on,
+        or None. The snapshot is ALWAYS billed monthly (qty 1) — never
+        prepaid — so this is period-independent. Used both by the
+        standalone monthly backup invoice and, when merging is on and the
+        snapshot month is due, by the renewal invoice. Price is
+        storage-aware + lock-aware via ``_get_daily_backup_price``."""
+        self.ensure_one()
+        if not (self.is_hosting and self.daily_backup_enabled):
+            return None
+        price = self._get_daily_backup_price()
+        if price <= 0:
+            return None
+        return (0, 0, {
+            'product_id': self._get_daily_backup_product().id,
+            'name': _('Daily Backups Add-on (monthly) — %s') % (
+                self.name or self.subdomain,
+            ),
+            'product_uom_qty': 1,
+            'price_unit': price,
+        })
+
     def action_confirm_and_bill(self):
         """Validate instance, create sale order, confirm it, and generate invoice.
 
@@ -1425,6 +1525,11 @@ class SaasInstance(models.Model):
             'product_uom_qty': 1,
             'price_unit': price,
         })]
+
+        # Support plan (P5): bill it on the initial invoice too.
+        support_line = self._support_order_line(period, period_label)
+        if support_line:
+            order_lines.append(support_line)
 
         # -- Create & confirm sale order --
         order_vals = {
@@ -6641,18 +6746,49 @@ class SaasInstance(models.Model):
 
     @api.model
     def _daily_backup_unpaid_invoices(self):
-        """Posted, still-unpaid daily-backup add-on invoices for this
-        instance (activation + renewals), newest first."""
+        """Posted, still-unpaid invoices that cover this instance's daily
+        backups, newest first. Two sources:
+
+        1. Standalone backup add-on invoices (origin SAAS:BACKUP-ADDON) —
+           the separate monthly cycle.
+        2. **Merged renewals (M4):** when the snapshot month is folded into
+           the main renewal (M3), the snapshot charge lives on a
+           SAAS:RENEWAL invoice as a daily-backup product line. An unpaid
+           such renewal means the backup month is unpaid, so it must pause
+           snapshots exactly like an unpaid standalone backup invoice.
+        """
         self.ensure_one()
-        origin = ORIGIN_BACKUP_ADDON % (self.name or self.subdomain)
-        orders = self.env['sale.order'].sudo().search([('origin', '=', origin)])
-        invs = orders.invoice_ids.filtered(
-            lambda m: m.state == 'posted'
-            and m.payment_state not in (
-                'paid', 'in_payment', 'reversed', 'invoicing_legacy',
+        sub_ref = self.name or self.subdomain
+
+        def _unpaid(moves):
+            return moves.filtered(
+                lambda m: m.state == 'posted'
+                and m.payment_state not in (
+                    'paid', 'in_payment', 'reversed', 'invoicing_legacy',
+                )
+                and m.amount_residual > 0
             )
-            and m.amount_residual > 0
-        )
+
+        SO = self.env['sale.order'].sudo()
+        # 1) standalone backup add-on invoices
+        backup_orders = SO.search([
+            ('origin', '=', ORIGIN_BACKUP_ADDON % sub_ref)])
+        invs = _unpaid(backup_orders.invoice_ids)
+
+        # 2) renewal invoices carrying a merged daily-backup line
+        backup_product = self.env['product.product'].sudo().search(
+            [('default_code', '=', 'SAAS-BACKUP-ADDON')], limit=1)
+        if backup_product:
+            renewal_orders = SO.search([
+                ('origin', '=', ORIGIN_RENEWAL % sub_ref)])
+            merged = _unpaid(renewal_orders.invoice_ids).filtered(
+                lambda m: any(
+                    line.product_id == backup_product
+                    for line in m.invoice_line_ids
+                )
+            )
+            invs |= merged
+
         return invs.sorted('invoice_date_due')
 
     def _sync_daily_backup_suspension(self):
@@ -6737,30 +6873,24 @@ class SaasInstance(models.Model):
         self.ensure_one()
         if not (self.is_hosting and self.daily_backup_enabled):
             return
-        monthly_price = self._get_daily_backup_price()
-        if monthly_price <= 0:
+        # One reusable definition of the snapshot line (M2). Returns None
+        # when backups are off or the price isn't configured.
+        snapshot_line = self._snapshot_order_line()
+        if not snapshot_line:
             _logger.warning(
                 "Skipping daily-backup renewal for %s: monthly price is "
                 "not configured (saas_master.hosting_daily_backup_price).",
                 self.subdomain,
             )
             return
+        monthly_price = snapshot_line[2]['price_unit']
 
         today = fields.Date.today()
-        line_name = _(
-            'Daily Backups Add-on (monthly) — %s'
-        ) % (self.name or self.subdomain)
-        product = self._get_daily_backup_product()
         pricelist = self.partner_id.property_product_pricelist
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': ORIGIN_BACKUP_ADDON % (self.name or self.subdomain),
-            'order_line': [(0, 0, {
-                'product_id': product.id,
-                'name': line_name,
-                'product_uom_qty': 1,
-                'price_unit': monthly_price,
-            })],
+            'order_line': [snapshot_line],
         }
         if pricelist:
             order_vals['pricelist_id'] = pricelist.id
@@ -6867,10 +6997,36 @@ class SaasInstance(models.Model):
             'price_unit': price,
         })]
 
-        # NB: the daily-backup add-on is NOT billed here. It has its
-        # own monthly cycle driven by ``_cron_renew_daily_backup_addons``
-        # so a customer on a yearly plan still pays for backups once a
-        # month — see ``_generate_daily_backup_renewal_invoice``.
+        # Support plan (P5): a flat monthly fee billed on the SAME cycle as
+        # the plan (see _support_order_line). The free/default plan and
+        # unpriced plans add nothing (behaviour-neutral until configured).
+        support_line = self._support_order_line(period, period_label)
+        if support_line:
+            order_lines.append(support_line)
+
+        # Daily-backup add-on (M3): the snapshot stays MONTHLY and is
+        # normally billed on its own cycle (_cron_renew_daily_backup_addons).
+        # When the merge toggle is ON *and* the snapshot's monthly charge is
+        # due on/before this renewal date, fold ONE month of it into this
+        # invoice so the customer gets a single bill. If it's not due (e.g.
+        # 11 of 12 months on a yearly plan, or a mismatched monthly date),
+        # nothing is added here and the standalone cron bills it — so it's
+        # never shown twice. ``merge_snapshot_month`` is advanced together
+        # with next_invoice_date below (pre-post, atomic).
+        merge_snapshot_month = (
+            self._merge_snapshot_billing()
+            and self.daily_backup_enabled
+            and self.daily_backup_next_invoice_date
+            and self.daily_backup_next_invoice_date <= self.next_invoice_date
+        )
+        if merge_snapshot_month:
+            snapshot_line = self._snapshot_order_line()
+            if snapshot_line:
+                order_lines.append(snapshot_line)
+            else:
+                # price 0 / backups off between the check and here — don't
+                # advance the backup date for a line we didn't add.
+                merge_snapshot_month = False
 
         # Add extra storage charge if usage exceeds the plan limit.
         # Centralised in the pricing engine: block-based when a storage
@@ -6910,11 +7066,22 @@ class SaasInstance(models.Model):
             interval = relativedelta(years=1)
         else:
             interval = relativedelta(months=1)
-        self.write({
+        renewal_vals = {
             'next_invoice_date': self.next_invoice_date + interval,
             'last_invoice_date': fields.Date.today(),
             'suspension_warning_sent': False,
-        })
+        }
+        # M3: if this invoice merged the snapshot month, advance the
+        # backup's own monthly date by ONE month (it's always monthly) so
+        # the standalone backup cron sees it as not-due and never re-bills
+        # the same month. Done in the same pre-post write as next_invoice_date
+        # for atomicity + idempotency.
+        if merge_snapshot_month:
+            renewal_vals['daily_backup_last_invoice_date'] = fields.Date.today()
+            renewal_vals['daily_backup_next_invoice_date'] = (
+                self.daily_backup_next_invoice_date + relativedelta(months=1)
+            )
+        self.write(renewal_vals)
         invoice.action_post()
         self._append_log(
             "Renewal invoice %s created for %s period."

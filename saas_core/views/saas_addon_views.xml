@@ -21,8 +21,11 @@
                 <field name="name"/>
                 <field name="code"/>
                 <field name="applies_to"/>
+                <field name="price_mode"/>
                 <field name="monthly_price"/>
-                <field name="price_config_param"/>
+                <field name="price_per_block" optional="show"/>
+                <field name="block_gb" optional="show"/>
+                <field name="price_config_param" optional="hide"/>
                 <field name="active" widget="boolean_toggle"/>
             </list>
         </field>
@@ -42,7 +45,13 @@
                             <field name="active"/>
                         </group>
                         <group string="Pricing">
-                            <field name="monthly_price"/>
+                            <field name="price_mode"/>
+                            <field name="monthly_price"
+                                   invisible="price_mode == 'storage'"/>
+                            <field name="price_per_block"
+                                   invisible="price_mode == 'flat'"/>
+                            <field name="block_gb"
+                                   invisible="price_mode == 'flat'"/>
                             <field name="price_config_param"
                                    placeholder="e.g. saas_master.hosting_daily_backup_price"/>
                         </group>

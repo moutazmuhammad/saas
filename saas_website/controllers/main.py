@@ -863,6 +863,8 @@ class SaasWebsite(http.Controller):
             )
             if region_id and str(region_id) != '0':
                 params += '&region_id=%s' % region_id
+            if kw.get('support_code'):
+                params += '&support_code=%s' % kw['support_code']
             if kw.get('is_trial') == '1':
                 params += '&is_trial=1'
             return request.redirect('/services/register?%s' % params)
@@ -876,20 +878,36 @@ class SaasWebsite(http.Controller):
         # free or not at all (per spec — paid feature only).
         daily_backup = (kw.get('daily_backup') == '1')
 
-        # Region (S8c). Resolve the picked/default region; the picker is
-        # only shown when there's a genuine choice (>1 active region), so
-        # single-region / unconfigured fleets behave exactly as before.
+        # Region (S8c). Only offer regions that can actually host an
+        # instance (proxy + docker + db in-region); empty regions are
+        # hidden. The picker is shown only when there's a genuine choice
+        # (>1 available region), so single-region / unconfigured fleets
+        # behave exactly as before.
         Region = request.env['saas.region'].sudo()
-        regions = Region.search([('active', '=', True)], order='sequence, id')
+        regions = Region._available_regions()
         region = self._resolve_region(region_id)
+        # If the resolved region has no capacity, don't pre-select it.
+        if region and not region.has_capacity():
+            region = regions[:1] or Region.browse()
         show_region_picker = len(regions) > 1
+
+        # Support plan (P6): offer active plans; the picker is only shown
+        # when there's a real choice (>1). Trials don't get paid support.
+        Support = request.env['saas.support.plan'].sudo()
+        support_plans = Support.search([('active', '=', True)], order='sequence, monthly_price, id')
+        support_code = (kw.get('support_code') or '').strip() or None
+        sel_support = support_plans.filtered(lambda s: s.code == support_code)[:1] \
+            or support_plans.filtered(lambda s: s.is_default)[:1]
+        support_code = sel_support.code if sel_support else None
+        show_support_picker = len(support_plans) > 1
 
         _addons = ['daily_snapshots'] if daily_backup else []
         _q = request.env['saas.pricing.engine'].compute(
             'hosting', workers, storage, addon_codes=_addons,
-            region=region or None,
+            region=region or None, support_code=support_code,
         )
         backup_cost = _q['breakdown']['addons_monthly']
+        support_cost = _q['breakdown']['support_monthly']
         monthly_total = _q['monthly']
         discount = config['yearly_discount_pct'] / 100.0
         yearly_total = monthly_total * 12 * (1 - discount)
@@ -914,6 +932,10 @@ class SaasWebsite(http.Controller):
             'storage': storage,
             'backup_cost': backup_cost,
             'daily_backup': daily_backup,
+            'support_plans': support_plans,
+            'selected_support_code': support_code or '',
+            'support_cost': support_cost,
+            'show_support_picker': show_support_picker,
             'monthly_total': monthly_total,
             'yearly_total': yearly_total,
             'billing_period': billing_period,
@@ -998,19 +1020,21 @@ class SaasWebsite(http.Controller):
             if active_count >= max_instances:
                 return request.redirect(err_redirect % ('Maximum+instances+reached'))
 
-        # Infrastructure validation (region-aware: a region needs both a
-        # Docker host and a DB server to be provisionable — co-location).
-        Server = request.env['saas.server'].sudo()
-        region_dom = Server._region_match_domain(region)
-        docker_servers = Server.search(
-            [('is_docker_host', '=', True)] + region_dom, limit=1,
-        )
-        db_servers = Server.search(
-            [('is_db_server', '=', True)] + region_dom, limit=1,
-        )
-        if not docker_servers or not db_servers:
+        # Infrastructure validation (region-aware): the chosen region must
+        # have capacity — a proxy + Docker host + DB server in-region
+        # (co-location). Empty regions can't be ordered. Defends against a
+        # POSTed region_id that the picker would never have offered.
+        if region and not region.has_capacity():
             return request.redirect(err_redirect % (
                 'Service+temporarily+unavailable+in+the+selected+region'))
+        if not region:
+            # No region configured at all: fall back to the legacy global
+            # capacity check (any docker host + any db server).
+            Server = request.env['saas.server'].sudo()
+            if not Server.search([('is_docker_host', '=', True)], limit=1) or \
+               not Server.search([('is_db_server', '=', True)], limit=1):
+                return request.redirect(err_redirect % (
+                    'Service+temporarily+unavailable'))
 
         # Validate repo URL format (if provided)
         if repo_url:
@@ -1060,6 +1084,16 @@ class SaasWebsite(http.Controller):
             # drives co-located server allocation.
             if region:
                 vals['region_id'] = region.id
+            # Support plan (P6): a paid add-on chosen at checkout. Trials
+            # don't get paid support. Falls back to the default plan.
+            if not is_trial:
+                Support = request.env['saas.support.plan'].sudo()
+                sup = Support.search([
+                    ('code', '=', (post.get('support_code') or '').strip()),
+                    ('active', '=', True),
+                ], limit=1)
+                if sup:
+                    vals['support_plan_id'] = sup.id
             if is_trial:
                 vals['is_trial'] = True
 

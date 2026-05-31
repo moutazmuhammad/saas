@@ -335,31 +335,18 @@ class SaasApi(http.Controller):
 
     @http.route('/saas/api/v1/regions', type='json', auth='public')
     def regions(self):
-        """Active regions for the create flow's region picker (S8). Each
-        carries a price multiplier so the SPA can show region-adjusted
-        prices (the engine is still the source of the actual quote)."""
-        regs = request.env['saas.region'].sudo().search(
-            [('active', '=', True)], order='sequence, id',
-        )
-        Server = request.env['saas.server'].sudo()
-
-        def _available(region):
-            # Selectable only if the region has BOTH a docker host and a
-            # db server (co-location prerequisite). Null-region servers
-            # count as the default region (see _region_match_domain).
-            dom = Server._region_match_domain(region)
-            return bool(
-                Server.search_count([('is_docker_host', '=', True)] + dom)
-                and Server.search_count([('is_db_server', '=', True)] + dom)
-            )
-
+        """Regions the customer can actually pick: active AND with capacity
+        (a proxy + docker host + db server in-region — the co-located trio
+        an instance needs). Empty regions are excluded entirely, so they
+        never appear in the picker. Each carries its price multiplier."""
+        regs = request.env['saas.region']._available_regions()
         return ok([{
             'id': r.id,
             'code': r.code,
             'name': r.name,
             'multiplier': r.price_multiplier or 1.0,
             'default': r.is_default,
-            'available': _available(r),
+            'available': True,
         } for r in regs])
 
     @http.route('/saas/api/v1/check-subdomain', type='json', auth='public')

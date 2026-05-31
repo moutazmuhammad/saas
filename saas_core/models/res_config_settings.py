@@ -228,6 +228,23 @@ class ResConfigSettings(models.TransientModel):
         default=0.0,
         help='Minimum monthly cost per GB on services custom configs. 0 = no floor.',
     )
+    saas_hosting_minimum_monthly = fields.Float(
+        string='Hosting: Minimum Monthly Charge',
+        config_parameter='saas_master.hosting_minimum_monthly',
+        default=0.0,
+        help='Floor on the FINAL monthly total for hosting plans. A tiny '
+             'config still bills at least this much, so it covers fixed '
+             'business costs (payment fees, support, monitoring, CAC) that '
+             'don\'t scale down. The customer just sees this as the price '
+             '— no surcharge. 0 = no minimum.',
+    )
+    saas_minimum_monthly = fields.Float(
+        string='Services: Minimum Monthly Charge',
+        config_parameter='saas_master.minimum_monthly',
+        default=0.0,
+        help='Floor on the final monthly total for services custom plans. '
+             '0 = no minimum.',
+    )
     saas_storage_block_gb = fields.Integer(
         string='Storage Expansion Block (GB)',
         config_parameter='saas_master.storage_block_gb',
@@ -263,6 +280,32 @@ class ResConfigSettings(models.TransientModel):
         help='When ON, a custom (slider) configuration is never priced below '
              'the nearest public tier with equal-or-greater resources — '
              'protects tier value. Wired in S4.',
+    )
+    saas_merge_snapshot_into_renewal_invoice = fields.Boolean(
+        string='Merge Snapshot into Renewal Invoice',
+        default=False,
+        help='When ON, the monthly Daily Backups charge is added as a line '
+             'on the main renewal invoice whenever the backup month falls '
+             'due on the same date as the renewal — so the customer gets a '
+             'single invoice (Plan + Support + Snapshot + Overage). The '
+             'snapshot stays MONTHLY (one month at a time, never prepaid): '
+             'on a monthly plan it merges every month; on a yearly plan it '
+             'merges once a year and bills separately the other 11 months. '
+             'When the backup is not due on the renewal date it is NOT shown '
+             'on the renewal (the customer is already billed for it that '
+             'month). OFF (default) = separate backup billing cycle '
+             '(current behaviour).',
+    )
+    saas_tier_floor_buffer_pct = fields.Float(
+        string='Custom-vs-Tier Buffer %',
+        config_parameter='saas_master.tier_floor_buffer_pct',
+        default=0.0,
+        help='Soft floor (P2): with the "Custom Price >= Nearest Tier" '
+             'switch ON, a custom config may be priced up to this % BELOW '
+             'the nearest tier instead of pinned to it. e.g. 10 lets a '
+             '3w/95GB config sit ~10% under the 4w/100GB Pro tier — cheaper '
+             'for the customer, but the tier is still the better value per '
+             'resource. 0 = the original hard floor (no discount allowed).',
     )
 
     # ========== Support ==========
@@ -380,6 +423,10 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.custom_min_is_nearest_tier',
             'True' if self.saas_custom_min_is_nearest_tier else 'False',
         )
+        ICP.set_param(
+            'saas_master.merge_snapshot_into_renewal_invoice',
+            'True' if self.saas_merge_snapshot_into_renewal_invoice else 'False',
+        )
         if self.saas_backup_service_account_key_file:
             import base64
             key_json = base64.b64decode(self.saas_backup_service_account_key_file).decode('utf-8')
@@ -401,6 +448,9 @@ class ResConfigSettings(models.TransientModel):
         ) != 'False'
         res['saas_custom_min_is_nearest_tier'] = ICP.get_param(
             'saas_master.custom_min_is_nearest_tier', 'False',
+        ) == 'True'
+        res['saas_merge_snapshot_into_renewal_invoice'] = ICP.get_param(
+            'saas_master.merge_snapshot_into_renewal_invoice', 'False',
         ) == 'True'
         sa_key = ICP.get_param('saas_backup.service_account_key', '')
         if sa_key:

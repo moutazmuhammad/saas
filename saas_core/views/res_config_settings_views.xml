@@ -227,6 +227,22 @@
                                 </div>
                             </div>
                         </setting>
+                        <setting id="saas_minimum_monthly_setting"
+                                 string="Minimum Monthly Charge"
+                                 help="Floor on the FINAL monthly total. A tiny config still bills at least this much, so every plan covers fixed business costs (payment fees, support, monitoring, CAC) that don't scale down. Shown to the customer as the plan price — no surcharge line. 0 = no minimum.">
+                            <div class="content-group">
+                                <div class="row mt8">
+                                    <label for="saas_hosting_minimum_monthly" string="Hosting" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_hosting_minimum_monthly" class="col-2"/>
+                                    <span class="text-muted ms-1">/ month</span>
+                                </div>
+                                <div class="row mt8">
+                                    <label for="saas_minimum_monthly" string="Services" class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_minimum_monthly" class="col-2"/>
+                                    <span class="text-muted ms-1">/ month</span>
+                                </div>
+                            </div>
+                        </setting>
                         <setting id="saas_extra_storage_price_per_gb_setting"
                                  string="Storage Overage: per-GB rate"
                                  help="Price charged per extra GB exceeding the plan storage limit. Added to renewal invoices. Used when no expansion block is configured below. Set to 0 to suspend instances instead of charging.">
@@ -257,10 +273,25 @@
                                  help="ON (current): half the deduplicated snapshot footprint counts against the plan storage allowance. OFF (recommended): snapshots are covered solely by the Daily Backups add-on. Wired in S6.">
                             <field name="saas_snapshots_count_toward_storage"/>
                         </setting>
+                        <setting id="saas_merge_snapshot_into_renewal_invoice_setting"
+                                 string="Merge Snapshot into Renewal Invoice"
+                                 help="ON: the monthly Daily Backups charge rides on the main renewal invoice whenever the backup month is due on the same date as the renewal — one invoice (Plan + Support + Snapshot + Overage). The snapshot stays monthly (one month at a time): monthly plans merge every month; yearly plans merge once a year and bill separately the other 11. OFF (default): separate monthly backup billing cycle (current behaviour).">
+                            <field name="saas_merge_snapshot_into_renewal_invoice"/>
+                        </setting>
                         <setting id="saas_custom_min_is_nearest_tier_setting"
                                  string="Custom Price >= Nearest Tier"
-                                 help="When on, a custom (slider) configuration is never priced below the nearest public tier with equal-or-greater resources. Protects tier value. Wired in S4.">
+                                 help="When on, a custom (slider) configuration can't be priced below the nearest public tier with equal-or-greater resources. Protects tier value. The buffer below softens it.">
                             <field name="saas_custom_min_is_nearest_tier"/>
+                            <div class="content-group mt8"
+                                 invisible="not saas_custom_min_is_nearest_tier">
+                                <div class="row">
+                                    <label for="saas_tier_floor_buffer_pct"
+                                           string="Allow custom up to"
+                                           class="col-4 col-lg-4 o_light_label"/>
+                                    <field name="saas_tier_floor_buffer_pct" class="col-2"/>
+                                    <span class="text-muted ms-1">% below the nearest tier (0 = hard floor)</span>
+                                </div>
+                            </div>
                         </setting>
                     </block>
 

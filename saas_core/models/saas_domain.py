@@ -24,3 +24,14 @@ class SaasBasedDomain(models.Model):
              'should point to this server. When set, Nginx configs are '
              'deployed here instead of on each Docker server.',
     )
+    region_id = fields.Many2one(
+        'saas.region',
+        string='Region',
+        related='proxy_server_id.region_id',
+        store=True,
+        readonly=True,
+        help="Region this domain serves, derived from its proxy server. "
+             "The instance configurator only offers a domain whose region "
+             "matches the customer's chosen region (co-location). A domain "
+             "with no proxy (or a proxy with no region) is region-neutral.",
+    )

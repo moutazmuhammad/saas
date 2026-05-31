@@ -285,6 +285,32 @@ class SaasServer(models.Model):
             return ['|', ('region_id', '=', region.id), ('region_id', '=', False)]
         return [('region_id', '=', region.id)]
 
+    @api.constrains('region_id', 'db_server_id')
+    def _check_db_server_same_region(self):
+        """Co-location: a Docker host and the DB server it points at must be
+        in the same region. A server with no region counts as the default
+        region, so an un-regioned fleet is unaffected (behaviour-neutral)."""
+        default = self.env['saas.region']._get_default()
+
+        def eff(server):
+            # Effective region: explicit, else the default region.
+            return server.region_id or default
+
+        for srv in self:
+            if not srv.db_server_id or srv.db_server_id == srv:
+                continue
+            host_region = eff(srv)
+            db_region = eff(srv.db_server_id)
+            if host_region and db_region and host_region != db_region:
+                raise ValidationError(_(
+                    "Co-location: Docker host '%(host)s' is in region "
+                    "'%(hr)s' but its database server '%(db)s' is in region "
+                    "'%(dr)s'. The Docker, DB and proxy servers serving an "
+                    "instance must all be in the same region.",
+                    host=srv.name, hr=host_region.name,
+                    db=srv.db_server_id.name, dr=db_region.name,
+                ))
+
     @api.model
     def _allocate_docker_server(self, plan=None, raise_on_failure=False,
                                region=None):

@@ -44,6 +44,10 @@ class SaasPricingEngine(models.AbstractModel):
                 # => no-op in S1, so prices are unchanged.
                 'worker_floor': float(get('saas_master.hosting_worker_floor', '0')),
                 'storage_floor': float(get('saas_master.hosting_storage_floor', '0')),
+                # Minimum monthly charge (P1). Floor on the FINAL monthly
+                # total so a tiny config still covers fixed business costs
+                # (payment fees, support, CAC). Default 0 => no-op.
+                'minimum_monthly': float(get('saas_master.hosting_minimum_monthly', '0')),
             }
         else:  # 'services' (custom plan builder)
             cfg = {
@@ -56,6 +60,7 @@ class SaasPricingEngine(models.AbstractModel):
                 'yearly_discount_pct': int(get('saas_master.custom_plan_yearly_discount_pct', '20')),
                 'worker_floor': float(get('saas_master.worker_floor', '0')),
                 'storage_floor': float(get('saas_master.storage_floor', '0')),
+                'minimum_monthly': float(get('saas_master.minimum_monthly', '0')),
             }
         cfg['currency'] = self.env.company.currency_id.name or 'USD'
         return cfg
@@ -84,11 +89,18 @@ class SaasPricingEngine(models.AbstractModel):
         return (workers * cfg['worker_floor']) + (storage * cfg['storage_floor'])
 
     def _tier_floor(self, kind, workers, storage):
-        """S4: when the 'custom >= nearest tier' policy is ON, a custom
-        config may not be priced below the highest public-tier monthly
-        price whose resources it fully contains (workers AND storage both
-        >= the tier's). Returns 0.0 when the policy is OFF (default) or no
-        tier qualifies -> no-op."""
+        """Tier protection (S4 + P2 soft floor): when the 'custom >= nearest
+        tier' policy is ON, a custom config may not be priced below the
+        highest public-tier monthly price whose resources it fully contains
+        (workers AND storage both >= the tier's) — minus a configurable
+        buffer.
+
+        ``tier_floor_buffer_pct`` (default 0 = the original hard floor)
+        lets a custom config sit up to N% under the nearest tier, so e.g.
+        a 3w/95GB config can be a bit cheaper than the 4w/100GB Pro tier
+        instead of pinned to it (which felt rigged). The tier is still the
+        better value per resource. Returns 0.0 when the policy is OFF
+        (default) or no tier qualifies -> no-op."""
         icp = self.env['ir.config_parameter'].sudo()
         if icp.get_param('saas_master.custom_min_is_nearest_tier', 'False') != 'True':
             return 0.0
@@ -104,14 +116,25 @@ class SaasPricingEngine(models.AbstractModel):
             ) else 'services'
             if t_kind == kind and t.price > best:
                 best = t.price
-        return best
+        if not best:
+            return 0.0
+        try:
+            buffer_pct = float(icp.get_param(
+                'saas_master.tier_floor_buffer_pct', '0') or 0)
+        except (TypeError, ValueError):
+            buffer_pct = 0.0
+        # Clamp to a sane 0..100 range; the floor is the tier price less
+        # the allowed buffer.
+        buffer_pct = min(max(buffer_pct, 0.0), 100.0)
+        return best * (1.0 - buffer_pct / 100.0)
 
-    def _addons_total(self, kind, addon_codes):
+    def _addons_total(self, kind, addon_codes, storage_gb=0):
         """Sum effective monthly prices of the given add-on codes that
-        apply to ``kind``. Empty/none -> 0.0 (behaviour-neutral)."""
+        apply to ``kind``. ``storage_gb`` lets storage-aware add-ons (P4)
+        scale; flat ones ignore it. Empty/none -> 0.0 (behaviour-neutral)."""
         if not addon_codes:
             return 0.0
-        return self.env['saas.addon']._sum_prices(kind, addon_codes)
+        return self.env['saas.addon']._sum_prices(kind, addon_codes, storage_gb)
 
     @staticmethod
     def _clamp(value, lo, hi):
@@ -126,7 +149,7 @@ class SaasPricingEngine(models.AbstractModel):
     # ------------------------------------------------------------------
     @api.model
     def compute(self, kind, workers, storage, billing='monthly',
-                addon_codes=(), region=None):
+                addon_codes=(), region=None, support_code=None):
         """Return one fully-resolved price quote.
 
         Args:
@@ -135,6 +158,8 @@ class SaasPricingEngine(models.AbstractModel):
             billing: 'monthly' or 'yearly'.
             addon_codes: iterable of add-on codes (S5; ignored in S1).
             region: region record/id (S7; multiplier is 1.0 in S1).
+            support_code: optional saas.support.plan code (P3). A flat
+                monthly fee added after infra/region; 0 if None/unknown.
 
         Returns a dict (superset of the current ``_price`` shape so
         callers can be repointed in S2 without changing their output):
@@ -154,8 +179,19 @@ class SaasPricingEngine(models.AbstractModel):
         region_factor = self._region_multiplier(region)
 
         resource_monthly = max(base, floor) * region_factor
-        addons_monthly = self._addons_total(kind, addon_codes)
-        monthly = resource_monthly + addons_monthly
+        addons_monthly = self._addons_total(kind, addon_codes, storage)
+        # Support plan (P3): flat monthly fee, NOT scaled by region, added
+        # after infra. 0 when no plan / the free default / unknown code.
+        support_monthly = self.env['saas.support.plan']._price_for_code(support_code)
+        pre_minimum = resource_monthly + addons_monthly + support_monthly
+
+        # Minimum monthly charge (P1): the final total never drops below
+        # the configured floor — small configs still cover fixed business
+        # costs. Applied AFTER add-ons (so add-ons count toward the
+        # minimum, never on top of it). Default 0 => no-op.
+        minimum_monthly = cfg.get('minimum_monthly', 0.0) or 0.0
+        monthly = max(pre_minimum, minimum_monthly)
+        minimum_applied = minimum_monthly > pre_minimum
 
         discount = cfg['yearly_discount_pct'] / 100.0
         yearly = monthly * 12 * (1 - discount)
@@ -175,6 +211,7 @@ class SaasPricingEngine(models.AbstractModel):
             'currency': cfg['currency'],
             'region_factor': region_factor,
             'floored': floored,
+            'minimum_applied': minimum_applied,
             'limits': {
                 'workers': {'min': cfg['min_workers'], 'max': cfg['max_workers']},
                 'storage': {'min': cfg['min_storage'], 'max': cfg['max_storage']},
@@ -186,6 +223,13 @@ class SaasPricingEngine(models.AbstractModel):
                 'tier_floor': round(tier_floor, 2),
                 'resource_monthly': round(resource_monthly, 2),
                 'addons_monthly': round(addons_monthly, 2),
+                # P3: flat support-plan fee (not region-scaled).
+                'support_monthly': round(support_monthly, 2),
+                # P1: the total before the minimum-monthly floor, and the
+                # minimum that was enforced (0 = off). monthly == max of
+                # these two.
+                'pre_minimum': round(pre_minimum, 2),
+                'minimum_monthly': round(minimum_monthly, 2),
                 # Per-resource split (pre-floor, pre-region) — kept so the
                 # legacy display routes can show the same breakdown they
                 # do today. Frontend will stop surfacing these in S8.
