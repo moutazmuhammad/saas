@@ -694,6 +694,64 @@ class SaasApi(http.Controller):
             return err(str(e), 'duplicate_failed')
         return ok({'db_name': op.db_name})
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/restore/upload-url',
+                type='json', auth='public')
+    def db_restore_upload_url(self, instance_id, name=None,
+                              access_token=None, **kw):
+        """Step 1 of customer restore: hand back a presigned PUT URL so
+        the browser uploads the local backup straight to the bucket
+        (bypassing Odoo — no timeout, large files OK)."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        try:
+            self._require_running(instance)
+            backup, upload_url = instance.hosting_db_restore_prepare_upload(
+                name=name or '',
+            )
+        except UserError as e:
+            return err(str(e), 'restore_failed')
+        except Exception:
+            _logger.exception("Restore upload-url failed for %s", instance_id)
+            return err(_("We couldn't start the restore. Please try again."),
+                       'restore_failed')
+        return ok({
+            'backup_id': backup.id,
+            'upload_url': upload_url,
+            'db_name': backup.db_name,
+        })
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/restore/start',
+                type='json', auth='public')
+    def db_restore_start(self, instance_id, backup_id=None, confirm=None,
+                         access_token=None, **kw):
+        """Step 2 of customer restore: after the upload finishes, verify
+        it and kick off the background restore into the target database.
+        Destructive (replaces the DB) — requires retyping its name."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        backup = request.env['saas.instance.backup'].sudo().browse(
+            int(backup_id or 0)
+        )
+        if not backup.exists() or backup.instance_id.id != instance.id:
+            return err(_("That upload isn't available to restore."), 'invalid')
+        if (confirm or '').strip() != (backup.db_name or ''):
+            return err(_("Type the database name exactly to confirm the restore."),
+                       'confirm')
+        try:
+            self._require_running(instance)
+            instance.hosting_db_restore_from_upload(backup.id)
+        except UserError as e:
+            return err(str(e), 'restore_failed')
+        except Exception:
+            _logger.exception("Restore start failed for %s", instance_id)
+            return err(_("We couldn't start the restore. Please try again."),
+                       'restore_failed')
+        return ok({})
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/drop',
                 type='json', auth='public')
     def db_drop(self, instance_id, name=None, access_token=None, **kw):

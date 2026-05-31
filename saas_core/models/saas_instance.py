@@ -4741,7 +4741,7 @@ class SaasInstance(models.Model):
                 "if you're seeing this, a stale code path is still calling "
                 "the zip restore on a restic backup."
             ))
-        if not backup.backup_path:
+        if not backup.bucket_path:
             raise UserError(_(
                 "Backup record has no cloud object path — nothing to "
                 "download. This row is probably a failed or partial "
@@ -8821,6 +8821,79 @@ class SaasInstance(models.Model):
             thread_name='saas_db_upgmod_%s' % full_name,
         )
         return op
+
+    def hosting_db_restore_prepare_upload(self, name):
+        """Create a placeholder backup record + a presigned PUT URL.
+
+        Lets the customer upload their OWN local Odoo backup (.zip)
+        straight to the bucket from the browser — the bytes never pass
+        through Odoo, so no worker is held and there's no request
+        timeout, at any size up to the bucket's single-PUT limit. The
+        record is ephemeral (reaped within a couple of hours — the
+        uploaded object is not retained). Returns ``(backup, url)``.
+        """
+        self._ensure_hosting_for_db_ops()
+        full = self._hosting_db_full_name(name)
+        if full not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % full
+            )
+        if self.plan_id and self.plan_id.is_trial_plan:
+            raise UserError(_(
+                "Restore isn't available on trial plans. Please upgrade "
+                "to a paid plan."
+            ))
+        Backup = self.env['saas.instance.backup']
+        now = fields.Datetime.now()
+        ts = now.strftime('%Y-%m-%d_%H-%M-%S')
+        object_key = 'ondemand/restore-upload/%s_%s.zip' % (full, ts)
+        backup = Backup.create({
+            'instance_id': self.id,
+            'db_name': full,
+            'name': 'Restore upload %s' % full,
+            # Placeholder until the browser finishes the PUT; flipped to
+            # 'done' by hosting_db_restore_from_upload once we confirm
+            # the object actually landed in the bucket.
+            'state': 'running',
+            'is_full_instance': False,
+            'ephemeral': True,
+            'format': 'zip',
+            'bucket_path': object_key,
+            'expires_at': now + datetime.timedelta(hours=2),
+        })
+        upload_url = backup._generate_presigned_put_url(object_key)
+        return backup, upload_url
+
+    def hosting_db_restore_from_upload(self, backup_id):
+        """Verify an uploaded object, then restore it into its db_name.
+
+        Reuses the standard background restore (``action_restore_backup``
+        -> ``_do_restore_backup``): download from the bucket to the
+        docker host, drop + recreate the target DB, ``psql`` the dump
+        in, restore the filestore. All on the host with generous
+        timeouts, so it scales to large databases without tying up the
+        portal. The uploaded object is reaped afterwards (ephemeral).
+        """
+        self._ensure_hosting_for_db_ops()
+        backup = self.env['saas.instance.backup'].browse(backup_id)
+        if (not backup.exists() or backup.instance_id != self
+                or not backup.ephemeral or backup.is_full_instance):
+            raise UserError(_("That upload isn't available to restore."))
+        size = backup._bucket_object_size(backup.bucket_path) or 0
+        if not size:
+            raise UserError(_(
+                "We couldn't find your uploaded file. The upload may not "
+                "have finished — please try again."
+            ))
+        backup.write({
+            'state': 'done',
+            'size_mb': round(size / (1024 * 1024), 2),
+        })
+        # Background restore; flips the instance to 'provisioning' while
+        # it runs and back to running when done (other databases on the
+        # instance keep serving — only the target DB is replaced).
+        self.action_restore_backup(backup.id)
+        return backup
 
     def hosting_db_reset_admin_password(self, name, new_password,
                                         login=None):

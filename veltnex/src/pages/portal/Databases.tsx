@@ -14,6 +14,7 @@ import {
   Download,
   CopyPlus,
   RefreshCw,
+  UploadCloud,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { HelpHint } from "@/components/HelpHint";
-import { api, ApiError, type DbListData, type ApiBackup } from "@/lib/api";
+import { api, ApiError, uploadToBucket, type DbListData, type ApiBackup } from "@/lib/api";
 import { formatDateTime, formatSizeMb } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -43,6 +44,7 @@ export default function Databases() {
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
   const [duplicateTarget, setDuplicateTarget] = React.useState<string | null>(null);
   const [upgradeTarget, setUpgradeTarget] = React.useState<string | null>(null);
+  const [restoreTarget, setRestoreTarget] = React.useState<string | null>(null);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [backupsTarget, setBackupsTarget] = React.useState<string | null>(null);
   const [backups, setBackups] = React.useState<ApiBackup[]>([]);
@@ -315,6 +317,7 @@ export default function Databases() {
                                   style={{ top: menuPos.top, right: menuPos.right }}
                                 >
                                   <MenuItem icon={Download} label="Download backup" onClick={() => { setOpenMenu(null); setBackupsTarget(db.name); }} />
+                                  <MenuItem icon={UploadCloud} label="Restore from file" onClick={() => { setOpenMenu(null); setRestoreTarget(db.name); }} />
                                   <MenuItem icon={CopyPlus} label="Duplicate" onClick={() => { setOpenMenu(null); setDuplicateTarget(db.name); }} />
                                   <MenuItem icon={RefreshCw} label="Upgrade modules" onClick={() => { setOpenMenu(null); setUpgradeTarget(db.name); }} />
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
@@ -363,6 +366,13 @@ export default function Databases() {
         instanceId={instanceId}
         onClose={() => setUpgradeTarget(null)}
         onDone={() => load(true)}
+      />
+
+      <RestoreDatabaseDialog
+        dbName={restoreTarget}
+        instanceId={instanceId}
+        onClose={() => setRestoreTarget(null)}
+        onDone={() => { navigate(`/my/instances/${id}`); }}
       />
 
       <ResetPasswordDialog
@@ -758,6 +768,136 @@ function UpgradeModulesDialog({
             Upgrade
           </ActionButton>
         )}
+      </div>
+    </Dialog>
+  );
+}
+
+function RestoreDatabaseDialog({
+  dbName,
+  instanceId,
+  onClose,
+  onDone,
+}: {
+  dbName: string | null;
+  instanceId: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [file, setFile] = React.useState<File | null>(null);
+  const [confirmText, setConfirmText] = React.useState("");
+  const [phase, setPhase] = React.useState<"idle" | "uploading" | "starting" | "done">("idle");
+  const [progress, setProgress] = React.useState(0);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (dbName) {
+      setFile(null);
+      setConfirmText("");
+      setPhase("idle");
+      setProgress(0);
+      setError(null);
+    }
+  }, [dbName]);
+
+  const busy = phase === "uploading" || phase === "starting";
+  const confirmed = confirmText.trim() === dbName;
+
+  const start = async () => {
+    if (!dbName || !file || !confirmed) return;
+    setError(null);
+    try {
+      // 1. Get a presigned PUT URL (a placeholder backup record).
+      setPhase("uploading");
+      setProgress(0);
+      const { backup_id, upload_url } = await api.dbRestoreUploadUrl(instanceId, dbName);
+      // 2. Upload the file straight to the bucket (no Odoo, no timeout).
+      await uploadToBucket(upload_url, file, setProgress);
+      // 3. Kick off the background restore into this database.
+      setPhase("starting");
+      await api.dbRestoreStart(instanceId, backup_id, dbName);
+      setPhase("done");
+      onDone();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "The restore couldn't be started.");
+      setPhase("idle");
+    }
+  };
+
+  const pct = Math.round(progress * 100);
+
+  return (
+    <Dialog
+      open={!!dbName}
+      onClose={onClose}
+      title="Restore from file"
+      description={dbName ? `Replace “${dbName}” with one of your own backup files.` : undefined}
+    >
+      {error && <AlertBanner className="mb-4" variant="danger" title="Restore" description={error} />}
+
+      <AlertBanner
+        variant="warning"
+        title="This replaces the database"
+        description="Everything currently in this database is overwritten by the uploaded backup. This can't be undone. Your other databases stay online."
+      />
+
+      <div className="mt-4 space-y-2">
+        <Label htmlFor="restore-file">Backup file</Label>
+        <Input
+          id="restore-file"
+          type="file"
+          accept=".zip"
+          disabled={busy}
+          onChange={(e) => { setFile(e.target.files?.[0] || null); setError(null); }}
+        />
+        <p className="text-xs text-muted">
+          An Odoo backup in <code className="rounded bg-border/60 px-1 font-mono">.zip</code> format
+          (database + filestore). The file uploads straight to secure storage — large
+          backups are fine and won't time out.
+        </p>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        <Label htmlFor="restore-confirm">
+          Type <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">{dbName}</code> to confirm
+        </Label>
+        <Input
+          id="restore-confirm"
+          autoComplete="off"
+          placeholder={dbName ?? ""}
+          value={confirmText}
+          disabled={busy}
+          onChange={(e) => setConfirmText(e.target.value)}
+        />
+      </div>
+
+      {phase === "uploading" && (
+        <div className="mt-4">
+          <div className="mb-1 flex justify-between text-xs text-muted">
+            <span>Uploading…</span>
+            <span>{pct}%</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-border">
+            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+      {phase === "starting" && (
+        <p className="mt-4 text-sm text-muted">Upload complete — starting the restore…</p>
+      )}
+
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+        <ActionButton
+          variant="danger"
+          loading={busy}
+          loadingText={phase === "starting" ? "Starting…" : "Uploading…"}
+          disabled={!file || !confirmed}
+          onClick={start}
+        >
+          <UploadCloud className="size-4" />
+          Upload &amp; restore
+        </ActionButton>
       </div>
     </Dialog>
   );
