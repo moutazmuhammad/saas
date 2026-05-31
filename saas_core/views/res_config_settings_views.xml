@@ -352,18 +352,8 @@
                         </setting>
                     </block>
 
-                    <!-- ==================== 8. Monitoring &amp; Infrastructure ==================== -->
-                    <block title="Monitoring &amp; Infrastructure" name="saas_monitoring_container">
-                        <setting id="saas_resource_usage_multiplier_setting"
-                                 string="Resource usage multiplier"
-                                 help="Display-only. Multiplies measured CPU / RAM to estimate total usage including shared DB-server overhead. Not a billing input.">
-                            <div class="content-group">
-                                <div class="mt8">
-                                    <label for="saas_resource_usage_multiplier" string="Multiplier" class="o_light_label" style="display:inline-block;min-width:90px;"/>
-                                    <field name="saas_resource_usage_multiplier" class="oe_inline" style="max-width:6rem;"/>
-                                </div>
-                            </div>
-                        </setting>
+                    <!-- ==================== 8. Infrastructure ==================== -->
+                    <block title="Infrastructure" name="saas_infrastructure_container">
                         <setting id="saas_default_instance_starting_port_setting"
                                  string="Default starting port"
                                  help="First port number used when auto-assigning HTTP / longpolling ports to new instances.">
