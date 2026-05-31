@@ -496,6 +496,59 @@ class SaasApi(http.Controller):
             return err(_("That action couldn't be completed. Please try again."), 'action_failed')
         return ok(instance._get_status_dict())
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/code',
+                type='json', auth='public')
+    def instance_set_code(self, instance_id, access_token=None, repo_url='',
+                          repo_branch='main', git_token=None,
+                          pip_packages='', **kw):
+        """Post-purchase: set the instance's Git repo + Python packages and
+        redeploy. Reuses action_redeploy (clone pending repos, apply config
+        incl. pip, restart) — the same path the webhook/redeploy use."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        if instance.state not in ('running', 'stopped'):
+            return err(_("The instance must be running or stopped to update "
+                         "its code."), 'invalid_state')
+        repo_url = (repo_url or '').strip()
+        repo_branch = (repo_branch or 'main').strip() or 'main'
+        pip_packages = (pip_packages or '').strip()
+        if repo_url and not (repo_url.startswith('https://')
+                             or repo_url.startswith('git@')):
+            return err(_("Repository URL must start with https:// or git@."),
+                       'invalid')
+        inst = instance.sudo()
+        try:
+            inst.pip_packages = pip_packages or False
+            existing = inst.repo_ids[:1]
+            if repo_url:
+                vals = {'repo_url': repo_url, 'branch': repo_branch}
+                if git_token is not None:
+                    vals['github_token'] = (git_token or '').strip() or False
+                    vals['webhook_enabled'] = bool((git_token or '').strip())
+                if existing:
+                    # Re-clone only when the source actually changed.
+                    if existing.repo_url != repo_url or existing.branch != repo_branch:
+                        vals['state'] = 'pending'
+                    existing.write(vals)
+                else:
+                    vals['instance_id'] = inst.id
+                    vals['state'] = 'pending'
+                    vals.setdefault('webhook_enabled', False)
+                    inst.env['saas.instance.repo'].create(vals)
+            elif existing:
+                # Repo cleared → drop the customer repo(s); redeploy unmounts.
+                existing.unlink()
+            instance.action_redeploy()
+        except UserError as e:
+            return err(str(e), 'deploy_failed')
+        except Exception:
+            _logger.exception("Set code failed for %s", instance_id)
+            return err(_("Couldn't apply the changes. Please try again."),
+                       'deploy_failed')
+        return ok(instance._get_status_dict())
+
     # ==================================================================
     #  Portal: hosting databases
     # ==================================================================
@@ -865,6 +918,16 @@ class SaasApi(http.Controller):
                 # Hidden safety layer surfaces only a soft upgrade nudge —
                 # never a GB number, never a charge.
                 'backup_upgrade_recommended': instance.backup_upgrade_recommended,
+                # Post-purchase custom code & packages (hosting only).
+                'pip_packages': instance.pip_packages or '',
+                'repo': ({
+                    'url': instance.repo_ids[:1].repo_url or '',
+                    'branch': instance.repo_ids[:1].branch or 'main',
+                    'has_token': bool(instance.repo_ids[:1].github_token),
+                    'state': instance.repo_ids[:1].state or '',
+                } if (instance.is_hosting and instance.repo_ids) else {
+                    'url': '', 'branch': 'main', 'has_token': False, 'state': '',
+                }),
                 'pending_plan': instance.pending_plan_id.name if instance.pending_plan_id else '',
                 'scheduled_plan': instance.scheduled_plan_id.name if instance.scheduled_plan_id else '',
                 'backups': [self._serialize_backup(b) for b in backups],

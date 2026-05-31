@@ -92,12 +92,12 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
   {
     anchor: "repo",
-    category: "Configuring your plan",
-    title: "Git repository & branch",
-    tip: "Optional: a Git repo (and branch) of your custom Odoo modules to deploy automatically.",
+    category: "Managing your instance",
+    title: "Git repository & Python packages",
+    tip: "Your custom modules and packages — set up from your instance after launch, not during purchase.",
     body: [
-      "If you write your own Odoo modules, point us at your Git repository (GitHub, GitLab or Bitbucket) and the branch to deploy. We pull and install them automatically.",
-      "Leave it blank to run a standard Odoo instance with no custom code. For private repositories you'll also provide an access token.",
+      "If you write your own Odoo modules, you can point us at your Git repository (GitHub, GitLab or Bitbucket) and the branch to deploy, along with any Python packages your code needs.",
+      "This is configured from your instance's own page after it's created — not during purchase — so you can connect or change it any time. For private repositories you'll provide an access token.",
     ],
   },
 

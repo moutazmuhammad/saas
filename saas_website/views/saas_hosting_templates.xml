@@ -163,43 +163,9 @@
                                         </div>
                                     </t>
 
-                                    <hr style="border-color:var(--border-color,#27272A);"/>
-                                    <h5 class="mb-3">
-                                        <i class="fas fa-code-branch me-2"></i>Your Project
-                                        <span class="text-muted small">(optional)</span>
-                                    </h5>
-                                    <p class="text-muted small mb-3">
-                                        Leave empty to start with a clean Odoo instance. You can connect your repository later.
-                                    </p>
-
-                                    <!-- Git Repo URL -->
-                                    <div class="mb-3">
-                                        <label class="form-label">Repository URL<a href="/help#repo" target="_blank" rel="noopener" class="saas-help" title="Optional: a Git repo (and branch) of your custom Odoo modules to deploy automatically." aria-label="Learn more"><i class="fas fa-question-circle"></i></a></label>
-                                        <input type="url" name="repo_url" class="form-control"
-                                               placeholder="https://github.com/user/my-odoo-project.git"
-                                               t-att-value="form_values.get('repo_url', '')"/>
-                                        <div class="form-text text-muted">The URL of your Odoo project repository.</div>
-                                    </div>
-
-                                    <!-- Branch -->
-                                    <div class="mb-3">
-                                        <label class="form-label">Branch</label>
-                                        <input type="text" name="repo_branch" class="form-control"
-                                               placeholder="main"
-                                               t-att-value="form_values.get('repo_branch', 'main')"/>
-                                    </div>
-
-                                    <!-- Git Token -->
-                                    <div class="mb-3">
-                                        <label class="form-label">Access Token</label>
-                                        <input type="password" name="git_token" class="form-control"
-                                               placeholder="ghp_xxxxxxxxxxxx"
-                                               t-att-value="form_values.get('git_token', '')"/>
-                                        <div class="form-text text-muted">
-                                            Required for private repositories and to enable auto-updates when you push changes.
-                                        </div>
-                                    </div>
-
+                                    <!-- Custom modules (Git repo) and Python packages are
+                                         configured AFTER purchase, from the instance's own
+                                         page — not part of buying. -->
                                 </div>
                             </div>
 
