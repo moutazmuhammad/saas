@@ -225,7 +225,22 @@ class SaasPricingEngine(models.AbstractModel):
         minimum_applied = minimum_monthly > pre_minimum
 
         discount = cfg['yearly_discount_pct'] / 100.0
-        yearly = monthly * 12 * (1 - discount)
+        if exact_tier:
+            # Honor the tier's STORED yearly price so the engine matches
+            # the pricing card (which shows ``plan.yearly_price``). Without
+            # this, an exact-tier quote re-derived yearly from the global
+            # discount and diverged from the advertised yearly figure.
+            # Region scales it like monthly; add-ons/support get the
+            # standard yearly discount on top so a configured tier still
+            # reconciles with the bare card.
+            resource_yearly = max(
+                exact_tier._get_price_for_period('yearly'), floor * 12,
+            ) * region_factor
+            other_yearly = (addons_monthly + support_monthly) * 12 * (1 - discount)
+            pre_minimum_yearly = resource_yearly + other_yearly
+            yearly = max(pre_minimum_yearly, minimum_monthly * 12 * (1 - discount))
+        else:
+            yearly = monthly * 12 * (1 - discount)
         yearly_savings = (monthly * 12) - yearly
         is_yearly = billing == 'yearly'
 
@@ -238,7 +253,13 @@ class SaasPricingEngine(models.AbstractModel):
             'total': round(yearly if is_yearly else monthly, 2),
             'monthly_equivalent': round(yearly / 12 if is_yearly else monthly, 2),
             'yearly_savings': round(yearly_savings, 2),
-            'savings_percent': int(cfg['yearly_discount_pct']),
+            # Derived from the ACTUAL monthly vs yearly (a named tier can
+            # carry its own yearly_price, so the real saving may differ
+            # from the global discount). Falls back to the config pct.
+            'savings_percent': (
+                int(round(yearly_savings / (monthly * 12) * 100))
+                if monthly else int(cfg['yearly_discount_pct'])
+            ),
             'currency': cfg['currency'],
             'region_factor': region_factor,
             'floored': floored,

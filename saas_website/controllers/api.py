@@ -295,13 +295,13 @@ class SaasApi(http.Controller):
     def hosting_calculate(self, workers=2, storage=5, billing='monthly'):
         site = SaasWebsite()
         config = site._get_hosting_plan_config()
-        return ok(self._price(config, workers, storage, billing))
+        return ok(self._price(config, workers, storage, billing, kind='hosting'))
 
     @http.route('/saas/api/v1/services/calculate', type='json', auth='public')
     def services_calculate(self, workers=2, storage=5, billing='monthly'):
         site = SaasWebsite()
         config = site._get_custom_plan_config()
-        return ok(self._price(config, workers, storage, billing))
+        return ok(self._price(config, workers, storage, billing, kind='services'))
 
     @http.route('/saas/api/v1/tiers', type='json', auth='public')
     def tiers(self, kind='hosting'):
@@ -364,13 +364,16 @@ class SaasApi(http.Controller):
             if k not in ('worker_price', 'storage_price_per_gb')
         }
 
-    def _price(self, config, workers, storage, billing):
+    def _price(self, config, workers, storage, billing, kind='services'):
         """Compute one customer-facing total via the single pricing
         engine (`saas.pricing.engine`). ``config`` is accepted for
         backward-compat with callers but no longer used — the engine
-        reads rates itself. Per-resource rates stay hidden."""
+        reads rates itself. ``kind`` selects the rate set ('hosting' vs
+        'services'); it MUST match the caller's product, otherwise the
+        slider quotes a different price than the order/invoice. Per-
+        resource rates stay hidden."""
         quote = request.env['saas.pricing.engine'].compute(
-            'services', workers, storage, billing,
+            kind, workers, storage, billing,
         )
         # Return exactly the historical key set (the engine returns a
         # superset; keep this stable for existing SPA consumers).
