@@ -38,6 +38,7 @@ export const DOC_FOLDERS: DocFolder[] = [
     articles: [
       {
         id: "overview",
+        image: "dashboard.svg",
         title: "What is VELTNEX?",
         readMinutes: 2,
         summary: "A quick tour of the platform and what you can do with it.",
@@ -51,6 +52,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "create-account",
+        image: "register.svg",
         title: "Creating your account",
         readMinutes: 3,
         summary: "Sign up, verify your phone, and you're ready to launch.",
@@ -64,6 +66,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "launch-instance",
+        image: "configurator.svg",
         title: "Launching your first instance",
         readMinutes: 5,
         summary: "Step through the hosting configurator and go live.",
@@ -81,6 +84,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "free-trial",
+        image: "configurator.svg",
         title: "Trying it free",
         readMinutes: 2,
         summary: "Explore a real instance before paying.",
@@ -98,6 +102,7 @@ export const DOC_FOLDERS: DocFolder[] = [
     articles: [
       {
         id: "sizing",
+        image: "configurator.svg",
         title: "Workers & storage — picking a size",
         readMinutes: 4,
         summary: "How much capacity you need, and how to change it later.",
@@ -111,6 +116,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "region-version",
+        image: "configurator.svg",
         title: "Region & Odoo version",
         readMinutes: 3,
         summary: "Where your instance runs and which Odoo it runs.",
@@ -121,6 +127,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "billing-options",
+        image: "configurator.svg",
         title: "Monthly vs yearly billing",
         readMinutes: 2,
         summary: "Flexibility vs a discount.",
@@ -131,6 +138,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "custom-code",
+        image: "configurator.svg",
         title: "Running your own modules",
         readMinutes: 3,
         summary: "Deploy custom Odoo modules from your Git repository.",
@@ -150,6 +158,7 @@ export const DOC_FOLDERS: DocFolder[] = [
     articles: [
       {
         id: "access-power",
+        image: "instance.svg",
         title: "Accessing & powering your instance",
         readMinutes: 3,
         summary: "Open Odoo, and start / stop / restart safely.",
@@ -164,6 +173,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "change-plan",
+        image: "instance.svg",
         title: "Changing or upgrading your plan",
         readMinutes: 4,
         summary: "Adjust workers, storage and billing — and what applies when.",
@@ -176,6 +186,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "monitoring",
+        image: "instance.svg",
         title: "Monitoring & logs",
         readMinutes: 2,
         summary: "Watch resource usage and stream live logs.",
@@ -186,6 +197,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "reactivate",
+        image: "instance.svg",
         title: "Reactivating a cancelled instance",
         readMinutes: 3,
         summary: "Bring back a cancelled instance from its retained snapshot.",
@@ -203,6 +215,7 @@ export const DOC_FOLDERS: DocFolder[] = [
     articles: [
       {
         id: "manage-databases",
+        image: "databases.svg",
         title: "Creating & managing databases",
         readMinutes: 4,
         summary: "Run more than one Odoo database on a hosting instance.",
@@ -224,6 +237,7 @@ export const DOC_FOLDERS: DocFolder[] = [
     articles: [
       {
         id: "daily-backups",
+        image: "backups.svg",
         title: "Daily backups",
         readMinutes: 3,
         summary: "Automatic daily protection you can turn on per instance.",
@@ -235,6 +249,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "restore",
+        image: "backups.svg",
         title: "Restoring from a snapshot",
         readMinutes: 3,
         summary: "Roll your instance back to an earlier day.",
@@ -245,6 +260,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "ondemand-backups",
+        image: "databases.svg",
         title: "On-demand database backups",
         readMinutes: 2,
         summary: "Download a one-off copy of a single database.",
@@ -262,6 +278,7 @@ export const DOC_FOLDERS: DocFolder[] = [
     articles: [
       {
         id: "invoices",
+        image: "billing.svg",
         title: "Invoices & payments",
         readMinutes: 3,
         summary: "Find, read and pay your invoices.",
@@ -276,6 +293,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "optional-charges",
+        image: "billing.svg",
         title: "Optional charges & upgrade credit",
         readMinutes: 2,
         summary: "Declining optional charges, and how mid-cycle upgrades are priced.",
@@ -286,6 +304,7 @@ export const DOC_FOLDERS: DocFolder[] = [
       },
       {
         id: "support-plans",
+        image: "configurator.svg",
         title: "Support plans",
         readMinutes: 2,
         summary: "Choose how quickly we respond when you need help.",
