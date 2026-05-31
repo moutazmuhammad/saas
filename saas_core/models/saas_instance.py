@@ -2475,17 +2475,17 @@ class SaasInstance(models.Model):
         for db_server in instances.mapped('db_server_id'):
             if not db_server:
                 continue
-            db_names = [
+            subdomains = [
                 i.subdomain for i in instances
                 if i.db_server_id == db_server
                 and i.subdomain
                 and SUBDOMAIN_RE.match(i.subdomain)
             ]
-            if not db_names:
+            if not subdomains:
                 continue
             try:
                 db_sizes_by_server[db_server.id] = \
-                    db_server._fetch_database_sizes(db_names)
+                    db_server._fetch_database_sizes(subdomains)
             except Exception:
                 _logger.exception(
                     "Cron: failed to batch-fetch DB sizes from server %s",
@@ -2816,20 +2816,14 @@ class SaasInstance(models.Model):
         db_bytes = 0
         if precomputed_db_size is not None:
             db_bytes = int(precomputed_db_size)
-        elif self.db_server_id and self.subdomain:
+        elif self.db_server_id and self.subdomain and SUBDOMAIN_RE.match(self.subdomain):
+            # Sum ALL of this customer's databases (the base <subdomain> DB
+            # plus every <subdomain>_* DB) — a hosting customer can own
+            # several, and they all count toward the storage allowance.
             try:
-                safe_db = self.subdomain.replace("'", "''")
-                with self.db_server_id._get_ssh_connection() as db_ssh:
-                    db_size_cmd = (
-                        "sudo -u postgres psql -At -c "
-                        "\"SELECT pg_database_size('%s');\""
-                    ) % safe_db
-                    exit_code, stdout, stderr = db_ssh.execute(db_size_cmd)
-                    if exit_code == 0 and stdout.strip():
-                        try:
-                            db_bytes = int(stdout.strip())
-                        except (ValueError, TypeError):
-                            pass
+                db_bytes = self.db_server_id._fetch_database_sizes(
+                    [self.subdomain],
+                ).get(self.subdomain, 0)
             except Exception:
                 _logger.warning(
                     "Failed to fetch DB size for instance %s", self.subdomain,
@@ -6364,17 +6358,17 @@ class SaasInstance(models.Model):
         for db_server in instances.mapped('db_server_id'):
             if not db_server:
                 continue
-            db_names = [
+            subdomains = [
                 i.subdomain for i in instances
                 if i.db_server_id == db_server
                 and i.subdomain
                 and SUBDOMAIN_RE.match(i.subdomain)
             ]
-            if not db_names:
+            if not subdomains:
                 continue
             try:
                 db_sizes_by_server[db_server.id] = \
-                    db_server._fetch_database_sizes(db_names)
+                    db_server._fetch_database_sizes(subdomains)
             except Exception:
                 _logger.exception(
                     "Storage cron: failed to batch-fetch sizes from %s",
