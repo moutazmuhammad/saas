@@ -724,11 +724,12 @@ class SaasApi(http.Controller):
 
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/restore/start',
                 type='json', auth='public')
-    def db_restore_start(self, instance_id, backup_id=None, confirm=None,
+    def db_restore_start(self, instance_id, backup_id=None,
                          access_token=None, **kw):
         """Step 2 of customer restore: after the upload finishes, verify
         it and kick off the background restore into the target database.
-        Destructive (replaces the DB) — requires retyping its name."""
+        The archive is validated (real, intact Odoo backup) on the host
+        BEFORE the database is touched, so a bad file changes nothing."""
         try:
             instance = self._hosting(instance_id, access_token)
         except (AccessError, MissingError):
@@ -738,9 +739,6 @@ class SaasApi(http.Controller):
         )
         if not backup.exists() or backup.instance_id.id != instance.id:
             return err(_("That upload isn't available to restore."), 'invalid')
-        if (confirm or '').strip() != (backup.db_name or ''):
-            return err(_("Type the database name exactly to confirm the restore."),
-                       'confirm')
         try:
             self._require_running(instance)
             instance.hosting_db_restore_from_upload(backup.id)

@@ -362,10 +362,9 @@ export const api = {
       `/saas/api/v1/instances/${id}/databases/restore/upload-url`,
       { name },
     ),
-  dbRestoreStart: (id: number, backupId: number, confirm: string) =>
+  dbRestoreStart: (id: number, backupId: number) =>
     rpc(`/saas/api/v1/instances/${id}/databases/restore/start`, {
       backup_id: backupId,
-      confirm,
     }),
   dbUpgrade: (id: number, name: string, modules: string) =>
     rpc<{ db_name: string; op_id: number }>(

@@ -44,7 +44,7 @@ export default function Databases() {
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
   const [duplicateTarget, setDuplicateTarget] = React.useState<string | null>(null);
   const [upgradeTarget, setUpgradeTarget] = React.useState<string | null>(null);
-  const [restoreTarget, setRestoreTarget] = React.useState<string | null>(null);
+  const [restoreOpen, setRestoreOpen] = React.useState(false);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [backupsTarget, setBackupsTarget] = React.useState<string | null>(null);
   const [backups, setBackups] = React.useState<ApiBackup[]>([]);
@@ -189,14 +189,25 @@ export default function Databases() {
           <h1 className="text-2xl font-bold tracking-tight">Databases<HelpHint anchor="create-database" className="ml-1.5" /></h1>
           <p className="mt-1 text-sm text-muted">Create, back up, and manage your databases.</p>
         </div>
-        <Button
-          onClick={() => setCreateOpen(true)}
-          disabled={!data?.ready || isCreating}
-          title={isCreating ? "A database is already being created on this instance." : undefined}
-        >
-          {isCreating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-          {isCreating ? "Creating…" : "Create database"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => setRestoreOpen(true)}
+            disabled={!data?.ready}
+            title={data?.ready ? undefined : "Available once your instance is running."}
+          >
+            <UploadCloud className="size-4" />
+            Restore from file
+          </Button>
+          <Button
+            onClick={() => setCreateOpen(true)}
+            disabled={!data?.ready || isCreating}
+            title={isCreating ? "A database is already being created on this instance." : undefined}
+          >
+            {isCreating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+            {isCreating ? "Creating…" : "Create database"}
+          </Button>
+        </div>
       </div>
 
       {error && <AlertBanner className="mt-6" variant="danger" title="Database management" description={error} />}
@@ -317,7 +328,6 @@ export default function Databases() {
                                   style={{ top: menuPos.top, right: menuPos.right }}
                                 >
                                   <MenuItem icon={Download} label="Download backup" onClick={() => { setOpenMenu(null); setBackupsTarget(db.name); }} />
-                                  <MenuItem icon={UploadCloud} label="Restore from file" onClick={() => { setOpenMenu(null); setRestoreTarget(db.name); }} />
                                   <MenuItem icon={CopyPlus} label="Duplicate" onClick={() => { setOpenMenu(null); setDuplicateTarget(db.name); }} />
                                   <MenuItem icon={RefreshCw} label="Upgrade modules" onClick={() => { setOpenMenu(null); setUpgradeTarget(db.name); }} />
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
@@ -369,9 +379,10 @@ export default function Databases() {
       />
 
       <RestoreDatabaseDialog
-        dbName={restoreTarget}
+        open={restoreOpen}
         instanceId={instanceId}
-        onClose={() => setRestoreTarget(null)}
+        existing={data?.databases.map((d) => d.name) || []}
+        onClose={() => setRestoreOpen(false)}
         onDone={() => { navigate(`/my/instances/${id}`); }}
       />
 
@@ -773,49 +784,79 @@ function UpgradeModulesDialog({
   );
 }
 
+// Cheap, fail-fast client check: a real .zip starts with the local-file
+// magic "PK\x03\x04". This catches an obviously-wrong file before we
+// upload a (potentially huge) file; the server then does the
+// authoritative integrity + Odoo-backup check before touching any DB.
+async function looksLikeZip(file: File): Promise<boolean> {
+  try {
+    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    return head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+  } catch {
+    return false;
+  }
+}
+
 function RestoreDatabaseDialog({
-  dbName,
+  open,
   instanceId,
+  existing,
   onClose,
   onDone,
 }: {
-  dbName: string | null;
+  open: boolean;
   instanceId: number;
+  existing: string[];
   onClose: () => void;
   onDone: () => void;
 }) {
   const [file, setFile] = React.useState<File | null>(null);
-  const [confirmText, setConfirmText] = React.useState("");
+  const [fileError, setFileError] = React.useState<string | null>(null);
+  const [target, setTarget] = React.useState("");
+  const [ack, setAck] = React.useState(false);
   const [phase, setPhase] = React.useState<"idle" | "uploading" | "starting" | "done">("idle");
   const [progress, setProgress] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (dbName) {
+    if (open) {
       setFile(null);
-      setConfirmText("");
+      setFileError(null);
+      setTarget("");
+      setAck(false);
       setPhase("idle");
       setProgress(0);
       setError(null);
     }
-  }, [dbName]);
+  }, [open]);
 
   const busy = phase === "uploading" || phase === "starting";
-  const confirmed = confirmText.trim() === dbName;
+  const validName = /^[a-z][a-z0-9_]{2,40}$/.test(target);
+  // existing holds full names ("acme_prod"); the customer types a suffix.
+  const overwrite = !!target && existing.some((n) => n === target || n.endsWith("_" + target));
+  const canSubmit = !!file && !fileError && validName && (!overwrite || ack) && !busy;
+
+  const pickFile = async (f: File | null) => {
+    setError(null);
+    setFileError(null);
+    setFile(f);
+    if (f) {
+      if (!f.name.toLowerCase().endsWith(".zip") || !(await looksLikeZip(f))) {
+        setFileError("That doesn't look like a .zip backup. Choose an Odoo backup file (.zip).");
+      }
+    }
+  };
 
   const start = async () => {
-    if (!dbName || !file || !confirmed) return;
+    if (!canSubmit || !file) return;
     setError(null);
     try {
-      // 1. Get a presigned PUT URL (a placeholder backup record).
       setPhase("uploading");
       setProgress(0);
-      const { backup_id, upload_url } = await api.dbRestoreUploadUrl(instanceId, dbName);
-      // 2. Upload the file straight to the bucket (no Odoo, no timeout).
+      const { backup_id, upload_url } = await api.dbRestoreUploadUrl(instanceId, target);
       await uploadToBucket(upload_url, file, setProgress);
-      // 3. Kick off the background restore into this database.
       setPhase("starting");
-      await api.dbRestoreStart(instanceId, backup_id, dbName);
+      await api.dbRestoreStart(instanceId, backup_id);
       setPhase("done");
       onDone();
     } catch (e) {
@@ -828,48 +869,65 @@ function RestoreDatabaseDialog({
 
   return (
     <Dialog
-      open={!!dbName}
+      open={open}
       onClose={onClose}
       title="Restore from file"
-      description={dbName ? `Replace “${dbName}” with one of your own backup files.` : undefined}
+      description="Upload one of your own Odoo backups and restore it into a database."
     >
       {error && <AlertBanner className="mb-4" variant="danger" title="Restore" description={error} />}
 
-      <AlertBanner
-        variant="warning"
-        title="This replaces the database"
-        description="Everything currently in this database is overwritten by the uploaded backup. This can't be undone. Your other databases stay online."
-      />
-
-      <div className="mt-4 space-y-2">
+      <div className="space-y-2">
         <Label htmlFor="restore-file">Backup file</Label>
         <Input
           id="restore-file"
           type="file"
           accept=".zip"
           disabled={busy}
-          onChange={(e) => { setFile(e.target.files?.[0] || null); setError(null); }}
+          onChange={(e) => pickFile(e.target.files?.[0] || null)}
         />
-        <p className="text-xs text-muted">
-          An Odoo backup in <code className="rounded bg-border/60 px-1 font-mono">.zip</code> format
-          (database + filestore). The file uploads straight to secure storage — large
-          backups are fine and won't time out.
-        </p>
+        {fileError ? (
+          <p className="text-xs text-danger">{fileError}</p>
+        ) : (
+          <p className="text-xs text-muted">
+            An Odoo backup in <code className="rounded bg-border/60 px-1 font-mono">.zip</code> format
+            (database + filestore). It uploads straight to secure storage — large backups
+            are fine and won't time out. We verify the file before changing anything.
+          </p>
+        )}
       </div>
 
       <div className="mt-4 space-y-2">
-        <Label htmlFor="restore-confirm">
-          Type <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">{dbName}</code> to confirm
-        </Label>
+        <Label htmlFor="restore-target">Restore into database</Label>
         <Input
-          id="restore-confirm"
-          autoComplete="off"
-          placeholder={dbName ?? ""}
-          value={confirmText}
+          id="restore-target"
+          placeholder="e.g. production"
+          value={target}
           disabled={busy}
-          onChange={(e) => setConfirmText(e.target.value)}
+          onChange={(e) => setTarget(e.target.value.toLowerCase())}
         />
+        <p className="text-xs text-muted">
+          Type a new name to create a database from the backup, or an existing
+          one to replace it. Your instance prefix is added automatically.
+        </p>
       </div>
+
+      {overwrite && (
+        <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={ack}
+            disabled={busy}
+            onChange={(e) => setAck(e.target.checked)}
+          />
+          <span>
+            A database matching <span className="font-medium">{target}</span> already
+            exists. Restoring <span className="font-medium">replaces it entirely</span> —
+            its current data is overwritten and can't be recovered. Other databases
+            stay online.
+          </span>
+        </label>
+      )}
 
       {phase === "uploading" && (
         <div className="mt-4">
@@ -883,16 +941,16 @@ function RestoreDatabaseDialog({
         </div>
       )}
       {phase === "starting" && (
-        <p className="mt-4 text-sm text-muted">Upload complete — starting the restore…</p>
+        <p className="mt-4 text-sm text-muted">Upload complete — verifying and starting the restore…</p>
       )}
 
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
         <ActionButton
-          variant="danger"
+          variant={overwrite ? "danger" : "default"}
           loading={busy}
           loadingText={phase === "starting" ? "Starting…" : "Uploading…"}
-          disabled={!file || !confirmed}
+          disabled={!canSubmit}
           onClick={start}
         >
           <UploadCloud className="size-4" />

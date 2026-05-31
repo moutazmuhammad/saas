@@ -5813,6 +5813,31 @@ class SaasInstance(models.Model):
                     _("Failed to download backup:\n%s\n%s") % (stdout, stderr)
                 )
 
+            # 2b. Validate the archive BEFORE touching the database. The
+            # destructive dropdb is below — if this isn't a real, intact
+            # Odoo backup we must bail now, while the current database is
+            # still untouched. ``zipfile -l`` reads only the central
+            # directory (cheap, no full read) and fails outright on a
+            # non-zip or a truncated/corrupt archive; we additionally
+            # require ``dump.sql`` so a random valid zip can't slip
+            # through and get half-restored.
+            self._append_log("Validating backup archive...")
+            v_ec, v_out, v_err = ssh.execute(
+                'python3 -m zipfile -l %s 2>&1' % shlex.quote(tmp_zip),
+                timeout=120,
+            )
+            if v_ec != 0:
+                raise UserError(_(
+                    "The backup file isn't a valid .zip archive (it may be "
+                    "corrupt or have uploaded incompletely). Nothing was "
+                    "changed."
+                ))
+            if 'dump.sql' not in v_out:
+                raise UserError(_(
+                    "This .zip doesn't look like an Odoo database backup — "
+                    "it has no dump.sql inside. Nothing was changed."
+                ))
+
             # 3. Extract
             self._append_log("Extracting...")
             ssh.execute('rm -rf %s && mkdir -p %s' % (
@@ -5828,6 +5853,20 @@ class SaasInstance(models.Model):
                 raise UserError(
                     _("Failed to extract backup:\n%s\n%s") % (stdout, stderr)
                 )
+
+            # 3b. Confirm the dump actually extracted and is non-empty
+            # before we drop the live database — last gate before the
+            # destructive step.
+            chk_ec, chk_out, _chk = ssh.execute(
+                'test -s %s && echo OK || echo MISSING'
+                % shlex.quote('%s/dump.sql' % extract_dir),
+                timeout=60,
+            )
+            if 'OK' not in chk_out:
+                raise UserError(_(
+                    "The backup is missing its database dump after "
+                    "extraction — aborting before any change."
+                ))
 
             # 4. Drop current DB and recreate empty.
             # Both commands MUST succeed — otherwise psql -f below would
@@ -8833,11 +8872,11 @@ class SaasInstance(models.Model):
         uploaded object is not retained). Returns ``(backup, url)``.
         """
         self._ensure_hosting_for_db_ops()
+        # ``_hosting_db_full_name`` enforces the instance prefix + a valid
+        # identifier — that's the ownership boundary. The target may be a
+        # NEW database (created from the backup) or an existing one
+        # (replaced); both are allowed.
         full = self._hosting_db_full_name(name)
-        if full not in {r['name'] for r in self.hosting_db_list()}:
-            raise UserError(
-                _("Database '%s' does not belong to this instance.") % full
-            )
         if self.plan_id and self.plan_id.is_trial_plan:
             raise UserError(_(
                 "Restore isn't available on trial plans. Please upgrade "
