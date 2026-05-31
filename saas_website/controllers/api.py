@@ -675,6 +675,81 @@ class SaasApi(http.Controller):
             return err(str(e), 'create_failed')
         return ok({'db_name': op.db_name})
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/duplicate',
+                type='json', auth='public')
+    def db_duplicate(self, instance_id, source=None, name=None,
+                     access_token=None, **kw):
+        """Duplicate an existing database into a new name. Runs async
+        (same in-flight tracking as create) and returns the new DB name."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        try:
+            self._require_running(instance)
+            op = instance.hosting_db_duplicate_async(
+                source=source or '', new_name=name or '',
+            )
+        except UserError as e:
+            return err(str(e), 'duplicate_failed')
+        return ok({'db_name': op.db_name})
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/restore/upload-url',
+                type='json', auth='public')
+    def db_restore_upload_url(self, instance_id, name=None,
+                              access_token=None, **kw):
+        """Step 1 of customer restore: hand back a presigned PUT URL so
+        the browser uploads the local backup straight to the bucket
+        (bypassing Odoo — no timeout, large files OK)."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        try:
+            self._require_running(instance)
+            backup, upload_url = instance.hosting_db_restore_prepare_upload(
+                name=name or '',
+            )
+        except UserError as e:
+            return err(str(e), 'restore_failed')
+        except Exception:
+            _logger.exception("Restore upload-url failed for %s", instance_id)
+            return err(_("We couldn't start the restore. Please try again."),
+                       'restore_failed')
+        return ok({
+            'backup_id': backup.id,
+            'upload_url': upload_url,
+            'db_name': backup.db_name,
+        })
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/restore/start',
+                type='json', auth='public')
+    def db_restore_start(self, instance_id, backup_id=None,
+                         access_token=None, **kw):
+        """Step 2 of customer restore: after the upload finishes, verify
+        it and kick off the background restore into the target database.
+        The archive is validated (real, intact Odoo backup) on the host
+        BEFORE the database is touched, so a bad file changes nothing."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        backup = request.env['saas.instance.backup'].sudo().browse(
+            int(backup_id or 0)
+        )
+        if not backup.exists() or backup.instance_id.id != instance.id:
+            return err(_("That upload isn't available to restore."), 'invalid')
+        try:
+            self._require_running(instance)
+            instance.hosting_db_restore_from_upload(backup.id)
+        except UserError as e:
+            return err(str(e), 'restore_failed')
+        except Exception:
+            _logger.exception("Restore start failed for %s", instance_id)
+            return err(_("We couldn't start the restore. Please try again."),
+                       'restore_failed')
+        return ok({})
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/drop',
                 type='json', auth='public')
     def db_drop(self, instance_id, name=None, access_token=None, **kw):
@@ -688,6 +763,48 @@ class SaasApi(http.Controller):
         except UserError as e:
             return err(str(e), 'drop_failed')
         return ok({'db_name': op.db_name})
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/upgrade',
+                type='json', auth='public')
+    def db_upgrade(self, instance_id, name=None, modules=None,
+                   access_token=None, **kw):
+        """Upgrade one or more modules on a database with no downtime.
+
+        Runs async (same in-flight tracking as create/duplicate) and
+        returns the op id so the client can poll its result/report."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        try:
+            self._require_running(instance)
+            op = instance.hosting_db_upgrade_modules_async(
+                name=name or '', modules=modules or '',
+            )
+        except UserError as e:
+            return err(str(e), 'upgrade_failed')
+        return ok({'db_name': op.db_name, 'op_id': op.id})
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/operation/<int:op_id>',
+                type='json', auth='public')
+    def db_operation_status(self, instance_id, op_id, access_token=None, **kw):
+        """Poll a database operation's state + captured report (used by
+        the no-downtime module upgrade so the customer sees the result)."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        op = request.env['saas.instance.db.operation'].sudo().browse(op_id)
+        if not op.exists() or op.instance_id.id != instance.id:
+            return err(_("Operation not found."), 'not_found')
+        return ok({
+            'id': op.id,
+            'operation': op.operation,
+            'db_name': op.db_name,
+            'state': op.state,
+            'error': op.error_message or '',
+            'output': op.output_log or '',
+        })
 
     @http.route('/saas/api/v1/instances/<int:instance_id>/daily-backup/enable',
                 type='json', auth='public')

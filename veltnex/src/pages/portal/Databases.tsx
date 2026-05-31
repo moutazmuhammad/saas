@@ -12,6 +12,9 @@ import {
   Loader2,
   Archive,
   Download,
+  CopyPlus,
+  RefreshCw,
+  UploadCloud,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,8 +28,8 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { HelpHint } from "@/components/HelpHint";
-import { api, ApiError, type DbListData, type ApiBackup } from "@/lib/api";
-import { formatSizeMb } from "@/lib/format";
+import { api, ApiError, uploadToBucket, type DbListData, type ApiBackup } from "@/lib/api";
+import { formatDateTime, formatSizeMb } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function Databases() {
@@ -39,6 +42,9 @@ export default function Databases() {
   const [error, setError] = React.useState<string | null>(null);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = React.useState<string | null>(null);
+  const [upgradeTarget, setUpgradeTarget] = React.useState<string | null>(null);
+  const [restoreOpen, setRestoreOpen] = React.useState(false);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [backupsTarget, setBackupsTarget] = React.useState<string | null>(null);
   const [backups, setBackups] = React.useState<ApiBackup[]>([]);
@@ -88,8 +94,13 @@ export default function Databases() {
   // in `databases` (mid-create), its own row carries the spinner — so
   // exclude those here to avoid a duplicate row.
   const existingNames = new Set((data?.databases ?? []).map((d) => d.name));
+  // A create OR duplicate produces a brand-new database that doesn't
+  // appear in the list until it's built — surface those as synthetic
+  // in-flight rows so the customer sees the work immediately.
   const creatingOps = (data?.pending_ops ?? []).filter(
-    (o) => o.operation === "create" && !existingNames.has(o.db_name),
+    (o) =>
+      (o.operation === "create" || o.operation === "duplicate") &&
+      !existingNames.has(o.db_name),
   );
   // Any create in flight (existing-in-list or not) locks the button.
   const isCreating = (data?.pending_ops ?? []).some((o) => o.operation === "create");
@@ -117,27 +128,44 @@ export default function Databases() {
   const downloadBackup = React.useCallback(
     async (name: string, format: "zip" | "dump") => {
       const { backup_id } = await api.dbBackup(instanceId, name, format);
-      // Poll for the build to finish (ceiling ~5 min; large DBs upload
-      // multipart so this is generous). Refresh the list as we go so the
-      // dialog shows progress and a manual fallback link.
-      for (let i = 0; i < 100; i++) {
+      // Poll until the build (dump + multipart upload) finishes. The
+      // build runs server-side in a background thread — there's no HTTP
+      // request held open — so there's no request timeout to hit; the
+      // only question is how long we keep watching. We adapt to DB size:
+      // as long as the backup is still building we keep waiting, up to a
+      // generous 30-minute backstop. A handful of consecutive network
+      // blips are tolerated rather than aborting. Refresh the list as we
+      // go so the dialog shows progress and a manual fallback link.
+      const DEADLINE_MS = 30 * 60 * 1000;
+      const startedAt = Date.now();
+      let misses = 0;
+      while (Date.now() - startedAt < DEADLINE_MS) {
         await new Promise((r) => setTimeout(r, 3000));
         let b: ApiBackup | undefined;
         try {
           const r = await api.backups(instanceId);
           setBackups(r.backups);
           b = r.backups.find((x) => x.id === backup_id);
+          misses = 0;
         } catch {
+          if (++misses > 20) {
+            throw new ApiError("Lost connection while preparing the backup. Please try again.");
+          }
           continue; // transient blip — keep polling
         }
-        if (b?.status === "failed") {
+        if (!b) {
+          // The record vanished (e.g. a newer backup wiped this slot).
+          throw new ApiError("This backup is no longer available. Please try again.");
+        }
+        if (b.status === "failed") {
           throw new ApiError("The backup couldn't be created. Please try again.");
         }
-        if (b?.status === "available" && b.download_url) {
+        if (b.status === "available" && b.download_url) {
           triggerBrowserDownload(b.download_url);
           void load(true);
           return;
         }
+        // status is still "in_progress" — keep waiting.
       }
       throw new ApiError(
         "Your backup is taking longer than expected — it'll be ready shortly. Try Download again in a moment.",
@@ -161,14 +189,25 @@ export default function Databases() {
           <h1 className="text-2xl font-bold tracking-tight">Databases<HelpHint anchor="create-database" className="ml-1.5" /></h1>
           <p className="mt-1 text-sm text-muted">Create, back up, and manage your databases.</p>
         </div>
-        <Button
-          onClick={() => setCreateOpen(true)}
-          disabled={!data?.ready || isCreating}
-          title={isCreating ? "A database is already being created on this instance." : undefined}
-        >
-          {isCreating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-          {isCreating ? "Creating…" : "Create database"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => setRestoreOpen(true)}
+            disabled={!data?.ready}
+            title={data?.ready ? undefined : "Available once your instance is running."}
+          >
+            <UploadCloud className="size-4" />
+            Restore from file
+          </Button>
+          <Button
+            onClick={() => setCreateOpen(true)}
+            disabled={!data?.ready || isCreating}
+            title={isCreating ? "A database is already being created on this instance." : undefined}
+          >
+            {isCreating ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+            {isCreating ? "Creating…" : "Create database"}
+          </Button>
+        </div>
       </div>
 
       {error && <AlertBanner className="mt-6" variant="danger" title="Database management" description={error} />}
@@ -217,7 +256,7 @@ export default function Databases() {
                     <td className="hidden px-5 py-4 text-muted sm:table-cell">—</td>
                     <td className="px-5 py-4">
                       <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                        <Loader2 className="size-3.5 animate-spin" /> Creating…
+                        <Loader2 className="size-3.5 animate-spin" /> {op.operation === "duplicate" ? "Duplicating…" : "Creating…"}
                       </span>
                     </td>
                     <td className="px-5 py-4" />
@@ -238,7 +277,7 @@ export default function Databases() {
                       <td className="px-5 py-4">
                         {pending ? (
                           <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : "Creating…"}
+                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : op === "duplicate" ? "Duplicating…" : op === "upgrade" ? "Upgrading…" : "Creating…"}
                           </span>
                         ) : (
                           <StatusBadge status="running" label="Active" />
@@ -289,6 +328,8 @@ export default function Databases() {
                                   style={{ top: menuPos.top, right: menuPos.right }}
                                 >
                                   <MenuItem icon={Download} label="Download backup" onClick={() => { setOpenMenu(null); setBackupsTarget(db.name); }} />
+                                  <MenuItem icon={CopyPlus} label="Duplicate" onClick={() => { setOpenMenu(null); setDuplicateTarget(db.name); }} />
+                                  <MenuItem icon={RefreshCw} label="Upgrade modules" onClick={() => { setOpenMenu(null); setUpgradeTarget(db.name); }} />
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
                                   <div className="border-t border-border" />
                                   <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpenMenu(null); setDropTarget(db.name); }} />
@@ -317,6 +358,32 @@ export default function Databases() {
           // row in the list, and the Create button locks until it's done.
           await load(true);
         }}
+      />
+
+      <DuplicateDatabaseDialog
+        source={duplicateTarget}
+        existing={data?.databases.map((d) => d.name) || []}
+        onClose={() => setDuplicateTarget(null)}
+        onDuplicate={async (source, newName) => {
+          await api.dbDuplicate(instanceId, source, newName);
+          // The copy shows up as a live "Duplicating…" row until ready.
+          await load(true);
+        }}
+      />
+
+      <UpgradeModulesDialog
+        dbName={upgradeTarget}
+        instanceId={instanceId}
+        onClose={() => setUpgradeTarget(null)}
+        onDone={() => load(true)}
+      />
+
+      <RestoreDatabaseDialog
+        open={restoreOpen}
+        instanceId={instanceId}
+        existing={data?.databases.map((d) => d.name) || []}
+        onClose={() => setRestoreOpen(false)}
+        onDone={() => { navigate(`/my/instances/${id}`); }}
       />
 
       <ResetPasswordDialog
@@ -450,16 +517,19 @@ function DatabaseBackupsDialog({
 
       <div className="mt-4 flex items-center justify-between gap-3">
         {ready && ready.download_url ? (
-          <a
-            href={ready.download_url}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-primary-glow underline-offset-2 hover:underline"
-          >
-            <Download className="size-4" />
-            Download last backup
-            {ready.size_mb > 0 && (
-              <span className="text-muted">({formatSizeMb(ready.size_mb)})</span>
-            )}
-          </a>
+          <div className="min-w-0">
+            <a
+              href={ready.download_url}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary-glow underline-offset-2 hover:underline"
+            >
+              <Download className="size-4" />
+              Download last backup
+            </a>
+            <p className="mt-0.5 text-xs text-muted">
+              {formatDateTime(ready.created)}
+              {ready.size_mb > 0 && <> · {formatSizeMb(ready.size_mb)}</>}
+            </p>
+          </div>
         ) : (
           <span className="text-sm text-muted">No backup yet.</span>
         )}
@@ -471,6 +541,421 @@ function DatabaseBackupsDialog({
 
       <div className="mt-6 flex justify-end">
         <Button variant="secondary" onClick={onClose} disabled={loading}>Close</Button>
+      </div>
+    </Dialog>
+  );
+}
+
+function DuplicateDatabaseDialog({
+  source,
+  existing,
+  onClose,
+  onDuplicate,
+}: {
+  source: string | null;
+  existing: string[];
+  onClose: () => void;
+  onDuplicate: (source: string, newName: string) => Promise<void>;
+}) {
+  const [name, setName] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (source) {
+      setName("");
+      setError(null);
+      setLoading(false);
+    }
+  }, [source]);
+
+  const submit = async () => {
+    if (!source) return;
+    if (!/^[a-z][a-z0-9_]{2,40}$/.test(name)) {
+      return setError("Use 3–41 lowercase letters, numbers, or underscores, starting with a letter.");
+    }
+    // existing holds full DB names (e.g. "acme_staging"); the customer
+    // types the new suffix. Catch the common collision client-side; the
+    // backend is the authoritative check.
+    if (existing.some((n) => n === name || n.endsWith("_" + name))) {
+      return setError("A database with that name already exists.");
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      await onDuplicate(source, name);
+      onClose();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't duplicate the database.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={!!source}
+      onClose={onClose}
+      title="Duplicate database"
+      description={source ? `Create an exact copy of “${source}” under a new name.` : undefined}
+    >
+      {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't duplicate" description={error} />}
+      <AlertBanner
+        variant="info"
+        title="This copies everything"
+        description="The new database starts as a full copy of the source — its data, users, and files. The original is left untouched."
+      />
+      <div className="mt-4 space-y-2">
+        <Label htmlFor="dup-name">New database name</Label>
+        <Input
+          id="dup-name"
+          placeholder="staging"
+          value={name}
+          autoFocus
+          onChange={(e) => { setName(e.target.value.toLowerCase()); setError(null); }}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+        <p className="text-xs text-muted">A short suffix — your instance prefix is added automatically.</p>
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={loading}>Cancel</Button>
+        <ActionButton loading={loading} loadingText="Starting…" onClick={submit}>
+          <CopyPlus className="size-4" />
+          Duplicate
+        </ActionButton>
+      </div>
+    </Dialog>
+  );
+}
+
+function UpgradeModulesDialog({
+  dbName,
+  instanceId,
+  onClose,
+  onDone,
+}: {
+  dbName: string | null;
+  instanceId: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [modules, setModules] = React.useState("");
+  const [phase, setPhase] = React.useState<"idle" | "running" | "done" | "failed">("idle");
+  const [error, setError] = React.useState<string | null>(null);
+  const [report, setReport] = React.useState("");
+
+  React.useEffect(() => {
+    if (dbName) {
+      setModules("");
+      setPhase("idle");
+      setError(null);
+      setReport("");
+    }
+  }, [dbName]);
+
+  const start = async () => {
+    if (!dbName) return;
+    setError(null);
+    setReport("");
+    setPhase("running");
+    let opId: number;
+    try {
+      const res = await api.dbUpgrade(instanceId, dbName, modules);
+      opId = res.op_id;
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't start the upgrade.");
+      setPhase("idle");
+      return;
+    }
+    // Poll the op until done/failed. A live module upgrade can take a
+    // while on a big database, so we watch up to ~20 min; the site
+    // stays online throughout. A few network blips are tolerated.
+    const DEADLINE_MS = 20 * 60 * 1000;
+    const startedAt = Date.now();
+    let misses = 0;
+    for (;;) {
+      if (Date.now() - startedAt > DEADLINE_MS) {
+        setError("This is taking longer than expected — it may still be finishing in the background. Check back shortly.");
+        setPhase("failed");
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+      let op;
+      try {
+        op = await api.dbOperation(instanceId, opId);
+        misses = 0;
+      } catch {
+        if (++misses > 20) {
+          setError("Lost connection while upgrading. The upgrade may still be running.");
+          setPhase("failed");
+          return;
+        }
+        continue;
+      }
+      if (op.state === "done") {
+        setReport(op.output || "");
+        setPhase("done");
+        onDone();
+        return;
+      }
+      if (op.state === "failed") {
+        setReport(op.output || "");
+        setError(op.error || "The upgrade didn't complete.");
+        setPhase("failed");
+        onDone();
+        return;
+      }
+      // still running — keep polling
+    }
+  };
+
+  const busy = phase === "running";
+
+  return (
+    <Dialog
+      open={!!dbName}
+      onClose={onClose}
+      title="Upgrade modules"
+      description={dbName ? `Update installed modules on “${dbName}”.` : undefined}
+    >
+      {error && (
+        <AlertBanner
+          className="mb-4"
+          variant={phase === "failed" ? "danger" : "warning"}
+          title="Upgrade"
+          description={error}
+        />
+      )}
+      {phase === "done" && !error && (
+        <AlertBanner
+          className="mb-4"
+          variant="success"
+          title="Upgrade complete"
+          description="Your modules were upgraded and your instance stayed online the whole time."
+        />
+      )}
+
+      <AlertBanner
+        variant="info"
+        title="No downtime"
+        description="The upgrade runs live — your site stays up. You may notice a brief slowdown while it finishes."
+      />
+
+      <div className="mt-4 space-y-2">
+        <Label htmlFor="upg-mods">Modules to upgrade</Label>
+        <Input
+          id="upg-mods"
+          placeholder="e.g. sale, stock, account"
+          value={modules}
+          autoFocus
+          disabled={busy || phase === "done"}
+          onChange={(e) => setModules(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !busy && phase !== "done" && start()}
+        />
+        <p className="text-xs text-muted">
+          Separate several with commas. Use the module's technical name
+          (e.g. <code className="rounded bg-border/60 px-1 font-mono">sale</code>),
+          or <code className="rounded bg-border/60 px-1 font-mono">all</code> to
+          upgrade everything installed.
+        </p>
+      </div>
+
+      {report && (
+        <div className="mt-4 space-y-2">
+          <Label>Report</Label>
+          <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-3 text-xs text-muted">
+            {report}
+          </pre>
+        </div>
+      )}
+
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={busy}>
+          {phase === "done" || phase === "failed" ? "Close" : "Cancel"}
+        </Button>
+        {phase !== "done" && (
+          <ActionButton loading={busy} loadingText="Upgrading…" onClick={start}>
+            <RefreshCw className="size-4" />
+            Upgrade
+          </ActionButton>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
+// Cheap, fail-fast client check: a real .zip starts with the local-file
+// magic "PK\x03\x04". This catches an obviously-wrong file before we
+// upload a (potentially huge) file; the server then does the
+// authoritative integrity + Odoo-backup check before touching any DB.
+async function looksLikeZip(file: File): Promise<boolean> {
+  try {
+    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    return head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+  } catch {
+    return false;
+  }
+}
+
+function RestoreDatabaseDialog({
+  open,
+  instanceId,
+  existing,
+  onClose,
+  onDone,
+}: {
+  open: boolean;
+  instanceId: number;
+  existing: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [file, setFile] = React.useState<File | null>(null);
+  const [fileError, setFileError] = React.useState<string | null>(null);
+  const [target, setTarget] = React.useState("");
+  const [ack, setAck] = React.useState(false);
+  const [phase, setPhase] = React.useState<"idle" | "uploading" | "starting" | "done">("idle");
+  const [progress, setProgress] = React.useState(0);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (open) {
+      setFile(null);
+      setFileError(null);
+      setTarget("");
+      setAck(false);
+      setPhase("idle");
+      setProgress(0);
+      setError(null);
+    }
+  }, [open]);
+
+  const busy = phase === "uploading" || phase === "starting";
+  const validName = /^[a-z][a-z0-9_]{2,40}$/.test(target);
+  // existing holds full names ("acme_prod"); the customer types a suffix.
+  const overwrite = !!target && existing.some((n) => n === target || n.endsWith("_" + target));
+  const canSubmit = !!file && !fileError && validName && (!overwrite || ack) && !busy;
+
+  const pickFile = async (f: File | null) => {
+    setError(null);
+    setFileError(null);
+    setFile(f);
+    if (f) {
+      if (!f.name.toLowerCase().endsWith(".zip") || !(await looksLikeZip(f))) {
+        setFileError("That doesn't look like a .zip backup. Choose an Odoo backup file (.zip).");
+      }
+    }
+  };
+
+  const start = async () => {
+    if (!canSubmit || !file) return;
+    setError(null);
+    try {
+      setPhase("uploading");
+      setProgress(0);
+      const { backup_id, upload_url } = await api.dbRestoreUploadUrl(instanceId, target);
+      await uploadToBucket(upload_url, file, setProgress);
+      setPhase("starting");
+      await api.dbRestoreStart(instanceId, backup_id);
+      setPhase("done");
+      onDone();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "The restore couldn't be started.");
+      setPhase("idle");
+    }
+  };
+
+  const pct = Math.round(progress * 100);
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Restore from file"
+      description="Upload one of your own Odoo backups and restore it into a database."
+    >
+      {error && <AlertBanner className="mb-4" variant="danger" title="Restore" description={error} />}
+
+      <div className="space-y-2">
+        <Label htmlFor="restore-file">Backup file</Label>
+        <Input
+          id="restore-file"
+          type="file"
+          accept=".zip"
+          disabled={busy}
+          onChange={(e) => pickFile(e.target.files?.[0] || null)}
+        />
+        {fileError ? (
+          <p className="text-xs text-danger">{fileError}</p>
+        ) : (
+          <p className="text-xs text-muted">
+            An Odoo backup in <code className="rounded bg-border/60 px-1 font-mono">.zip</code> format
+            (database + filestore). It uploads straight to secure storage — large backups
+            are fine and won't time out. We verify the file before changing anything.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-4 space-y-2">
+        <Label htmlFor="restore-target">Restore into database</Label>
+        <Input
+          id="restore-target"
+          placeholder="e.g. production"
+          value={target}
+          disabled={busy}
+          onChange={(e) => setTarget(e.target.value.toLowerCase())}
+        />
+        <p className="text-xs text-muted">
+          Type a new name to create a database from the backup, or an existing
+          one to replace it. Your instance prefix is added automatically.
+        </p>
+      </div>
+
+      {overwrite && (
+        <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={ack}
+            disabled={busy}
+            onChange={(e) => setAck(e.target.checked)}
+          />
+          <span>
+            A database matching <span className="font-medium">{target}</span> already
+            exists. Restoring <span className="font-medium">replaces it entirely</span> —
+            its current data is overwritten and can't be recovered. Other databases
+            stay online.
+          </span>
+        </label>
+      )}
+
+      {phase === "uploading" && (
+        <div className="mt-4">
+          <div className="mb-1 flex justify-between text-xs text-muted">
+            <span>Uploading…</span>
+            <span>{pct}%</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-border">
+            <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+      {phase === "starting" && (
+        <p className="mt-4 text-sm text-muted">Upload complete — verifying and starting the restore…</p>
+      )}
+
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
+        <ActionButton
+          variant={overwrite ? "danger" : "default"}
+          loading={busy}
+          loadingText={phase === "starting" ? "Starting…" : "Uploading…"}
+          disabled={!canSubmit}
+          onClick={start}
+        >
+          <UploadCloud className="size-4" />
+          Upload &amp; restore
+        </ActionButton>
       </div>
     </Dialog>
   );

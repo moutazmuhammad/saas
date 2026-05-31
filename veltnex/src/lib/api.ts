@@ -278,6 +278,15 @@ export interface StatusData {
   db_ops_running: boolean;
 }
 
+export interface DbOperationStatus {
+  id: number;
+  operation: "create" | "duplicate" | "drop" | "upgrade";
+  db_name: string;
+  state: "running" | "done" | "failed";
+  error: string;
+  output: string;
+}
+
 export interface DbListData {
   databases: { name: string; login: string }[];
   ready: boolean;
@@ -343,6 +352,27 @@ export const api = {
     }),
   dbDrop: (id: number, name: string) =>
     rpc<{ db_name: string }>(`/saas/api/v1/instances/${id}/databases/drop`, { name }),
+  dbDuplicate: (id: number, source: string, name: string) =>
+    rpc<{ db_name: string }>(`/saas/api/v1/instances/${id}/databases/duplicate`, {
+      source,
+      name,
+    }),
+  dbRestoreUploadUrl: (id: number, name: string) =>
+    rpc<{ backup_id: number; upload_url: string; db_name: string }>(
+      `/saas/api/v1/instances/${id}/databases/restore/upload-url`,
+      { name },
+    ),
+  dbRestoreStart: (id: number, backupId: number) =>
+    rpc(`/saas/api/v1/instances/${id}/databases/restore/start`, {
+      backup_id: backupId,
+    }),
+  dbUpgrade: (id: number, name: string, modules: string) =>
+    rpc<{ db_name: string; op_id: number }>(
+      `/saas/api/v1/instances/${id}/databases/upgrade`,
+      { name, modules },
+    ),
+  dbOperation: (id: number, opId: number) =>
+    rpc<DbOperationStatus>(`/saas/api/v1/instances/${id}/databases/operation/${opId}`),
   dbBackup: (id: number, name: string, format: "zip" | "dump" = "zip") =>
     rpc<{ backup_id: number }>(`/saas/api/v1/instances/${id}/databases/backup`, { name, format }),
   dailyBackupEnable: (id: number) =>
@@ -375,6 +405,38 @@ export const api = {
   invoices: () => rpc<ApiInvoice[]>("/saas/api/v1/invoices"),
   invoice: (id: number) => rpc<ApiInvoice>(`/saas/api/v1/invoices/${id}`),
 };
+
+/**
+ * Upload a file straight to the bucket using a presigned PUT URL.
+ * Bypasses Odoo entirely (no worker held, no request timeout), so it
+ * scales to large backup files. Reports progress 0..1 via onProgress.
+ *
+ * Note: the bucket must allow cross-origin PUT from this app's origin
+ * (a one-time CORS rule), and the Content-Type must match what the
+ * presigned URL was signed with (application/zip).
+ */
+export function uploadToBucket(
+  url: string,
+  file: File | Blob,
+  onProgress?: (fraction: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url, true);
+    xhr.setRequestHeader("Content-Type", "application/zip");
+    xhr.upload.onprogress = (e) => {
+      if (onProgress && e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new ApiError("The upload was rejected by storage.", "upload_failed"));
+    };
+    xhr.onerror = () =>
+      reject(new ApiError("The upload failed. Check your connection and try again.", "upload_failed"));
+    xhr.onabort = () => reject(new ApiError("Upload cancelled.", "upload_cancelled"));
+    xhr.send(file);
+  });
+}
 
 /** SSE URL for an instance's live container logs (served by saas_core). */
 export function logStreamUrl(instanceId: number, tail = 100) {

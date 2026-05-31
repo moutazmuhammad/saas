@@ -1,4 +1,4 @@
-from odoo import api, fields, models
+from odoo import api, fields, models, _
 
 
 class ResConfigSettings(models.TransientModel):
@@ -378,7 +378,6 @@ class ResConfigSettings(models.TransientModel):
     # ========== Backup Storage ==========
     saas_backup_provider = fields.Selection([
         ('aws', 'AWS S3'),
-        ('gcs', 'Google Cloud Storage'),
         ('digitalocean', 'DigitalOcean Spaces'),
     ], string='Backup Provider',
         config_parameter='saas_backup.provider',
@@ -399,13 +398,6 @@ class ResConfigSettings(models.TransientModel):
     saas_backup_secret_key = fields.Char(
         string='Secret Key',
         config_parameter='saas_backup.secret_key',
-    )
-    saas_backup_service_account_key_file = fields.Binary(
-        string='Service Account JSON Key',
-        help='Upload the GCP service account key JSON file.',
-    )
-    saas_backup_service_account_key_filename = fields.Char(
-        string='Key Filename',
     )
     saas_backup_endpoint = fields.Char(
         string='Endpoint URL',
@@ -443,10 +435,6 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.merge_snapshot_into_renewal_invoice',
             'True' if self.saas_merge_snapshot_into_renewal_invoice else 'False',
         )
-        if self.saas_backup_service_account_key_file:
-            import base64
-            key_json = base64.b64decode(self.saas_backup_service_account_key_file).decode('utf-8')
-            ICP.set_param('saas_backup.service_account_key', key_json)
         return res
 
     @api.model
@@ -468,11 +456,28 @@ class ResConfigSettings(models.TransientModel):
         res['saas_merge_snapshot_into_renewal_invoice'] = ICP.get_param(
             'saas_master.merge_snapshot_into_renewal_invoice', 'False',
         ) == 'True'
-        sa_key = ICP.get_param('saas_backup.service_account_key', '')
-        if sa_key:
-            import base64
-            res['saas_backup_service_account_key_file'] = base64.b64encode(
-                sa_key.encode('utf-8')
-            )
-            res['saas_backup_service_account_key_filename'] = 'service_account.json'
         return res
+
+    def action_apply_bucket_cors(self):
+        """Configure the storage bucket's CORS so customers' browsers can
+        upload restore files straight to it (presigned PUT). Persists the
+        current settings first, then applies the policy via the bucket
+        API using the configured credentials — no cloud-console trip."""
+        self.ensure_one()
+        # Make sure freshly-typed provider/keys/bucket are saved before
+        # we open a client against them.
+        self.set_values()
+        origins = self.env['saas.instance.backup'].apply_bucket_cors()
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'type': 'success',
+                'title': _("Bucket ready for uploads"),
+                'message': _(
+                    "Browser uploads (restore from file) are now allowed "
+                    "from: %s"
+                ) % ', '.join(origins),
+                'sticky': False,
+            },
+        }

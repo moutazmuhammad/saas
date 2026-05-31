@@ -4741,7 +4741,7 @@ class SaasInstance(models.Model):
                 "if you're seeing this, a stale code path is still calling "
                 "the zip restore on a restic backup."
             ))
-        if not backup.backup_path:
+        if not backup.bucket_path:
             raise UserError(_(
                 "Backup record has no cloud object path — nothing to "
                 "download. This row is probably a failed or partial "
@@ -5813,6 +5813,31 @@ class SaasInstance(models.Model):
                     _("Failed to download backup:\n%s\n%s") % (stdout, stderr)
                 )
 
+            # 2b. Validate the archive BEFORE touching the database. The
+            # destructive dropdb is below — if this isn't a real, intact
+            # Odoo backup we must bail now, while the current database is
+            # still untouched. ``zipfile -l`` reads only the central
+            # directory (cheap, no full read) and fails outright on a
+            # non-zip or a truncated/corrupt archive; we additionally
+            # require ``dump.sql`` so a random valid zip can't slip
+            # through and get half-restored.
+            self._append_log("Validating backup archive...")
+            v_ec, v_out, v_err = ssh.execute(
+                'python3 -m zipfile -l %s 2>&1' % shlex.quote(tmp_zip),
+                timeout=120,
+            )
+            if v_ec != 0:
+                raise UserError(_(
+                    "The backup file isn't a valid .zip archive (it may be "
+                    "corrupt or have uploaded incompletely). Nothing was "
+                    "changed."
+                ))
+            if 'dump.sql' not in v_out:
+                raise UserError(_(
+                    "This .zip doesn't look like an Odoo database backup — "
+                    "it has no dump.sql inside. Nothing was changed."
+                ))
+
             # 3. Extract
             self._append_log("Extracting...")
             ssh.execute('rm -rf %s && mkdir -p %s' % (
@@ -5828,6 +5853,20 @@ class SaasInstance(models.Model):
                 raise UserError(
                     _("Failed to extract backup:\n%s\n%s") % (stdout, stderr)
                 )
+
+            # 3b. Confirm the dump actually extracted and is non-empty
+            # before we drop the live database — last gate before the
+            # destructive step.
+            chk_ec, chk_out, _chk = ssh.execute(
+                'test -s %s && echo OK || echo MISSING'
+                % shlex.quote('%s/dump.sql' % extract_dir),
+                timeout=60,
+            )
+            if 'OK' not in chk_out:
+                raise UserError(_(
+                    "The backup is missing its database dump after "
+                    "extraction — aborting before any change."
+                ))
 
             # 4. Drop current DB and recreate empty.
             # Both commands MUST succeed — otherwise psql -f below would
@@ -8659,6 +8698,241 @@ class SaasInstance(models.Model):
             thread_name='saas_db_upgrade_%s_%s' % (full_name, module_norm),
         )
         return op
+
+    def _parse_upgrade_modules(self, modules):
+        """Normalise + validate a customer-typed module list.
+
+        Accepts comma- or space-separated technical names. Returns
+        ``['all']`` if the customer asked to upgrade everything, else a
+        de-duplicated list of validated module names. Same per-name
+        validation as the recovery path so a name can never smuggle
+        shell/CLI tokens downstream.
+        """
+        raw = (modules or '').replace(',', ' ').split()
+        seen, out = set(), []
+        for token in raw:
+            m = token.strip().lower()
+            if not m or m in seen:
+                continue
+            seen.add(m)
+            if m == 'all':
+                return ['all']
+            if not self._UPGRADE_MODULE_RE.match(m):
+                raise UserError(_(
+                    "'%s' isn't a valid module name. Use lowercase "
+                    "letters, digits and underscores (e.g. 'sale', "
+                    "'stock_account')."
+                ) % token)
+            out.append(m)
+        if not out:
+            raise UserError(_("Please enter at least one module to upgrade."))
+        return out
+
+    def hosting_db_upgrade_modules(self, name, modules):
+        """Upgrade one or more modules on a customer DB with NO downtime.
+
+        Runs Odoo's own ``button_immediate_upgrade`` inside the *live*
+        container via ``docker compose exec`` (no ``stop``, no one-shot
+        ``run``): the module migration runs in a short-lived python
+        process, and the running workers pick up the rebuilt registry
+        through Odoo's standard registry-signaling — so the customer's
+        site stays up throughout. There may be a brief blip while the
+        migration holds its locks, but the instance never goes down.
+
+        Contrast :meth:`hosting_db_upgrade_module` — the recovery path
+        that *stops* the container, for when the live Odoo is already
+        returning 500s and exec/XML-RPC into it won't work.
+
+        Returns the captured stdout/stderr. Raises ``UserError`` on
+        failure, with the captured output attached as
+        ``_saas_upgrade_output`` so the portal can render the report.
+        """
+        self._ensure_hosting_for_db_ops()
+        name = self._hosting_db_full_name(name)
+        if name not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % name
+            )
+        mod_list = self._parse_upgrade_modules(modules)
+
+        # The script runs inside the live container. It marks the
+        # requested modules 'to upgrade' and triggers Odoo's in-process
+        # registry rebuild (``button_immediate_upgrade``); the live
+        # workers reload via the registry-signaling sequence right
+        # after. We capture the module names BEFORE the call (the env is
+        # reset during the rebuild) and ``os._exit(0)`` on success so a
+        # noisy cursor teardown can't turn a good run into a non-zero
+        # exit. Markers tell a real success from "done" text in a log.
+        script = (
+            "from odoo.modules.registry import Registry\n"
+            "from odoo import api, SUPERUSER_ID\n"
+            "db = os.environ['SAAS_DB']\n"
+            "names = [m for m in os.environ['SAAS_MODULES'].split() if m]\n"
+            "registry = Registry(db)\n"
+            "cr = registry.cursor()\n"
+            "env = api.Environment(cr, SUPERUSER_ID, {})\n"
+            "Mod = env['ir.module.module']\n"
+            "if names == ['all']:\n"
+            "    mods = Mod.search([('state', '=', 'installed')])\n"
+            "else:\n"
+            "    mods = Mod.search([('name', 'in', names)])\n"
+            "    found = set(mods.mapped('name'))\n"
+            "    missing = [n for n in names if n not in found]\n"
+            "    if missing:\n"
+            "        sys.stderr.write('SAAS_NOT_FOUND:' + ','.join(missing) + '\\n')\n"
+            "        sys.exit(2)\n"
+            "    bad = mods.filtered(lambda m: m.state != 'installed')\n"
+            "    if bad:\n"
+            "        sys.stderr.write('SAAS_NOT_INSTALLED:' + ','.join(bad.mapped('name')) + '\\n')\n"
+            "        sys.exit(2)\n"
+            "if not mods:\n"
+            "    sys.stderr.write('SAAS_NOTHING\\n')\n"
+            "    sys.exit(2)\n"
+            "targets = ','.join(sorted(mods.mapped('name')))\n"
+            "print('---SAAS_UPGRADE_BEGIN---')\n"
+            "print('upgrading=%s' % targets)\n"
+            "sys.stdout.flush()\n"
+            "mods.button_immediate_upgrade()\n"
+            "print('upgraded=%s' % targets)\n"
+            "print('---SAAS_UPGRADE_END---')\n"
+            "sys.stdout.flush()\n"
+            "os._exit(0)\n"
+        )
+        script_env = {'SAAS_DB': name, 'SAAS_MODULES': ' '.join(mod_list)}
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            ec, sout, serr = self._docker_exec_python(
+                ssh, script, env=script_env, timeout=1800,
+            )
+        combined = (sout or '') + (serr or '')
+
+        if 'SAAS_NOT_FOUND:' in combined:
+            bad = combined.split('SAAS_NOT_FOUND:', 1)[1].splitlines()[0]
+            raise UserError(_(
+                "These modules aren't installed on this database: %s. "
+                "Check the names and try again."
+            ) % bad)
+        if 'SAAS_NOT_INSTALLED:' in combined:
+            bad = combined.split('SAAS_NOT_INSTALLED:', 1)[1].splitlines()[0]
+            raise UserError(_(
+                "These modules exist but aren't installed, so there's "
+                "nothing to upgrade: %s."
+            ) % bad)
+        if 'SAAS_NOTHING' in combined:
+            raise UserError(_("No installed modules matched your request."))
+        if ec != 0 or '---SAAS_UPGRADE_END---' not in sout:
+            exc = UserError(_(
+                "The upgrade didn't complete successfully. See the "
+                "report below for details."
+            ))
+            exc._saas_upgrade_output = combined
+            raise exc
+        return combined
+
+    def hosting_db_upgrade_modules_async(self, name, modules):
+        """Queue a no-downtime module upgrade and return the tracking op."""
+        self._ensure_hosting_for_db_ops()
+        full_name = self._hosting_db_full_name(name)
+        # Validate the module list upfront so a bad name is a synchronous
+        # error, not a ``failed`` record the customer has to discover.
+        mod_list = self._parse_upgrade_modules(modules)
+        if full_name not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % full_name
+            )
+        Op = self.env['saas.instance.db.operation']
+        if Op.search_count([
+            ('instance_id', '=', self.id),
+            ('db_name', '=', full_name),
+            ('state', '=', 'running'),
+        ]):
+            raise UserError(_(
+                "Another operation is already in progress on '%s'. "
+                "Please wait for it to finish."
+            ) % full_name)
+        op = Op.create({
+            'instance_id': self.id,
+            'db_name': full_name,
+            'operation': 'upgrade',
+            'module_name': ' '.join(mod_list),
+        })
+        run_in_background(
+            op, '_run_upgrade_live',
+            thread_name='saas_db_upgmod_%s' % full_name,
+        )
+        return op
+
+    def hosting_db_restore_prepare_upload(self, name):
+        """Create a placeholder backup record + a presigned PUT URL.
+
+        Lets the customer upload their OWN local Odoo backup (.zip)
+        straight to the bucket from the browser — the bytes never pass
+        through Odoo, so no worker is held and there's no request
+        timeout, at any size up to the bucket's single-PUT limit. The
+        record is ephemeral (reaped within a couple of hours — the
+        uploaded object is not retained). Returns ``(backup, url)``.
+        """
+        self._ensure_hosting_for_db_ops()
+        # ``_hosting_db_full_name`` enforces the instance prefix + a valid
+        # identifier — that's the ownership boundary. The target may be a
+        # NEW database (created from the backup) or an existing one
+        # (replaced); both are allowed.
+        full = self._hosting_db_full_name(name)
+        if self.plan_id and self.plan_id.is_trial_plan:
+            raise UserError(_(
+                "Restore isn't available on trial plans. Please upgrade "
+                "to a paid plan."
+            ))
+        Backup = self.env['saas.instance.backup']
+        now = fields.Datetime.now()
+        ts = now.strftime('%Y-%m-%d_%H-%M-%S')
+        object_key = 'ondemand/restore-upload/%s_%s.zip' % (full, ts)
+        backup = Backup.create({
+            'instance_id': self.id,
+            'db_name': full,
+            'name': 'Restore upload %s' % full,
+            # Placeholder until the browser finishes the PUT; flipped to
+            # 'done' by hosting_db_restore_from_upload once we confirm
+            # the object actually landed in the bucket.
+            'state': 'running',
+            'is_full_instance': False,
+            'ephemeral': True,
+            'format': 'zip',
+            'bucket_path': object_key,
+            'expires_at': now + datetime.timedelta(hours=2),
+        })
+        upload_url = backup._generate_presigned_put_url(object_key)
+        return backup, upload_url
+
+    def hosting_db_restore_from_upload(self, backup_id):
+        """Verify an uploaded object, then restore it into its db_name.
+
+        Reuses the standard background restore (``action_restore_backup``
+        -> ``_do_restore_backup``): download from the bucket to the
+        docker host, drop + recreate the target DB, ``psql`` the dump
+        in, restore the filestore. All on the host with generous
+        timeouts, so it scales to large databases without tying up the
+        portal. The uploaded object is reaped afterwards (ephemeral).
+        """
+        self._ensure_hosting_for_db_ops()
+        backup = self.env['saas.instance.backup'].browse(backup_id)
+        if (not backup.exists() or backup.instance_id != self
+                or not backup.ephemeral or backup.is_full_instance):
+            raise UserError(_("That upload isn't available to restore."))
+        size = backup._bucket_object_size(backup.bucket_path) or 0
+        if not size:
+            raise UserError(_(
+                "We couldn't find your uploaded file. The upload may not "
+                "have finished — please try again."
+            ))
+        backup.write({
+            'state': 'done',
+            'size_mb': round(size / (1024 * 1024), 2),
+        })
+        # Background restore; flips the instance to 'provisioning' while
+        # it runs and back to running when done (other databases on the
+        # instance keep serving — only the target DB is replaced).
+        self.action_restore_backup(backup.id)
+        return backup
 
     def hosting_db_reset_admin_password(self, name, new_password,
                                         login=None):
