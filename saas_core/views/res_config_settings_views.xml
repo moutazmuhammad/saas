@@ -151,10 +151,11 @@
                                  string="Services: sizing recommendation"
                                  help="Display-only. The concurrent-users-per-worker range shown to help a customer pick a Services size (light → heavy usage).">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_custom_plan_users_per_worker_min" string="Users / worker: light → heavy" class="col-6 col-lg-6 o_light_label"/>
-                                    <field name="saas_custom_plan_users_per_worker_min" class="col-2"/>
-                                    <field name="saas_custom_plan_users_per_worker_max" class="col-2"/>
+                                <div class="mt8">
+                                    <label for="saas_custom_plan_users_per_worker_min" string="Users / worker: light → heavy" class="o_light_label" style="display:inline-block;min-width:230px;"/>
+                                    <field name="saas_custom_plan_users_per_worker_min" class="oe_inline" style="max-width:5rem;"/>
+                                    <span class="text-muted mx-2">→</span>
+                                    <field name="saas_custom_plan_users_per_worker_max" class="oe_inline" style="max-width:5rem;"/>
                                 </div>
                             </div>
                         </setting>
@@ -216,12 +217,12 @@
                             <field name="saas_custom_min_is_nearest_tier"/>
                             <div class="content-group mt8"
                                  invisible="not saas_custom_min_is_nearest_tier">
-                                <div class="row">
+                                <div>
                                     <label for="saas_tier_floor_buffer_pct"
                                            string="Allow custom up to"
-                                           class="col-4 col-lg-4 o_light_label"/>
-                                    <field name="saas_tier_floor_buffer_pct" class="col-2"/>
-                                    <span class="text-muted ms-1">% below the nearest tier (0 = hard floor)</span>
+                                           class="o_light_label" style="display:inline-block;min-width:140px;"/>
+                                    <field name="saas_tier_floor_buffer_pct" class="oe_inline" style="max-width:5rem;"/>
+                                    <span class="text-muted ms-2">% below the nearest tier (0 = hard floor)</span>
                                 </div>
                             </div>
                         </setting>
@@ -235,15 +236,15 @@
                                  string="Daily backup add-on (hosting)"
                                  help="Optional add-on at hosting checkout. Backs up every database on the instance daily and keeps the last 7 days. Billed monthly.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_hosting_daily_backup_price" string="Monthly price" class="col-5 col-lg-5 o_light_label"/>
-                                    <field name="saas_hosting_daily_backup_price" class="col-2"/>
-                                    <span class="text-muted ms-1">/ month</span>
+                                <div class="mt8">
+                                    <label for="saas_hosting_daily_backup_price" string="Monthly price" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <field name="saas_hosting_daily_backup_price" class="oe_inline" style="max-width:7rem;"/>
+                                    <span class="text-muted ms-2">/ month</span>
                                 </div>
-                                <div class="row mt8">
-                                    <label for="saas_hosting_snapshot_retention_surcharge" string="Retention surcharge" class="col-5 col-lg-5 o_light_label"/>
-                                    <field name="saas_hosting_snapshot_retention_surcharge" class="col-2"/>
-                                    <span class="text-muted ms-1">one-time, on first activation after reactivation</span>
+                                <div class="mt8">
+                                    <label for="saas_hosting_snapshot_retention_surcharge" string="Retention surcharge" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <field name="saas_hosting_snapshot_retention_surcharge" class="oe_inline" style="max-width:7rem;"/>
+                                    <span class="text-muted ms-2">one-time, on first activation after reactivation</span>
                                 </div>
                             </div>
                         </setting>
@@ -251,10 +252,11 @@
                                  string="Services: backup count"
                                  help="How many backups a Services plan keeps. Scales with plan size: the smallest plan keeps the first number, the largest keeps the second. (Hosting retention is fixed at 7 days.)">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_custom_plan_min_backups" string="Backups: smallest → largest plan" class="col-6 col-lg-6 o_light_label"/>
-                                    <field name="saas_custom_plan_min_backups" class="col-2"/>
-                                    <field name="saas_custom_plan_max_backups" class="col-2"/>
+                                <div class="mt8">
+                                    <label for="saas_custom_plan_min_backups" string="Backups: smallest → largest plan" class="o_light_label" style="display:inline-block;min-width:230px;"/>
+                                    <field name="saas_custom_plan_min_backups" class="oe_inline" style="max-width:5rem;"/>
+                                    <span class="text-muted mx-2">→</span>
+                                    <field name="saas_custom_plan_max_backups" class="oe_inline" style="max-width:5rem;"/>
                                 </div>
                             </div>
                         </setting>
@@ -278,13 +280,13 @@
                                  string="Expansion block (preferred)"
                                  help="When a block price is set, storage above the plan allowance is billed in whole blocks of this size — predictable for the customer. Leave the price at 0 to fall back to the per-GB rate below.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_storage_block_gb" string="Block size (GB)" class="col-5 col-lg-5 o_light_label"/>
-                                    <field name="saas_storage_block_gb" class="col-2"/>
+                                <div class="mt8">
+                                    <label for="saas_storage_block_gb" string="Block size (GB)" class="o_light_label" style="display:inline-block;min-width:170px;"/>
+                                    <field name="saas_storage_block_gb" class="oe_inline" style="max-width:7rem;"/>
                                 </div>
-                                <div class="row mt8">
-                                    <label for="saas_storage_block_price" string="Block price (monthly)" class="col-5 col-lg-5 o_light_label"/>
-                                    <field name="saas_storage_block_price" class="col-2"/>
+                                <div class="mt8">
+                                    <label for="saas_storage_block_price" string="Block price (monthly)" class="o_light_label" style="display:inline-block;min-width:170px;"/>
+                                    <field name="saas_storage_block_price" class="oe_inline" style="max-width:7rem;"/>
                                 </div>
                             </div>
                         </setting>
@@ -292,10 +294,10 @@
                                  string="Per-GB rate (fallback)"
                                  help="Charged per extra GB over the plan limit when no expansion block is configured above. Set to 0 to suspend over-quota instances instead of charging.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_extra_storage_price_per_gb" string="Price per GB" class="col-5 col-lg-5 o_light_label"/>
-                                    <field name="saas_extra_storage_price_per_gb" class="col-2"/>
-                                    <span class="text-muted ms-1">/ billing cycle</span>
+                                <div class="mt8">
+                                    <label for="saas_extra_storage_price_per_gb" string="Price per GB" class="o_light_label" style="display:inline-block;min-width:160px;"/>
+                                    <field name="saas_extra_storage_price_per_gb" class="oe_inline" style="max-width:7rem;"/>
+                                    <span class="text-muted ms-2">/ billing cycle</span>
                                 </div>
                             </div>
                         </setting>
@@ -307,10 +309,10 @@
                                  string="Free trial duration"
                                  help="Days a free trial lasts. After expiry the instance is suspended until the client pays.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_trial_days" string="Duration" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_trial_days" class="col-2"/>
-                                    <span class="text-muted ms-1">days</span>
+                                <div class="mt8">
+                                    <label for="saas_trial_days" string="Duration" class="o_light_label" style="display:inline-block;min-width:90px;"/>
+                                    <field name="saas_trial_days" class="oe_inline" style="max-width:6rem;"/>
+                                    <span class="text-muted ms-2">days</span>
                                 </div>
                             </div>
                         </setting>
@@ -318,9 +320,9 @@
                                  string="Max instances per customer"
                                  help="Maximum number of active instances a single customer can have. 0 = unlimited.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_max_instances_per_user" string="Limit" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_max_instances_per_user" class="col-2"/>
+                                <div class="mt8">
+                                    <label for="saas_max_instances_per_user" string="Limit" class="o_light_label" style="display:inline-block;min-width:90px;"/>
+                                    <field name="saas_max_instances_per_user" class="oe_inline" style="max-width:6rem;"/>
                                 </div>
                             </div>
                         </setting>
@@ -332,9 +334,9 @@
                                  string="Support email"
                                  help="Shown to clients in notifications and portal pages when they need to contact support.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_support_email" string="Email" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_support_email" class="col-4" placeholder="support@example.com"/>
+                                <div class="mt8">
+                                    <label for="saas_support_email" string="Email" class="o_light_label" style="display:inline-block;min-width:90px;"/>
+                                    <field name="saas_support_email" class="oe_inline" style="min-width:18rem;" placeholder="support@example.com"/>
                                 </div>
                             </div>
                         </setting>
@@ -342,9 +344,9 @@
                                  string="Data restoration fee"
                                  help="One-off fee charged when restoring data from a retained backup to a client's new instance. An invoice is generated automatically. 0 = free.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_data_restoration_fee" string="Fee" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_data_restoration_fee" class="col-2"/>
+                                <div class="mt8">
+                                    <label for="saas_data_restoration_fee" string="Fee" class="o_light_label" style="display:inline-block;min-width:90px;"/>
+                                    <field name="saas_data_restoration_fee" class="oe_inline" style="max-width:7rem;"/>
                                 </div>
                             </div>
                         </setting>
@@ -356,9 +358,9 @@
                                  string="Resource usage multiplier"
                                  help="Display-only. Multiplies measured CPU / RAM to estimate total usage including shared DB-server overhead. Not a billing input.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_resource_usage_multiplier" string="Multiplier" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_resource_usage_multiplier" class="col-2"/>
+                                <div class="mt8">
+                                    <label for="saas_resource_usage_multiplier" string="Multiplier" class="o_light_label" style="display:inline-block;min-width:90px;"/>
+                                    <field name="saas_resource_usage_multiplier" class="oe_inline" style="max-width:6rem;"/>
                                 </div>
                             </div>
                         </setting>
@@ -366,9 +368,9 @@
                                  string="Default starting port"
                                  help="First port number used when auto-assigning HTTP / longpolling ports to new instances.">
                             <div class="content-group">
-                                <div class="row mt8">
-                                    <label for="saas_default_instance_starting_port" string="Port" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_default_instance_starting_port" class="col-2"/>
+                                <div class="mt8">
+                                    <label for="saas_default_instance_starting_port" string="Port" class="o_light_label" style="display:inline-block;min-width:90px;"/>
+                                    <field name="saas_default_instance_starting_port" class="oe_inline" style="max-width:7rem;"/>
                                 </div>
                             </div>
                         </setting>
