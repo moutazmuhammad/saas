@@ -47,7 +47,7 @@
 
                                     <!-- Subdomain -->
                                     <div class="mb-3">
-                                        <label class="form-label">Subdomain</label>
+                                        <label class="form-label">Subdomain<a href="/help#subdomain" target="_blank" rel="noopener" class="saas-help" title="The name in front of your instance's web address, e.g. &quot;acme&quot; in acme.example.com." aria-label="Learn more">?</a></label>
                                         <div class="input-group">
                                             <span class="input-group-text">https://</span>
                                             <input type="text" name="subdomain" id="subdomain-input"
@@ -69,7 +69,7 @@
 
                                     <!-- Odoo Version -->
                                     <div class="mb-3">
-                                        <label class="form-label">Odoo Version</label>
+                                        <label class="form-label">Odoo Version<a href="/help#odoo-version" target="_blank" rel="noopener" class="saas-help" title="Which release of Odoo your instance runs (e.g. 17, 18, 19), Community or Enterprise." aria-label="Learn more">?</a></label>
                                         <select name="odoo_version_id" class="form-select" required="required">
                                             <option value="">Select version...</option>
                                             <t t-foreach="versions" t-as="ver">
@@ -88,7 +88,7 @@
                                          intentionally kept out of the URL. -->
                                     <t t-if="show_region_picker">
                                         <div class="mb-3">
-                                            <label class="form-label">Region</label>
+                                            <label class="form-label">Region<a href="/help#region" target="_blank" rel="noopener" class="saas-help" title="The data-centre location your instance runs in. Pick the one closest to your users. Fixed after creation." aria-label="Learn more">?</a></label>
                                             <select name="region_id" class="form-select"
                                                     id="region-select"
                                                     onchange="(function(s){var f=s.form;var p=new URLSearchParams();['workers','storage','billing','odoo_version_id','subdomain','domain_id','repo_url','repo_branch'].forEach(function(n){var el=f.elements[n];if(el &amp;&amp; el.value)p.set(n,el.value);});p.set('region_id',s.value);var db=f.elements['daily_backup'];if(db &amp;&amp; db.checked)p.set('daily_backup','1');var tr=f.elements['is_trial'];if(tr &amp;&amp; tr.value)p.set('is_trial',tr.value);window.location='/hosting/configure?'+p.toString();})(this)">
@@ -113,7 +113,7 @@
                                          recomputes server-side (single source of truth). -->
                                     <t t-if="form_values.get('is_trial') != '1' and show_support_picker">
                                         <div class="mb-3">
-                                            <label class="form-label">Support plan</label>
+                                            <label class="form-label">Support plan<a href="/help#support-plan" target="_blank" rel="noopener" class="saas-help" title="How fast we promise to respond when you need help. Higher tiers = faster guaranteed response." aria-label="Learn more">?</a></label>
                                             <select name="support_code" class="form-select"
                                                     id="support-select"
                                                     onchange="(function(s){var f=s.form;var p=new URLSearchParams();['workers','storage','billing','odoo_version_id','subdomain','domain_id','repo_url','repo_branch','region_id'].forEach(function(n){var el=f.elements[n];if(el &amp;&amp; el.value)p.set(n,el.value);});p.set('support_code',s.value);var db=f.elements['daily_backup'];if(db &amp;&amp; db.checked)p.set('daily_backup','1');var tr=f.elements['is_trial'];if(tr &amp;&amp; tr.value)p.set('is_trial',tr.value);window.location='/hosting/configure?'+p.toString();})(this)">
@@ -150,7 +150,7 @@
                                                        t-att-checked="daily_backup or None"/>
                                                 <label class="form-check-label" for="daily-backup-toggle">
                                                     <span class="fw-semibold">
-                                                        <i class="fas fa-shield-alt me-1"></i>Add daily backups
+                                                        <i class="fas fa-shield-alt me-1"></i>Add daily backups<a href="/help#daily-backup" target="_blank" rel="noopener" class="saas-help" title="A paid add-on: an automatic encrypted snapshot every day, last 7 days kept, so you can restore." aria-label="Learn more">?</a>
                                                     </span>
                                                     <div class="small mt-1" style="color:var(--co-text-muted,#71717A);">
                                                         Every database on this instance is dumped daily to encrypted
@@ -174,7 +174,7 @@
 
                                     <!-- Git Repo URL -->
                                     <div class="mb-3">
-                                        <label class="form-label">Repository URL</label>
+                                        <label class="form-label">Repository URL<a href="/help#repo" target="_blank" rel="noopener" class="saas-help" title="Optional: a Git repo (and branch) of your custom Odoo modules to deploy automatically." aria-label="Learn more">?</a></label>
                                         <input type="url" name="repo_url" class="form-control"
                                                placeholder="https://github.com/user/my-odoo-project.git"
                                                t-att-value="form_values.get('repo_url', '')"/>

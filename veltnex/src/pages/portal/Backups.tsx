@@ -10,6 +10,7 @@ import { AlertBanner } from "@/components/AlertBanner";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
 import { InfoCard } from "@/components/InfoCard";
+import { HelpHint } from "@/components/HelpHint";
 import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
@@ -91,7 +92,10 @@ export default function Backups() {
       />
 
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Snapshots</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          Snapshots
+          <HelpHint anchor="snapshots" className="ml-1.5" />
+        </h1>
         <p className="mt-1 text-sm text-muted">
           Automatic daily full-instance snapshots. On-demand, per-database backups are on the Databases page.
         </p>
@@ -375,7 +379,7 @@ function DailyBackupCard({
           <ShieldAlert className="size-5" />
         </span>
         <div>
-          <p className="font-medium">Daily snapshots are off</p>
+          <p className="font-medium">Daily snapshots are off<HelpHint anchor="daily-backup" className="ml-1.5" /></p>
           <p className="text-xs text-muted">
             Automatic daily full-instance snapshots{price > 0 ? `, billed ${price}/month` : ""}. Renews monthly; pauses if a renewal goes unpaid.
           </p>

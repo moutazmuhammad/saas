@@ -3844,3 +3844,32 @@ footer.bg-light.o_footer a:hover {
 #wrapwrap .o_footer_copyright {
     display: none !important;
 }
+
+/* ============================================================
+   Inline help marker ("?") — hover shows the native tooltip,
+   click opens the matching /help#anchor section in a new tab.
+   Mirrors the SPA <HelpHint> affordance on the QWeb funnel.
+   ============================================================ */
+.saas-help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    margin-left: 0.35rem;
+    border-radius: 50%;
+    border: 1px solid currentColor;
+    color: #8a94a6;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    cursor: help;
+    vertical-align: middle;
+    transition: color .15s, border-color .15s;
+}
+.saas-help:hover {
+    color: #203c86;
+    border-color: #203c86;
+    text-decoration: none;
+}

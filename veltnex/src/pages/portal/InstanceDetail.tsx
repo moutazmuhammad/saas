@@ -24,6 +24,7 @@ import { ActionButton } from "@/components/ActionButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { AlertBanner } from "@/components/AlertBanner";
 import { InfoCard } from "@/components/InfoCard";
+import { HelpHint } from "@/components/HelpHint";
 import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
@@ -343,9 +344,9 @@ export default function InstanceDetail() {
       )}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
-        <UsageCard icon={Cpu} label="CPU" value={live?.cpu ?? instance.usage.cpu} active={isRunning} live={isRunning && !!live} history={cpuHist} />
-        <UsageCard icon={MemoryStick} label="Memory" value={live?.ram ?? instance.usage.ram} active={isRunning} live={isRunning && !!live} history={ramHist} />
-        <UsageCard icon={HardDrive} label="Storage" value={instance.usage.storage} active />
+        <UsageCard icon={Cpu} label="CPU" helpAnchor="cpu-usage" value={live?.cpu ?? instance.usage.cpu} active={isRunning} live={isRunning && !!live} history={cpuHist} />
+        <UsageCard icon={MemoryStick} label="Memory" helpAnchor="ram-usage" value={live?.ram ?? instance.usage.ram} active={isRunning} live={isRunning && !!live} history={ramHist} />
+        <UsageCard icon={HardDrive} label="Storage" helpAnchor="storage-usage" value={instance.usage.storage} active />
       </div>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -432,6 +433,7 @@ function UsageCard({
   active,
   live,
   history,
+  helpAnchor,
 }: {
   icon: typeof Cpu;
   label: string;
@@ -439,6 +441,7 @@ function UsageCard({
   active: boolean;
   live?: boolean;
   history?: number[];
+  helpAnchor?: string;
 }) {
   const tone = value >= 85 ? "bg-danger" : value >= 65 ? "bg-warning" : "bg-primary-glow";
   const lineTone = value >= 85 ? "text-danger" : value >= 65 ? "text-warning" : "text-primary-glow";
@@ -448,6 +451,7 @@ function UsageCard({
         <div className="flex items-center gap-2 text-sm text-muted">
           <Icon className="size-4" />
           {label}
+          {helpAnchor && <HelpHint anchor={helpAnchor} />}
           {live && (
             <span className="ml-1 inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-success">
               <span className="size-1.5 rounded-full bg-success animate-pulse-soft" />
