@@ -33,6 +33,7 @@
                 <field name="saas_product_ids" string="Services" widget="many2many_tags"/>
                 <field name="is_trial_plan"/>
                 <field name="is_custom"/>
+                <field name="is_public_tier" string="Public"/>
                 <field name="price" widget="monetary"/>
                 <field name="currency_id" column_invisible="1"/>
                 <field name="cpu_limit" optional="show"/>
@@ -80,6 +81,13 @@
                             <field name="storage_limit"/>
                             <field name="max_backups" invisible="is_trial_plan"/>
                             <field name="recommended_users"/>
+                        </group>
+                        <group string="Public Storefront" invisible="is_trial_plan or is_custom">
+                            <field name="is_public_tier"
+                                   string="Show as a tier card on the website"/>
+                            <field name="is_recommended" invisible="not is_public_tier"/>
+                            <field name="badge" invisible="not is_public_tier"
+                                   placeholder="e.g. Most popular"/>
                         </group>
                     </group>
                 </sheet>
