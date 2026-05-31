@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowRight, Check, ShieldCheck, Cpu, HardDrive, Globe, Sparkles } from "lucide-react";
+import { ArrowRight, Check, ShieldCheck, Cpu, HardDrive, Globe, Sparkles, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertBanner } from "@/components/AlertBanner";
@@ -199,15 +199,15 @@ export default function Hosting() {
               })}
             </div>
 
-            <p className="text-center text-sm text-muted">
-              Need a different size?{" "}
-              <button
-                onClick={() => setCustomize(true)}
-                className="font-medium text-primary-glow underline-offset-2 hover:underline"
-              >
+            <div className="mt-10 flex flex-col items-center gap-3 border-t border-border pt-8">
+              <p className="text-sm text-muted">
+                Need a different size? Build one with the exact workers and storage you want.
+              </p>
+              <Button variant="secondary" size="lg" onClick={() => setCustomize(true)}>
+                <SlidersHorizontal className="size-4" />
                 Build a custom plan
-              </button>
-            </p>
+              </Button>
+            </div>
           </div>
         )}
 
