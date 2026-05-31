@@ -1,6 +1,6 @@
 {
     'name': 'SaaS Website',
-    'version': '18.0.5.0.10',
+    'version': '18.0.5.0.11',
     'category': 'SaaS',
     'summary': 'Customer-facing website for SaaS plan selection, ordering, and instance management',
     'author': 'SaaS Platform',
@@ -37,4 +37,5 @@
     },
     'installable': True,
     'auto_install': False,
+    'post_init_hook': 'post_init_hook',
 }
