@@ -675,6 +675,25 @@ class SaasApi(http.Controller):
             return err(str(e), 'create_failed')
         return ok({'db_name': op.db_name})
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/databases/duplicate',
+                type='json', auth='public')
+    def db_duplicate(self, instance_id, source=None, name=None,
+                     access_token=None, **kw):
+        """Duplicate an existing database into a new name. Runs async
+        (same in-flight tracking as create) and returns the new DB name."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        try:
+            self._require_running(instance)
+            op = instance.hosting_db_duplicate_async(
+                source=source or '', new_name=name or '',
+            )
+        except UserError as e:
+            return err(str(e), 'duplicate_failed')
+        return ok({'db_name': op.db_name})
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/drop',
                 type='json', auth='public')
     def db_drop(self, instance_id, name=None, access_token=None, **kw):

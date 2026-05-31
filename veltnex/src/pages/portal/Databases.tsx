@@ -12,6 +12,7 @@ import {
   Loader2,
   Archive,
   Download,
+  CopyPlus,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ export default function Databases() {
   const [error, setError] = React.useState<string | null>(null);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = React.useState<string | null>(null);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [backupsTarget, setBackupsTarget] = React.useState<string | null>(null);
   const [backups, setBackups] = React.useState<ApiBackup[]>([]);
@@ -88,8 +90,13 @@ export default function Databases() {
   // in `databases` (mid-create), its own row carries the spinner — so
   // exclude those here to avoid a duplicate row.
   const existingNames = new Set((data?.databases ?? []).map((d) => d.name));
+  // A create OR duplicate produces a brand-new database that doesn't
+  // appear in the list until it's built — surface those as synthetic
+  // in-flight rows so the customer sees the work immediately.
   const creatingOps = (data?.pending_ops ?? []).filter(
-    (o) => o.operation === "create" && !existingNames.has(o.db_name),
+    (o) =>
+      (o.operation === "create" || o.operation === "duplicate") &&
+      !existingNames.has(o.db_name),
   );
   // Any create in flight (existing-in-list or not) locks the button.
   const isCreating = (data?.pending_ops ?? []).some((o) => o.operation === "create");
@@ -234,7 +241,7 @@ export default function Databases() {
                     <td className="hidden px-5 py-4 text-muted sm:table-cell">—</td>
                     <td className="px-5 py-4">
                       <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                        <Loader2 className="size-3.5 animate-spin" /> Creating…
+                        <Loader2 className="size-3.5 animate-spin" /> {op.operation === "duplicate" ? "Duplicating…" : "Creating…"}
                       </span>
                     </td>
                     <td className="px-5 py-4" />
@@ -255,7 +262,7 @@ export default function Databases() {
                       <td className="px-5 py-4">
                         {pending ? (
                           <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : "Creating…"}
+                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : op === "duplicate" ? "Duplicating…" : "Creating…"}
                           </span>
                         ) : (
                           <StatusBadge status="running" label="Active" />
@@ -306,6 +313,7 @@ export default function Databases() {
                                   style={{ top: menuPos.top, right: menuPos.right }}
                                 >
                                   <MenuItem icon={Download} label="Download backup" onClick={() => { setOpenMenu(null); setBackupsTarget(db.name); }} />
+                                  <MenuItem icon={CopyPlus} label="Duplicate" onClick={() => { setOpenMenu(null); setDuplicateTarget(db.name); }} />
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
                                   <div className="border-t border-border" />
                                   <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpenMenu(null); setDropTarget(db.name); }} />
@@ -332,6 +340,17 @@ export default function Databases() {
           await api.dbCreate(instanceId, name, login, password);
           // No banner/toast — the new DB now shows as a live "Creating…"
           // row in the list, and the Create button locks until it's done.
+          await load(true);
+        }}
+      />
+
+      <DuplicateDatabaseDialog
+        source={duplicateTarget}
+        existing={data?.databases.map((d) => d.name) || []}
+        onClose={() => setDuplicateTarget(null)}
+        onDuplicate={async (source, newName) => {
+          await api.dbDuplicate(instanceId, source, newName);
+          // The copy shows up as a live "Duplicating…" row until ready.
           await load(true);
         }}
       />
@@ -491,6 +510,88 @@ function DatabaseBackupsDialog({
 
       <div className="mt-6 flex justify-end">
         <Button variant="secondary" onClick={onClose} disabled={loading}>Close</Button>
+      </div>
+    </Dialog>
+  );
+}
+
+function DuplicateDatabaseDialog({
+  source,
+  existing,
+  onClose,
+  onDuplicate,
+}: {
+  source: string | null;
+  existing: string[];
+  onClose: () => void;
+  onDuplicate: (source: string, newName: string) => Promise<void>;
+}) {
+  const [name, setName] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (source) {
+      setName("");
+      setError(null);
+      setLoading(false);
+    }
+  }, [source]);
+
+  const submit = async () => {
+    if (!source) return;
+    if (!/^[a-z][a-z0-9_]{2,40}$/.test(name)) {
+      return setError("Use 3–41 lowercase letters, numbers, or underscores, starting with a letter.");
+    }
+    // existing holds full DB names (e.g. "acme_staging"); the customer
+    // types the new suffix. Catch the common collision client-side; the
+    // backend is the authoritative check.
+    if (existing.some((n) => n === name || n.endsWith("_" + name))) {
+      return setError("A database with that name already exists.");
+    }
+    setError(null);
+    setLoading(true);
+    try {
+      await onDuplicate(source, name);
+      onClose();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't duplicate the database.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={!!source}
+      onClose={onClose}
+      title="Duplicate database"
+      description={source ? `Create an exact copy of “${source}” under a new name.` : undefined}
+    >
+      {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't duplicate" description={error} />}
+      <AlertBanner
+        variant="info"
+        title="This copies everything"
+        description="The new database starts as a full copy of the source — its data, users, and files. The original is left untouched."
+      />
+      <div className="mt-4 space-y-2">
+        <Label htmlFor="dup-name">New database name</Label>
+        <Input
+          id="dup-name"
+          placeholder="staging"
+          value={name}
+          autoFocus
+          onChange={(e) => { setName(e.target.value.toLowerCase()); setError(null); }}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+        <p className="text-xs text-muted">A short suffix — your instance prefix is added automatically.</p>
+      </div>
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={loading}>Cancel</Button>
+        <ActionButton loading={loading} loadingText="Starting…" onClick={submit}>
+          <CopyPlus className="size-4" />
+          Duplicate
+        </ActionButton>
       </div>
     </Dialog>
   );
