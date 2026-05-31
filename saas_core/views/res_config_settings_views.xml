@@ -265,7 +265,7 @@
                         </setting>
                         <setting id="saas_snapshots_count_toward_storage_setting"
                                  string="Count snapshots toward storage allowance"
-                                 help="ON (current): half the deduplicated snapshot footprint counts against the plan's storage allowance. OFF (recommended): snapshots are covered solely by the Daily Backups add-on and don't eat into storage.">
+                                 help="OFF (default, recommended): backups are covered by the Daily Backups add-on and do NOT consume the plan storage allowance — counting them would double-charge the customer. ON: half the deduplicated snapshot footprint counts against the allowance.">
                             <field name="saas_snapshots_count_toward_storage"/>
                         </setting>
                         <setting id="saas_backup_internal_tuning_setting"

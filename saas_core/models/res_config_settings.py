@@ -283,11 +283,12 @@ class ResConfigSettings(models.TransientModel):
     # the literal strings 'True'/'False'.
     saas_snapshots_count_toward_storage = fields.Boolean(
         string='Count Snapshots Toward Storage',
-        default=True,
-        help='When ON (current behaviour), half the deduplicated snapshot '
-             'footprint counts against the plan storage allowance. When OFF '
-             '(recommended), snapshots are covered solely by the Daily '
-             'Backups add-on and do NOT consume storage. Wired in S6.',
+        default=False,
+        help='OFF (default, recommended): backups are covered solely by the '
+             'Daily Backups add-on and do NOT consume the plan storage '
+             'allowance — counting them would double-charge the customer. '
+             'ON: half the deduplicated snapshot footprint counts against '
+             'the allowance.',
     )
     saas_custom_min_is_nearest_tier = fields.Boolean(
         string='Custom Price >= Nearest Tier',
@@ -459,8 +460,8 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.show_hosting_section', 'True',
         ) != 'False'
         res['saas_snapshots_count_toward_storage'] = ICP.get_param(
-            'saas_master.snapshots_count_toward_storage', 'True',
-        ) != 'False'
+            'saas_master.snapshots_count_toward_storage', 'False',
+        ) == 'True'
         res['saas_custom_min_is_nearest_tier'] = ICP.get_param(
             'saas_master.custom_min_is_nearest_tier', 'False',
         ) == 'True'

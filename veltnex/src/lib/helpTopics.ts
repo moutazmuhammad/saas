@@ -23,22 +23,21 @@ export const HELP_TOPICS: HelpTopic[] = [
     anchor: "workers",
     category: "Configuring your plan",
     title: "Workers",
-    tip: "How many requests your instance handles at once — more workers = more simultaneous users.",
+    tip: "How many people can use your instance at the same time — more workers = more simultaneous users.",
     body: [
-      "A worker is a process that handles one request at a time. More workers means your instance can serve more users simultaneously without slowing down.",
-      "As a rough guide, each worker comfortably handles a handful of active users. If your team grows or pages feel slow under load, add workers.",
-      "Workers are the main driver of your plan price. You can increase them any time; reducing them takes effect on your next billing cycle.",
+      "Workers decide how many people can use your instance at the same time without it slowing down. More workers = more simultaneous users.",
+      "If your team grows or pages feel slow when many people are active, add workers. You can increase them any time; reducing them takes effect on your next bill.",
     ],
   },
   {
     anchor: "storage",
     category: "Configuring your plan",
     title: "Storage",
-    tip: "Total space for your database and files (attachments, documents, backups count toward it).",
+    tip: "Total space for your database and files (uploaded documents, images, attachments).",
     body: [
-      "Storage is the total space your instance can use — your database plus the filestore (uploaded documents, images, attachments).",
-      "If you turn on daily backups, the backup footprint also counts toward this allowance.",
-      "If you approach the limit we'll prompt you to move to a larger plan. Storage can be increased any time but not reduced below what you're using.",
+      "Storage is the total space your instance can use — your data plus your uploaded files (documents, images, attachments).",
+      "Daily backups are kept separately and do NOT count against your storage.",
+      "If you get close to the limit we'll suggest a larger plan. Storage can be increased any time but not reduced below what you're using.",
     ],
   },
   {
@@ -109,9 +108,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     title: "Daily backups",
     tip: "A paid add-on: an automatic encrypted snapshot every day, last 7 days kept, so you can restore.",
     body: [
-      "Daily backups take an automatic, encrypted snapshot of your whole instance (every database + files) once a day, and keep the most recent 7.",
+      "Daily backups take an automatic, encrypted copy of your whole instance once a day, and keep the last 7 days.",
       "If anything goes wrong you can restore your instance to any of those days from the Snapshots page.",
-      "It's an optional add-on billed monthly. The price is a fixed share of your plan price, so it scales with the size of what you're protecting.",
+      "It's an optional add-on billed monthly.",
     ],
   },
   {
@@ -140,11 +139,10 @@ export const HELP_TOPICS: HelpTopic[] = [
   {
     anchor: "proration",
     category: "Billing",
-    title: "Proration credit",
-    tip: "When you upgrade mid-cycle, you're credited for the unused days of your current plan.",
+    title: "Upgrade credit",
+    tip: "When you upgrade partway through a month, you're credited for the days you already paid for.",
     body: [
-      "If you change plan partway through a billing period, you don't pay twice. We credit the unused days remaining on your current plan against the new one.",
-      "The credit appears as a line on your checkout summary, so you only pay the difference.",
+      "If you change plan partway through a billing period you don't pay twice. We credit the days you've already paid for on your current plan against the new one, so you only pay the difference.",
     ],
   },
   {
@@ -235,9 +233,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     anchor: "storage-usage",
     category: "Monitoring",
     title: "Storage usage",
-    tip: "How much of your plan's storage allowance is used (database + files + backups).",
+    tip: "How much of your plan's storage allowance is used (database + files).",
     body: [
-      "This is how much of your storage allowance is in use — your database, uploaded files, and (if enabled) backup footprint.",
+      "This is how much of your storage allowance is in use — your database and uploaded files. Daily backups are stored separately and don't count here.",
       "As you near the limit we'll prompt an upgrade so you don't run out of space.",
     ],
   },

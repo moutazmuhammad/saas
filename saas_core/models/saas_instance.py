@@ -2885,14 +2885,13 @@ class SaasInstance(models.Model):
         # record stores the WHOLE repo's current size, so the latest
         # record is the current total snapshot footprint — we do NOT sum
         # records (that would multiply the repo by the record count).
-        # Half the snapshot footprint counts toward storage only when the
-        # policy flag is ON (default ON = current behaviour). Turn it OFF
-        # in Settings so snapshots are covered solely by the Daily Backups
-        # add-on and don't consume the plan allowance (recommended — avoids
-        # double-charging).
+        # Backups are a separate paid add-on and do NOT consume the plan's
+        # storage allowance (default OFF) — counting them would double-charge
+        # the customer. An operator can opt in by turning the flag ON, in
+        # which case half the deduplicated snapshot footprint counts.
         total_bytes = disk_bytes + db_bytes
         if self.env['ir.config_parameter'].sudo().get_param(
-                'saas_master.snapshots_count_toward_storage', 'True') != 'False':
+                'saas_master.snapshots_count_toward_storage', 'False') == 'True':
             total_bytes += self._snapshot_total_bytes() // 2
         self.total_storage = self._format_bytes(total_bytes) if total_bytes else ''
         self.total_storage_bytes = total_bytes
