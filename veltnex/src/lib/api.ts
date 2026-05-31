@@ -278,6 +278,15 @@ export interface StatusData {
   db_ops_running: boolean;
 }
 
+export interface DbOperationStatus {
+  id: number;
+  operation: "create" | "duplicate" | "drop" | "upgrade";
+  db_name: string;
+  state: "running" | "done" | "failed";
+  error: string;
+  output: string;
+}
+
 export interface DbListData {
   databases: { name: string; login: string }[];
   ready: boolean;
@@ -348,6 +357,13 @@ export const api = {
       source,
       name,
     }),
+  dbUpgrade: (id: number, name: string, modules: string) =>
+    rpc<{ db_name: string; op_id: number }>(
+      `/saas/api/v1/instances/${id}/databases/upgrade`,
+      { name, modules },
+    ),
+  dbOperation: (id: number, opId: number) =>
+    rpc<DbOperationStatus>(`/saas/api/v1/instances/${id}/databases/operation/${opId}`),
   dbBackup: (id: number, name: string, format: "zip" | "dump" = "zip") =>
     rpc<{ backup_id: number }>(`/saas/api/v1/instances/${id}/databases/backup`, { name, format }),
   dailyBackupEnable: (id: number) =>

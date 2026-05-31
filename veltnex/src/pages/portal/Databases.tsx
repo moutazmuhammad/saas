@@ -13,6 +13,7 @@ import {
   Archive,
   Download,
   CopyPlus,
+  RefreshCw,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ export default function Databases() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
   const [duplicateTarget, setDuplicateTarget] = React.useState<string | null>(null);
+  const [upgradeTarget, setUpgradeTarget] = React.useState<string | null>(null);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [backupsTarget, setBackupsTarget] = React.useState<string | null>(null);
   const [backups, setBackups] = React.useState<ApiBackup[]>([]);
@@ -262,7 +264,7 @@ export default function Databases() {
                       <td className="px-5 py-4">
                         {pending ? (
                           <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : op === "duplicate" ? "Duplicating…" : "Creating…"}
+                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : op === "duplicate" ? "Duplicating…" : op === "upgrade" ? "Upgrading…" : "Creating…"}
                           </span>
                         ) : (
                           <StatusBadge status="running" label="Active" />
@@ -314,6 +316,7 @@ export default function Databases() {
                                 >
                                   <MenuItem icon={Download} label="Download backup" onClick={() => { setOpenMenu(null); setBackupsTarget(db.name); }} />
                                   <MenuItem icon={CopyPlus} label="Duplicate" onClick={() => { setOpenMenu(null); setDuplicateTarget(db.name); }} />
+                                  <MenuItem icon={RefreshCw} label="Upgrade modules" onClick={() => { setOpenMenu(null); setUpgradeTarget(db.name); }} />
                                   <MenuItem icon={KeyRound} label="Reset password" onClick={() => { setOpenMenu(null); setResetTarget(db.name); }} />
                                   <div className="border-t border-border" />
                                   <MenuItem icon={Trash2} label="Delete" danger onClick={() => { setOpenMenu(null); setDropTarget(db.name); }} />
@@ -353,6 +356,13 @@ export default function Databases() {
           // The copy shows up as a live "Duplicating…" row until ready.
           await load(true);
         }}
+      />
+
+      <UpgradeModulesDialog
+        dbName={upgradeTarget}
+        instanceId={instanceId}
+        onClose={() => setUpgradeTarget(null)}
+        onDone={() => load(true)}
       />
 
       <ResetPasswordDialog
@@ -592,6 +602,162 @@ function DuplicateDatabaseDialog({
           <CopyPlus className="size-4" />
           Duplicate
         </ActionButton>
+      </div>
+    </Dialog>
+  );
+}
+
+function UpgradeModulesDialog({
+  dbName,
+  instanceId,
+  onClose,
+  onDone,
+}: {
+  dbName: string | null;
+  instanceId: number;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [modules, setModules] = React.useState("");
+  const [phase, setPhase] = React.useState<"idle" | "running" | "done" | "failed">("idle");
+  const [error, setError] = React.useState<string | null>(null);
+  const [report, setReport] = React.useState("");
+
+  React.useEffect(() => {
+    if (dbName) {
+      setModules("");
+      setPhase("idle");
+      setError(null);
+      setReport("");
+    }
+  }, [dbName]);
+
+  const start = async () => {
+    if (!dbName) return;
+    setError(null);
+    setReport("");
+    setPhase("running");
+    let opId: number;
+    try {
+      const res = await api.dbUpgrade(instanceId, dbName, modules);
+      opId = res.op_id;
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't start the upgrade.");
+      setPhase("idle");
+      return;
+    }
+    // Poll the op until done/failed. A live module upgrade can take a
+    // while on a big database, so we watch up to ~20 min; the site
+    // stays online throughout. A few network blips are tolerated.
+    const DEADLINE_MS = 20 * 60 * 1000;
+    const startedAt = Date.now();
+    let misses = 0;
+    for (;;) {
+      if (Date.now() - startedAt > DEADLINE_MS) {
+        setError("This is taking longer than expected — it may still be finishing in the background. Check back shortly.");
+        setPhase("failed");
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+      let op;
+      try {
+        op = await api.dbOperation(instanceId, opId);
+        misses = 0;
+      } catch {
+        if (++misses > 20) {
+          setError("Lost connection while upgrading. The upgrade may still be running.");
+          setPhase("failed");
+          return;
+        }
+        continue;
+      }
+      if (op.state === "done") {
+        setReport(op.output || "");
+        setPhase("done");
+        onDone();
+        return;
+      }
+      if (op.state === "failed") {
+        setReport(op.output || "");
+        setError(op.error || "The upgrade didn't complete.");
+        setPhase("failed");
+        onDone();
+        return;
+      }
+      // still running — keep polling
+    }
+  };
+
+  const busy = phase === "running";
+
+  return (
+    <Dialog
+      open={!!dbName}
+      onClose={onClose}
+      title="Upgrade modules"
+      description={dbName ? `Update installed modules on “${dbName}”.` : undefined}
+    >
+      {error && (
+        <AlertBanner
+          className="mb-4"
+          variant={phase === "failed" ? "danger" : "warning"}
+          title="Upgrade"
+          description={error}
+        />
+      )}
+      {phase === "done" && !error && (
+        <AlertBanner
+          className="mb-4"
+          variant="success"
+          title="Upgrade complete"
+          description="Your modules were upgraded and your instance stayed online the whole time."
+        />
+      )}
+
+      <AlertBanner
+        variant="info"
+        title="No downtime"
+        description="The upgrade runs live — your site stays up. You may notice a brief slowdown while it finishes."
+      />
+
+      <div className="mt-4 space-y-2">
+        <Label htmlFor="upg-mods">Modules to upgrade</Label>
+        <Input
+          id="upg-mods"
+          placeholder="e.g. sale, stock, account"
+          value={modules}
+          autoFocus
+          disabled={busy || phase === "done"}
+          onChange={(e) => setModules(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !busy && phase !== "done" && start()}
+        />
+        <p className="text-xs text-muted">
+          Separate several with commas. Use the module's technical name
+          (e.g. <code className="rounded bg-border/60 px-1 font-mono">sale</code>),
+          or <code className="rounded bg-border/60 px-1 font-mono">all</code> to
+          upgrade everything installed.
+        </p>
+      </div>
+
+      {report && (
+        <div className="mt-4 space-y-2">
+          <Label>Report</Label>
+          <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded-lg border border-border bg-background p-3 text-xs text-muted">
+            {report}
+          </pre>
+        </div>
+      )}
+
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={busy}>
+          {phase === "done" || phase === "failed" ? "Close" : "Cancel"}
+        </Button>
+        {phase !== "done" && (
+          <ActionButton loading={busy} loadingText="Upgrading…" onClick={start}>
+            <RefreshCw className="size-4" />
+            Upgrade
+          </ActionButton>
+        )}
       </div>
     </Dialog>
   );

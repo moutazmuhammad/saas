@@ -8660,6 +8660,168 @@ class SaasInstance(models.Model):
         )
         return op
 
+    def _parse_upgrade_modules(self, modules):
+        """Normalise + validate a customer-typed module list.
+
+        Accepts comma- or space-separated technical names. Returns
+        ``['all']`` if the customer asked to upgrade everything, else a
+        de-duplicated list of validated module names. Same per-name
+        validation as the recovery path so a name can never smuggle
+        shell/CLI tokens downstream.
+        """
+        raw = (modules or '').replace(',', ' ').split()
+        seen, out = set(), []
+        for token in raw:
+            m = token.strip().lower()
+            if not m or m in seen:
+                continue
+            seen.add(m)
+            if m == 'all':
+                return ['all']
+            if not self._UPGRADE_MODULE_RE.match(m):
+                raise UserError(_(
+                    "'%s' isn't a valid module name. Use lowercase "
+                    "letters, digits and underscores (e.g. 'sale', "
+                    "'stock_account')."
+                ) % token)
+            out.append(m)
+        if not out:
+            raise UserError(_("Please enter at least one module to upgrade."))
+        return out
+
+    def hosting_db_upgrade_modules(self, name, modules):
+        """Upgrade one or more modules on a customer DB with NO downtime.
+
+        Runs Odoo's own ``button_immediate_upgrade`` inside the *live*
+        container via ``docker compose exec`` (no ``stop``, no one-shot
+        ``run``): the module migration runs in a short-lived python
+        process, and the running workers pick up the rebuilt registry
+        through Odoo's standard registry-signaling — so the customer's
+        site stays up throughout. There may be a brief blip while the
+        migration holds its locks, but the instance never goes down.
+
+        Contrast :meth:`hosting_db_upgrade_module` — the recovery path
+        that *stops* the container, for when the live Odoo is already
+        returning 500s and exec/XML-RPC into it won't work.
+
+        Returns the captured stdout/stderr. Raises ``UserError`` on
+        failure, with the captured output attached as
+        ``_saas_upgrade_output`` so the portal can render the report.
+        """
+        self._ensure_hosting_for_db_ops()
+        name = self._hosting_db_full_name(name)
+        if name not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % name
+            )
+        mod_list = self._parse_upgrade_modules(modules)
+
+        # The script runs inside the live container. It marks the
+        # requested modules 'to upgrade' and triggers Odoo's in-process
+        # registry rebuild (``button_immediate_upgrade``); the live
+        # workers reload via the registry-signaling sequence right
+        # after. We capture the module names BEFORE the call (the env is
+        # reset during the rebuild) and ``os._exit(0)`` on success so a
+        # noisy cursor teardown can't turn a good run into a non-zero
+        # exit. Markers tell a real success from "done" text in a log.
+        script = (
+            "from odoo.modules.registry import Registry\n"
+            "from odoo import api, SUPERUSER_ID\n"
+            "db = os.environ['SAAS_DB']\n"
+            "names = [m for m in os.environ['SAAS_MODULES'].split() if m]\n"
+            "registry = Registry(db)\n"
+            "cr = registry.cursor()\n"
+            "env = api.Environment(cr, SUPERUSER_ID, {})\n"
+            "Mod = env['ir.module.module']\n"
+            "if names == ['all']:\n"
+            "    mods = Mod.search([('state', '=', 'installed')])\n"
+            "else:\n"
+            "    mods = Mod.search([('name', 'in', names)])\n"
+            "    found = set(mods.mapped('name'))\n"
+            "    missing = [n for n in names if n not in found]\n"
+            "    if missing:\n"
+            "        sys.stderr.write('SAAS_NOT_FOUND:' + ','.join(missing) + '\\n')\n"
+            "        sys.exit(2)\n"
+            "    bad = mods.filtered(lambda m: m.state != 'installed')\n"
+            "    if bad:\n"
+            "        sys.stderr.write('SAAS_NOT_INSTALLED:' + ','.join(bad.mapped('name')) + '\\n')\n"
+            "        sys.exit(2)\n"
+            "if not mods:\n"
+            "    sys.stderr.write('SAAS_NOTHING\\n')\n"
+            "    sys.exit(2)\n"
+            "targets = ','.join(sorted(mods.mapped('name')))\n"
+            "print('---SAAS_UPGRADE_BEGIN---')\n"
+            "print('upgrading=%s' % targets)\n"
+            "sys.stdout.flush()\n"
+            "mods.button_immediate_upgrade()\n"
+            "print('upgraded=%s' % targets)\n"
+            "print('---SAAS_UPGRADE_END---')\n"
+            "sys.stdout.flush()\n"
+            "os._exit(0)\n"
+        )
+        script_env = {'SAAS_DB': name, 'SAAS_MODULES': ' '.join(mod_list)}
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            ec, sout, serr = self._docker_exec_python(
+                ssh, script, env=script_env, timeout=1800,
+            )
+        combined = (sout or '') + (serr or '')
+
+        if 'SAAS_NOT_FOUND:' in combined:
+            bad = combined.split('SAAS_NOT_FOUND:', 1)[1].splitlines()[0]
+            raise UserError(_(
+                "These modules aren't installed on this database: %s. "
+                "Check the names and try again."
+            ) % bad)
+        if 'SAAS_NOT_INSTALLED:' in combined:
+            bad = combined.split('SAAS_NOT_INSTALLED:', 1)[1].splitlines()[0]
+            raise UserError(_(
+                "These modules exist but aren't installed, so there's "
+                "nothing to upgrade: %s."
+            ) % bad)
+        if 'SAAS_NOTHING' in combined:
+            raise UserError(_("No installed modules matched your request."))
+        if ec != 0 or '---SAAS_UPGRADE_END---' not in sout:
+            exc = UserError(_(
+                "The upgrade didn't complete successfully. See the "
+                "report below for details."
+            ))
+            exc._saas_upgrade_output = combined
+            raise exc
+        return combined
+
+    def hosting_db_upgrade_modules_async(self, name, modules):
+        """Queue a no-downtime module upgrade and return the tracking op."""
+        self._ensure_hosting_for_db_ops()
+        full_name = self._hosting_db_full_name(name)
+        # Validate the module list upfront so a bad name is a synchronous
+        # error, not a ``failed`` record the customer has to discover.
+        mod_list = self._parse_upgrade_modules(modules)
+        if full_name not in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(
+                _("Database '%s' does not belong to this instance.") % full_name
+            )
+        Op = self.env['saas.instance.db.operation']
+        if Op.search_count([
+            ('instance_id', '=', self.id),
+            ('db_name', '=', full_name),
+            ('state', '=', 'running'),
+        ]):
+            raise UserError(_(
+                "Another operation is already in progress on '%s'. "
+                "Please wait for it to finish."
+            ) % full_name)
+        op = Op.create({
+            'instance_id': self.id,
+            'db_name': full_name,
+            'operation': 'upgrade',
+            'module_name': ' '.join(mod_list),
+        })
+        run_in_background(
+            op, '_run_upgrade_live',
+            thread_name='saas_db_upgmod_%s' % full_name,
+        )
+        return op
+
     def hosting_db_reset_admin_password(self, name, new_password,
                                         login=None):
         """Reset an administrator's password on a customer database.

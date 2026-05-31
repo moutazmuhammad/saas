@@ -112,10 +112,11 @@ class SaasInstanceDbOperation(models.Model):
     )
     # For ``duplicate`` ops, the source DB name. ``False`` for create / drop.
     source_db = fields.Char()
-    # For ``upgrade`` ops, the module name passed to ``odoo -u``. Pre-
-    # validated by the controller against ``_UPGRADE_MODULE_RE`` so an
-    # arbitrary string can't smuggle shell or CLI flags into the
-    # docker-compose-run command.
+    # For ``upgrade`` ops, the module(s) to upgrade. The recovery path
+    # (``_run_upgrade``) stores a single name; the no-downtime path
+    # (``_run_upgrade_live``) stores a space-separated list (or
+    # ``all``). Each name is pre-validated against ``_UPGRADE_MODULE_RE``
+    # so an arbitrary string can't smuggle shell/CLI tokens downstream.
     module_name = fields.Char()
     state = fields.Selection(
         [('running', 'Running'), ('done', 'Done'), ('failed', 'Failed')],
@@ -264,6 +265,30 @@ class SaasInstanceDbOperation(models.Model):
             # a ``UserError`` carrying the captured CLI output (so the
             # portal can render it). Plain exceptions just go to
             # error_message.
+            output = getattr(e, '_saas_upgrade_output', None) or ''
+            self._mark_failed(e, output=output)
+            raise
+
+    def _run_upgrade_live(self):
+        """Background worker: no-downtime module upgrade on the live container.
+
+        Calls :meth:`saas.instance.hosting_db_upgrade_modules`, which
+        runs Odoo's ``button_immediate_upgrade`` inside the running
+        container (no stop). The captured report is stored on the op so
+        the portal can show it whether the run succeeded or failed.
+        """
+        self.ensure_one()
+        try:
+            output = self.instance_id.hosting_db_upgrade_modules(
+                name=self.db_name,
+                modules=self.module_name or '',
+            )
+            self.write({'state': 'done', 'output_log': output or ''})
+            try:
+                self.env.cr.commit()
+            except Exception:
+                pass
+        except Exception as e:
             output = getattr(e, '_saas_upgrade_output', None) or ''
             self._mark_failed(e, output=output)
             raise
