@@ -289,6 +289,22 @@ export default function InstanceDetail() {
           }
         />
       )}
+      {instance.last_error && (instance.state === "stopped" || instance.state === "failed") && (
+        <AlertBanner
+          className="mt-6"
+          variant="danger"
+          title="Your instance was stopped"
+          description={instance.last_error}
+          action={
+            instance.is_hosting ? (
+              <Button size="sm" variant="secondary" onClick={() => navigate(`/my/instances/${id}/code`)}>
+                <GitBranch className="size-4" />
+                Review code &amp; packages
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
       {!instance.has_unpaid_invoice && instance.is_cancelled && (
         <AlertBanner
           className="mt-6"

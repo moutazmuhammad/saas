@@ -6422,6 +6422,10 @@ class SaasInstance(models.Model):
                                     "Container found in '%s' state — auto-restarting." % status
                                 )
                                 ssh.execute('cd %s && docker compose up -d' % path)
+                            elif status == 'running' and inst.last_error:
+                                # Healthy again → clear a stale error so the
+                                # customer's "stopped" banner goes away.
+                                inst.last_error = False
                         except Exception:
                             _logger.exception(
                                 "Health check failed for instance %s", inst.name
