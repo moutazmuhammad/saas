@@ -17,6 +17,10 @@ export interface DocArticle {
   readMinutes: number;
   summary: string;
   body: string[];
+  // Optional thumbnail filename under static/spa/docs-img/ (e.g.
+  // "launch-instance.png"). Rendered at the top of the article; absent
+  // or broken images are simply not shown.
+  image?: string;
 }
 
 export interface DocFolder {
