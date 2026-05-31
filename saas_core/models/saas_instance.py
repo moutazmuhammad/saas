@@ -8821,15 +8821,16 @@ class SaasInstance(models.Model):
 
         Triggered from the Databases page. Policy (per customer
         request): an instance keeps AT MOST ONE on-demand backup at a
-        time, and it's ephemeral — auto-deleted 24h after creation.
+        time, and it's ephemeral — transient, reaped within an hour so
+        nothing is retained on the bucket.
 
-        So pressing "Back up now":
+        So pressing "Download backup":
           * wipes every existing on-demand backup on this instance
             (any database) — bucket object + record — keeping only the
             new one;
           * creates an ``ephemeral`` backup of ``<sub>_<name>`` with a
-            24h ``expires_at``, which ``_cron_cleanup_ephemeral_backups``
-            reaps once it lapses.
+            1-hour ``expires_at``, which ``_cron_cleanup_ephemeral_backups``
+            reaps once it lapses (right after the download).
 
         Full-instance snapshots (``is_full_instance=True``) are left
         untouched. Reuses ``_run_portal_backup``, which honours the

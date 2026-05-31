@@ -746,7 +746,7 @@ class SaasApi(http.Controller):
             return err(_("Instance not found."), 'not_found')
         try:
             self._require_running(instance)
-            instance.hosting_db_backup(
+            backup = instance.hosting_db_backup(
                 name=name or '',
                 backup_format='dump' if format == 'dump' else 'zip',
             )
@@ -755,7 +755,10 @@ class SaasApi(http.Controller):
         except Exception:
             _logger.exception("DB backup failed for %s", instance_id)
             return err(_("Couldn't start the backup. Please try again."), 'backup_failed')
-        return ok({})
+        # The build runs in the background; the client polls /backups for
+        # this id until it's available with a download URL, then streams
+        # the download straight from the bucket (one click, end to end).
+        return ok({'backup_id': backup.id})
 
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/reset-password',
                 type='json', auth='public')
