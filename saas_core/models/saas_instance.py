@@ -6369,12 +6369,51 @@ class SaasInstance(models.Model):
                     for inst in inst_list:
                         try:
                             container = 'odoo_%s' % inst.subdomain
+                            # Read status AND restart count in one shot so we
+                            # can tell a one-off stop apart from a crash-loop.
                             exit_code, stdout, stderr = ssh.execute(
-                                'docker inspect -f "{{.State.Status}}" %s 2>/dev/null || echo "not_found"'
-                                % container
+                                'docker inspect -f "{{.State.Status}}|{{.RestartCount}}" %s '
+                                '2>/dev/null || echo "not_found|0"' % container
                             )
-                            status = (stdout or '').strip().strip('"')
-                            if status in ('exited', 'dead', 'not_found'):
+                            raw = (stdout or '').strip().strip('"')
+                            status = (raw.split('|')[0] or 'not_found').strip()
+                            try:
+                                restarts = int(raw.split('|')[1])
+                            except (IndexError, ValueError):
+                                restarts = 0
+                            path = inst._get_instance_path()
+                            CRASH_LOOP = 5
+
+                            crash_looping = (
+                                status == 'restarting'
+                                or (status in ('exited', 'dead') and restarts >= CRASH_LOOP)
+                            )
+                            if crash_looping:
+                                # Restarting a crash-looper is futile and burns
+                                # resources. Break the loop: stop it, park the
+                                # instance as 'stopped', and surface why — the
+                                # customer can fix their code/packages and
+                                # redeploy (redeploy is allowed from stopped).
+                                _logger.warning(
+                                    "Container %s crash-looping (status=%s restarts=%s) "
+                                    "— stopping instance %s", container, status, restarts, inst.name,
+                                )
+                                ssh.execute('cd %s && docker compose stop 2>&1' % path)
+                                inst._append_log(
+                                    "Container kept crashing on startup (status=%s, "
+                                    "restarts=%s) — auto-stopped to break the loop. "
+                                    "Review your custom modules / Python packages, "
+                                    "then redeploy." % (status, restarts)
+                                )
+                                inst.write({
+                                    'state': 'stopped',
+                                    'last_error': 'Container crash-looped on startup and was '
+                                                  'auto-stopped. Review your custom code / '
+                                                  'packages, then redeploy.',
+                                    'last_error_date': fields.Datetime.now(),
+                                })
+                            elif status in ('exited', 'dead', 'not_found'):
+                                # Genuine one-off down → try to bring it back.
                                 _logger.warning(
                                     "Container %s is %s — restarting instance %s",
                                     container, status, inst.name,
@@ -6382,7 +6421,6 @@ class SaasInstance(models.Model):
                                 inst._append_log(
                                     "Container found in '%s' state — auto-restarting." % status
                                 )
-                                path = inst._get_instance_path()
                                 ssh.execute('cd %s && docker compose up -d' % path)
                         except Exception:
                             _logger.exception(
