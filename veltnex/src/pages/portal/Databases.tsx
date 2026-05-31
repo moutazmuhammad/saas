@@ -45,6 +45,12 @@ export default function Databases() {
   const [duplicateTarget, setDuplicateTarget] = React.useState<string | null>(null);
   const [upgradeTarget, setUpgradeTarget] = React.useState<string | null>(null);
   const [restoreOpen, setRestoreOpen] = React.useState(false);
+  // A restore briefly flips the whole instance to "provisioning"; we
+  // keep the customer on this page and show a banner instead of bouncing
+  // them to the instance screen. `sawProvisioning` makes the "finished"
+  // detection robust against the first poll racing the state flip.
+  const [restoring, setRestoring] = React.useState(false);
+  const sawProvisioning = React.useRef(false);
   const [dropTarget, setDropTarget] = React.useState<string | null>(null);
   const [backupsTarget, setBackupsTarget] = React.useState<string | null>(null);
   const [backups, setBackups] = React.useState<ApiBackup[]>([]);
@@ -104,11 +110,29 @@ export default function Databases() {
   );
   // Any create in flight (existing-in-list or not) locks the button.
   const isCreating = (data?.pending_ops ?? []).some((o) => o.operation === "create");
+  // Poll while anything is in flight: pending DB ops, a running backup,
+  // or a restore (instance provisioning).
+  const provisioning = data?.state === "provisioning";
+  const shouldPoll = hasPending || restoring || provisioning;
   React.useEffect(() => {
-    if (!hasPending) return;
+    if (!shouldPoll) return;
     const t = setInterval(() => load(true), 5000);
     return () => clearInterval(t);
-  }, [hasPending, load]);
+  }, [shouldPoll, load]);
+
+  // Clear the restore banner once the instance is back up — but only
+  // after we've actually seen it go into provisioning, so a stray first
+  // poll can't dismiss it prematurely.
+  React.useEffect(() => {
+    if (!restoring) return;
+    if (data && !data.ready) sawProvisioning.current = true;
+    if (data?.ready && sawProvisioning.current) {
+      setRestoring(false);
+      sawProvisioning.current = false;
+      toast.success("Restore complete", "Your database has been restored.");
+      void load(true);
+    }
+  }, [restoring, data, load, toast]);
 
   // Runs the actual delete once confirmed in the dialog. Throws on
   // failure so the dialog can surface the error inline. No banner —
@@ -212,18 +236,33 @@ export default function Databases() {
 
       {error && <AlertBanner className="mt-6" variant="danger" title="Database management" description={error} />}
 
+      {(restoring || provisioning) && (
+        <AlertBanner
+          className="mt-6"
+          variant="info"
+          title="Restoring your database…"
+          description="Your instance is provisioning while the restore runs — this can take a few minutes for large backups. This page refreshes automatically, so you can stay here. Your other databases remain online."
+        />
+      )}
+
       {!data && !error ? (
         <div className="mt-20 flex justify-center">
           <Spinner size="lg" label="Loading databases…" />
         </div>
       ) : data && !data.ready ? (
-        <EmptyState
-          className="mt-8"
-          icon={Database}
-          title="Instance not ready"
-          description="Database management becomes available once your instance is running."
-          action={<Button variant="secondary" onClick={() => navigate(`/my/instances/${id}`)}>Back to instance</Button>}
-        />
+        restoring || provisioning ? (
+          <div className="mt-12 flex justify-center">
+            <Spinner size="lg" label="Restore in progress…" />
+          </div>
+        ) : (
+          <EmptyState
+            className="mt-8"
+            icon={Database}
+            title="Instance not ready"
+            description="Database management becomes available once your instance is running."
+            action={<Button variant="secondary" onClick={() => navigate(`/my/instances/${id}`)}>Back to instance</Button>}
+          />
+        )
       ) : data && data.databases.length === 0 && !isCreating ? (
         <EmptyState
           className="mt-8"
@@ -383,7 +422,12 @@ export default function Databases() {
         instanceId={instanceId}
         existing={data?.databases.map((d) => d.name) || []}
         onClose={() => setRestoreOpen(false)}
-        onDone={() => { navigate(`/my/instances/${id}`); }}
+        onDone={() => {
+          setRestoreOpen(false);
+          sawProvisioning.current = false;
+          setRestoring(true);
+          void load(true);
+        }}
       />
 
       <ResetPasswordDialog
