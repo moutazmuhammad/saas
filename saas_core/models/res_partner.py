@@ -37,6 +37,43 @@ class ResPartner(models.Model):
         for rec in self:
             rec.saas_instance_count = counts.get(rec.id, 0)
 
+    @api.model
+    def _saas_normalize_phone(self, phone, country_id=None):
+        """Return a phone in canonical E.164 form for storage + dedup.
+
+        Trial farming abused the fact that ``+1 555-111-2222``,
+        ``+15551112222`` and ``15551112222`` are different STRINGS — the
+        old raw-string dedup let one person reformat the same number to
+        pass the "phone already registered" check on each new free
+        trial. Storing and comparing the E.164 form collapses them to
+        one, so the phone (which must receive an OTP) becomes a real
+        per-account cost.
+
+        Falls back to the stripped raw string when the number can't be
+        parsed (e.g. no/unknown country) — we never drop the customer's
+        input, we just can't canonicalize it.
+        """
+        raw = (phone or '').strip()
+        if not raw:
+            return raw
+        code = None
+        phone_code = None
+        if country_id:
+            try:
+                country = self.env['res.country'].sudo().browse(int(country_id))
+                if country.exists():
+                    code = country.code
+                    phone_code = country.phone_code
+            except (ValueError, TypeError):
+                pass
+        try:
+            return phone_format(
+                raw, code, phone_code,
+                force_format='E164', raise_exception=True,
+            )
+        except Exception:
+            return raw
+
     def _saas_uniqueness_applies(self, partner):
         """Whether the saas_core uniqueness checks apply to *partner*.
 
