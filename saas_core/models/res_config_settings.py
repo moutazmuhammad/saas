@@ -13,16 +13,6 @@ class ResConfigSettings(models.TransientModel):
              '(HTTP, longpolling) starting from this value.',
     )
 
-    # ========== Resource Usage ==========
-    saas_resource_usage_multiplier = fields.Float(
-        string='Resource Usage Multiplier',
-        config_parameter='saas_master.resource_usage_multiplier',
-        default=2.0,
-        help='Multiplier applied to CPU and RAM measurements to account for '
-             'shared DB server usage that cannot be measured per instance. '
-             'E.g. 2.0 means displayed usage = measured × 2.',
-    )
-
     # ========== Free Trial ==========
     saas_trial_days = fields.Integer(
         string='Free Trial Duration (Days)',

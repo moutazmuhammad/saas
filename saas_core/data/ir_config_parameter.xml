@@ -20,12 +20,6 @@
             <field name="value">5</field>
         </record>
 
-        <record id="config_param_resource_usage_multiplier"
-                model="ir.config_parameter">
-            <field name="key">saas_master.resource_usage_multiplier</field>
-            <field name="value">2.0</field>
-        </record>
-
         <!-- Custom Plan Builder Pricing -->
         <record id="config_param_worker_price"
                 model="ir.config_parameter">

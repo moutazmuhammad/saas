@@ -379,8 +379,18 @@ class SaasServer(models.Model):
             )
         return self.ip_v4
 
-    def _fetch_database_sizes(self, db_names):
-        """Return ``{db_name: size_bytes}`` for the given DB names.
+    def _fetch_database_sizes(self, subdomains):
+        """Return ``{subdomain: total_size_bytes}`` summing EVERY database
+        owned by each subdomain.
+
+        A hosting customer can create many databases; they're all named
+        either exactly ``<subdomain>`` or with the ``<subdomain>_*``
+        prefix. All of them must count against the plan's storage
+        allowance — not just a single base DB. One SSH + one psql call
+        lists every database's size, then we aggregate by owning subdomain
+        in Python. The ``_`` separator makes the prefix match unambiguous
+        (subdomains can't contain ``_`` — see ``_DB_NAME_RE``); we still
+        match the longest subdomain first as a safety net for nested names.
 
         Single SSH + single psql call instead of N. Used by the usage-
         and storage-check crons to avoid opening a fresh paramiko
@@ -388,29 +398,34 @@ class SaasServer(models.Model):
         """
         self.ensure_one()
         # Re-validate names (defence in depth — caller should have done it).
-        safe = [n for n in db_names if n and _DB_NAME_RE.match(n)]
-        if not safe:
+        subs = [s for s in subdomains if s and _DB_NAME_RE.match(s)]
+        if not subs:
             return {}
-        # Build a quoted list literal for the IN clause.
-        in_list = ', '.join("'%s'" % n.replace("'", "''") for n in safe)
         cmd = (
             "sudo -u postgres psql -At -F '|' -c "
-            "\"SELECT datname, pg_database_size(datname) "
-            "FROM pg_database WHERE datname IN (%s);\""
-        ) % in_list
-        sizes = {}
+            "\"SELECT datname, pg_database_size(datname) FROM pg_database "
+            "WHERE datistemplate = false AND datname <> 'postgres';\""
+        )
         with self._get_ssh_connection() as ssh:
             exit_code, stdout, _stderr = ssh.execute(cmd)
         if exit_code != 0:
             return {}
+        totals = {s: 0 for s in subs}
+        ordered = sorted(subs, key=len, reverse=True)  # longest prefix wins
         for line in stdout.splitlines():
             parts = line.strip().split('|', 1)
-            if len(parts) == 2:
-                try:
-                    sizes[parts[0]] = int(parts[1])
-                except (ValueError, TypeError):
-                    pass
-        return sizes
+            if len(parts) != 2:
+                continue
+            datname = parts[0].strip()
+            try:
+                size = int(parts[1])
+            except (ValueError, TypeError):
+                continue
+            for s in ordered:
+                if datname == s or datname.startswith(s + '_'):
+                    totals[s] += size
+                    break
+        return totals
 
     def _get_ssh_connection(self):
         """Return an SSHConnection context manager for this server."""

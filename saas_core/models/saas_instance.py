@@ -2475,17 +2475,17 @@ class SaasInstance(models.Model):
         for db_server in instances.mapped('db_server_id'):
             if not db_server:
                 continue
-            db_names = [
+            subdomains = [
                 i.subdomain for i in instances
                 if i.db_server_id == db_server
                 and i.subdomain
                 and SUBDOMAIN_RE.match(i.subdomain)
             ]
-            if not db_names:
+            if not subdomains:
                 continue
             try:
                 db_sizes_by_server[db_server.id] = \
-                    db_server._fetch_database_sizes(db_names)
+                    db_server._fetch_database_sizes(subdomains)
             except Exception:
                 _logger.exception(
                     "Cron: failed to batch-fetch DB sizes from server %s",
@@ -2775,10 +2775,6 @@ class SaasInstance(models.Model):
                 if mem_parts:
                     ram_used_bytes = self._parse_mem_value(mem_parts[0].strip())
 
-        # -- Resource usage multiplier (accounts for shared DB server overhead) --
-        ICP = self.env['ir.config_parameter'].sudo()
-        usage_multiplier = float(ICP.get_param('saas_master.resource_usage_multiplier', '2.0'))
-
         # -- Calculate CPU % relative to plan limit --
         # docker stats reports CPU% relative to ALL host cores.
         # E.g. on 8-core host using 1 core = 12.5%.
@@ -2787,12 +2783,11 @@ class SaasInstance(models.Model):
         cpu_pct = 0.0
         if plan_cpu > 0 and raw_cpu_pct > 0:
             cores_used = raw_cpu_pct / 100.0
-            cpu_pct = min((cores_used * usage_multiplier / plan_cpu) * 100, 999)
+            cpu_pct = min((cores_used / plan_cpu) * 100, 999)
         self.cpu_usage = '%.1f%%' % cpu_pct if cpu_pct else '0%'
         self.cpu_usage_pct = round(cpu_pct, 1)
 
         # -- Calculate RAM % relative to plan limit --
-        ram_used_bytes = ram_used_bytes * usage_multiplier
         ram_pct = 0.0
         if plan_ram_bytes > 0 and ram_used_bytes > 0:
             ram_pct = min((ram_used_bytes / plan_ram_bytes) * 100, 999)
@@ -2821,20 +2816,14 @@ class SaasInstance(models.Model):
         db_bytes = 0
         if precomputed_db_size is not None:
             db_bytes = int(precomputed_db_size)
-        elif self.db_server_id and self.subdomain:
+        elif self.db_server_id and self.subdomain and SUBDOMAIN_RE.match(self.subdomain):
+            # Sum ALL of this customer's databases (the base <subdomain> DB
+            # plus every <subdomain>_* DB) — a hosting customer can own
+            # several, and they all count toward the storage allowance.
             try:
-                safe_db = self.subdomain.replace("'", "''")
-                with self.db_server_id._get_ssh_connection() as db_ssh:
-                    db_size_cmd = (
-                        "sudo -u postgres psql -At -c "
-                        "\"SELECT pg_database_size('%s');\""
-                    ) % safe_db
-                    exit_code, stdout, stderr = db_ssh.execute(db_size_cmd)
-                    if exit_code == 0 and stdout.strip():
-                        try:
-                            db_bytes = int(stdout.strip())
-                        except (ValueError, TypeError):
-                            pass
+                db_bytes = self.db_server_id._fetch_database_sizes(
+                    [self.subdomain],
+                ).get(self.subdomain, 0)
             except Exception:
                 _logger.warning(
                     "Failed to fetch DB size for instance %s", self.subdomain,
@@ -2964,9 +2953,6 @@ class SaasInstance(models.Model):
                 continue
         if not names:
             return
-        multiplier = float(self.env['ir.config_parameter'].sudo().get_param(
-            'saas_master.resource_usage_multiplier', '2.0',
-        ) or 2.0)
         fmt = '{{.Name}}||{{.CPUPerc}}||{{.MemUsage}}'
         cmd = 'docker stats --no-stream --format %s %s' % (
             shlex.quote(fmt),
@@ -2995,11 +2981,10 @@ class SaasInstance(models.Model):
                 plan and plan.ram_limit) else 0
             cpu_pct = 0.0
             if plan_cpu and raw_cpu > 0:
-                cpu_pct = min((raw_cpu / 100.0) * multiplier / plan_cpu * 100, 999)
-            ram_used_m = ram_used * multiplier
+                cpu_pct = min((raw_cpu / 100.0) / plan_cpu * 100, 999)
             ram_pct = 0.0
-            if plan_ram and ram_used_m > 0:
-                ram_pct = min(ram_used_m / plan_ram * 100, 999)
+            if plan_ram and ram_used > 0:
+                ram_pct = min(ram_used / plan_ram * 100, 999)
             inst.cpu_usage_pct = round(cpu_pct, 1)
             inst.cpu_usage = '%.1f%%' % cpu_pct if cpu_pct else '0%'
             inst.ram_usage_pct = round(ram_pct, 1)
@@ -6373,17 +6358,17 @@ class SaasInstance(models.Model):
         for db_server in instances.mapped('db_server_id'):
             if not db_server:
                 continue
-            db_names = [
+            subdomains = [
                 i.subdomain for i in instances
                 if i.db_server_id == db_server
                 and i.subdomain
                 and SUBDOMAIN_RE.match(i.subdomain)
             ]
-            if not db_names:
+            if not subdomains:
                 continue
             try:
                 db_sizes_by_server[db_server.id] = \
-                    db_server._fetch_database_sizes(db_names)
+                    db_server._fetch_database_sizes(subdomains)
             except Exception:
                 _logger.exception(
                     "Storage cron: failed to batch-fetch sizes from %s",
