@@ -405,6 +405,18 @@ class ResConfigSettings(models.TransientModel):
         help='Custom S3-compatible endpoint. Required for DigitalOcean Spaces. '
              'e.g. https://nyc3.digitaloceanspaces.com',
     )
+    # Dedicated, broader-privilege credentials used ONLY by the "Allow
+    # browser uploads" (PutBucketCORS) button — kept separate from the
+    # least-privilege object key above so the backup/restore key never
+    # needs bucket-admin rights.
+    saas_backup_cors_access_key = fields.Char(
+        string='CORS Admin Access Key',
+        config_parameter='saas_backup.cors_access_key',
+    )
+    saas_backup_cors_secret_key = fields.Char(
+        string='CORS Admin Secret Key',
+        config_parameter='saas_backup.cors_secret_key',
+    )
 
     # Snapshot storage uses the same bucket as backups — there's a
     # single Storage block in settings. ``saas.product._get_storage_config``
