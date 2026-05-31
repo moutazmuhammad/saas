@@ -75,18 +75,6 @@ class ResConfigSettings(models.TransientModel):
         default=512,
         help='RAM in MB allocated per worker in custom plans (e.g. 512 = 512MB per worker).',
     )
-    saas_custom_plan_min_backups = fields.Integer(
-        string='Min Backups (smallest plan)',
-        config_parameter='saas_master.custom_plan_min_backups',
-        default=3,
-        help='Backups for the smallest custom plan (fewest workers + lowest storage).',
-    )
-    saas_custom_plan_max_backups = fields.Integer(
-        string='Max Backups (largest plan)',
-        config_parameter='saas_master.custom_plan_max_backups',
-        default=14,
-        help='Backups for the largest custom plan (most workers + highest storage).',
-    )
     saas_custom_plan_users_per_worker_min = fields.Integer(
         string='Min Users per Worker',
         config_parameter='saas_master.custom_plan_users_per_worker_min',

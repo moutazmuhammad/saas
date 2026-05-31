@@ -70,18 +70,6 @@
             <field name="value">512</field>
         </record>
 
-        <record id="config_param_custom_plan_min_backups"
-                model="ir.config_parameter">
-            <field name="key">saas_master.custom_plan_min_backups</field>
-            <field name="value">3</field>
-        </record>
-
-        <record id="config_param_custom_plan_max_backups"
-                model="ir.config_parameter">
-            <field name="key">saas_master.custom_plan_max_backups</field>
-            <field name="value">14</field>
-        </record>
-
         <record id="config_param_custom_plan_users_per_worker_min"
                 model="ir.config_parameter">
             <field name="key">saas_master.custom_plan_users_per_worker_min</field>

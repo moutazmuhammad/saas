@@ -248,18 +248,6 @@
                                 </div>
                             </div>
                         </setting>
-                        <setting id="saas_services_backups_setting"
-                                 string="Services: backup count"
-                                 help="How many backups a Services plan keeps. Scales with plan size: the smallest plan keeps the first number, the largest keeps the second. (Hosting retention is fixed at 7 days.)">
-                            <div class="content-group">
-                                <div class="mt8">
-                                    <label for="saas_custom_plan_min_backups" string="Backups: smallest → largest plan" class="o_light_label" style="display:inline-block;min-width:230px;"/>
-                                    <field name="saas_custom_plan_min_backups" class="oe_inline" style="max-width:5rem;"/>
-                                    <span class="text-muted mx-2">→</span>
-                                    <field name="saas_custom_plan_max_backups" class="oe_inline" style="max-width:5rem;"/>
-                                </div>
-                            </div>
-                        </setting>
                         <setting id="saas_merge_snapshot_into_renewal_invoice_setting"
                                  string="One invoice: merge snapshot into renewal"
                                  help="ON: the monthly Daily Backups charge rides on the main renewal invoice whenever the backup month is due on the same date as the renewal — so the customer gets a single bill (Plan + Support + Snapshot + Overage). The snapshot stays monthly: monthly plans merge every month; yearly plans merge once a year and bill separately the other 11 months. OFF (default): a separate monthly backup invoice.">

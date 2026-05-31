@@ -5,6 +5,7 @@ from odoo.exceptions import UserError, ValidationError
 from odoo.http import request
 
 from odoo.addons.saas_core.models.saas_instance import SUBDOMAIN_RE
+from odoo.addons.saas_core.models.saas_instance_backup import DEFAULT_MAX_BACKUPS
 
 # States that BLOCK a new subdomain claim. Cancelled instances are
 # included on purpose: a cancelled instance still has its retained
@@ -315,8 +316,6 @@ class SaasWebsite(http.Controller):
             'max_storage': int(ICP.get_param('saas_master.custom_plan_max_storage', '200')),
             'cpu_per_worker': float(ICP.get_param('saas_master.custom_plan_cpu_per_worker', '0.5')),
             'ram_per_worker': int(ICP.get_param('saas_master.custom_plan_ram_per_worker', '512')),
-            'min_backups': int(ICP.get_param('saas_master.custom_plan_min_backups', '3')),
-            'max_backups': int(ICP.get_param('saas_master.custom_plan_max_backups', '14')),
             'users_per_worker_min': int(ICP.get_param('saas_master.custom_plan_users_per_worker_min', '6')),
             'users_per_worker_max': int(ICP.get_param('saas_master.custom_plan_users_per_worker_max', '10')),
             'yearly_discount_pct': int(ICP.get_param('saas_master.custom_plan_yearly_discount_pct', '20')),
@@ -548,18 +547,10 @@ class SaasWebsite(http.Controller):
             yearly_price = _q['yearly']
             recommended_users = workers * config['users_per_worker_max']
 
-            # Scale backups based on plan size (0.0 = smallest, 1.0 = largest)
-            w_range = max(1, config['max_workers'] - config['min_workers'])
-            s_range = max(1, config['max_storage'] - config['min_storage'])
-            w_pct = (workers - config['min_workers']) / w_range
-            s_pct = (storage - config['min_storage']) / s_range
-            plan_size = (w_pct + s_pct) / 2.0
-            backup_count = max(config['min_backups'], min(config['max_backups'],
-                config['min_backups'] + round(
-                    plan_size * (config['max_backups'] - config['min_backups'])
-                )
-            ))
-
+            # Backup retention is FIXED — same as hosting (no scaling by
+            # plan size). Every Services plan keeps the last
+            # DEFAULT_MAX_BACKUPS copies, mirroring hosting's fixed
+            # HOSTING_MAX_SNAPSHOTS retention.
             plan = Plan.create({
                 'name': plan_name,
                 'is_custom': True,
@@ -569,7 +560,7 @@ class SaasWebsite(http.Controller):
                 'storage_limit': float(storage),
                 'cpu_limit': cpu_limit,
                 'ram_limit': ram_limit,
-                'max_backups': backup_count,
+                'max_backups': DEFAULT_MAX_BACKUPS,
                 'recommended_users': recommended_users,
                 'saas_product_ids': [(4, product.id)],
                 'sequence': 999,
