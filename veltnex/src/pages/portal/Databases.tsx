@@ -197,7 +197,7 @@ export default function Databases() {
             title={data?.ready ? undefined : "Available once your instance is running."}
           >
             <UploadCloud className="size-4" />
-            Restore from file
+            Restore database
           </Button>
           <Button
             onClick={() => setCreateOpen(true)}

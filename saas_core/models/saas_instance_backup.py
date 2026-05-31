@@ -673,12 +673,20 @@ class SaasInstanceBackup(models.Model):
                 'web.base.url', '',
             )
             parsed = urllib.parse.urlparse(base or '')
-            if not parsed.scheme or not parsed.netloc:
+            if not parsed.netloc:
                 raise UserError(_(
                     "Set the System Parameter 'web.base.url' to your portal "
                     "address first (e.g. https://saas.odex.sa)."
                 ))
-            origins = ['%s://%s' % (parsed.scheme, parsed.netloc)]
+            # The browser sends the origin of the page it's on. A portal
+            # served over HTTPS sends ``https://host`` even if
+            # ``web.base.url`` is recorded as http (common behind a
+            # proxy). Allow BOTH schemes so the rule matches the real
+            # origin regardless of that mismatch.
+            origins = [
+                'https://%s' % parsed.netloc,
+                'http://%s' % parsed.netloc,
+            ]
 
         # The CORS button runs under a dedicated, broader-privilege key
         # (it needs PutBucketCORS) kept separate from the least-privilege
