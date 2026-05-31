@@ -20,6 +20,7 @@ import Dashboard from "./pages/portal/Dashboard";
 import Instances from "./pages/portal/Instances";
 import InstanceDetail from "./pages/portal/InstanceDetail";
 import Databases from "./pages/portal/Databases";
+import Code from "./pages/portal/Code";
 import Logs from "./pages/portal/Logs";
 import Backups from "./pages/portal/Backups";
 import Invoices from "./pages/portal/Invoices";
@@ -67,6 +68,7 @@ export default function App() {
           <Route path="instances" element={<Instances />} />
           <Route path="instances/:id" element={<InstanceDetail />} />
           <Route path="instances/:id/databases" element={<Databases />} />
+          <Route path="instances/:id/code" element={<Code />} />
           <Route path="instances/:id/logs" element={<Logs />} />
           <Route path="instances/:id/backups" element={<Backups />} />
           <Route path="billing" element={<Invoices />} />
