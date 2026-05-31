@@ -195,6 +195,11 @@ class SaasPortalSpa(SaasPortal):
                                   error=None, notice=None, **kw):
         return spa_shell()
 
+    @http.route('/my/instances/<int:instance_id>/code',
+                type='http', auth='public', website=True)
+    def portal_instance_code(self, instance_id, access_token=None, **kw):
+        return spa_shell()
+
     @http.route('/my/instances/<int:instance_id>/backups',
                 type='http', auth='public', website=True)
     def portal_instance_backups(self, instance_id, access_token=None,

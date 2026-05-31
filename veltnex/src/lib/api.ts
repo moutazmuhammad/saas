@@ -237,6 +237,7 @@ export interface ApiInstance {
   daily_backup_next_invoice_date?: string;
   backup_upgrade_recommended?: boolean;
   pip_packages?: string;
+  pip_install_error?: string;
   repo?: { url: string; branch: string; has_token: boolean; state: string };
   pending_plan?: string;
   scheduled_plan?: string;
@@ -345,10 +346,12 @@ export const api = {
     rpc(`/saas/api/v1/instances/${id}/databases/backup`, { name, format }),
   dailyBackupEnable: (id: number) =>
     rpc<{ checkout_url: string }>(`/saas/api/v1/instances/${id}/daily-backup/enable`),
-  setCode: (
+  setRepo: (
     id: number,
-    p: { repo_url: string; repo_branch: string; git_token?: string; pip_packages: string }
-  ) => rpc(`/saas/api/v1/instances/${id}/code`, p),
+    p: { repo_url: string; repo_branch: string; git_token?: string }
+  ) => rpc(`/saas/api/v1/instances/${id}/repo`, p),
+  setPackages: (id: number, pip_packages: string) =>
+    rpc(`/saas/api/v1/instances/${id}/packages`, { pip_packages }),
   invoiceCancel: (id: number) =>
     rpc<{ result: string; state: string }>(`/saas/api/v1/instances/${id}/invoice/cancel`),
   dbResetPassword: (id: number, name: string, new_password: string, login?: string) =>

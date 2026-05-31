@@ -351,6 +351,12 @@ class SaasInstance(models.Model):
         help='Python packages to install via pip on container startup. '
              'One package per line (e.g. phonenumbers, openpyxl).',
     )
+    pip_install_error = fields.Text(
+        string='Last Package Install Error',
+        copy=False,
+        help='Output of the last failed pip install, surfaced to the '
+             'customer. Empty when the most recent install succeeded.',
+    )
     package_ids = fields.One2many(
         'saas.instance.package',
         'instance_id',
@@ -6578,6 +6584,72 @@ class SaasInstance(models.Model):
                     _("docker compose up -d failed:\n%s\n%s") % (stdout, stderr)
                 )
             self._append_log("Container restarted successfully.")
+
+    def _apply_pip_packages(self):
+        """Force-install the instance's Python packages NOW via docker exec,
+        capturing any failure so it can be shown to the customer.
+
+        Returns (ok: bool, output: str). On failure ``pip_install_error`` is
+        set to the pip output (surfaced in the portal) and ``ok`` is False —
+        the caller decides whether to restart. On success the field is
+        cleared and the requirements checksum is written so the container
+        entrypoint won't redo the install on the next restart.
+
+        Requires the container to be running (docker exec). ``--force
+        -reinstall`` is used so a package is always (re)installed cleanly.
+        """
+        self.ensure_one()
+        container = self._get_container_name()
+        pkgs = [
+            p.strip() for p in (self.pip_packages or '').splitlines()
+            if p.strip() and not p.strip().startswith('#')
+        ]
+        if not pkgs:
+            self.pip_install_error = False
+            return True, ''
+        self._ensure_can_ssh()
+        self._append_log("Installing pip packages (forced): %s" % ', '.join(pkgs))
+        # Install, then on success stamp the checksum so the boot-time
+        # entrypoint skips a duplicate install.
+        install = (
+            'docker exec %s bash -c '
+            '"mkdir -p /var/lib/odoo/pip_packages && '
+            'pip3 install --target=/var/lib/odoo/pip_packages --upgrade '
+            '--force-reinstall --no-warn-script-location %s '
+            '&& md5sum /etc/odoo/requirements.txt 2>/dev/null '
+            '| awk \'{print \\$1}\' > /var/lib/odoo/pip_packages/.requirements.md5 '
+            '&& rm -f /var/lib/odoo/pip_packages/.pip_error" 2>&1'
+        ) % (
+            shlex.quote(container),
+            ' '.join(shlex.quote(p) for p in pkgs),
+        )
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            exit_code, stdout, stderr = ssh.execute(install, timeout=900)
+        output = (stdout or stderr or '').strip()
+        if exit_code == 0:
+            self.pip_install_error = False
+            self._append_log("Pip packages installed: %s" % ', '.join(pkgs))
+            return True, output
+        # Keep only the tail — pip output can be long.
+        self.pip_install_error = output[-4000:] or _("pip install failed.")
+        self._append_log("ERROR: pip install failed:\n%s" % output[-1000:])
+        return False, output
+
+    def _deploy_pip_packages(self):
+        """Persist requirements, force-install now (capturing errors), and
+        restart only on success. Returns (ok, output). On failure the
+        instance keeps running with its previous packages and the error is
+        stored on ``pip_install_error`` for the portal to show."""
+        self.ensure_one()
+        self._ensure_can_ssh()
+        # Regenerate requirements.txt / pip_install.sh from pip_packages so
+        # a future rebuild is consistent with what we install now.
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            self._render_and_write_configs(ssh)
+        ok_install, output = self._apply_pip_packages()
+        if ok_install:
+            self._restart_container()
+        return ok_install, output
 
     # ========== Recurring Billing ==========
 

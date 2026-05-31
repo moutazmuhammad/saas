@@ -496,56 +496,93 @@ class SaasApi(http.Controller):
             return err(_("That action couldn't be completed. Please try again."), 'action_failed')
         return ok(instance._get_status_dict())
 
-    @http.route('/saas/api/v1/instances/<int:instance_id>/code',
+    def _require_redeployable(self, instance):
+        """Repo/package changes redeploy the instance, which requires it to
+        be running or stopped (action_redeploy's own rule)."""
+        if instance.state not in ('running', 'stopped'):
+            raise UserError(_("The instance must be running or stopped to "
+                              "apply this change."))
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/repo',
                 type='json', auth='public')
-    def instance_set_code(self, instance_id, access_token=None, repo_url='',
-                          repo_branch='main', git_token=None,
-                          pip_packages='', **kw):
-        """Post-purchase: set the instance's Git repo + Python packages and
-        redeploy. Reuses action_redeploy (clone pending repos, apply config
-        incl. pip, restart) — the same path the webhook/redeploy use."""
+    def instance_set_repo(self, instance_id, access_token=None, repo_url='',
+                          repo_branch='main', git_token=None, **kw):
+        """Connect / update / disconnect the instance's Git repository, then
+        redeploy. Empty repo_url disconnects (unlinks) the repo. Reuses
+        action_redeploy (clone pending repos, re-render config, restart)."""
         try:
             instance = self._hosting(instance_id, access_token)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
-        if instance.state not in ('running', 'stopped'):
-            return err(_("The instance must be running or stopped to update "
-                         "its code."), 'invalid_state')
         repo_url = (repo_url or '').strip()
         repo_branch = (repo_branch or 'main').strip() or 'main'
-        pip_packages = (pip_packages or '').strip()
         if repo_url and not (repo_url.startswith('https://')
                              or repo_url.startswith('git@')):
             return err(_("Repository URL must start with https:// or git@."),
                        'invalid')
         inst = instance.sudo()
+        existing = inst.repo_ids[:1]
+        if not repo_url and not existing:
+            return ok(instance._get_status_dict())  # nothing to do
         try:
-            inst.pip_packages = pip_packages or False
-            existing = inst.repo_ids[:1]
+            self._require_redeployable(instance)
             if repo_url:
                 vals = {'repo_url': repo_url, 'branch': repo_branch}
                 if git_token is not None:
                     vals['github_token'] = (git_token or '').strip() or False
                     vals['webhook_enabled'] = bool((git_token or '').strip())
                 if existing:
-                    # Re-clone only when the source actually changed.
                     if existing.repo_url != repo_url or existing.branch != repo_branch:
-                        vals['state'] = 'pending'
+                        vals['state'] = 'pending'  # re-clone on source change
                     existing.write(vals)
                 else:
                     vals['instance_id'] = inst.id
                     vals['state'] = 'pending'
                     vals.setdefault('webhook_enabled', False)
                     inst.env['saas.instance.repo'].create(vals)
-            elif existing:
-                # Repo cleared → drop the customer repo(s); redeploy unmounts.
-                existing.unlink()
+            else:
+                existing.unlink()  # disconnect
             instance.action_redeploy()
         except UserError as e:
             return err(str(e), 'deploy_failed')
         except Exception:
-            _logger.exception("Set code failed for %s", instance_id)
-            return err(_("Couldn't apply the changes. Please try again."),
+            _logger.exception("Set repo failed for %s", instance_id)
+            return err(_("Couldn't apply the change. Please try again."),
+                       'deploy_failed')
+        return ok(instance._get_status_dict())
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/packages',
+                type='json', auth='public')
+    def instance_set_packages(self, instance_id, access_token=None,
+                              pip_packages='', **kw):
+        """Replace the instance's Python packages (newline-separated), then
+        force-install them now and surface any failure to the customer. The
+        SPA sends the full list, so removing a package drops it from the
+        list (uninstalled on the forced reinstall of the remaining set)."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        # Installing happens via docker exec, so the container must be up.
+        if instance.state != 'running':
+            return err(_("Start the instance first — packages are installed "
+                         "into the running container."), 'invalid_state')
+        inst = instance.sudo()
+        try:
+            inst.pip_packages = (pip_packages or '').strip() or False
+            ok_install, output = inst._deploy_pip_packages()
+            if not ok_install:
+                # Saved, but the install failed — show the customer why.
+                return err(
+                    _("Some packages failed to install:\n\n%s")
+                    % (output[-1500:] or _("pip reported an error.")),
+                    'pip_failed',
+                )
+        except UserError as e:
+            return err(str(e), 'deploy_failed')
+        except Exception:
+            _logger.exception("Set packages failed for %s", instance_id)
+            return err(_("Couldn't apply the change. Please try again."),
                        'deploy_failed')
         return ok(instance._get_status_dict())
 
@@ -920,6 +957,7 @@ class SaasApi(http.Controller):
                 'backup_upgrade_recommended': instance.backup_upgrade_recommended,
                 # Post-purchase custom code & packages (hosting only).
                 'pip_packages': instance.pip_packages or '',
+                'pip_install_error': instance.pip_install_error or '',
                 'repo': ({
                     'url': instance.repo_ids[:1].repo_url or '',
                     'branch': instance.repo_ids[:1].branch or 'main',
