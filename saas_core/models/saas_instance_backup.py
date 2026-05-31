@@ -2,6 +2,7 @@ import datetime
 import logging
 import shlex
 import time
+import urllib.parse
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
@@ -643,6 +644,47 @@ class SaasInstanceBackup(models.Model):
         self.ensure_one()
         if self.bucket_path:
             self._delete_bucket_path(self.bucket_path)
+
+    @api.model
+    def apply_bucket_cors(self, origins=None):
+        """Configure the storage bucket's CORS policy.
+
+        Needed so a customer's browser can upload a restore file
+        straight to the bucket (presigned PUT) — browsers block a
+        cross-origin PUT unless the bucket explicitly allows the app's
+        origin. This does that from Odoo itself (using the configured
+        credentials) so the admin never has to touch the cloud console.
+
+        One-time, idempotent (safe to re-run). ``origins`` defaults to
+        the app's own origin derived from ``web.base.url``. Returns the
+        list of origins applied.
+        """
+        self._get_backup_config()  # validates provider/bucket are set
+        if not origins:
+            base = self.env['ir.config_parameter'].sudo().get_param(
+                'web.base.url', '',
+            )
+            parsed = urllib.parse.urlparse(base or '')
+            if not parsed.scheme or not parsed.netloc:
+                raise UserError(_(
+                    "Set the System Parameter 'web.base.url' to your portal "
+                    "address first (e.g. https://saas.odex.sa)."
+                ))
+            origins = ['%s://%s' % (parsed.scheme, parsed.netloc)]
+
+        client, bucket = self._get_s3_client()
+        client.put_bucket_cors(
+            Bucket=bucket,
+            CORSConfiguration={'CORSRules': [{
+                'AllowedOrigins': origins,
+                'AllowedMethods': ['PUT', 'GET'],
+                'AllowedHeaders': ['*'],
+                'ExposeHeaders': ['ETag'],
+                'MaxAgeSeconds': 3600,
+            }]},
+        )
+        _logger.info("Applied bucket CORS for origins %s", origins)
+        return origins
 
     # Hard limit on backup size we'll download just to inspect manifest.
     # For larger backups the version check is skipped — safer to allow

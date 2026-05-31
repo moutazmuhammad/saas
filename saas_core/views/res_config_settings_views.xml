@@ -394,20 +394,13 @@
                                  help="Authentication credentials for the storage provider."
                                  invisible="not saas_backup_provider">
                             <div class="content-group">
-                                <div class="row mt8" invisible="saas_backup_provider == 'gcs'">
+                                <div class="row mt8">
                                     <label for="saas_backup_access_key" string="Access Key" class="col-3 col-lg-3 o_light_label"/>
                                     <field name="saas_backup_access_key" class="col-4"/>
                                 </div>
-                                <div class="row mt8" invisible="saas_backup_provider == 'gcs'">
+                                <div class="row mt8">
                                     <label for="saas_backup_secret_key" string="Secret Key" class="col-3 col-lg-3 o_light_label"/>
                                     <field name="saas_backup_secret_key" password="True" class="col-4"/>
-                                </div>
-                                <div class="row mt8" invisible="saas_backup_provider != 'gcs'">
-                                    <label for="saas_backup_service_account_key_file" string="Service Account Key" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_backup_service_account_key_file"
-                                           filename="saas_backup_service_account_key_filename"/>
-                                    <field name="saas_backup_service_account_key_filename"
-                                           invisible="1"/>
                                 </div>
                             </div>
                         </setting>
@@ -420,15 +413,26 @@
                                     <label for="saas_backup_bucket_name" string="Bucket Name" class="col-3 col-lg-3 o_light_label"/>
                                     <field name="saas_backup_bucket_name" class="col-4"/>
                                 </div>
-                                <div class="row mt8" invisible="saas_backup_provider == 'gcs'">
+                                <div class="row mt8">
                                     <label for="saas_backup_region" string="Region" class="col-3 col-lg-3 o_light_label"/>
                                     <field name="saas_backup_region" class="col-4" placeholder="e.g. us-east-1"/>
                                 </div>
-                                <div class="row mt8" invisible="saas_backup_provider in ('gcs', 'digitalocean')">
+                                <div class="row mt8" invisible="saas_backup_provider == 'digitalocean'">
                                     <label for="saas_backup_endpoint" string="Endpoint URL" class="col-3 col-lg-3 o_light_label"/>
                                     <field name="saas_backup_endpoint" class="col-4"
                                            placeholder="https://s3.amazonaws.com"/>
                                 </div>
+                            </div>
+                        </setting>
+                        <setting id="saas_backup_cors_setting"
+                                 string="Browser uploads"
+                                 help="Let customers upload their own backup files for restore. This sets a CORS rule on the bucket allowing direct uploads from your portal — a one-time, idempotent action. Save your storage settings first."
+                                 invisible="not saas_backup_provider">
+                            <div class="content-group">
+                                <button name="action_apply_bucket_cors" type="object"
+                                        string="Allow browser uploads (set bucket CORS)"
+                                        class="btn-secondary"
+                                        icon="fa-cloud-upload"/>
                             </div>
                         </setting>
                     </block>
