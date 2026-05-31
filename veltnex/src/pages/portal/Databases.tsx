@@ -117,27 +117,44 @@ export default function Databases() {
   const downloadBackup = React.useCallback(
     async (name: string, format: "zip" | "dump") => {
       const { backup_id } = await api.dbBackup(instanceId, name, format);
-      // Poll for the build to finish (ceiling ~5 min; large DBs upload
-      // multipart so this is generous). Refresh the list as we go so the
-      // dialog shows progress and a manual fallback link.
-      for (let i = 0; i < 100; i++) {
+      // Poll until the build (dump + multipart upload) finishes. The
+      // build runs server-side in a background thread — there's no HTTP
+      // request held open — so there's no request timeout to hit; the
+      // only question is how long we keep watching. We adapt to DB size:
+      // as long as the backup is still building we keep waiting, up to a
+      // generous 30-minute backstop. A handful of consecutive network
+      // blips are tolerated rather than aborting. Refresh the list as we
+      // go so the dialog shows progress and a manual fallback link.
+      const DEADLINE_MS = 30 * 60 * 1000;
+      const startedAt = Date.now();
+      let misses = 0;
+      while (Date.now() - startedAt < DEADLINE_MS) {
         await new Promise((r) => setTimeout(r, 3000));
         let b: ApiBackup | undefined;
         try {
           const r = await api.backups(instanceId);
           setBackups(r.backups);
           b = r.backups.find((x) => x.id === backup_id);
+          misses = 0;
         } catch {
+          if (++misses > 20) {
+            throw new ApiError("Lost connection while preparing the backup. Please try again.");
+          }
           continue; // transient blip — keep polling
         }
-        if (b?.status === "failed") {
+        if (!b) {
+          // The record vanished (e.g. a newer backup wiped this slot).
+          throw new ApiError("This backup is no longer available. Please try again.");
+        }
+        if (b.status === "failed") {
           throw new ApiError("The backup couldn't be created. Please try again.");
         }
-        if (b?.status === "available" && b.download_url) {
+        if (b.status === "available" && b.download_url) {
           triggerBrowserDownload(b.download_url);
           void load(true);
           return;
         }
+        // status is still "in_progress" — keep waiting.
       }
       throw new ApiError(
         "Your backup is taking longer than expected — it'll be ready shortly. Try Download again in a moment.",
