@@ -902,6 +902,9 @@ class SaasWebsite(http.Controller):
         )
         backup_cost = _q['breakdown']['addons_monthly']
         support_cost = _q['breakdown']['support_monthly']
+        # Resource (plan) portion — the named-tier price or the linear
+        # compute, shown as its own line so the breakdown is transparent.
+        plan_cost = _q['breakdown']['resource_monthly']
         monthly_total = _q['monthly']
         discount = config['yearly_discount_pct'] / 100.0
         yearly_total = monthly_total * 12 * (1 - discount)
@@ -925,6 +928,7 @@ class SaasWebsite(http.Controller):
             'workers': workers,
             'storage': storage,
             'backup_cost': backup_cost,
+            'plan_cost': plan_cost,
             'daily_backup': daily_backup,
             'support_plans': support_plans,
             'selected_support_code': support_code or '',

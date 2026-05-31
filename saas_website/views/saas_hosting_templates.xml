@@ -210,9 +210,8 @@
                                         </div>
                                     </t>
                                     <t t-else="">
-                                        <!-- Paid: resources listed, only the FINAL price is shown.
-                                             Per-resource pricing is an internal calculation — the
-                                             customer just sees what they get + what they pay. -->
+                                        <!-- Paid: transparent breakdown — plan price + any
+                                             add-ons + support, then the total the customer pays. -->
                                         <div class="price-breakdown">
                                             <div class="breakdown-row">
                                                 <span class="breakdown-label"><i class="fas fa-cogs me-2"></i>Workers</span>
@@ -222,11 +221,16 @@
                                                 <span class="breakdown-label"><i class="fas fa-hdd me-2"></i>Storage</span>
                                                 <span class="breakdown-value"><t t-esc="storage"/> GB</span>
                                             </div>
+                                            <div class="breakdown-divider"></div>
+                                            <div class="breakdown-row">
+                                                <span class="breakdown-label"><i class="fas fa-server me-2"></i>Plan</span>
+                                                <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(plan_cost)"/>/mo</span>
+                                            </div>
                                             <div class="breakdown-row"
                                                  id="backup-cost-row"
                                                  t-att-style="'' if daily_backup else 'display:none;'">
                                                 <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Daily Backups</span>
-                                                <span class="breakdown-value">Included</span>
+                                                <span class="breakdown-value">+<t t-esc="'${:,.2f}'.format(config.get('daily_backup_price', 0))"/>/mo</span>
                                             </div>
                                             <div class="breakdown-row" t-if="support_cost &gt; 0">
                                                 <span class="breakdown-label"><i class="fas fa-headset me-2"></i>Support</span>
