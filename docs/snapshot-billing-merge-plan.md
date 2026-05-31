@@ -29,7 +29,7 @@ Grounded in the actual code: `saas_instance.py`
 - [x] **M3** — Renewal includes the snapshot line **only when the snapshot is due on/before this renewal**, then advances the snapshot date by 1 month
 - [x] **M4** — Backup cron skips an instance **only for the month already merged** (no separate invoice for that month); suspension always runs
 - [x] **M5** — Migration: no double charge; the snapshot's own due date is the single source of "is this month already billed?"
-- [ ] **M6** — Tests + docs + clear customer-facing labelling
+- [x] **M6** — Tests + docs + clear customer-facing labelling
 
 ---
 

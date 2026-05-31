@@ -422,8 +422,22 @@ simply adds nothing).
    line.
 4. **Storage overage line**: `engine.storage_overage(...)` — added only
    when `charge > 0`.
-5. **Daily-backup is NOT on this invoice.** It has its **own monthly
-   cycle**, so a yearly-plan customer still pays for backups once a month.
+5. **Daily-backup / snapshot — depends on the merge toggle**
+   (`merge_snapshot_into_renewal_invoice`, default OFF):
+   - **OFF (default):** the snapshot is NOT on this invoice; it bills on
+     its **own monthly cycle** (`_cron_renew_daily_backup_addons`).
+   - **ON:** the snapshot is always still **monthly (qty 1)**, but it is
+     folded into this renewal **only when its monthly date is due on/before
+     the renewal date** (`daily_backup_next_invoice_date <=
+     next_invoice_date`). When merged, that date advances one month so the
+     standalone cron skips it — a month can never be billed twice (the one
+     date field is the source of truth). On a monthly plan the dates
+     coincide every month (one invoice); on a yearly plan they coincide
+     once a year (one merged month + 11 standalone monthly). If the backup
+     isn't due on the renewal date, no snapshot line appears — the customer
+     isn't shown a charge they're already paying separately. An unpaid
+     merged renewal pauses snapshots just like an unpaid standalone backup
+     invoice (M4).
 
 ### Discount handling
 
