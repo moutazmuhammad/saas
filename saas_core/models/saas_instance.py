@@ -2672,15 +2672,17 @@ class SaasInstance(models.Model):
         auto-reverted — doing so would mark a half-deleted instance as
         "running" again. They are routed to ``failed`` for manual review.
 
-        The threshold is intentionally generous (40 min) — a large
-        snapshot restore can legitimately take 15–25 min, so a tighter
-        window used to re-queue restores mid-flight and create duplicate
-        containers. ``restore`` ops get an extra-wide window because
-        they're the slowest legitimate path; everything else uses the
-        standard cutoff.
+        Thresholds: ``restore`` ops keep a wide window (90 min) because a
+        large snapshot restore is the slowest legitimate path and
+        re-queuing it mid-flight creates duplicate containers. Everything
+        else uses a tighter 15-min cutoff so a stuck instance self-heals
+        quickly instead of leaving the customer staring at "Provisioning"
+        — recovery of these ops just reverts state (or retries a deploy),
+        so an over-eager recovery is cheap, while a fresh provision still
+        completes well within 15 min.
         """
         now = fields.Datetime.now()
-        normal_cutoff = now - datetime.timedelta(minutes=40)
+        normal_cutoff = now - datetime.timedelta(minutes=15)
         restore_cutoff = now - datetime.timedelta(minutes=90)
         stuck = self.search([
             ('state', '=', 'provisioning'),
