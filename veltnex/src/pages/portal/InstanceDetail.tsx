@@ -17,8 +17,10 @@ import {
   ArrowUpCircle,
   Clock,
 } from "lucide-react";
+import { GitBranch } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ActionButton";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -386,6 +388,8 @@ export default function InstanceDetail() {
         </Button>
       </Card>
 
+      {instance.is_hosting && <CustomCodeCard instance={instance} onDeployed={load} />}
+
       <h2 className="mt-10 text-lg font-semibold">Manage</h2>
       <div className="mt-4 grid gap-4 sm:grid-cols-3">
         {subnav.map((s) => (
@@ -489,5 +493,132 @@ function Sparkline({ data, className }: { data: number[]; className?: string }) 
     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={cn("h-7 w-full", className)}>
       <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
     </svg>
+  );
+}
+
+function CustomCodeCard({
+  instance,
+  onDeployed,
+}: {
+  instance: ApiInstance;
+  onDeployed: () => void;
+}) {
+  const toast = useToast();
+  const repo = instance.repo || { url: "", branch: "main", has_token: false, state: "" };
+  const [url, setUrl] = React.useState(repo.url || "");
+  const [branch, setBranch] = React.useState(repo.branch || "main");
+  const [token, setToken] = React.useState("");
+  const [pip, setPip] = React.useState(instance.pip_packages || "");
+  const [saving, setSaving] = React.useState(false);
+  const canEdit = instance.state === "running" || instance.state === "stopped";
+
+  const deploy = async () => {
+    setSaving(true);
+    try {
+      const payload: {
+        repo_url: string; repo_branch: string; pip_packages: string; git_token?: string;
+      } = { repo_url: url.trim(), repo_branch: branch.trim() || "main", pip_packages: pip };
+      if (token.trim()) payload.git_token = token.trim();
+      await api.setCode(instance.id, payload);
+      toast.success("Deploying…", "Your instance is applying the changes and restarting.");
+      setToken("");
+      onDeployed();
+    } catch (e) {
+      toast.error("Couldn't deploy", e instanceof ApiError ? e.message : "Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="mt-4 p-5">
+      <div className="flex items-center gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary-glow">
+          <GitBranch className="size-4" />
+        </span>
+        <div>
+          <h3 className="font-semibold">
+            Custom code &amp; packages
+            <HelpHint anchor="repo" className="ml-1.5" />
+          </h3>
+          <p className="text-xs text-muted">
+            Deploy your own Odoo modules from Git and install Python packages.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-5 space-y-4">
+        <div>
+          <Label htmlFor="repo-url">Git repository URL</Label>
+          <Input
+            id="repo-url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://github.com/you/your-odoo-modules.git"
+          />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="repo-branch">Branch</Label>
+            <Input
+              id="repo-branch"
+              value={branch}
+              onChange={(e) => setBranch(e.target.value)}
+              placeholder="main"
+            />
+          </div>
+          <div>
+            <Label htmlFor="repo-token">
+              Access token{" "}
+              {repo.has_token && <span className="text-muted">(set — blank keeps it)</span>}
+            </Label>
+            <Input
+              id="repo-token"
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder={repo.has_token ? "••••••••" : "for private repositories"}
+            />
+          </div>
+        </div>
+        <div>
+          <Label htmlFor="pip-pkgs">Python packages</Label>
+          <textarea
+            id="pip-pkgs"
+            value={pip}
+            onChange={(e) => setPip(e.target.value)}
+            rows={3}
+            placeholder={"one per line, e.g.\nrequests\npandas==2.2.0"}
+            className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 font-mono text-sm outline-none transition-colors focus:border-primary/50"
+          />
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-muted">
+          Deploying pulls your code and restarts the instance (brief downtime).
+        </p>
+        <ActionButton
+          loading={saving}
+          loadingText="Deploying…"
+          disabled={!canEdit}
+          onClick={deploy}
+          className="shrink-0"
+        >
+          <GitBranch className="size-4" />
+          Deploy
+        </ActionButton>
+      </div>
+      {!canEdit && (
+        <p className="mt-2 text-xs text-warning">
+          The instance must be running or stopped to deploy.
+        </p>
+      )}
+      {repo.state === "error" && (
+        <p className="mt-2 text-xs text-danger">
+          The last repository deploy failed — check the URL, branch and token.
+        </p>
+      )}
+    </Card>
   );
 }
