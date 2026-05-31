@@ -128,6 +128,30 @@ class SaasPricingEngine(models.AbstractModel):
         buffer_pct = min(max(buffer_pct, 0.0), 100.0)
         return best * (1.0 - buffer_pct / 100.0)
 
+    def _exact_public_tier(self, kind, workers, storage):
+        """The published public tier whose resources EXACTLY match this
+        config, if any.
+
+        When a customer's config matches a named tier, that tier's
+        advertised price IS the price — so the pricing card, the
+        configurator, and the invoice all quote the same number (one
+        source of truth). Any non-matching (custom slider) config falls
+        back to the linear rate. Returns an empty recordset when nothing
+        matches.
+        """
+        tiers = self.env['saas.plan'].sudo().search([
+            ('is_public_tier', '=', True),
+            ('workers', '=', workers),
+            ('storage_limit', '=', float(storage)),
+        ])
+        for t in tiers:
+            t_kind = 'hosting' if any(
+                p.is_hosting for p in t.saas_product_ids
+            ) else 'services'
+            if t_kind == kind:
+                return t
+        return self.env['saas.plan'].browse()
+
     def _addons_total(self, kind, addon_codes, storage_gb=0):
         """Sum effective monthly prices of the given add-on codes that
         apply to ``kind``. ``storage_gb`` lets storage-aware add-ons (P4)
@@ -172,13 +196,20 @@ class SaasPricingEngine(models.AbstractModel):
         storage = self._clamp(storage, cfg['min_storage'], cfg['max_storage'])
 
         base = (workers * cfg['worker_price']) + (storage * cfg['storage_price_per_gb'])
+        # Named-tier override (single source of truth): when this EXACT
+        # config is a published public tier, its advertised price is the
+        # resource price — so the pricing card, the configurator and the
+        # invoice all quote the same number. Custom configs keep the
+        # linear ``base``.
+        exact_tier = self._exact_public_tier(kind, workers, storage)
+        resource_base = exact_tier.price if exact_tier else base
         cost_floor = self._cost_floor(cfg, workers, storage)
         tier_floor = self._tier_floor(kind, workers, storage)
         floor = max(cost_floor, tier_floor)
-        floored = floor > base
+        floored = floor > resource_base
         region_factor = self._region_multiplier(region)
 
-        resource_monthly = max(base, floor) * region_factor
+        resource_monthly = max(resource_base, floor) * region_factor
         addons_monthly = self._addons_total(kind, addon_codes, storage)
         # Support plan (P3): flat monthly fee, NOT scaled by region, added
         # after infra. 0 when no plan / the free default / unknown code.
@@ -218,6 +249,10 @@ class SaasPricingEngine(models.AbstractModel):
             },
             'breakdown': {
                 'base': round(base, 2),
+                # Linear vs named-tier: when an exact public tier matched,
+                # its price replaced the linear base as the resource cost.
+                'tier_price': round(exact_tier.price, 2) if exact_tier else 0.0,
+                'resource_base': round(resource_base, 2),
                 'floor': round(floor, 2),
                 'cost_floor': round(cost_floor, 2),
                 'tier_floor': round(tier_floor, 2),
