@@ -5,8 +5,8 @@ import { useSections } from "@/lib/useSections";
 
 export function Footer() {
   const sections = useSections();
-  // "Get started" lands on whichever section is live.
-  const getStartedTo = sections.services ? "/services/register" : "/hosting";
+  // "Get started" sends people to sign up (works hosting-only too).
+  const getStartedTo = "/register";
   const COLUMNS = [
     {
       title: "Product",

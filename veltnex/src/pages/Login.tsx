@@ -8,14 +8,12 @@ import { AlertBanner } from "@/components/AlertBanner";
 import { Logo } from "@/components/Logo";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
-import { useSections } from "@/lib/useSections";
 import { ApiError } from "@/lib/api";
 
 export default function Login() {
   const { login } = useAuth();
   const toast = useToast();
-  const sections = useSections();
-  const registerTo = sections.services ? "/services/register" : "/hosting";
+  const registerTo = "/register";
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();

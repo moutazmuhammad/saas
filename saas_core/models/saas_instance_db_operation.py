@@ -31,6 +31,7 @@ def _sanitize_op_error(exc, operation):
         'duplicate': 'duplicate the database',
         'drop': 'delete the database',
         'upgrade': 'upgrade the module',
+        'restore': 'restore the database',
     }.get(operation, 'run that operation')
     msg = str(exc) if exc else ''
     low = msg.lower()
@@ -107,6 +108,7 @@ class SaasInstanceDbOperation(models.Model):
             ('duplicate', 'Duplicate'),
             ('drop', 'Drop'),
             ('upgrade', 'Upgrade Module'),
+            ('restore', 'Restore'),
         ],
         required=True,
     )
@@ -291,6 +293,25 @@ class SaasInstanceDbOperation(models.Model):
         except Exception as e:
             output = getattr(e, '_saas_upgrade_output', None) or ''
             self._mark_failed(e, output=output)
+            raise
+
+    def _run_restore(self, backup_id):
+        """Background worker: restore one database from an uploaded backup.
+
+        Calls ``_do_restore_backup`` directly (NOT action_restore_backup),
+        so the instance is never flipped to 'provisioning' — the
+        container keeps running and only the target DB is replaced.
+        """
+        self.ensure_one()
+        try:
+            self.instance_id._do_restore_backup(backup_id)
+            self.write({'state': 'done'})
+            try:
+                self.env.cr.commit()
+            except Exception:
+                pass
+        except Exception as e:
+            self._mark_failed(e)
             raise
 
     def _run_drop(self):

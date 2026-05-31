@@ -6771,7 +6771,12 @@ class SaasInstance(models.Model):
         pending tx that ultimately fails won't be silently used.
         """
         self.ensure_one()
-        if not invoice or self.payment_token_id:
+        # Card retention is disabled as a matter of policy: we never store
+        # a customer's card token (the "Save my card" option is removed
+        # from every checkout). Bail out before persisting anything, even
+        # if a token somehow reaches us from another payment entry point.
+        return
+        if not invoice or self.payment_token_id:  # pragma: no cover
             # Don't overwrite an existing token here — switching
             # cards is an explicit portal action.
             return
@@ -8873,10 +8878,16 @@ class SaasInstance(models.Model):
         """
         self._ensure_hosting_for_db_ops()
         # ``_hosting_db_full_name`` enforces the instance prefix + a valid
-        # identifier — that's the ownership boundary. The target may be a
-        # NEW database (created from the backup) or an existing one
-        # (replaced); both are allowed.
+        # identifier — that's the ownership boundary.
         full = self._hosting_db_full_name(name)
+        # Restore always creates a NEW database — never overwrite an
+        # existing one (no accidental data loss). The customer must pick a
+        # free name.
+        if full in {r['name'] for r in self.hosting_db_list()}:
+            raise UserError(_(
+                "A database named '%s' already exists. Choose a different "
+                "name — restore creates a new database from your backup."
+            ) % full)
         if self.plan_id and self.plan_id.is_trial_plan:
             raise UserError(_(
                 "Restore isn't available on trial plans. Please upgrade "
@@ -8928,11 +8939,33 @@ class SaasInstance(models.Model):
             'state': 'done',
             'size_mb': round(size / (1024 * 1024), 2),
         })
-        # Background restore; flips the instance to 'provisioning' while
-        # it runs and back to running when done (other databases on the
-        # instance keep serving — only the target DB is replaced).
-        self.action_restore_backup(backup.id)
-        return backup
+        # Track it as a per-DB operation (like create/duplicate) and run
+        # in the background — deliberately NOT via action_restore_backup,
+        # which flips the WHOLE instance to 'provisioning'. Restoring one
+        # database shouldn't make the instance look down: the container
+        # keeps running, only the target DB is briefly replaced, and the
+        # UI shows just that row as "Restoring…".
+        Op = self.env['saas.instance.db.operation']
+        if Op.search_count([
+            ('instance_id', '=', self.id),
+            ('db_name', '=', backup.db_name),
+            ('state', '=', 'running'),
+        ]):
+            raise UserError(_(
+                "Another operation is already in progress on '%s'. Please "
+                "wait for it to finish."
+            ) % backup.db_name)
+        op = Op.create({
+            'instance_id': self.id,
+            'db_name': backup.db_name,
+            'operation': 'restore',
+        })
+        run_in_background(
+            op, '_run_restore',
+            method_args=(backup.id,),
+            thread_name='saas_db_restore_%s' % backup.db_name,
+        )
+        return op
 
     def hosting_db_reset_admin_password(self, name, new_password,
                                         login=None):

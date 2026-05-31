@@ -94,12 +94,12 @@ export default function Databases() {
   // in `databases` (mid-create), its own row carries the spinner — so
   // exclude those here to avoid a duplicate row.
   const existingNames = new Set((data?.databases ?? []).map((d) => d.name));
-  // A create OR duplicate produces a brand-new database that doesn't
-  // appear in the list until it's built — surface those as synthetic
-  // in-flight rows so the customer sees the work immediately.
+  // A create / duplicate / restore-into-new-name produces a database
+  // that isn't in the list yet (or is mid-replacement) — surface those
+  // as synthetic in-flight rows so the customer sees the work.
   const creatingOps = (data?.pending_ops ?? []).filter(
     (o) =>
-      (o.operation === "create" || o.operation === "duplicate") &&
+      (o.operation === "create" || o.operation === "duplicate" || o.operation === "restore") &&
       !existingNames.has(o.db_name),
   );
   // Any create in flight (existing-in-list or not) locks the button.
@@ -256,7 +256,7 @@ export default function Databases() {
                     <td className="hidden px-5 py-4 text-muted sm:table-cell">—</td>
                     <td className="px-5 py-4">
                       <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                        <Loader2 className="size-3.5 animate-spin" /> {op.operation === "duplicate" ? "Duplicating…" : "Creating…"}
+                        <Loader2 className="size-3.5 animate-spin" /> {op.operation === "duplicate" ? "Duplicating…" : op.operation === "restore" ? "Restoring…" : "Creating…"}
                       </span>
                     </td>
                     <td className="px-5 py-4" />
@@ -277,7 +277,7 @@ export default function Databases() {
                       <td className="px-5 py-4">
                         {pending ? (
                           <span className="inline-flex items-center gap-1.5 text-xs text-info">
-                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : op === "duplicate" ? "Duplicating…" : op === "upgrade" ? "Upgrading…" : "Creating…"}
+                            <Loader2 className="size-3.5 animate-spin" /> {op === "drop" ? "Deleting…" : op === "duplicate" ? "Duplicating…" : op === "upgrade" ? "Upgrading…" : op === "restore" ? "Restoring…" : "Creating…"}
                           </span>
                         ) : (
                           <StatusBadge status="running" label="Active" />
@@ -383,7 +383,12 @@ export default function Databases() {
         instanceId={instanceId}
         existing={data?.databases.map((d) => d.name) || []}
         onClose={() => setRestoreOpen(false)}
-        onDone={() => { navigate(`/my/instances/${id}`); }}
+        onDone={() => {
+          // The target DB now shows a live "Restoring…" row; the instance
+          // stays running and the page keeps working.
+          setRestoreOpen(false);
+          void load(true);
+        }}
       />
 
       <ResetPasswordDialog
@@ -813,7 +818,6 @@ function RestoreDatabaseDialog({
   const [file, setFile] = React.useState<File | null>(null);
   const [fileError, setFileError] = React.useState<string | null>(null);
   const [target, setTarget] = React.useState("");
-  const [ack, setAck] = React.useState(false);
   const [phase, setPhase] = React.useState<"idle" | "uploading" | "starting" | "done">("idle");
   const [progress, setProgress] = React.useState(0);
   const [error, setError] = React.useState<string | null>(null);
@@ -823,7 +827,6 @@ function RestoreDatabaseDialog({
       setFile(null);
       setFileError(null);
       setTarget("");
-      setAck(false);
       setPhase("idle");
       setProgress(0);
       setError(null);
@@ -832,9 +835,11 @@ function RestoreDatabaseDialog({
 
   const busy = phase === "uploading" || phase === "starting";
   const validName = /^[a-z][a-z0-9_]{2,40}$/.test(target);
-  // existing holds full names ("acme_prod"); the customer types a suffix.
-  const overwrite = !!target && existing.some((n) => n === target || n.endsWith("_" + target));
-  const canSubmit = !!file && !fileError && validName && (!overwrite || ack) && !busy;
+  // Restore always creates a NEW database, so reject a name already in
+  // use. (existing holds full names like "acme_prod"; the customer types
+  // a suffix.)
+  const nameTaken = !!target && existing.some((n) => n === target || n.endsWith("_" + target));
+  const canSubmit = !!file && !fileError && validName && !nameTaken && !busy;
 
   const pickFile = async (f: File | null) => {
     setError(null);
@@ -877,7 +882,7 @@ function RestoreDatabaseDialog({
       {error && <AlertBanner className="mb-4" variant="danger" title="Restore" description={error} />}
 
       <div className="space-y-2">
-        <Label htmlFor="restore-file">Backup file</Label>
+        <Label htmlFor="restore-file">Backup file (.zip)</Label>
         <Input
           id="restore-file"
           type="file"
@@ -885,19 +890,11 @@ function RestoreDatabaseDialog({
           disabled={busy}
           onChange={(e) => pickFile(e.target.files?.[0] || null)}
         />
-        {fileError ? (
-          <p className="text-xs text-danger">{fileError}</p>
-        ) : (
-          <p className="text-xs text-muted">
-            An Odoo backup in <code className="rounded bg-border/60 px-1 font-mono">.zip</code> format
-            (database + filestore). It uploads straight to secure storage — large backups
-            are fine and won't time out. We verify the file before changing anything.
-          </p>
-        )}
+        {fileError && <p className="text-xs text-danger">{fileError}</p>}
       </div>
 
       <div className="mt-4 space-y-2">
-        <Label htmlFor="restore-target">Restore into database</Label>
+        <Label htmlFor="restore-target">New database name</Label>
         <Input
           id="restore-target"
           placeholder="e.g. production"
@@ -905,29 +902,12 @@ function RestoreDatabaseDialog({
           disabled={busy}
           onChange={(e) => setTarget(e.target.value.toLowerCase())}
         />
-        <p className="text-xs text-muted">
-          Type a new name to create a database from the backup, or an existing
-          one to replace it. Your instance prefix is added automatically.
-        </p>
+        {nameTaken ? (
+          <p className="text-xs text-danger">That name is already in use. Pick a different one.</p>
+        ) : (
+          <p className="text-xs text-muted">Your backup is restored into a new database with this name.</p>
+        )}
       </div>
-
-      {overwrite && (
-        <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm">
-          <input
-            type="checkbox"
-            className="mt-0.5"
-            checked={ack}
-            disabled={busy}
-            onChange={(e) => setAck(e.target.checked)}
-          />
-          <span>
-            A database matching <span className="font-medium">{target}</span> already
-            exists. Restoring <span className="font-medium">replaces it entirely</span> —
-            its current data is overwritten and can't be recovered. Other databases
-            stay online.
-          </span>
-        </label>
-      )}
 
       {phase === "uploading" && (
         <div className="mt-4">
@@ -947,7 +927,6 @@ function RestoreDatabaseDialog({
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={busy}>Cancel</Button>
         <ActionButton
-          variant={overwrite ? "danger" : "default"}
           loading={busy}
           loadingText={phase === "starting" ? "Starting…" : "Uploading…"}
           disabled={!canSubmit}
