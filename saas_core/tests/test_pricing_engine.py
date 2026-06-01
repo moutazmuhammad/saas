@@ -229,6 +229,45 @@ class TestPricingEngine(TransactionCase):
         self._set({'saas_master.tier_floor_buffer_pct': '0',
                    'saas_master.custom_min_is_nearest_tier': 'False'})
 
+    def test_yearly_not_above_monthly_annual_constraint(self):
+        """#4: a plan whose yearly price exceeds 12x its monthly price
+        (negative discount) is rejected."""
+        from odoo.exceptions import ValidationError
+        product = self.env['saas.product'].sudo().search([], limit=1)
+        if not product:
+            self.skipTest('no saas.product available in this DB')
+        with self.assertRaises(ValidationError):
+            self.env['saas.plan'].sudo().create({
+                'name': 'TEST negative discount',
+                'workers': 2, 'storage_limit': 5,
+                'cpu_limit': 1.0, 'ram_limit': '1g',
+                'price': 100.0,
+                'yearly_price': 1300.0,  # > 12 * 100
+                'currency_id': self.env.company.currency_id.id,
+                'saas_product_ids': [(6, 0, [product.id])],
+            })
+
+    def test_tier_yearly_not_below_linear(self):
+        """#5: a public tier whose yearly price sits below the linear
+        yearly rate (linear x12 less the standard discount) is rejected —
+        yearly price inversion."""
+        from odoo.exceptions import ValidationError
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1)
+        if not product:
+            self.skipTest('no hosting product in this DB')
+        # 4w/50gb linear monthly = 55 -> linear yearly = 55*12*0.8 = 528.
+        with self.assertRaises(ValidationError):
+            self.env['saas.plan'].sudo().create({
+                'name': 'TEST tier low yearly', 'is_public_tier': True,
+                'workers': 4, 'storage_limit': 50,
+                'cpu_limit': 2.0, 'ram_limit': '2g',
+                'price': 60.0,           # ok monthly (>= 55 linear)
+                'yearly_price': 300.0,   # below 528 linear yearly -> reject
+                'currency_id': self.env.company.currency_id.id,
+                'saas_product_ids': [(6, 0, [product.id])],
+            })
+
     def test_addon_sum(self):
         """The daily_snapshots add-on adds the Settings price to the quote."""
         self._set({'saas_master.hosting_daily_backup_price': '7.0'})
@@ -336,6 +375,29 @@ class TestPricingEngine(TransactionCase):
             regs['monthly'],
             base['breakdown']['resource_monthly'] * 2 + 50.0, places=2)
 
+    def test_support_and_addons_not_discounted_yearly(self):
+        """#3: the yearly discount applies ONLY to infra (compute+storage).
+        Support and add-ons are flat monthly fees billed 12x at full price
+        on yearly — so the quote reconciles with the actual invoice."""
+        Support = self.env['saas.support.plan'].sudo()
+        Support.create({
+            'name': 'TEST Yd Sup', 'code': 'test_yd_sup',
+            'monthly_price': 50.0, 'response_time': '4h',
+        })
+        # 4w/50gb -> resource monthly = 4*10 + 50*0.3 = 55.0
+        resource_monthly = 4 * 10 + 50 * 0.3
+        q = self.engine.compute('hosting', 4, 50, 'yearly',
+                                support_code='test_yd_sup')
+        # Infra discounted 20%, support flat x12 (NO discount).
+        expected_yearly = resource_monthly * 12 * 0.8 + 50.0 * 12
+        self.assertAlmostEqual(q['yearly'], round(expected_yearly, 2), places=2)
+        # The blended saving is below the headline 20% (support isn't cut).
+        self.assertLess(q['savings_percent'], 20)
+        # Without extras the yearly is the plain discounted infra (legacy).
+        bare = self.engine.compute('hosting', 4, 50, 'yearly')
+        self.assertAlmostEqual(
+            bare['yearly'], round(resource_monthly * 12 * 0.8, 2), places=2)
+
     def test_region_multiplier_scales_compute_not_addons(self):
         """Region multiplier scales compute+storage only; add-ons unaffected."""
         region = self.env['saas.region'].sudo().create({
@@ -358,6 +420,20 @@ class TestPricingEngine(TransactionCase):
                 addon_codes=['daily_snapshots'], region=region.id)
             self.assertAlmostEqual(
                 rega['breakdown']['addons_monthly'], 7.0, places=2)
+
+    def test_region_scales_yearly_too(self):
+        """Region multiplier must scale the YEARLY total exactly like the
+        monthly one (regression: yearly was derived without the region in
+        some callers). Both ratios equal the multiplier."""
+        region = self.env['saas.region'].sudo().create({
+            'name': 'TEST y x3', 'code': 'test_y_x3', 'price_multiplier': 3.0,
+        })
+        base = self.engine.compute('hosting', 4, 50, 'yearly')
+        reg = self.engine.compute('hosting', 4, 50, 'yearly', region=region.id)
+        self.assertAlmostEqual(reg['monthly'], base['monthly'] * 3.0, places=2)
+        self.assertAlmostEqual(reg['yearly'], base['yearly'] * 3.0, places=2)
+        # `total` for yearly billing is the (region-scaled) yearly figure.
+        self.assertAlmostEqual(reg['total'], base['yearly'] * 3.0, places=2)
 
     def test_region_match_domain_treats_null_as_default(self):
         """Null-region servers belong to the default region (behaviour-

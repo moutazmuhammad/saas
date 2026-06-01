@@ -145,8 +145,7 @@
                                                 <input type="checkbox" name="daily_backup" value="1"
                                                        class="form-check-input mt-1"
                                                        id="daily-backup-toggle"
-                                                       t-att-data-price="config.get('daily_backup_price', 0)"
-                                                       t-att-data-yearly-discount="config.get('yearly_discount_pct', 20)"
+                                                       t-att-data-price="backup_unit_price"
                                                        t-att-checked="daily_backup or None"/>
                                                 <label class="form-check-label" for="daily-backup-toggle">
                                                     <span class="fw-semibold">
@@ -230,7 +229,7 @@
                                                  id="backup-cost-row"
                                                  t-att-style="'' if daily_backup else 'display:none;'">
                                                 <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Daily Backups</span>
-                                                <span class="breakdown-value">+<t t-esc="'${:,.2f}'.format(config.get('daily_backup_price', 0))"/>/mo</span>
+                                                <span class="breakdown-value">+<t t-esc="'${:,.2f}'.format(backup_unit_price)"/>/mo</span>
                                             </div>
                                             <div class="breakdown-row" t-if="support_cost &gt; 0">
                                                 <span class="breakdown-label"><i class="fas fa-headset me-2"></i>Support</span>
@@ -244,6 +243,7 @@
                                                 </span>
                                                 <span class="total-amount" id="hosting-total-amount"
                                                       t-att-data-base-monthly="monthly_total - backup_cost"
+                                                      t-att-data-base-yearly="yearly_total - backup_cost * 12"
                                                       t-att-data-billing="billing_period">
                                                     <t t-if="billing_period == 'yearly'">
                                                         <t t-esc="'${:,.2f}'.format(yearly_total)"/>
@@ -265,17 +265,19 @@
                                                 var totalEl = document.getElementById('hosting-total-amount');
                                                 if (!totalEl) return;
                                                 var baseMonthly = parseFloat(totalEl.dataset.baseMonthly) || 0;
+                                                var baseYearly = parseFloat(totalEl.dataset.baseYearly) || 0;
                                                 var billing = totalEl.dataset.billing;
+                                                // Daily-backup is a FLAT monthly fee: x12 on yearly with
+                                                // NO discount (only the infra/base carries the yearly
+                                                // discount, already baked into baseYearly server-side).
                                                 var price = parseFloat(cb.dataset.price) || 0;
-                                                var yd = (parseFloat(cb.dataset.yearlyDiscount) || 0) / 100;
                                                 function fmt(n) { return '$' + n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
                                                 function refresh() {
                                                     var addon = cb.checked ? price : 0;
-                                                    var monthly = baseMonthly + addon;
                                                     if (row) row.style.display = cb.checked ? '' : 'none';
                                                     totalEl.textContent = billing === 'yearly'
-                                                        ? fmt(monthly * 12 * (1 - yd))
-                                                        : fmt(monthly);
+                                                        ? fmt(baseYearly + addon * 12)
+                                                        : fmt(baseMonthly + addon);
                                                 }
                                                 cb.addEventListener('change', refresh);
                                             })();

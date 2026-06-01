@@ -219,6 +219,43 @@ class SaasPlan(models.Model):
                     "rates in Settings."
                 ) % (rec.name, rec.price, rec.workers,
                      int(rec.storage_limit or 0), linear, linear))
+            # Same inversion guard for the YEARLY price: a custom (slider)
+            # config of the same size is quoted at the linear yearly rate
+            # (linear x12 less the standard yearly discount). A tier whose
+            # yearly price sits below that would let the bigger named tier
+            # undercut a smaller custom plan on yearly billing too.
+            if linear > 0 and rec.yearly_price:
+                discount = (cfg.get('yearly_discount_pct') or 0) / 100.0
+                linear_yearly = linear * 12 * (1 - discount)
+                if rec.yearly_price + 0.01 < linear_yearly:
+                    raise ValidationError(_(
+                        "Tier '%s' has a yearly price of %.2f but its "
+                        "resources (%d workers / %d GB) cost %.2f/year at "
+                        "the standard rate (linear x12 less the %d%% yearly "
+                        "discount). Raise the yearly price to at least %.2f "
+                        "to avoid yearly price inversion."
+                    ) % (rec.name, rec.yearly_price, rec.workers,
+                         int(rec.storage_limit or 0), linear_yearly,
+                         int(cfg.get('yearly_discount_pct') or 0),
+                         linear_yearly))
+
+    @api.constrains('price', 'yearly_price', 'is_trial_plan')
+    def _check_yearly_not_above_monthly_annual(self):
+        """The yearly price must never exceed 12 months of the monthly
+        price — otherwise the "yearly" option is more expensive than paying
+        monthly (a negative discount), which the pricing card would render
+        as a negative saving. Equal (= 12x monthly) is allowed (no
+        discount). Skipped for trials and unpriced plans."""
+        for rec in self:
+            if rec.is_trial_plan or not rec.price or not rec.yearly_price:
+                continue
+            if rec.yearly_price > rec.price * 12 + 0.01:
+                raise ValidationError(_(
+                    "Plan '%s': yearly price %.2f is higher than 12 months "
+                    "of the monthly price (%.2f). Yearly must be at most "
+                    "12x the monthly price so it is never a worse deal than "
+                    "paying monthly."
+                ) % (rec.name, rec.yearly_price, rec.price * 12))
 
     @api.depends('price', 'yearly_price')
     def _compute_yearly_discount_pct(self):

@@ -1323,24 +1323,12 @@ class SaasInstance(models.Model):
         lock = self.backup_price_locked_until
         if lock and lock >= fields.Date.today():
             return flat
-        icp = self.env['ir.config_parameter'].sudo()
-        try:
-            pct = float(icp.get_param('saas_master.backup_price_pct', '20') or 0)
-        except (TypeError, ValueError):
-            pct = 0.0
-        if pct <= 0:
-            return flat  # percentage disabled → legacy flat price
-        try:
-            minimum = float(icp.get_param('saas_master.backup_price_min', '0') or 0)
-        except (TypeError, ValueError):
-            minimum = 0.0
+        # Delegate to the pricing engine so the checkout quote, the portal
+        # and the recurring invoice all charge the SAME number.
         plan_monthly = (
             self.plan_id._get_price_for_period('monthly') if self.plan_id else 0.0
         )
-        price = plan_monthly * pct / 100.0
-        if minimum > 0:
-            price = max(price, minimum)
-        return round(price, 2)
+        return self.env['saas.pricing.engine'].daily_backup_price(plan_monthly)
 
     def _get_snapshot_retention_surcharge(self):
         """One-time fee for keeping a snapshot through cancellation.
@@ -1582,6 +1570,16 @@ class SaasInstance(models.Model):
         support_line = self._support_order_line(period, period_label)
         if support_line:
             order_lines.append(support_line)
+
+        # Daily-backup add-on chosen at checkout (daily_backup_enabled set at
+        # instance creation). It's a flat MONTHLY fee, so charge one full
+        # month upfront here and anchor its monthly cycle when the instance
+        # is marked paid (see _set_next_invoice_date). Without this the
+        # feature was switched on but never billed.
+        if self.daily_backup_enabled:
+            snapshot_line = self._snapshot_order_line()
+            if snapshot_line:
+                order_lines.append(snapshot_line)
 
         # -- Create & confirm sale order --
         order_vals = {
@@ -6751,6 +6749,20 @@ class SaasInstance(models.Model):
         self.last_invoice_date = today
         self.suspension_warning_sent = False
 
+        # Anchor the daily-backup add-on's monthly billing cycle the first
+        # time the instance is activated with backups already enabled (e.g.
+        # the customer ticked "daily backups" at checkout). The add-on is
+        # ALWAYS billed monthly, independent of the plan period; the first
+        # month is charged on the activation invoice (action_confirm_and_bill)
+        # and the next charge falls one month later. Only set it once, and
+        # only when a price is actually configured — otherwise the renewal
+        # cron would log "price not configured" every day.
+        if (self.is_hosting and self.daily_backup_enabled
+                and not self.daily_backup_next_invoice_date
+                and self._get_daily_backup_price() > 0):
+            self.daily_backup_last_invoice_date = today
+            self.daily_backup_next_invoice_date = today + relativedelta(months=1)
+
     # ============================================================
     # Saved card + auto-renewal
     # ============================================================
@@ -7849,8 +7861,19 @@ class SaasInstance(models.Model):
                     % (remaining_value, remaining_days, self.plan_id.name)
                 )
 
-        # Final charge = new plan price - remaining value (min 0)
-        final_charge = max(new_price - remaining_value, 0)
+        # Final charge = new plan price - remaining value (min 0). The
+        # applied credit is capped at the new price — an upgrade is not
+        # refunded in cash — so if the remaining value of the current plan
+        # exceeds the new price, the surplus is forfeited. Disclose it
+        # rather than dropping it silently (see review finding #6).
+        applied_credit = min(remaining_value, new_price)
+        forfeited_credit = remaining_value - applied_credit
+        final_charge = new_price - applied_credit
+        if forfeited_credit > 0.01:
+            remaining_info += (
+                ' — note: %.2f of unused credit is forfeited '
+                '(upgrades are credited, not cash-refunded)' % forfeited_credit
+            )
 
         self._append_log(
             "Upgrade calculation: new_price=%.2f, remaining_value=%.2f, "

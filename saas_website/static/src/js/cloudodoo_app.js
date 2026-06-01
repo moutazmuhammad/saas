@@ -516,6 +516,10 @@ function initUpgradePlanBuilder() {
         yearlyDiscountPct: parseInt(configEl.dataset.yearlyDiscountPct) || 20,
         currency: configEl.dataset.currency || 'USD',
         mode: configEl.dataset.mode || 'upgrade',
+        // The instance's pinned region (0 = none -> x1.0). Sent to the
+        // calc endpoint so the preview is region-scaled exactly like the
+        // plan that will be created.
+        regionId: parseInt(configEl.dataset.regionId) || 0,
         currentWorkers: parseInt(configEl.dataset.currentWorkers) || 0,
         currentStorage: parseInt(configEl.dataset.currentStorage) || 0,
         currentBilling: configEl.dataset.currentBilling || 'monthly',
@@ -560,12 +564,19 @@ function initUpgradePlanBuilder() {
         if (_priceTimer) clearTimeout(_priceTimer);
         var seq = ++_priceSeq;
         _priceTimer = setTimeout(function () {
-            CloudOdoo.jsonRpc(config.calcUrl, { workers: workers, storage: storage })
+            CloudOdoo.jsonRpc(config.calcUrl, {
+                workers: workers, storage: storage,
+                region: config.regionId || undefined,
+            })
                 .then(function (r) {
                     if (seq !== _priceSeq) return;  // a newer request superseded this
                     var monthly = (r && r.monthly_total) || 0;
                     var yearlyFull = monthly * 12;
-                    var yearlyDiscounted = yearlyFull * (1 - YEARLY_DISCOUNT);
+                    // Use the server's region-scaled + discounted yearly
+                    // total; fall back to the local discount only if absent.
+                    var yearlyDiscounted = (r && r.yearly_total != null)
+                        ? r.yearly_total
+                        : yearlyFull * (1 - YEARLY_DISCOUNT);
                     var yearlySavings = yearlyFull - yearlyDiscounted;
                     var cur = (r && r.currency) || config.currency;
                     if (currentBilling === 'yearly') {

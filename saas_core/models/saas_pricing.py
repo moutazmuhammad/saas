@@ -225,22 +225,28 @@ class SaasPricingEngine(models.AbstractModel):
         minimum_applied = minimum_monthly > pre_minimum
 
         discount = cfg['yearly_discount_pct'] / 100.0
+        # The yearly discount applies ONLY to the infrastructure (compute +
+        # storage) portion. Support plans and the daily-backup / other
+        # add-ons are FLAT MONTHLY fees billed 12x at their full monthly
+        # price and are NEVER discounted on yearly billing — so the quote
+        # reconciles exactly with what is invoiced: support is billed
+        # qty=12 @ the monthly price (see ``_support_order_line``) and the
+        # snapshot add-on is billed monthly at full price by its own cron.
         if exact_tier:
             # Honor the tier's STORED yearly price so the engine matches
-            # the pricing card (which shows ``plan.yearly_price``). Without
-            # this, an exact-tier quote re-derived yearly from the global
-            # discount and diverged from the advertised yearly figure.
-            # Region scales it like monthly; add-ons/support get the
-            # standard yearly discount on top so a configured tier still
-            # reconciles with the bare card.
+            # the pricing card (which shows ``plan.yearly_price``). Region
+            # scales it like monthly.
             resource_yearly = max(
                 exact_tier._get_price_for_period('yearly'), floor * 12,
             ) * region_factor
-            other_yearly = (addons_monthly + support_monthly) * 12 * (1 - discount)
-            pre_minimum_yearly = resource_yearly + other_yearly
-            yearly = max(pre_minimum_yearly, minimum_monthly * 12 * (1 - discount))
         else:
-            yearly = monthly * 12 * (1 - discount)
+            resource_yearly = resource_monthly * 12 * (1 - discount)
+        # Flat extras: full monthly price x12, NO yearly discount.
+        other_yearly = (addons_monthly + support_monthly) * 12
+        pre_minimum_yearly = resource_yearly + other_yearly
+        # The minimum-monthly floor still guards the yearly total; only the
+        # infra portion it floors carries the yearly discount.
+        yearly = max(pre_minimum_yearly, minimum_monthly * 12 * (1 - discount))
         yearly_savings = (monthly * 12) - yearly
         is_yearly = billing == 'yearly'
 
@@ -323,6 +329,38 @@ class SaasPricingEngine(models.AbstractModel):
         per_gb = float(icp.get_param('saas_master.extra_storage_price_per_gb', '0') or 0)
         return {'mode': 'per_gb', 'over_gb': over_gb,
                 'charge': round(over_gb * per_gb, 2)}
+
+    @api.model
+    def daily_backup_price(self, plan_monthly):
+        """Monthly price of the daily-backup add-on for a plan whose monthly
+        price is ``plan_monthly``.
+
+        SINGLE source of truth for the snapshot add-on price so the checkout
+        quote, the portal, and the recurring invoice all agree. Percentage
+        model: a fixed % of the plan's monthly price
+        (``saas_master.backup_price_pct``, default 20) with an optional flat
+        floor (``saas_master.backup_price_min``). Falls back to the legacy
+        flat price (``saas_master.hosting_daily_backup_price``) when the
+        percentage is 0. This is a flat MONTHLY fee — never discounted on
+        yearly billing.
+        """
+        icp = self.env['ir.config_parameter'].sudo()
+
+        def _f(key, default='0'):
+            try:
+                return float(icp.get_param(key, default) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        flat = _f('saas_master.hosting_daily_backup_price', '0.0')
+        pct = _f('saas_master.backup_price_pct', '20')
+        if pct <= 0:
+            return flat  # percentage disabled -> legacy flat price
+        minimum = _f('saas_master.backup_price_min', '0')
+        price = (plan_monthly or 0.0) * pct / 100.0
+        if minimum > 0:
+            price = max(price, minimum)
+        return round(price, 2)
 
     @api.model
     def monthly_price(self, kind, workers, storage, region=None):

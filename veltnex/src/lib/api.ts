@@ -96,6 +96,16 @@ export interface ApiTier {
   currency: string;
 }
 
+export interface ApiRegion {
+  id: number;
+  code: string;
+  name: string;
+  /** Price multiplier applied to the compute+storage portion (1.0 = base). */
+  multiplier: number;
+  default: boolean;
+  available: boolean;
+}
+
 export interface PriceResult {
   workers: number;
   storage: number;
@@ -105,6 +115,8 @@ export interface PriceResult {
   yearly_savings: number;
   savings_percent: number;
   currency: string;
+  /** Region multiplier baked into `total` (1.0 = base region). */
+  region_factor: number;
   limits: {
     workers: { min: number; max: number };
     storage: { min: number; max: number };
@@ -315,13 +327,35 @@ export const api = {
 
   // public
   meta: () => rpc<Meta>("/saas/api/v1/meta"),
-  tiers: (kind = "hosting") => rpc<ApiTier[]>("/saas/api/v1/tiers", { kind }),
+  tiers: (kind = "hosting", region?: number | null) =>
+    rpc<ApiTier[]>("/saas/api/v1/tiers", { kind, region: region ?? undefined }),
+  regions: () => rpc<ApiRegion[]>("/saas/api/v1/regions"),
   services: () => rpc<ApiService[]>("/saas/api/v1/services"),
   service: (id: number) => rpc<ApiService>(`/saas/api/v1/services/${id}`),
-  hostingCalculate: (workers: number, storage: number, billing: string) =>
-    rpc<PriceResult>("/saas/api/v1/hosting/calculate", { workers, storage, billing }),
-  servicesCalculate: (workers: number, storage: number, billing: string) =>
-    rpc<PriceResult>("/saas/api/v1/services/calculate", { workers, storage, billing }),
+  hostingCalculate: (
+    workers: number,
+    storage: number,
+    billing: string,
+    region?: number | null,
+  ) =>
+    rpc<PriceResult>("/saas/api/v1/hosting/calculate", {
+      workers,
+      storage,
+      billing,
+      region: region ?? undefined,
+    }),
+  servicesCalculate: (
+    workers: number,
+    storage: number,
+    billing: string,
+    region?: number | null,
+  ) =>
+    rpc<PriceResult>("/saas/api/v1/services/calculate", {
+      workers,
+      storage,
+      billing,
+      region: region ?? undefined,
+    }),
   checkSubdomain: (subdomain: string, domain_id: number) =>
     rpc<{ available: boolean; message: string }>("/saas/api/v1/check-subdomain", {
       subdomain,

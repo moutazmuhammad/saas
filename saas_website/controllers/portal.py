@@ -438,10 +438,12 @@ class SaasPortal(CustomerPortal):
         if instance_sudo.is_hosting:
             plan = SaasWebsite._get_or_create_hosting_plan(
                 self, instance_sudo.saas_product_id, workers, storage, config,
+                region=instance_sudo.region_id,
             )
         else:
             plan = SaasWebsite._get_or_create_custom_plan(
                 self, instance_sudo.saas_product_id, workers, storage, config,
+                region=instance_sudo.region_id,
             )
 
         try:
@@ -701,11 +703,13 @@ class SaasPortal(CustomerPortal):
             new_plan = SaasWebsite._get_or_create_hosting_plan(
                 self, instance_sudo.saas_product_id,
                 new_workers, new_storage, config,
+                region=instance_sudo.region_id,
             )
         else:
             new_plan = SaasWebsite._get_or_create_custom_plan(
                 self, instance_sudo.saas_product_id,
                 new_workers, new_storage, config,
+                region=instance_sudo.region_id,
             )
 
         try:
@@ -2204,10 +2208,12 @@ class SaasPortal(CustomerPortal):
         if instance_sudo.is_hosting:
             new_plan = SaasWebsite._get_or_create_hosting_plan(
                 self, product, new_workers, new_storage, config,
+                region=instance_sudo.region_id,
             )
         else:
             new_plan = SaasWebsite._get_or_create_custom_plan(
                 self, product, new_workers, new_storage, config,
+                region=instance_sudo.region_id,
             )
 
         try:
