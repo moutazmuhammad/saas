@@ -52,16 +52,30 @@ class SaasPlan(models.Model):
     )
 
     # ========== Pricing ==========
+    # For NAMED tiers the price is derived automatically from the resources
+    # (the same linear rate the custom builder uses) minus ``discount_amount``
+    # — operators tune the discount, not the raw price. Custom plans get their
+    # price from the pricing engine at creation. See ``_auto_price_vals``.
     price = fields.Float(
         string='Monthly Price',
         default=0.0,
-        help='Monthly recurring price for this plan.',
+        help='Monthly recurring price. For named tiers this is computed '
+             'automatically from the resources minus the discount; edit the '
+             'discount, not this field.',
     )
     yearly_price = fields.Float(
         string='Yearly Price',
         default=0.0,
-        help='Yearly recurring price. Leave 0 to disable yearly billing. '
-             'Typically set lower than 12× the monthly price to offer a discount.',
+        help='Yearly recurring price. Derived from the monthly price and the '
+             'global yearly discount for named tiers.',
+    )
+    discount_amount = fields.Float(
+        string='Plan Discount ($/mo)',
+        default=0.0,
+        help='Fixed amount knocked off this named tier\'s automatic '
+             'resource-based monthly price, to make it a "good deal" '
+             '(e.g. 5 = $5/mo off). 0 = full resource price. The price is '
+             'never allowed below cost. Ignored for custom and trial plans.',
     )
     yearly_discount_pct = fields.Float(
         string='Yearly Discount %',
@@ -184,60 +198,57 @@ class SaasPlan(models.Model):
                 ) % (rec.name, rec.yearly_price, floor * 12, rec.workers,
                      int(rec.storage_limit or 0)))
 
-    @api.constrains('price', 'workers', 'storage_limit', 'is_public_tier',
-                    'is_trial_plan', 'saas_product_ids')
-    def _check_tier_not_below_linear(self):
-        """A published tier must not be cheaper than the plain linear
-        price of its OWN resources.
+    # ========== Automatic resource-based pricing (named tiers) ==========
+    def _kind(self):
+        """'hosting' or 'services' — selects the rate set for this plan."""
+        self.ensure_one()
+        return 'hosting' if any(
+            p.is_hosting for p in self.saas_product_ids
+        ) else 'services'
 
-        Without this a "marketing" tier could be set, say, $30 for
-        4w/160GB while the linear rate for that same size (or even a
-        SMALLER custom config) is $88 — so buying the bigger named tier
-        would be cheaper than a smaller slider config (price inversion),
-        and the tier itself would undercut your own rate card. Only
-        enforced for public tiers; custom/auto plans are exempt (they
-        ARE the linear price). No-op if base rates are 0.
-        """
+    def _auto_price_vals(self):
+        """The automatic (monthly, yearly) price for a NAMED tier: the linear
+        resource rate for its workers/storage MINUS the fixed
+        ``discount_amount``, never below the cost floor. Yearly applies the
+        global yearly discount on top.
+
+        This is the SINGLE pricing formula — the custom builder prices the
+        same linear rate through the engine, and a custom config is capped by
+        the cheapest covering tier (``_tier_ceiling``), so the card, the
+        configurator and the invoice all agree."""
+        self.ensure_one()
         engine = self.env['saas.pricing.engine']
+        cfg = engine._rate_config(self._kind())
+        storage = int(self.storage_limit or 0)
+        linear = (self.workers * cfg['worker_price']) + (
+            storage * cfg['storage_price_per_gb'])
+        floor = engine._cost_floor(cfg, self.workers, storage)
+        price = max(linear - (self.discount_amount or 0.0), floor, 0.0)
+        yd = (cfg['yearly_discount_pct'] or 0) / 100.0
+        return round(price, 2), round(price * 12 * (1 - yd), 2)
+
+    @api.onchange('workers', 'storage_limit', 'discount_amount',
+                  'saas_product_ids', 'is_public_tier')
+    def _onchange_auto_price(self):
+        """Live-fill a named tier's price from its resources in the form, so
+        the operator tunes the discount and sees the resulting price."""
         for rec in self:
-            if (rec.is_trial_plan or not rec.is_public_tier
-                    or not rec.workers or not rec.price):
-                continue
-            kind = 'hosting' if any(
-                p.is_hosting for p in rec.saas_product_ids
-            ) else 'services'
-            cfg = engine._rate_config(kind)
-            linear = (rec.workers * cfg['worker_price']) + (
-                int(rec.storage_limit or 0) * cfg['storage_price_per_gb'])
-            if linear > 0 and rec.price + 0.01 < linear:
-                raise ValidationError(_(
-                    "Tier '%s' is priced at %.2f/mo but its resources "
-                    "(%d workers / %d GB) cost %.2f at the standard rate. "
-                    "A tier priced below the rate card would be cheaper "
-                    "than a smaller custom plan (price inversion). Raise "
-                    "the tier price to at least %.2f, or lower the base "
-                    "rates in Settings."
-                ) % (rec.name, rec.price, rec.workers,
-                     int(rec.storage_limit or 0), linear, linear))
-            # Same inversion guard for the YEARLY price: a custom (slider)
-            # config of the same size is quoted at the linear yearly rate
-            # (linear x12 less the standard yearly discount). A tier whose
-            # yearly price sits below that would let the bigger named tier
-            # undercut a smaller custom plan on yearly billing too.
-            if linear > 0 and rec.yearly_price:
-                discount = (cfg.get('yearly_discount_pct') or 0) / 100.0
-                linear_yearly = linear * 12 * (1 - discount)
-                if rec.yearly_price + 0.01 < linear_yearly:
-                    raise ValidationError(_(
-                        "Tier '%s' has a yearly price of %.2f but its "
-                        "resources (%d workers / %d GB) cost %.2f/year at "
-                        "the standard rate (linear x12 less the %d%% yearly "
-                        "discount). Raise the yearly price to at least %.2f "
-                        "to avoid yearly price inversion."
-                    ) % (rec.name, rec.yearly_price, rec.workers,
-                         int(rec.storage_limit or 0), linear_yearly,
-                         int(cfg.get('yearly_discount_pct') or 0),
-                         linear_yearly))
+            if rec.is_public_tier and not rec.is_trial_plan and rec.workers:
+                rec.price, rec.yearly_price = rec._auto_price_vals()
+
+    def _sync_auto_price(self):
+        """Enforce the automatic resource-based price on named tiers so the
+        STORED price always equals linear - discount (floored at cost),
+        regardless of what was written. Custom/trial/manual plans are left
+        untouched (custom plans are priced by the engine at creation)."""
+        for rec in self:
+            if rec.is_public_tier and not rec.is_trial_plan and rec.workers:
+                price, yearly = rec._auto_price_vals()
+                if (abs(rec.price - price) > 0.005
+                        or abs(rec.yearly_price - yearly) > 0.005):
+                    rec.with_context(_skip_auto_price=True).write({
+                        'price': price, 'yearly_price': yearly,
+                    })
 
     @api.constrains('price', 'yearly_price', 'is_trial_plan')
     def _check_yearly_not_above_monthly_annual(self):
@@ -267,6 +278,25 @@ class SaasPlan(models.Model):
                 )
             else:
                 rec.yearly_discount_pct = 0
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        plans = super().create(vals_list)
+        plans._sync_auto_price()
+        return plans
+
+    def write(self, vals):
+        res = super().write(vals)
+        # Re-derive a named tier's auto price whenever the inputs change — or
+        # when the raw price/yearly is written directly (a tier's price is
+        # operator-readonly and always overridden by the auto value).
+        if not self.env.context.get('_skip_auto_price') and (
+            {'workers', 'storage_limit', 'discount_amount', 'is_public_tier',
+             'is_trial_plan', 'saas_product_ids', 'price', 'yearly_price'}
+            & set(vals)
+        ):
+            self._sync_auto_price()
+        return res
 
     def _get_price_for_period(self, period):
         """Return the price for the given billing period ('monthly' or 'yearly')."""

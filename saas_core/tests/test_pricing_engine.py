@@ -151,128 +151,83 @@ class TestPricingEngine(TransactionCase):
         self.assertAlmostEqual(q['monthly'], 26.5, places=2)
         self.assertAlmostEqual(q['breakdown']['cost_floor'], 26.5, places=2)
 
-    def test_plan_price_floor_constraint(self):
-        """A plan priced below its cost floor is rejected."""
-        from odoo.exceptions import ValidationError
+    def _make_tier(self, workers, storage, discount=0.0, name='TEST Tier'):
+        """Helper: a published hosting tier (auto-priced from resources)."""
         product = self.env['saas.product'].sudo().search(
             [('is_hosting', '=', True)], limit=1)
         if not product:
             self.skipTest('no hosting product in this DB')
+        return self.env['saas.plan'].sudo().create({
+            'name': name, 'is_public_tier': True,
+            'workers': workers, 'storage_limit': storage,
+            'cpu_limit': 2.0, 'ram_limit': '2g',
+            'discount_amount': discount,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])],
+        })
+
+    def test_tier_auto_priced_from_resources(self):
+        """A named tier's price is auto-derived = linear rate − discount
+        (floored at cost); yearly applies the global yearly discount. Any
+        raw price written is overridden by the auto value."""
+        # 4w/50 -> linear 55. discount 5 -> 50. Pass a bogus price: ignored.
+        tier = self._make_tier(4, 50, discount=5.0, name='TEST Auto Pro')
+        tier.write({'price': 9999.0})  # must be re-synced to the auto value
+        self.assertAlmostEqual(tier.price, 50.0, places=2)
+        self.assertAlmostEqual(tier.yearly_price, 50.0 * 12 * 0.8, places=2)
+        # No discount -> full linear.
+        tier.write({'discount_amount': 0.0})
+        self.assertAlmostEqual(tier.price, 55.0, places=2)
+
+    def test_tier_price_respects_cost_floor(self):
+        """A tier's auto price never drops below the cost floor, even with a
+        discount larger than the linear rate."""
         self._set({
             'saas_master.hosting_worker_floor': '12',
             'saas_master.hosting_storage_floor': '0.5',
         })
-        with self.assertRaises(ValidationError):
-            self.env['saas.plan'].sudo().create({
-                'name': 'TEST below floor',
-                'is_public_tier': True,
-                'workers': 2, 'storage_limit': 5,
-                'cpu_limit': 1.0, 'ram_limit': '1g',
-                'price': 10.0,  # below floor 26.5
-                'currency_id': self.env.company.currency_id.id,
-                'saas_product_ids': [(6, 0, [product.id])],
-            })
+        # 2w/5 -> linear 21.5, floor 2*12 + 5*0.5 = 26.5. Big discount can't
+        # push it below the floor.
+        tier = self._make_tier(2, 5, discount=100.0, name='TEST Floored')
+        self.assertAlmostEqual(tier.price, 26.5, places=2)
+        self._set({'saas_master.hosting_worker_floor': '0',
+                   'saas_master.hosting_storage_floor': '0'})
 
-    def test_tier_floor_blocks_undercut(self):
-        """When 'custom >= nearest tier' is on, a custom config that
-        contains a tier can't be priced below that tier."""
-        product = self.env['saas.product'].sudo().search(
-            [('is_hosting', '=', True)], limit=1)
-        if not product:
-            self.skipTest('no hosting product in this DB')
-        self._set({'saas_master.custom_min_is_nearest_tier': 'True'})
-        self.env['saas.plan'].sudo().create({
-            'name': 'TEST Pro tier', 'is_public_tier': True,
-            'workers': 4, 'storage_limit': 50,
-            'cpu_limit': 2.0, 'ram_limit': '2g',
-            'price': 999.0, 'yearly_price': 9990.0,
-            'currency_id': self.env.company.currency_id.id,
-            'saas_product_ids': [(6, 0, [product.id])],
-        })
-        # 8w/200gb contains the 4w/50gb tier -> floor up to 999
-        q = self.engine.compute('hosting', 8, 200, 'monthly')
-        self.assertEqual(q['breakdown']['tier_floor'], 999.0)
-        self.assertGreaterEqual(q['monthly'], 999.0)
+    def test_custom_capped_by_covering_tier(self):
+        """A custom config never costs more than the cheapest tier that gives
+        the SAME or MORE resources. A tier-sized config charges exactly the
+        tier price (card == configurator == invoice)."""
+        self._make_tier(4, 50, discount=5.0, name='TEST Pro')  # price 50
+        # Exact tier size: capped at 50 (not linear 55).
+        self.assertAlmostEqual(
+            self.engine.compute('hosting', 4, 50, 'monthly')['monthly'], 50.0, places=2)
+        # Smaller, still covered by Pro, linear above 50 -> capped at 50.
+        self.assertAlmostEqual(
+            self.engine.compute('hosting', 4, 45, 'monthly')['monthly'], 50.0, places=2)
+        # Much smaller, linear below 50 -> stays linear (cheaper).
+        self.assertAlmostEqual(
+            self.engine.compute('hosting', 2, 5, 'monthly')['monthly'], 21.5, places=2)
+        # Bigger than Pro (no covering tier) -> linear.
+        self.assertAlmostEqual(
+            self.engine.compute('hosting', 8, 200, 'monthly')['monthly'],
+            8 * 10 + 200 * 0.3, places=2)
 
     def test_custom_slider_is_monotonic(self):
-        """Reducing workers or storage must NEVER increase the price. The
-        custom slider is linear by default; the exact-tier override (which
-        would spike an exact match up to a premium tier price) is OFF unless
-        ``custom_match_tier_price`` is set."""
-        product = self.env['saas.product'].sudo().search(
-            [('is_hosting', '=', True)], limit=1)
-        if not product:
-            self.skipTest('no hosting product in this DB')
-        # A premium tier that WOULD spike an exact 4w/50GB match to 999.
-        self.env['saas.plan'].sudo().create({
-            'name': 'TEST Premium Pro', 'is_public_tier': True,
-            'workers': 4, 'storage_limit': 50,
-            'cpu_limit': 2.0, 'ram_limit': '2g',
-            'price': 999.0, 'yearly_price': 9990.0,
-            'currency_id': self.env.company.currency_id.id,
-            'saas_product_ids': [(6, 0, [product.id])],
-        })
-        # Exact match stays LINEAR (override off by default) — no spike.
-        exact = self.engine.compute('hosting', 4, 50, 'monthly')
-        self.assertAlmostEqual(exact['monthly'], 4 * 10 + 50 * 0.3, places=2)
-
-        # Sweep storage DOWN: price never rises.
+        """Reducing workers or storage NEVER increases the price — even with a
+        discounted covering tier (linear capped by the monotonic ceiling)."""
+        self._make_tier(4, 50, discount=5.0, name='TEST Pro')  # price 50
         prev = None
-        for s in range(60, 39, -5):
+        for s in range(60, 4, -5):
             m = self.engine.compute('hosting', 4, s, 'monthly')['monthly']
             if prev is not None:
-                self.assertLessEqual(
-                    m, prev + 1e-6, 'price rose when storage dropped to %d' % s)
+                self.assertLessEqual(m, prev + 1e-6, 'storage dropped to %d' % s)
             prev = m
-        # Sweep workers DOWN: price never rises.
         prev = None
         for w in range(8, 1, -1):
             m = self.engine.compute('hosting', w, 50, 'monthly')['monthly']
             if prev is not None:
-                self.assertLessEqual(
-                    m, prev + 1e-6, 'price rose when workers dropped to %d' % w)
+                self.assertLessEqual(m, prev + 1e-6, 'workers dropped to %d' % w)
             prev = m
-
-        # With the opt-in flag ON, the exact match DOES quote the tier price.
-        self._set({'saas_master.custom_match_tier_price': 'True'})
-        on = self.engine.compute('hosting', 4, 50, 'monthly')
-        self.assertAlmostEqual(on['monthly'], 999.0, places=2)
-        self._set({'saas_master.custom_match_tier_price': 'False'})
-
-    def test_tier_floor_soft_buffer(self):
-        """P2: the buffer % lets a custom config sit below the nearest tier
-        instead of being pinned to it. 0 = hard floor (unchanged)."""
-        product = self.env['saas.product'].sudo().search(
-            [('is_hosting', '=', True)], limit=1)
-        if not product:
-            self.skipTest('no hosting product in this DB')
-        self._set({'saas_master.custom_min_is_nearest_tier': 'True'})
-        self.env['saas.plan'].sudo().create({
-            'name': 'TEST Pro 1000', 'is_public_tier': True,
-            'workers': 4, 'storage_limit': 50,
-            'cpu_limit': 2.0, 'ram_limit': '2g',
-            'price': 1000.0, 'yearly_price': 10000.0,
-            'currency_id': self.env.company.currency_id.id,
-            'saas_product_ids': [(6, 0, [product.id])],
-        })
-        # buffer 0 -> hard floor at the full tier price.
-        self._set({'saas_master.tier_floor_buffer_pct': '0'})
-        q0 = self.engine.compute('hosting', 8, 200, 'monthly')
-        self.assertAlmostEqual(q0['breakdown']['tier_floor'], 1000.0, places=2)
-
-        # buffer 10 -> floor relaxes to 90% of the tier (900).
-        self._set({'saas_master.tier_floor_buffer_pct': '10'})
-        q10 = self.engine.compute('hosting', 8, 200, 'monthly')
-        self.assertAlmostEqual(q10['breakdown']['tier_floor'], 900.0, places=2)
-        self.assertGreaterEqual(q10['monthly'], 900.0)
-        self.assertLess(q10['monthly'], 1000.0)
-
-        # buffer is clamped to 0..100 (a silly 150 can't go negative).
-        self._set({'saas_master.tier_floor_buffer_pct': '150'})
-        qmax = self.engine.compute('hosting', 8, 200, 'monthly')
-        self.assertAlmostEqual(qmax['breakdown']['tier_floor'], 0.0, places=2)
-        self._set({'saas_master.tier_floor_buffer_pct': '0',
-                   'saas_master.custom_min_is_nearest_tier': 'False'})
 
     def test_yearly_not_above_monthly_annual_constraint(self):
         """#4: a plan whose yearly price exceeds 12x its monthly price
@@ -288,27 +243,6 @@ class TestPricingEngine(TransactionCase):
                 'cpu_limit': 1.0, 'ram_limit': '1g',
                 'price': 100.0,
                 'yearly_price': 1300.0,  # > 12 * 100
-                'currency_id': self.env.company.currency_id.id,
-                'saas_product_ids': [(6, 0, [product.id])],
-            })
-
-    def test_tier_yearly_not_below_linear(self):
-        """#5: a public tier whose yearly price sits below the linear
-        yearly rate (linear x12 less the standard discount) is rejected —
-        yearly price inversion."""
-        from odoo.exceptions import ValidationError
-        product = self.env['saas.product'].sudo().search(
-            [('is_hosting', '=', True)], limit=1)
-        if not product:
-            self.skipTest('no hosting product in this DB')
-        # 4w/50gb linear monthly = 55 -> linear yearly = 55*12*0.8 = 528.
-        with self.assertRaises(ValidationError):
-            self.env['saas.plan'].sudo().create({
-                'name': 'TEST tier low yearly', 'is_public_tier': True,
-                'workers': 4, 'storage_limit': 50,
-                'cpu_limit': 2.0, 'ram_limit': '2g',
-                'price': 60.0,           # ok monthly (>= 55 linear)
-                'yearly_price': 300.0,   # below 528 linear yearly -> reject
                 'currency_id': self.env.company.currency_id.id,
                 'saas_product_ids': [(6, 0, [product.id])],
             })

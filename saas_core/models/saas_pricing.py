@@ -152,6 +152,37 @@ class SaasPricingEngine(models.AbstractModel):
                 return t
         return self.env['saas.plan'].browse()
 
+    def _tier_ceiling(self, kind, workers, storage):
+        """Price CEILING for a custom config: the cheapest published tier
+        that gives the SAME or MORE resources (workers >= W AND storage >=
+        S). A customer must never pay more for a custom build than for a
+        bigger named plan — paying more for less is nonsensical.
+
+        Returns ``{'monthly': x|None, 'yearly': y|None}`` (None => no tier
+        covers this config, so no cap). MONOTONIC: a bigger config is
+        covered by fewer tiers, so the ceiling only rises or disappears, so
+        capping by it keeps the slider monotonic. Always on (purely
+        customer-fair); independent of the optional ``_tier_floor``."""
+        tiers = self.env['saas.plan'].sudo().search([
+            ('is_public_tier', '=', True),
+            ('workers', '>=', workers),
+            ('storage_limit', '>=', float(storage)),
+        ])
+        monthly = None
+        yearly = None
+        for t in tiers:
+            t_kind = 'hosting' if any(
+                p.is_hosting for p in t.saas_product_ids
+            ) else 'services'
+            if t_kind != kind or not t.price:
+                continue
+            if monthly is None or t.price < monthly:
+                monthly = t.price
+            # Only tiers that actually offer yearly bound the yearly price.
+            if t.yearly_price and (yearly is None or t.yearly_price < yearly):
+                yearly = t.yearly_price
+        return {'monthly': monthly, 'yearly': yearly}
+
     def _addons_total(self, kind, addon_codes, storage_gb=0):
         """Sum effective monthly prices of the given add-on codes that
         apply to ``kind``. ``storage_gb`` lets storage-aware add-ons (P4)
@@ -196,31 +227,34 @@ class SaasPricingEngine(models.AbstractModel):
         storage = self._clamp(storage, cfg['min_storage'], cfg['max_storage'])
 
         base = (workers * cfg['worker_price']) + (storage * cfg['storage_price_per_gb'])
-        # Named-tier override (OFF by default): when this EXACT config is a
-        # published public tier, quote that tier's advertised price instead
-        # of the linear ``base``.
-        #
-        # This is DISABLED by default because tier prices sit ABOVE the
-        # linear rate (the tier premium), so matching a tier exactly would
-        # SPIKE the price above a slightly-larger custom config that stays on
-        # the cheaper linear rate — i.e. REDUCING resources could INCREASE
-        # the price. That is confusing and non-monotonic, so the slider stays
-        # purely linear. Operators who want the configurator to mirror the
-        # tier cards can switch it on AND enable ``custom_min_is_nearest_tier``
-        # (a monotonic floor) so there is no dip.
-        if self.env['ir.config_parameter'].sudo().get_param(
-                'saas_master.custom_match_tier_price', 'False') == 'True':
-            exact_tier = self._exact_public_tier(kind, workers, storage)
-        else:
-            exact_tier = self.env['saas.plan'].browse()
-        resource_base = exact_tier.price if exact_tier else base
+        # UNIFIED pricing — ONE formula for tiers and custom builds:
+        #   * Resources are priced by the linear rate (``base``), which is
+        #     monotonic: more workers/storage always costs more.
+        #   * A named tier is the SAME linear rate minus an optional fixed
+        #     discount (see ``saas.plan.discount_amount``) — that is the only
+        #     knob for making a published plan a "good deal".
+        #   * A custom build is CAPPED by the cheapest tier that covers it
+        #     (same or more resources): a customer never pays more for a
+        #     custom build than for a bigger named plan. So buying a
+        #     tier-sized custom config charges exactly the tier price, and the
+        #     card / configurator / invoice all agree.
+        # No exact-match override (it spiked the price up at tier sizes and
+        # broke monotonicity); the ceiling does the job, monotonically.
+        resource_base = base
         cost_floor = self._cost_floor(cfg, workers, storage)
         tier_floor = self._tier_floor(kind, workers, storage)
         floor = max(cost_floor, tier_floor)
-        floored = floor > resource_base
         region_factor = self._region_multiplier(region)
 
-        resource_monthly = max(resource_base, floor) * region_factor
+        # Cost floor first (never below cost), then the tier CEILING (never
+        # above a covering named plan). Both are monotonic in resources, so
+        # the result stays monotonic.
+        ceiling = self._tier_ceiling(kind, workers, storage)
+        resource_pre = max(resource_base, floor)
+        if ceiling['monthly'] is not None:
+            resource_pre = min(resource_pre, ceiling['monthly'])
+        floored = floor > resource_base
+        resource_monthly = resource_pre * region_factor
         addons_monthly = self._addons_total(kind, addon_codes, storage)
         # Support plan (P3): flat monthly fee, NOT scaled by region, added
         # after infra. 0 when no plan / the free default / unknown code.
@@ -243,15 +277,12 @@ class SaasPricingEngine(models.AbstractModel):
         # reconciles exactly with what is invoiced: support is billed
         # qty=12 @ the monthly price (see ``_support_order_line``) and the
         # snapshot add-on is billed monthly at full price by its own cron.
-        if exact_tier:
-            # Honor the tier's STORED yearly price so the engine matches
-            # the pricing card (which shows ``plan.yearly_price``). Region
-            # scales it like monthly.
-            resource_yearly = max(
-                exact_tier._get_price_for_period('yearly'), floor * 12,
-            ) * region_factor
-        else:
-            resource_yearly = resource_monthly * 12 * (1 - discount)
+        # Linear yearly = discounted linear monthly, then capped by the
+        # covering tier's yearly price (the same ceiling logic as monthly).
+        resource_yearly = max(resource_base, floor) * 12 * (1 - discount)
+        if ceiling['yearly'] is not None:
+            resource_yearly = min(resource_yearly, ceiling['yearly'])
+        resource_yearly *= region_factor
         # Flat extras: full monthly price x12, NO yearly discount.
         other_yearly = (addons_monthly + support_monthly) * 12
         pre_minimum_yearly = resource_yearly + other_yearly
@@ -287,9 +318,9 @@ class SaasPricingEngine(models.AbstractModel):
             },
             'breakdown': {
                 'base': round(base, 2),
-                # Linear vs named-tier: when an exact public tier matched,
-                # its price replaced the linear base as the resource cost.
-                'tier_price': round(exact_tier.price, 2) if exact_tier else 0.0,
+                # Cheapest covering-tier ceiling applied to this config (0 =
+                # no tier covers it, so the linear rate stands).
+                'tier_ceiling': round(ceiling['monthly'], 2) if ceiling['monthly'] is not None else 0.0,
                 'resource_base': round(resource_base, 2),
                 'floor': round(floor, 2),
                 'cost_floor': round(cost_floor, 2),

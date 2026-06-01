@@ -66,8 +66,16 @@
                             <field name="instance_count"/>
                         </group>
                         <group string="Pricing" invisible="is_trial_plan">
-                            <field name="price" widget="monetary" string="Monthly Price"/>
-                            <field name="yearly_price" widget="monetary"/>
+                            <!-- For named tiers the price is auto-derived from
+                                 resources minus the discount; tune the discount,
+                                 not the raw price. -->
+                            <field name="discount_amount" widget="monetary"
+                                   string="Plan Discount ($/mo)"
+                                   invisible="not is_public_tier"/>
+                            <field name="price" widget="monetary" string="Monthly Price"
+                                   readonly="is_public_tier"/>
+                            <field name="yearly_price" widget="monetary"
+                                   readonly="is_public_tier"/>
                             <field name="yearly_discount_pct" string="Yearly Savings"/>
                             <field name="currency_id" groups="base.group_multi_currency"/>
                             <field name="grace_period_days"/>
