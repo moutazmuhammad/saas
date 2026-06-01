@@ -196,12 +196,23 @@ class SaasPricingEngine(models.AbstractModel):
         storage = self._clamp(storage, cfg['min_storage'], cfg['max_storage'])
 
         base = (workers * cfg['worker_price']) + (storage * cfg['storage_price_per_gb'])
-        # Named-tier override (single source of truth): when this EXACT
-        # config is a published public tier, its advertised price is the
-        # resource price — so the pricing card, the configurator and the
-        # invoice all quote the same number. Custom configs keep the
-        # linear ``base``.
-        exact_tier = self._exact_public_tier(kind, workers, storage)
+        # Named-tier override (OFF by default): when this EXACT config is a
+        # published public tier, quote that tier's advertised price instead
+        # of the linear ``base``.
+        #
+        # This is DISABLED by default because tier prices sit ABOVE the
+        # linear rate (the tier premium), so matching a tier exactly would
+        # SPIKE the price above a slightly-larger custom config that stays on
+        # the cheaper linear rate — i.e. REDUCING resources could INCREASE
+        # the price. That is confusing and non-monotonic, so the slider stays
+        # purely linear. Operators who want the configurator to mirror the
+        # tier cards can switch it on AND enable ``custom_min_is_nearest_tier``
+        # (a monotonic floor) so there is no dip.
+        if self.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.custom_match_tier_price', 'False') == 'True':
+            exact_tier = self._exact_public_tier(kind, workers, storage)
+        else:
+            exact_tier = self.env['saas.plan'].browse()
         resource_base = exact_tier.price if exact_tier else base
         cost_floor = self._cost_floor(cfg, workers, storage)
         tier_floor = self._tier_floor(kind, workers, storage)
