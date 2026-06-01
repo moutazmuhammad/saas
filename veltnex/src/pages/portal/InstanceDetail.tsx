@@ -190,16 +190,16 @@ export default function InstanceDetail() {
     }
   };
 
-  const subnav = [
-    ...(instance.is_hosting
-      ? [
-          { to: `/my/instances/${id}/databases`, label: "Databases", icon: Database },
-          { to: `/my/instances/${id}/code`, label: "Code & packages", icon: GitBranch },
-        ]
-      : []),
-    { to: `/my/instances/${id}/logs`, label: "Logs", icon: ScrollText },
-    { to: `/my/instances/${id}/backups`, label: "Backups", icon: Archive },
-  ];
+  // Managed services expose ONLY snapshots (view + restore). Hosting (self-
+  // managed) gets the full toolset: databases, code, logs, snapshots.
+  const subnav = instance.is_hosting
+    ? [
+        { to: `/my/instances/${id}/databases`, label: "Databases", icon: Database },
+        { to: `/my/instances/${id}/code`, label: "Code & packages", icon: GitBranch },
+        { to: `/my/instances/${id}/logs`, label: "Logs", icon: ScrollText },
+        { to: `/my/instances/${id}/backups`, label: "Snapshots", icon: Archive },
+      ]
+    : [{ to: `/my/instances/${id}/backups`, label: "Snapshots", icon: Archive }];
 
   return (
     <div className="animate-fade-in">

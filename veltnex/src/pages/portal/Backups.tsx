@@ -67,9 +67,15 @@ export default function Backups() {
     }
   };
 
-  // This page is for FULL-INSTANCE snapshots only. On-demand,
-  // per-database backups live on the Databases page.
-  const snapshots = backups ? backups.filter((b) => b.is_full_instance) : null;
+  // Snapshots shown here: hosting takes FULL-INSTANCE snapshots (its
+  // per-database/on-demand backups live on the Databases page); managed
+  // services take per-DB snapshots and have no Databases page, so this is
+  // their only backup view. Default to the hosting filter while the
+  // instance is still loading to avoid a flicker.
+  const isManagedService = !!instance && !instance.is_hosting;
+  const snapshots = backups
+    ? backups.filter((b) => (isManagedService ? !b.is_full_instance : b.is_full_instance))
+    : null;
 
   // Poll while a snapshot is in progress.
   const hasRunning = !!snapshots?.some((b) => b.status === "in_progress");
@@ -97,7 +103,9 @@ export default function Backups() {
           <HelpHint anchor="snapshots" className="ml-1.5" />
         </h1>
         <p className="mt-1 text-sm text-muted">
-          Automatic daily full-instance snapshots. On-demand, per-database backups are on the Databases page.
+          {isManagedService
+            ? "Automatic daily snapshots of your service. Restore any snapshot with one click."
+            : "Automatic daily full-instance snapshots. On-demand, per-database backups are on the Databases page."}
         </p>
       </div>
 

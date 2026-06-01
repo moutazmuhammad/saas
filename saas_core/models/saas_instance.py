@@ -1365,10 +1365,9 @@ class SaasInstance(models.Model):
         page where the customer pays.
         """
         self.ensure_one()
-        if not self.is_hosting:
-            raise UserError(_(
-                "Daily backups are a hosting-only feature."
-            ))
+        # Snapshots are available to BOTH hosting and managed-services
+        # instances (the one app-level add-on a service gets); only trials
+        # are excluded.
         if self.is_trial:
             raise UserError(_(
                 "Daily backups can't be purchased on a trial plan."
@@ -1521,9 +1520,13 @@ class SaasInstance(models.Model):
         prepaid — so this is period-independent. Used both by the
         standalone monthly backup invoice and, when merging is on and the
         snapshot month is due, by the renewal invoice. Price is
-        storage-aware + lock-aware via ``_get_daily_backup_price``."""
+        storage-aware + lock-aware via ``_get_daily_backup_price``.
+
+        Snapshots apply to BOTH hosting and services subscribers (the only
+        app-level feature a managed services instance gets); the gate is the
+        subscription flag, not the product type."""
         self.ensure_one()
-        if not (self.is_hosting and self.daily_backup_enabled):
+        if not self.daily_backup_enabled:
             return None
         price = self._get_daily_backup_price()
         if price <= 0:

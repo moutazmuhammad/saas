@@ -925,8 +925,8 @@ class SaasPortal(CustomerPortal):
         except (AccessError, MissingError):
             return request.redirect('/my/instances')
 
-        if not instance.is_hosting:
-            return request.redirect('/my/instances/%d' % instance_id)
+        # Snapshots are available to hosting AND managed-services instances
+        # (the one app-level add-on a service gets); only trials are excluded.
         if instance.is_trial:
             return request.redirect(
                 '/my/instances/%d/backups?error=%s'

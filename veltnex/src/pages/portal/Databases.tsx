@@ -28,7 +28,7 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { HelpHint } from "@/components/HelpHint";
-import { api, ApiError, uploadToBucket, type DbListData, type ApiBackup } from "@/lib/api";
+import { api, ApiError, uploadToBucket, type DbListData, type ApiBackup, type ApiInstance } from "@/lib/api";
 import { formatDateTime, formatSizeMb } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +39,7 @@ export default function Databases() {
   const toast = useToast();
 
   const [data, setData] = React.useState<DbListData | null>(null);
+  const [instance, setInstance] = React.useState<ApiInstance | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [resetTarget, setResetTarget] = React.useState<string | null>(null);
@@ -77,6 +78,17 @@ export default function Databases() {
   React.useEffect(() => {
     load();
   }, [load]);
+
+  // Database management is hosting-only (self-managed). Managed services get
+  // a server-provisioned DB and no DB ops — bounce to the instance overview.
+  React.useEffect(() => {
+    api.instance(instanceId).then(setInstance).catch(() => {});
+  }, [instanceId]);
+  React.useEffect(() => {
+    if (instance && !instance.is_hosting) {
+      navigate(`/my/instances/${id}`, { replace: true });
+    }
+  }, [instance, id, navigate]);
 
   // Per-database, non-snapshot backups for a given DB name, newest first.
   const backupsFor = (name: string) =>

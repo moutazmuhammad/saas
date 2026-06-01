@@ -1740,12 +1740,12 @@ fi
     def _cron_backup_all_instances(self):
         """Create backups for all running instances and clean up old ones.
 
-        Service instances: one backup per instance (DB name = subdomain).
-        Hosting instances: skipped unless ``daily_backup_enabled``; then
-        one full-instance snapshot per run, capped at
-        ``HOSTING_MAX_SNAPSHOTS`` per instance (oldest dropped — see
-        ``_cleanup_old_backups``). Trial-plan instances are skipped on
-        both sides.
+        Both hosting and services snapshots are a paid, opt-in add-on:
+        skipped unless ``daily_backup_enabled`` and not
+        ``daily_backup_suspended``. Hosting takes a full-instance snapshot
+        (capped at ``HOSTING_MAX_SNAPSHOTS``); services take a per-DB zip
+        backup (capped at ``plan.max_backups``) — both via
+        ``_cleanup_old_backups``. Trial-plan instances are skipped.
         """
         instances = self.env['saas.instance'].search([
             ('state', '=', 'running'),
@@ -1776,6 +1776,13 @@ fi
                             instance.name, e,
                         )
                 else:
+                    # Services: snapshots are a paid, opt-in add-on too —
+                    # only back up when subscribed and not paused (mirrors
+                    # the hosting gate above).
+                    if not instance.daily_backup_enabled:
+                        continue
+                    if instance.daily_backup_suspended:
+                        continue
                     self._perform_backup_in_new_cursor(instance.id)
             except Exception as e:
                 _logger.error("Backup failed for instance %s: %s", instance.name, e)

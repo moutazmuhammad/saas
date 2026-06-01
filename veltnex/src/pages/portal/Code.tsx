@@ -39,6 +39,14 @@ export default function Code() {
     load();
   }, [load]);
 
+  // Code & packages is a hosting-only (self-managed) feature. Managed
+  // services have no code access — bounce back to the instance overview.
+  React.useEffect(() => {
+    if (instance && !instance.is_hosting) {
+      navigate(`/my/instances/${id}`, { replace: true });
+    }
+  }, [instance, id, navigate]);
+
   if (error) {
     return (
       <EmptyState className="mt-10" icon={GitBranch} title="Unavailable" description={error} />

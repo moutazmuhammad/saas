@@ -860,9 +860,11 @@ class SaasApi(http.Controller):
     def daily_backup_enable(self, instance_id, access_token=None, **kw):
         """Create the daily-backup add-on activation invoice and return
         the checkout URL for the customer to pay. Enabling itself happens
-        once that invoice is paid (account_move hook)."""
+        once that invoice is paid (account_move hook). Available to both
+        hosting and managed-services instances (snapshots are the one
+        app-level add-on a service gets)."""
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._instance(instance_id, access_token)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:

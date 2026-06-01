@@ -41,6 +41,14 @@ export default function Logs() {
     api.instance(instanceId).then(setInstance).catch(() => {});
   }, [instanceId]);
 
+  // Live logs are a hosting-only (self-managed) feature. Managed services
+  // don't expose logs — bounce back to the instance overview.
+  React.useEffect(() => {
+    if (instance && !instance.is_hosting) {
+      navigate(`/my/instances/${id}`, { replace: true });
+    }
+  }, [instance, id, navigate]);
+
   // Logs only stream while the instance is running. Stopped / suspended /
   // not-yet-running instances have no live container — the server rejects
   // the stream, so don't even open it; show a clear message instead.
