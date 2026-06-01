@@ -194,6 +194,51 @@ class TestPricingEngine(TransactionCase):
         self.assertEqual(q['breakdown']['tier_floor'], 999.0)
         self.assertGreaterEqual(q['monthly'], 999.0)
 
+    def test_custom_slider_is_monotonic(self):
+        """Reducing workers or storage must NEVER increase the price. The
+        custom slider is linear by default; the exact-tier override (which
+        would spike an exact match up to a premium tier price) is OFF unless
+        ``custom_match_tier_price`` is set."""
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1)
+        if not product:
+            self.skipTest('no hosting product in this DB')
+        # A premium tier that WOULD spike an exact 4w/50GB match to 999.
+        self.env['saas.plan'].sudo().create({
+            'name': 'TEST Premium Pro', 'is_public_tier': True,
+            'workers': 4, 'storage_limit': 50,
+            'cpu_limit': 2.0, 'ram_limit': '2g',
+            'price': 999.0, 'yearly_price': 9990.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])],
+        })
+        # Exact match stays LINEAR (override off by default) — no spike.
+        exact = self.engine.compute('hosting', 4, 50, 'monthly')
+        self.assertAlmostEqual(exact['monthly'], 4 * 10 + 50 * 0.3, places=2)
+
+        # Sweep storage DOWN: price never rises.
+        prev = None
+        for s in range(60, 39, -5):
+            m = self.engine.compute('hosting', 4, s, 'monthly')['monthly']
+            if prev is not None:
+                self.assertLessEqual(
+                    m, prev + 1e-6, 'price rose when storage dropped to %d' % s)
+            prev = m
+        # Sweep workers DOWN: price never rises.
+        prev = None
+        for w in range(8, 1, -1):
+            m = self.engine.compute('hosting', w, 50, 'monthly')['monthly']
+            if prev is not None:
+                self.assertLessEqual(
+                    m, prev + 1e-6, 'price rose when workers dropped to %d' % w)
+            prev = m
+
+        # With the opt-in flag ON, the exact match DOES quote the tier price.
+        self._set({'saas_master.custom_match_tier_price': 'True'})
+        on = self.engine.compute('hosting', 4, 50, 'monthly')
+        self.assertAlmostEqual(on['monthly'], 999.0, places=2)
+        self._set({'saas_master.custom_match_tier_price': 'False'})
+
     def test_tier_floor_soft_buffer(self):
         """P2: the buffer % lets a custom config sit below the nearest tier
         instead of being pinned to it. 0 = hard floor (unchanged)."""
