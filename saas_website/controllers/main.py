@@ -323,14 +323,19 @@ class SaasWebsite(http.Controller):
         }
 
     @http.route('/saas/custom-plan/calculate', type='json', auth='public', website=True)
-    def custom_plan_calculate(self, workers=2, storage=5):
-        """Real-time price calculation for the custom plan builder."""
+    def custom_plan_calculate(self, workers=2, storage=5, region=None):
+        """Real-time price calculation for the custom plan builder.
+
+        ``region`` (id, optional) scales the price by that region's
+        multiplier so a change-plan preview matches the region-aware plan
+        that will actually be created/billed."""
         config = self._get_custom_plan_config()
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
-        _q = request.env['saas.pricing.engine'].compute('services', workers, storage)
-        monthly_total = _q['monthly']
+        region_rec = self._resolve_region_id_strict(region)
+        _q = request.env['saas.pricing.engine'].compute(
+            'services', workers, storage, region=region_rec.id or None)
 
         min_users = workers * config['users_per_worker_min']
         max_users = workers * config['users_per_worker_max']
@@ -338,8 +343,10 @@ class SaasWebsite(http.Controller):
         return {
             'workers': workers,
             'storage': storage,
-            'monthly_total': monthly_total,
-            'yearly_total': monthly_total * 12,
+            'monthly_total': _q['monthly'],
+            # Engine yearly: region-scaled AND discounted (infra only). The
+            # client no longer derives yearly from monthly.
+            'yearly_total': _q['yearly'],
             'min_users': min_users,
             'max_users': max_users,
             'currency': config['currency'],
@@ -756,6 +763,24 @@ class SaasWebsite(http.Controller):
                 region = None
         return region or Region._get_default()
 
+    def _resolve_region_id_strict(self, region_id):
+        """Resolve a region id to an ACTIVE region record WITHOUT defaulting.
+
+        Unlike ``_resolve_region`` (the create funnel, which falls back to the
+        platform default), a missing/invalid id here means x1.0 — used by the
+        change-plan preview where the region must mirror the instance's stored
+        ``region_id`` (a legacy instance with no region is priced at base, not
+        at the default region's multiplier)."""
+        Region = request.env['saas.region'].sudo()
+        try:
+            rid = int(region_id or 0)
+        except (TypeError, ValueError):
+            return Region.browse()
+        if not rid:
+            return Region.browse()
+        r = Region.browse(rid)
+        return r if (r.exists() and r.active) else Region.browse()
+
     def _region_domain_ok(self, domain, region):
         """Proxy co-location: a domain is usable in ``region`` when its
         reverse-proxy server sits in that region — or it has no proxy (the
@@ -895,19 +920,31 @@ class SaasWebsite(http.Controller):
         support_code = sel_support.code if sel_support else None
         show_support_picker = len(support_plans) > 1
 
-        _addons = ['daily_snapshots'] if daily_backup else []
         _q = request.env['saas.pricing.engine'].compute(
-            'hosting', workers, storage, addon_codes=_addons,
+            'hosting', workers, storage,
             region=region or None, support_code=support_code,
         )
-        backup_cost = _q['breakdown']['addons_monthly']
         support_cost = _q['breakdown']['support_monthly']
         # Resource (plan) portion — the named-tier price or the linear
         # compute, shown as its own line so the breakdown is transparent.
         plan_cost = _q['breakdown']['resource_monthly']
-        monthly_total = _q['monthly']
-        discount = config['yearly_discount_pct'] / 100.0
-        yearly_total = monthly_total * 12 * (1 - discount)
+        # Daily-backup add-on priced the SAME way it is billed (a percentage
+        # of the plan price — see saas.pricing.engine.daily_backup_price /
+        # saas.instance._get_daily_backup_price) so the checkout quote
+        # matches the invoice. ``backup_unit_price`` is the per-month figure
+        # used for the toggle; ``backup_cost`` is what's added to the total
+        # only when the box is ticked. It is a FLAT monthly fee — billed x12
+        # on yearly with NO discount.
+        backup_unit_price = request.env['saas.pricing.engine'].daily_backup_price(
+            plan_cost)
+        backup_cost = backup_unit_price if daily_backup else 0.0
+        # The yearly discount applies ONLY to the infra (plan) portion.
+        # Support and the backup add-on are flat monthly fees billed x12 at
+        # full price. ``_q`` already encodes "support flat, infra discounted"
+        # in its monthly/yearly figures (computed without the backup add-on),
+        # so we just add the backup on top.
+        monthly_total = _q['monthly'] + backup_cost
+        yearly_total = _q['yearly'] + backup_cost * 12
 
         versions = request.env['saas.odoo.version'].sudo().search(
             [('is_hosting_version', '=', True)], order='name desc',
@@ -928,6 +965,7 @@ class SaasWebsite(http.Controller):
             'workers': workers,
             'storage': storage,
             'backup_cost': backup_cost,
+            'backup_unit_price': backup_unit_price,
             'plan_cost': plan_cost,
             'daily_backup': daily_backup,
             'support_plans': support_plans,
@@ -1124,20 +1162,27 @@ class SaasWebsite(http.Controller):
             return request.redirect(err_redirect % str(e).replace(' ', '+'))
 
     @http.route('/saas/hosting-plan/calculate', type='json', auth='public', website=True)
-    def hosting_plan_calculate(self, workers=2, storage=5):
-        """Real-time price calculation for the hosting plan builder."""
+    def hosting_plan_calculate(self, workers=2, storage=5, region=None):
+        """Real-time price calculation for the hosting plan builder.
+
+        ``region`` (id, optional) scales the price by that region's
+        multiplier so a change-plan preview matches the region-aware plan
+        that will actually be created/billed."""
         config = self._get_hosting_plan_config()
         workers = max(config['min_workers'], min(int(workers), config['max_workers']))
         storage = max(config['min_storage'], min(int(storage), config['max_storage']))
 
-        _q = request.env['saas.pricing.engine'].compute('hosting', workers, storage)
-        monthly_total = _q['monthly']
+        region_rec = self._resolve_region_id_strict(region)
+        _q = request.env['saas.pricing.engine'].compute(
+            'hosting', workers, storage, region=region_rec.id or None)
 
         return {
             'workers': workers,
             'storage': storage,
-            'monthly_total': monthly_total,
-            'yearly_total': monthly_total * 12,
+            'monthly_total': _q['monthly'],
+            # Engine yearly: region-scaled AND discounted. The client no
+            # longer derives yearly from monthly.
+            'yearly_total': _q['yearly'],
             'currency': config['currency'],
         }
 

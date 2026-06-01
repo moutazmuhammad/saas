@@ -292,22 +292,38 @@ class SaasApi(http.Controller):
         return ok(self._serialize_product(product, detail=True))
 
     @http.route('/saas/api/v1/hosting/calculate', type='json', auth='public')
-    def hosting_calculate(self, workers=2, storage=5, billing='monthly'):
+    def hosting_calculate(self, workers=2, storage=5, billing='monthly',
+                          region=None):
         site = SaasWebsite()
         config = site._get_hosting_plan_config()
-        return ok(self._price(config, workers, storage, billing, kind='hosting'))
+        region_rec = self._resolve_region(region)
+        return ok(self._price(
+            config, workers, storage, billing, kind='hosting',
+            region=region_rec.id or None))
 
     @http.route('/saas/api/v1/services/calculate', type='json', auth='public')
-    def services_calculate(self, workers=2, storage=5, billing='monthly'):
+    def services_calculate(self, workers=2, storage=5, billing='monthly',
+                           region=None):
         site = SaasWebsite()
         config = site._get_custom_plan_config()
-        return ok(self._price(config, workers, storage, billing, kind='services'))
+        region_rec = self._resolve_region(region)
+        return ok(self._price(
+            config, workers, storage, billing, kind='services',
+            region=region_rec.id or None))
 
     @http.route('/saas/api/v1/tiers', type='json', auth='public')
-    def tiers(self, kind='hosting'):
+    def tiers(self, kind='hosting', region=None):
         """Public named tiers for the pricing/configure cards (S8 renders
         them). Returns [] until tiers are configured (S9), so the SPA can
-        fall back to the slider configurator."""
+        fall back to the slider configurator.
+
+        ``region`` (id/code, optional) scales the advertised tier prices by
+        that region's multiplier — the SAME scaling the engine applies to
+        the resource portion of a quote — so the cards, the slider and the
+        checkout all show one region-consistent number. Unknown/falsy
+        region -> x1.0 (behaviour-neutral)."""
+        region_rec = self._resolve_region(region)
+        mult = region_rec.price_multiplier if region_rec else 1.0
         plans = request.env['saas.plan'].sudo().search(
             [('is_public_tier', '=', True)], order='sequence, id',
         )
@@ -324,8 +340,11 @@ class SaasApi(http.Controller):
                 'name': p.name,
                 'workers': p.workers,
                 'storage': int(p.storage_limit or 0),
-                'monthly': round(p.price, 2),
-                'yearly': round(p.yearly_price, 2),
+                # Region-scaled to mirror the engine's resource scaling
+                # (tier price >= floor, so tier*mult >= floor*mult — the
+                # max() in the engine resolves to the same number).
+                'monthly': round(p.price * mult, 2),
+                'yearly': round(p.yearly_price * mult, 2),
                 'recommended': p.is_recommended,
                 'badge': p.badge or '',
                 'sequence': p.sequence,
@@ -364,16 +383,36 @@ class SaasApi(http.Controller):
             if k not in ('worker_price', 'storage_price_per_gb')
         }
 
-    def _price(self, config, workers, storage, billing, kind='services'):
+    def _resolve_region(self, region):
+        """Resolve a region id or code to an ACTIVE region record, or an
+        empty recordset. Falsy / unknown / inactive -> empty (the engine
+        treats that as a x1.0 multiplier, so pricing is behaviour-neutral).
+        Used so the public pricing endpoints can scale by a customer-picked
+        region the same way the checkout does."""
+        Region = request.env['saas.region'].sudo()
+        if not region:
+            return Region.browse()
+        rec = Region.browse()
+        try:
+            rec = Region.browse(int(region))
+        except (TypeError, ValueError):
+            rec = Region.search([('code', '=', region)], limit=1)
+        if rec and rec.exists() and rec.active:
+            return rec
+        return Region.browse()
+
+    def _price(self, config, workers, storage, billing, kind='services',
+               region=None):
         """Compute one customer-facing total via the single pricing
         engine (`saas.pricing.engine`). ``config`` is accepted for
         backward-compat with callers but no longer used — the engine
         reads rates itself. ``kind`` selects the rate set ('hosting' vs
         'services'); it MUST match the caller's product, otherwise the
-        slider quotes a different price than the order/invoice. Per-
-        resource rates stay hidden."""
+        slider quotes a different price than the order/invoice. ``region``
+        (id, optional) scales the compute+storage portion. Per-resource
+        rates stay hidden."""
         quote = request.env['saas.pricing.engine'].compute(
-            kind, workers, storage, billing,
+            kind, workers, storage, billing, region=region,
         )
         # Return exactly the historical key set (the engine returns a
         # superset; keep this stable for existing SPA consumers).
@@ -386,6 +425,7 @@ class SaasApi(http.Controller):
             'yearly_savings': quote['yearly_savings'],
             'savings_percent': quote['savings_percent'],
             'currency': quote['currency'],
+            'region_factor': quote['region_factor'],
             'limits': quote['limits'],
         }
 

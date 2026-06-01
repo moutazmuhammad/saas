@@ -400,6 +400,7 @@
                     <!-- Hidden config data for JavaScript -->
                     <div id="upgrade-plan-config" style="display:none;"
                          t-att-data-calc-url="'/saas/hosting-plan/calculate' if instance.is_hosting else '/saas/custom-plan/calculate'"
+                         t-att-data-region-id="instance.region_id.id"
                          t-att-data-min-workers="custom_config.get('min_workers', 2)"
                          t-att-data-max-workers="custom_config.get('max_workers', 8)"
                          t-att-data-min-storage="custom_config.get('min_storage', 5)"
@@ -864,6 +865,7 @@
                     <!-- Hidden config data for JavaScript -->
                     <div id="upgrade-plan-config" style="display:none;"
                          t-att-data-calc-url="'/saas/hosting-plan/calculate' if instance.is_hosting else '/saas/custom-plan/calculate'"
+                         t-att-data-region-id="instance.region_id.id"
                          t-att-data-min-workers="custom_config.get('min_workers', 2)"
                          t-att-data-max-workers="custom_config.get('max_workers', 8)"
                          t-att-data-min-storage="current_storage"
@@ -1063,6 +1065,7 @@
                     <!-- Hidden config data for JavaScript -->
                     <div id="upgrade-plan-config" style="display:none;"
                          t-att-data-calc-url="'/saas/hosting-plan/calculate' if instance.is_hosting else '/saas/custom-plan/calculate'"
+                         t-att-data-region-id="instance.region_id.id"
                          t-att-data-min-workers="current_workers"
                          t-att-data-max-workers="custom_config.get('max_workers', 8)"
                          t-att-data-min-storage="current_storage"
