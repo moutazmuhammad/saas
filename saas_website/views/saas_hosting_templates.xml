@@ -82,16 +82,13 @@
                                     </div>
 
                                     <!-- Region (S8c). Shown only when there's a real choice;
-                                         changing it reloads the funnel so price + available
-                                         domains recompute server-side (single source of truth).
-                                         Non-sensitive fields are carried over; the Git token is
-                                         intentionally kept out of the URL. -->
+                                         changing it updates the price + the available domains
+                                         LIVE via /hosting/configure/quote (no full reload). -->
                                     <t t-if="show_region_picker">
                                         <div class="mb-3">
                                             <label class="form-label">Region<a href="/help#region" target="_blank" rel="noopener" class="saas-help" title="The data-centre location your instance runs in. Pick the one closest to your users. Fixed after creation." aria-label="Learn more"><i class="fas fa-question-circle"></i></a></label>
                                             <select name="region_id" class="form-select"
-                                                    id="region-select"
-                                                    onchange="(function(s){var f=s.form;var p=new URLSearchParams();['workers','storage','billing','odoo_version_id','subdomain','domain_id','repo_url','repo_branch'].forEach(function(n){var el=f.elements[n];if(el &amp;&amp; el.value)p.set(n,el.value);});p.set('region_id',s.value);var db=f.elements['daily_backup'];if(db &amp;&amp; db.checked)p.set('daily_backup','1');var tr=f.elements['is_trial'];if(tr &amp;&amp; tr.value)p.set('is_trial',tr.value);window.location='/hosting/configure?'+p.toString();})(this)">
+                                                    id="region-select">
                                                 <t t-foreach="regions" t-as="reg">
                                                     <option t-att-value="reg.id"
                                                             t-att-selected="reg.id == selected_region_id">
@@ -109,14 +106,13 @@
                                     </t>
 
                                     <!-- Support plan (P6). Paid add-on; hidden for trials.
-                                         Changing it reloads the funnel so the total
-                                         recomputes server-side (single source of truth). -->
+                                         Changing it updates the total LIVE via
+                                         /hosting/configure/quote (no full reload). -->
                                     <t t-if="form_values.get('is_trial') != '1' and show_support_picker">
                                         <div class="mb-3">
                                             <label class="form-label">Support plan<a href="/help#support-plan" target="_blank" rel="noopener" class="saas-help" title="How fast we promise to respond when you need help. Higher tiers = faster guaranteed response." aria-label="Learn more"><i class="fas fa-question-circle"></i></a></label>
                                             <select name="support_code" class="form-select"
-                                                    id="support-select"
-                                                    onchange="(function(s){var f=s.form;var p=new URLSearchParams();['workers','storage','billing','odoo_version_id','subdomain','domain_id','repo_url','repo_branch','region_id'].forEach(function(n){var el=f.elements[n];if(el &amp;&amp; el.value)p.set(n,el.value);});p.set('support_code',s.value);var db=f.elements['daily_backup'];if(db &amp;&amp; db.checked)p.set('daily_backup','1');var tr=f.elements['is_trial'];if(tr &amp;&amp; tr.value)p.set('is_trial',tr.value);window.location='/hosting/configure?'+p.toString();})(this)">
+                                                    id="support-select">
                                                 <t t-foreach="support_plans" t-as="sp">
                                                     <option t-att-value="sp.code"
                                                             t-att-selected="sp.code == selected_support_code">
@@ -223,17 +219,18 @@
                                             <div class="breakdown-divider"></div>
                                             <div class="breakdown-row">
                                                 <span class="breakdown-label"><i class="fas fa-server me-2"></i>Plan</span>
-                                                <span class="breakdown-value"><t t-esc="'${:,.2f}'.format(plan_cost)"/>/mo</span>
+                                                <span class="breakdown-value" id="plan-cost-value"><t t-esc="'${:,.2f}'.format(plan_cost)"/>/mo</span>
                                             </div>
                                             <div class="breakdown-row"
                                                  id="backup-cost-row"
                                                  t-att-style="'' if daily_backup else 'display:none;'">
                                                 <span class="breakdown-label"><i class="fas fa-shield-alt me-2"></i>Daily Backups</span>
-                                                <span class="breakdown-value">+<t t-esc="'${:,.2f}'.format(backup_unit_price)"/>/mo</span>
+                                                <span class="breakdown-value">+<span id="backup-cost-value"><t t-esc="'${:,.2f}'.format(backup_unit_price)"/></span>/mo</span>
                                             </div>
-                                            <div class="breakdown-row" t-if="support_cost &gt; 0">
+                                            <div class="breakdown-row" id="support-cost-row"
+                                                 t-att-style="'' if support_cost &gt; 0 else 'display:none;'">
                                                 <span class="breakdown-label"><i class="fas fa-headset me-2"></i>Support</span>
-                                                <span class="breakdown-value">+<t t-esc="'${:,.2f}'.format(support_cost)"/>/mo</span>
+                                                <span class="breakdown-value">+<span id="support-cost-value"><t t-esc="'${:,.2f}'.format(support_cost)"/></span>/mo</span>
                                             </div>
                                             <div class="breakdown-divider"></div>
                                             <div class="breakdown-total">
@@ -253,33 +250,121 @@
                                                     </t>
                                                 </span>
                                             </div>
+                                            <!-- Always show the yearly saving so the customer
+                                                 sees the benefit (independent of the backup
+                                                 toggle — it cancels out). Hidden when 0; updated
+                                                 live with region/support changes. -->
+                                            <div class="breakdown-row" id="savings-row"
+                                                 t-att-style="'margin-top:8px;' if yearly_savings &gt; 0 else 'display:none;'">
+                                                <span class="breakdown-label" style="color:#10b981;">
+                                                    <i class="fas fa-piggy-bank me-2"></i>
+                                                    <t t-if="billing_period == 'yearly'">You save (vs monthly)</t>
+                                                    <t t-else="">Switch to yearly &amp; save</t>
+                                                </span>
+                                                <span class="breakdown-value" style="color:#10b981;font-weight:600;">
+                                                    <span id="savings-value"><t t-esc="'${:,.2f}'.format(yearly_savings)"/>/yr · <t t-esc="yearly_savings_pct"/>%</span>
+                                                </span>
+                                            </div>
                                         </div>
-                                        <!-- Live update when the daily-backup checkbox toggles —
-                                             only the FINAL total changes; per-resource prices
-                                             stay hidden from the customer. -->
+                                        <!-- Live pricing: the backup toggle updates the total
+                                             client-side; changing region or support fetches a
+                                             fresh quote (price + region-filtered domains) from
+                                             /hosting/configure/quote — NO full-page reload. -->
                                         <script>
                                             (function(){
-                                                var cb = document.getElementById('daily-backup-toggle');
-                                                if (!cb) return;
-                                                var row = document.getElementById('backup-cost-row');
+                                                var form = document.querySelector('form[action="/hosting/order"]');
                                                 var totalEl = document.getElementById('hosting-total-amount');
-                                                if (!totalEl) return;
-                                                var baseMonthly = parseFloat(totalEl.dataset.baseMonthly) || 0;
-                                                var baseYearly = parseFloat(totalEl.dataset.baseYearly) || 0;
+                                                if (!form || !totalEl) return;
+                                                var cb = document.getElementById('daily-backup-toggle');
+                                                var backupRow = document.getElementById('backup-cost-row');
+                                                var backupValEl = document.getElementById('backup-cost-value');
+                                                var planValEl = document.getElementById('plan-cost-value');
+                                                var supportRow = document.getElementById('support-cost-row');
+                                                var supportValEl = document.getElementById('support-cost-value');
+                                                var savingsRow = document.getElementById('savings-row');
+                                                var savingsValEl = document.getElementById('savings-value');
+                                                var regionSel = document.getElementById('region-select');
+                                                var supportSel = document.getElementById('support-select');
+                                                var domainSel = document.getElementById('domain-select');
                                                 var billing = totalEl.dataset.billing;
-                                                // Daily-backup is a FLAT monthly fee: x12 on yearly with
-                                                // NO discount (only the infra/base carries the yearly
-                                                // discount, already baked into baseYearly server-side).
-                                                var price = parseFloat(cb.dataset.price) || 0;
-                                                function fmt(n) { return '$' + n.toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
-                                                function refresh() {
-                                                    var addon = cb.checked ? price : 0;
-                                                    if (row) row.style.display = cb.checked ? '' : 'none';
+                                                var backupPrice = cb ? (parseFloat(cb.dataset.price) || 0) : 0;
+
+                                                function fmt(n) { return '$' + (n||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+                                                // Re-render the TOTAL from the no-backup base plus
+                                                // the backup toggle (flat fee, x12 on yearly).
+                                                function render() {
+                                                    var baseMonthly = parseFloat(totalEl.dataset.baseMonthly) || 0;
+                                                    var baseYearly = parseFloat(totalEl.dataset.baseYearly) || 0;
+                                                    var on = cb &amp;&amp; cb.checked;
+                                                    if (backupRow) backupRow.style.display = on ? '' : 'none';
+                                                    var addon = on ? backupPrice : 0;
                                                     totalEl.textContent = billing === 'yearly'
                                                         ? fmt(baseYearly + addon * 12)
                                                         : fmt(baseMonthly + addon);
                                                 }
-                                                cb.addEventListener('change', refresh);
+
+                                                function applyQuote(q) {
+                                                    if (!q) return;
+                                                    if (planValEl) planValEl.textContent = fmt(q.plan_cost) + '/mo';
+                                                    backupPrice = q.backup_unit_price || 0;
+                                                    if (cb) cb.dataset.price = backupPrice;
+                                                    if (backupValEl) backupValEl.textContent = fmt(backupPrice);
+                                                    if (supportValEl) supportValEl.textContent = fmt(q.support_cost);
+                                                    if (supportRow) supportRow.style.display = (q.support_cost &gt; 0) ? '' : 'none';
+                                                    totalEl.dataset.baseMonthly = q.base_monthly;
+                                                    totalEl.dataset.baseYearly = q.base_yearly;
+                                                    if (savingsRow &amp;&amp; savingsValEl) {
+                                                        if (q.yearly_savings &gt; 0) {
+                                                            savingsRow.style.display = '';
+                                                            savingsValEl.textContent = fmt(q.yearly_savings) + '/yr · ' + q.yearly_savings_pct + '%';
+                                                        } else {
+                                                            savingsRow.style.display = 'none';
+                                                        }
+                                                    }
+                                                    // Region change re-filters domains (co-location):
+                                                    // rebuild the select, keep the pick if still valid.
+                                                    if (domainSel &amp;&amp; q.domains) {
+                                                        var cur = domainSel.value;
+                                                        domainSel.innerHTML = '';
+                                                        q.domains.forEach(function(d){
+                                                            var o = document.createElement('option');
+                                                            o.value = d.id; o.textContent = '.' + d.name;
+                                                            domainSel.appendChild(o);
+                                                        });
+                                                        var keep = q.domains.some(function(d){ return String(d.id) === String(cur); });
+                                                        domainSel.value = keep ? cur : (q.domains[0] ? String(q.domains[0].id) : '');
+                                                    }
+                                                    render();
+                                                }
+
+                                                function params() {
+                                                    function v(n){ var el = form.elements[n]; return el ? el.value : ''; }
+                                                    return {
+                                                        workers: v('workers'),
+                                                        storage: v('storage'),
+                                                        region_id: v('region_id') || 0,
+                                                        support_code: v('support_code') || '',
+                                                        daily_backup: (cb &amp;&amp; cb.checked) ? 1 : 0,
+                                                    };
+                                                }
+
+                                                var _seq = 0;
+                                                function fetchQuote() {
+                                                    var seq = ++_seq;
+                                                    fetch('/hosting/configure/quote', {
+                                                        method: 'POST',
+                                                        headers: {'Content-Type': 'application/json'},
+                                                        body: JSON.stringify({jsonrpc:'2.0', method:'call', params: params()}),
+                                                    }).then(function(r){ return r.json(); })
+                                                      .then(function(res){ if (seq === _seq) applyQuote(res &amp;&amp; res.result); })
+                                                      .catch(function(){});
+                                                }
+
+                                                if (cb) cb.addEventListener('change', render);
+                                                if (regionSel) regionSel.addEventListener('change', fetchQuote);
+                                                if (supportSel) supportSel.addEventListener('change', fetchQuote);
+                                                render();
                                             })();
                                         </script>
                                     </t>

@@ -23,6 +23,14 @@ function money(amount: number, currency = "USD") {
   }).format(amount);
 }
 
+/** Yearly saving vs paying month-by-month for a tier (amount + % off). */
+function yearlySaving(t: { monthly: number; yearly: number }) {
+  const annual = t.monthly * 12;
+  const amount = t.yearly > 0 && t.yearly < annual ? annual - t.yearly : 0;
+  const pct = amount > 0 ? Math.round((amount / annual) * 100) : 0;
+  return { amount, pct };
+}
+
 const INCLUDED = [
   "Daily automated backups",
   "Zero-downtime upgrades",
@@ -63,8 +71,12 @@ export default function Hosting() {
       .then(([m, regs]) => {
         setMeta(m);
         setRegions(regs);
-        const initial = regs.find((r) => r.default) || regs[0] || null;
-        setRegionId(initial ? initial.id : null);
+        // Default to the CHEAPEST region (lowest multiplier) so the entry
+        // price is always the lowest — independent of API ordering/flags.
+        const cheapest = regs.length
+          ? regs.reduce((a, b) => (b.multiplier < a.multiplier ? b : a))
+          : null;
+        setRegionId(cheapest ? cheapest.id : null);
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load hosting plans."));
   }, []);
@@ -148,6 +160,25 @@ export default function Hosting() {
 
   const selectedRegion = regions.find((r) => r.id === regionId) || null;
   const showRegionPicker = regions.length > 1;
+  // Cheapest-first so the lowest entry price sits at the top. Switch to a
+  // dropdown when there are many regions (the platform may have 15+).
+  const sortedRegions = React.useMemo(
+    () => [...regions].sort((a, b) => a.multiplier - b.multiplier),
+    [regions],
+  );
+  const cheapestRegion = sortedRegions[0] || null;
+  const manyRegions = sortedRegions.length > 6;
+
+  // Largest yearly saving (as an AMOUNT) across tiers — drives the
+  // "Save up to $X/yr" badge on the billing toggle.
+  const maxSave = React.useMemo(() => {
+    let best = { amount: 0, currency: currency };
+    for (const t of tiers || []) {
+      const s = yearlySaving(t);
+      if (s.amount > best.amount) best = { amount: s.amount, currency: t.currency };
+    }
+    return best;
+  }, [tiers, currency]);
 
   // Finalizing (subdomain, version, repo, payment) stays on Odoo. Carry the
   // chosen region so the checkout quotes the SAME region-scaled price.
@@ -229,24 +260,49 @@ export default function Hosting() {
                 </span>
               )}
             </p>
-            <div className="inline-flex flex-wrap justify-center gap-1 rounded-xl border border-border bg-card p-1">
-              {regions.map((r) => (
-                <button
-                  key={r.id}
-                  onClick={() => setRegionId(r.id)}
-                  className={cn(
-                    "rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                    r.id === regionId
-                      ? "bg-primary/20 text-foreground ring-1 ring-primary/40"
-                      : "text-muted hover:text-foreground",
-                  )}
-                >
-                  {r.name}
-                </button>
-              ))}
-            </div>
+            {manyRegions ? (
+              <select
+                value={regionId ?? ""}
+                onChange={(e) => setRegionId(Number(e.target.value))}
+                className="w-full max-w-xs rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground outline-none ring-primary/40 focus:ring-1"
+              >
+                {sortedRegions.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                    {cheapestRegion && r.id === cheapestRegion.id
+                      ? " — cheapest"
+                      : r.multiplier !== 1
+                        ? ` (×${r.multiplier.toFixed(2)})`
+                        : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="inline-flex flex-wrap justify-center gap-1 rounded-xl border border-border bg-card p-1">
+                {sortedRegions.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => setRegionId(r.id)}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                      r.id === regionId
+                        ? "bg-primary/20 text-foreground ring-1 ring-primary/40"
+                        : "text-muted hover:text-foreground",
+                    )}
+                  >
+                    {r.name}
+                    {cheapestRegion && r.id === cheapestRegion.id && (
+                      <span className="rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+                        Cheapest
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
             <p className="text-xs text-muted">
-              Server cost varies by location, so prices adjust per region.
+              Server cost varies by location, so prices adjust per region. The
+              cheapest is selected by default.
             </p>
           </div>
         )}
@@ -270,7 +326,9 @@ export default function Hosting() {
                     {c}
                     {c === "yearly" && (
                       <span className="rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold text-success">
-                        Save
+                        {maxSave.amount > 0
+                          ? `Save up to ${money(maxSave.amount, maxSave.currency)}/yr`
+                          : "Save"}
                       </span>
                     )}
                   </button>
@@ -300,6 +358,19 @@ export default function Hosting() {
                       {money(amount, t.currency)}
                       <span className="text-base font-normal text-muted">{per}</span>
                     </p>
+                    {(() => {
+                      const s = yearlySaving(t);
+                      if (s.amount <= 0) return null;
+                      return config.cycle === "yearly" ? (
+                        <p className="mt-2 inline-flex items-center gap-1.5 self-start rounded-lg bg-success/10 px-2.5 py-1 text-xs font-semibold text-success">
+                          <Sparkles className="size-3.5" /> You save {money(s.amount, t.currency)}/yr · {s.pct}% off
+                        </p>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted">
+                          Pay yearly and save {money(s.amount, t.currency)} ({s.pct}%)
+                        </p>
+                      );
+                    })()}
                     <ul className="mt-5 space-y-2 text-sm text-muted">
                       <li className="flex items-center gap-2">
                         <Cpu className="size-4 text-primary-glow" /> {t.workers} dedicated workers

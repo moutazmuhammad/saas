@@ -145,9 +145,12 @@ export function PlanBuilder({
                   You save {money(price.yearly_savings, currency)} per year
                 </div>
               ) : (
-                <p className="mt-3 text-xs text-muted">
-                  Switch to yearly to save {price.savings_percent}%
-                </p>
+                price.yearly_savings > 0 && (
+                  <div className="mt-3 flex items-center gap-2 rounded-lg border border-success/30 bg-success/10 px-3 py-2 text-sm text-success">
+                    <Sparkles className="size-4" />
+                    Switch to yearly and save {money(price.yearly_savings, currency)} ({price.savings_percent}%)
+                  </div>
+                )
               )}
             </>
           )}

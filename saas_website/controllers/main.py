@@ -748,9 +748,11 @@ class SaasWebsite(http.Controller):
     def _resolve_region(self, region_id=0):
         """Resolve the customer-picked region for the create flow.
 
-        Explicit pick -> default region -> None (no regions configured).
-        None keeps the funnel behaviour-neutral: the pricing engine uses
-        x1.0 and allocation imposes no region constraint."""
+        Explicit pick -> CHEAPEST available region -> None (no regions
+        configured). The cheapest is the platform default so a buyer who
+        doesn't pick still gets the lowest price. None keeps the funnel
+        behaviour-neutral: the pricing engine uses x1.0 and allocation
+        imposes no region constraint."""
         Region = request.env['saas.region'].sudo()
         region = None
         try:
@@ -761,7 +763,7 @@ class SaasWebsite(http.Controller):
             region = Region.browse(rid)
             if not region.exists() or not region.active:
                 region = None
-        return region or Region._get_default()
+        return region or Region._cheapest_available()
 
     def _resolve_region_id_strict(self, region_id):
         """Resolve a region id to an ACTIVE region record WITHOUT defaulting.
@@ -903,7 +905,10 @@ class SaasWebsite(http.Controller):
         # (>1 available region), so single-region / unconfigured fleets
         # behave exactly as before.
         Region = request.env['saas.region'].sudo()
-        regions = Region._available_regions()
+        # Cheapest-first so the picker lists the lowest entry price at the
+        # top (matters when there are many regions).
+        regions = Region._available_regions().sorted(
+            key=lambda r: (r.price_multiplier or 1.0, r.sequence, r.id))
         region = self._resolve_region(region_id)
         # If the resolved region has no capacity, don't pre-select it.
         if region and not region.has_capacity():
@@ -945,6 +950,14 @@ class SaasWebsite(http.Controller):
         # so we just add the backup on top.
         monthly_total = _q['monthly'] + backup_cost
         yearly_total = _q['yearly'] + backup_cost * 12
+        # What the customer saves on yearly vs paying month-by-month. The
+        # backup add-on cancels out (it's billed monthly x12 either way), so
+        # the saving is entirely the infra yearly discount.
+        yearly_savings = round(monthly_total * 12 - yearly_total, 2)
+        yearly_savings_pct = (
+            int(round(yearly_savings / (monthly_total * 12) * 100))
+            if monthly_total else 0
+        )
 
         versions = request.env['saas.odoo.version'].sudo().search(
             [('is_hosting_version', '=', True)], order='name desc',
@@ -974,11 +987,76 @@ class SaasWebsite(http.Controller):
             'show_support_picker': show_support_picker,
             'monthly_total': monthly_total,
             'yearly_total': yearly_total,
+            'yearly_savings': yearly_savings,
+            'yearly_savings_pct': yearly_savings_pct,
             'billing_period': billing_period,
             'config': config,
             'odoo_version_id': int(odoo_version_id or 0),
             'form_values': kw,
         })
+
+    @http.route('/hosting/configure/quote', type='json', auth='public', website=True)
+    def hosting_configure_quote(self, workers=2, storage=5, region_id=0,
+                                support_code=None, daily_backup=False):
+        """Region/support/backup-aware price breakdown for the hosting
+        checkout — lets the page update the total live instead of doing a
+        full reload when the customer changes the region or support plan.
+
+        Returns the same numbers the GET renders, plus the region-filtered
+        domain list (changing region changes which domains are co-located
+        and therefore selectable)."""
+        Region = request.env['saas.region'].sudo()
+        engine = request.env['saas.pricing.engine']
+        config = self._get_hosting_plan_config()
+        workers = max(config['min_workers'], min(int(workers or 0), config['max_workers']))
+        storage = max(config['min_storage'], min(int(storage or 0), config['max_storage']))
+
+        region = self._resolve_region(region_id)
+        support = request.env['saas.support.plan'].sudo().search([
+            ('code', '=', (support_code or '').strip()),
+            ('active', '=', True),
+        ], limit=1)
+        support_resolved = support.code if support else None
+        daily = str(daily_backup) in ('1', 'true', 'True', 'on') or daily_backup is True
+
+        _q = engine.compute(
+            'hosting', workers, storage,
+            region=region.id or None, support_code=support_resolved,
+        )
+        support_cost = _q['breakdown']['support_monthly']
+        plan_cost = _q['breakdown']['resource_monthly']
+        backup_unit_price = engine.daily_backup_price(plan_cost)
+        backup_cost = backup_unit_price if daily else 0.0
+        monthly_total = _q['monthly'] + backup_cost
+        yearly_total = _q['yearly'] + backup_cost * 12
+        yearly_savings = round(monthly_total * 12 - yearly_total, 2)
+        yearly_savings_pct = (
+            int(round(yearly_savings / (monthly_total * 12) * 100))
+            if monthly_total else 0
+        )
+
+        # Region-filtered domains (proxy co-location) — same rule as the GET.
+        domains = request.env['saas.based.domain'].sudo().search([])
+        show_region_picker = len(Region._available_regions()) > 1
+        if show_region_picker and region:
+            domains = domains.filtered(lambda d: self._region_domain_ok(d, region))
+
+        return {
+            'plan_cost': round(plan_cost, 2),
+            'support_cost': round(support_cost, 2),
+            'backup_unit_price': round(backup_unit_price, 2),
+            'backup_cost': round(backup_cost, 2),
+            # Totals WITHOUT the backup add-on, so the client's backup toggle
+            # can add it on top exactly like the initial server render.
+            'base_monthly': round(_q['monthly'], 2),
+            'base_yearly': round(_q['yearly'], 2),
+            'monthly_total': round(monthly_total, 2),
+            'yearly_total': round(yearly_total, 2),
+            'yearly_savings': yearly_savings,
+            'yearly_savings_pct': yearly_savings_pct,
+            'currency': config['currency'],
+            'domains': [{'id': d.id, 'name': d.name} for d in domains],
+        }
 
     @http.route('/hosting/order', type='http', auth='user', website=True,
                 methods=['POST'], csrf=True)
