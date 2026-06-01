@@ -358,13 +358,19 @@ class SaasApi(http.Controller):
         (a proxy + docker host + db server in-region — the co-located trio
         an instance needs). Empty regions are excluded entirely, so they
         never appear in the picker. Each carries its price multiplier."""
-        regs = request.env['saas.region']._available_regions()
+        Region = request.env['saas.region']
+        regs = Region._available_regions()
+        cheapest = Region._cheapest_available()
+        # Cheapest-first so the customer sees the lowest entry price at the
+        # top — important when there are many (15+) regions. The cheapest is
+        # marked the default so the picker pre-selects it.
+        regs = regs.sorted(key=lambda r: (r.price_multiplier or 1.0, r.sequence, r.id))
         return ok([{
             'id': r.id,
             'code': r.code,
             'name': r.name,
             'multiplier': r.price_multiplier or 1.0,
-            'default': r.is_default,
+            'default': bool(cheapest) and r.id == cheapest.id,
             'available': True,
         } for r in regs])
 

@@ -85,3 +85,17 @@ class SaasRegion(models.Model):
         return self.sudo().search(
             [('active', '=', True)], order='sequence, id',
         ).filtered(lambda r: r.has_capacity())
+
+    @api.model
+    def _cheapest_available(self):
+        """The available region with the LOWEST price multiplier — the
+        platform's customer-facing default, so the advertised entry price is
+        always the cheapest. Ties break on sequence then id (stable). Returns
+        an empty recordset when no region can host (caller falls back to the
+        un-regioned fleet, i.e. x1.0)."""
+        regions = self._available_regions()
+        if not regions:
+            return self.browse()
+        return regions.sorted(
+            key=lambda r: (r.price_multiplier or 1.0, r.sequence, r.id),
+        )[0]
