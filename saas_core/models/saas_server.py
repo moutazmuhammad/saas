@@ -311,6 +311,47 @@ class SaasServer(models.Model):
                     db=srv.db_server_id.name, dr=db_region.name,
                 ))
 
+    @api.constrains('ip_v4', 'private_ip_v4', 'region_id')
+    def _check_no_duplicate_machine(self):
+        """One physical machine = one server record (with role flags).
+
+        Same-machine detection everywhere (db_host, nginx upstream, port
+        bindings) compares server *records*, so modeling one machine as
+        two records silently flips deployments onto the remote code
+        path: TCP to the database instead of the local socket, ports
+        bound beyond loopback, proxy traffic over the network. Public
+        IPs are globally unique; private IPs only collide within the
+        same region (different regions/VPCs may reuse private subnets).
+        """
+        default = self.env['saas.region']._get_default()
+
+        def eff(server):
+            return server.region_id or default
+
+        for srv in self:
+            if not srv.ip_v4 and not srv.private_ip_v4:
+                continue
+            for other in self.search([('id', '!=', srv.id)]):
+                same_public = srv.ip_v4 and srv.ip_v4 == other.ip_v4
+                same_private = (
+                    srv.private_ip_v4
+                    and srv.private_ip_v4 == other.private_ip_v4
+                    and eff(srv) == eff(other)
+                )
+                if same_public or same_private:
+                    raise ValidationError(_(
+                        "Server '%(srv)s' has the same %(kind)s IP as "
+                        "server '%(other)s'. One physical machine must be "
+                        "a single Server record with multiple roles "
+                        "(Docker Host / Database Server / Reverse Proxy) "
+                        "— duplicating it as separate records makes "
+                        "deployments treat it as two machines and route "
+                        "same-server traffic over the network. Merge the "
+                        "records, or fix the IP address.",
+                        srv=srv.name, other=other.name,
+                        kind=_('public') if same_public else _('private'),
+                    ))
+
     @api.model
     def _allocate_docker_server(self, plan=None, raise_on_failure=False,
                                region=None):

@@ -1786,6 +1786,18 @@ class SaasInstance(models.Model):
             return 'localhost'
         return psql_server.private_ip_v4 or psql_server.ip_v4
 
+    def _get_proxy_backend_ip(self):
+        """IP a *remote* proxy server uses to reach this instance's
+        published ports.
+
+        Prefers the private network so proxy→Odoo traffic (plain HTTP
+        after SSL termination) never crosses the public internet. Must
+        stay in sync with the interface the ports are bound to in
+        ``_render_and_write_configs`` (private IP, else all interfaces).
+        """
+        self.ensure_one()
+        return self.docker_server_id.private_ip_v4 or self.docker_server_id.ip_v4
+
     def _get_container_uid(self, ssh):
         """Return the UID of the default user inside the Docker image.
 
@@ -2455,8 +2467,18 @@ class SaasInstance(models.Model):
                 errors.append(_("Database server Private IP is required (SSH is set to use Private IP)."))
             elif psql.ssh_connect_using == 'public_ip' and not psql.ip_v4:
                 errors.append(_("Database server Public IP address is required."))
-            if not psql.private_ip_v4 and not psql.ip_v4:
-                errors.append(_("Database server needs at least one IP address for db_host configuration."))
+            # Cross-server PostgreSQL traffic must stay on the private
+            # network — without a private IP, _get_db_host() would fall
+            # back to the public IP and send database traffic (and
+            # password auth) over the internet. Same-server setups don't
+            # need an IP for db_host (host.docker.internal / localhost).
+            if server and psql != server and not psql.private_ip_v4:
+                errors.append(_(
+                    "Database server '%s' needs a Private IP: it is a "
+                    "different machine than the Docker server, and "
+                    "cross-server database traffic must use the private "
+                    "network, never a public IP."
+                ) % psql.name)
         if errors:
             raise ValidationError('\n'.join(str(e) for e in errors))
 
@@ -3119,12 +3141,19 @@ class SaasInstance(models.Model):
 
         # docker-compose.yml
         self._append_log("Writing docker-compose.yml...")
-        # When a proxy server is configured, bind ports to 0.0.0.0 so the
-        # remote proxy can reach the container.  Otherwise keep 127.0.0.1.
+        # When the proxy is on a different machine, bind the published
+        # ports to the Docker host's private interface so the remote
+        # proxy can reach the container without exposing the instance on
+        # the public internet (Docker-published ports bypass ufw, so a
+        # 0.0.0.0 binding is world-reachable regardless of firewall
+        # rules). 0.0.0.0 is the last-resort fallback when no private IP
+        # is configured; same-machine proxy keeps loopback.
         proxy_server = self.domain_id.proxy_server_id
-        # Only bind to 0.0.0.0 when the proxy is on a different machine
         needs_remote_access = proxy_server and proxy_server != self.docker_server_id
-        host_ip = '0.0.0.0' if needs_remote_access else '127.0.0.1'
+        if needs_remote_access:
+            host_ip = self.docker_server_id.private_ip_v4 or '0.0.0.0'
+        else:
+            host_ip = '127.0.0.1'
         # Compute memory limits from plan RAM
         plan = self.plan_id
         ram_limit_str = plan.ram_limit if plan else ''
@@ -3733,9 +3762,12 @@ class SaasInstance(models.Model):
             self._append_log("Configuring Nginx reverse proxy with SSL...")
             proxy_server = self.domain_id.proxy_server_id
             if proxy_server and proxy_server != self.docker_server_id:
-                # Proxy is on a different server — deploy Nginx there
+                # Proxy is on a different server — deploy Nginx there,
+                # pointing at the Docker host over the private network.
                 with proxy_server._get_ssh_connection() as proxy_ssh:
-                    self._provision_nginx(proxy_ssh, backend_ip=self.docker_server_id.ip_v4)
+                    self._provision_nginx(
+                        proxy_ssh, backend_ip=self._get_proxy_backend_ip(),
+                    )
             elif proxy_server:
                 # Proxy and Docker are the same server — use localhost
                 self._provision_nginx(ssh)
@@ -6353,7 +6385,7 @@ class SaasInstance(models.Model):
         if proxy_server and proxy_server != self.docker_server_id:
             with proxy_server._get_ssh_connection() as proxy_ssh:
                 self._refresh_nginx_config(
-                    proxy_ssh, backend_ip=self.docker_server_id.ip_v4,
+                    proxy_ssh, backend_ip=self._get_proxy_backend_ip(),
                 )
         else:
             with self.docker_server_id._get_ssh_connection() as ssh:
