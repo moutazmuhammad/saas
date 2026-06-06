@@ -570,8 +570,11 @@ class SaasPortal(CustomerPortal):
             'transaction_route': '/invoice/transaction/%d' % invoice.id,
             'landing_route': landing_route,
             'access_token': invoice_access_token,
-            # Empty mapping -> no "Save my card" checkbox is rendered.
-            'show_tokenize_input_mapping': {},
+            # False for EVERY provider -> no "Save my card" checkbox.
+            # payment.method_form indexes this dict for any tokenization-
+            # capable provider, so an empty mapping KeyErrors as soon as
+            # one is enabled — each compatible provider needs an entry.
+            'show_tokenize_input_mapping': {p.id: False for p in providers_sudo},
             'company_mismatch': not PaymentPortal._can_partner_pay_in_company(
                 partner_sudo, invoice_company
             ),
@@ -1083,8 +1086,11 @@ class SaasPortal(CustomerPortal):
             'providers_sudo': providers_sudo,
             'payment_methods_sudo': payment_methods_sudo,
             'tokens_sudo': tokens_sudo,
-            # Empty mapping -> no "Save my card" checkbox is rendered.
-            'show_tokenize_input_mapping': {},
+            # False for EVERY provider -> no "Save my card" checkbox.
+            # payment.method_form indexes this dict for any tokenization-
+            # capable provider, so an empty mapping KeyErrors as soon as
+            # one is enabled — each compatible provider needs an entry.
+            'show_tokenize_input_mapping': {p.id: False for p in providers_sudo},
             'amount': invoice.amount_residual,
             'currency': invoice.currency_id,
             'partner_id': partner_sudo.id,
