@@ -35,7 +35,13 @@ import { api, ApiError, type ApiInstance } from "@/lib/api";
 import { formatBytes, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+// States that resolve on their own — poll fast while in any of them.
 const TRANSITIONAL = new Set(["provisioning", "pending_provision", "paid", "pending_payment"]);
+// Subset where work is actually happening on our side. "pending_payment"
+// is deliberately NOT here: nothing provisions until the customer pays,
+// and showing "Provisioning in progress" next to the unpaid-invoice
+// banner reads as a contradiction.
+const PROVISIONING = new Set(["provisioning", "pending_provision", "paid"]);
 
 function formatMoney(amount: number, currency = "USD") {
   try {
@@ -156,7 +162,8 @@ export default function InstanceDetail() {
   }
 
   const isRunning = instance.state === "running";
-  const isBusy = TRANSITIONAL.has(instance.state);
+  const isBusy = PROVISIONING.has(instance.state);
+  const awaitingPayment = instance.state === "pending_payment";
   const isSuspended = instance.state === "suspended";
 
   const run = async (action: "start" | "stop" | "restart", label: string) => {
@@ -259,7 +266,7 @@ export default function InstanceDetail() {
               icon={Play}
               loading={pending === "start" || isBusy}
               loadingText={isBusy ? "Provisioning…" : "Starting…"}
-              disabled={!!pending || isBusy || isSuspended}
+              disabled={!!pending || isBusy || isSuspended || awaitingPayment}
               onClick={() => run("start", "Instance started")}
             >
               Start
