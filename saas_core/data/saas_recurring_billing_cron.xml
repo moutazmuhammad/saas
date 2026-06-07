@@ -37,6 +37,19 @@
         <field name="active" eval="True"/>
     </record>
 
+    <!-- Safety net: apply pending plan changes whose invoice is paid but
+         where the payment hook never (fully) ran — without this a paying
+         customer can stay stuck on the old plan forever. -->
+    <record id="ir_cron_saas_apply_paid_pending_changes" model="ir.cron">
+        <field name="name">SaaS: Apply Paid Pending Plan Changes (Safety Net)</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_apply_paid_pending_changes()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">hours</field>
+        <field name="active" eval="True"/>
+    </record>
+
     <!-- Daily-backup add-on: monthly renewal invoices, independent of the
          main subscription billing cycle. -->
     <record id="ir_cron_saas_daily_backup_renewal" model="ir.cron">

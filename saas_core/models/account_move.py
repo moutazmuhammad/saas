@@ -141,15 +141,13 @@ class AccountMove(models.Model):
         sale_orders = self.env['sale.order'].search([
             ('invoice_ids', 'in', paid_invoices.ids),
         ])
-        if not sale_orders:
-            return
 
         # --- Handle new instance deployment (pending_payment → paid) ---
         instances = self.env['saas.instance'].search([
             ('sale_order_id', 'in', sale_orders.ids),
             ('state', '=', 'pending_payment'),
             ('pending_plan_id', '=', False),
-        ])
+        ]) if sale_orders else self.env['saas.instance']
         for instance in instances:
             instance.state = 'paid'
             instance._set_next_invoice_date()
@@ -178,9 +176,14 @@ class AccountMove(models.Model):
             )
 
         # --- Handle pending plan changes (trial upgrade or paid plan change) ---
+        # Match by the explicit invoice link first (exact — survives
+        # sale_order_id being overwritten between request and payment),
+        # then by sale order for records created before that field existed.
         upgrade_instances = self.env['saas.instance'].search([
-            ('sale_order_id', 'in', sale_orders.ids),
             ('pending_plan_id', '!=', False),
+            '|',
+            ('pending_change_invoice_id', 'in', paid_invoices.ids),
+            ('sale_order_id', 'in', sale_orders.ids),
         ])
         for instance in upgrade_instances:
             # Pick the right method: trial upgrade or paid plan change

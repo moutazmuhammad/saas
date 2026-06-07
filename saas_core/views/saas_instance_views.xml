@@ -184,6 +184,10 @@
                             <field name="is_trial" widget="boolean_toggle" readonly="1"/>
                             <field name="next_invoice_date" readonly="1"/>
                             <field name="odoo_version_id" readonly="id"/>
+                            <field name="pending_plan_id" readonly="1"
+                                   invisible="not pending_plan_id"/>
+                            <field name="pending_change_invoice_id" readonly="1"
+                                   invisible="not pending_change_invoice_id"/>
                         </group>
                         <!-- Right Column -->
                         <group>

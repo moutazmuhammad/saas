@@ -589,6 +589,16 @@ class SaasInstance(models.Model):
         [('monthly', 'Monthly'), ('yearly', 'Yearly')],
         string='Pending Billing Period',
     )
+    pending_change_invoice_id = fields.Many2one(
+        'account.move',
+        string='Pending Change Invoice',
+        ondelete='set null',
+        copy=False,
+        help='Invoice the client must pay for the pending plan change. '
+             'Explicit link so the payment hook and the safety-net cron '
+             'can match the payment exactly, even if sale_order_id is '
+             'later overwritten by another flow.',
+    )
 
 
     # ========== Scheduled Downgrade ==========
@@ -1232,6 +1242,7 @@ class SaasInstance(models.Model):
             self.write({
                 'pending_plan_id': False,
                 'pending_billing_period': False,
+                'pending_change_invoice_id': False,
             })
 
         if self.state in ('pending_payment', 'draft'):
@@ -6629,6 +6640,7 @@ class SaasInstance(models.Model):
                     instance.write({
                         'pending_plan_id': False,
                         'pending_billing_period': False,
+                        'pending_change_invoice_id': False,
                     })
                     instance._append_log(
                         "Pending upgrade to %s cleared (trial expired)."
@@ -6979,6 +6991,80 @@ class SaasInstance(models.Model):
                 _logger.exception(
                     "Failed to generate renewal invoice for %s",
                     instance.subdomain,
+                )
+
+    def _paid_pending_change_invoice(self):
+        """Paid invoice for the current pending plan change, or empty.
+
+        Prefers the explicit ``pending_change_invoice_id`` link. Falls
+        back (for changes requested before that field existed) to the
+        newest posted invoice of ``sale_order_id`` — but only when that
+        order's origin is an upgrade/subscription token, so an older
+        paid invoice can never re-apply a NEW unpaid pending change.
+        """
+        self.ensure_one()
+        paid = ('paid', 'in_payment')
+        empty = self.env['account.move']
+        inv = self.pending_change_invoice_id
+        if inv:
+            if inv.state == 'posted' and inv.payment_state in paid:
+                return inv
+            return empty
+        # Legacy fallback: _request_upgrade / action_subscribe_from_trial
+        # always pointed sale_order_id at the change's own order.
+        ref = self.name or self.subdomain
+        order = self.sale_order_id
+        if not (ref and order) or order.origin not in (
+            ORIGIN_PLAN_UPGRADE % ref, ORIGIN_SUBSCRIPTION % ref,
+        ):
+            return empty
+        latest = order.invoice_ids.filtered(
+            lambda m: m.state == 'posted'
+        ).sorted('create_date', reverse=True)[:1]
+        if latest and latest.payment_state in paid:
+            return latest
+        return empty
+
+    @api.model
+    def _cron_apply_paid_pending_changes(self):
+        """Safety net for the payment hook: apply pending plan changes
+        whose invoice is already paid.
+
+        The normal path is ``_saas_check_instance_payment()`` firing when
+        the invoice's payment_state flips, then applying the change in a
+        background thread. If that is ever missed (thread killed mid-way,
+        payment post-processed while the module was upgrading, hook error
+        rolled back with the payment retried independently), the customer
+        has paid but stays on the old plan forever — there was no retry.
+        This cron converges those stragglers.
+        """
+        instances = self.search([('pending_plan_id', '!=', False)])
+        for instance in instances:
+            try:
+                invoice = instance._paid_pending_change_invoice()
+                if not invoice:
+                    continue
+                method = ('_apply_pending_upgrade' if instance.is_trial
+                          else '_apply_pending_plan_change')
+                _logger.info(
+                    "SaaS instance %s: invoice %s for pending change to %s "
+                    "is paid but the change was never applied — applying "
+                    "now (safety-net cron, %s).",
+                    instance.subdomain, invoice.name,
+                    instance.pending_plan_id.name, method,
+                )
+                instance._append_log(
+                    "Pending plan change invoice %s is paid but the change "
+                    "was never applied — applying now (safety-net cron)."
+                    % invoice.name
+                )
+                getattr(instance, method)()
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Safety-net cron failed to apply paid pending plan "
+                    "change for %s", instance.subdomain,
                 )
 
     @api.model
@@ -7634,6 +7720,7 @@ class SaasInstance(models.Model):
 
         invoice = order._create_invoices()
         invoice.action_post()
+        self.pending_change_invoice_id = invoice[:1]
 
         self._append_log(
             "Upgrade to %s (%s) requested. Invoice %s created — awaiting payment."
@@ -7692,6 +7779,7 @@ class SaasInstance(models.Model):
             'billing_period': billing_period,
             'pending_plan_id': False,
             'pending_billing_period': False,
+            'pending_change_invoice_id': False,
         })
 
         self._set_next_invoice_date()
@@ -7872,6 +7960,7 @@ class SaasInstance(models.Model):
         self.write({
             'pending_plan_id': False,
             'pending_billing_period': False,
+            'pending_change_invoice_id': False,
         })
 
     # ---------- UPGRADE ----------
@@ -7947,6 +8036,7 @@ class SaasInstance(models.Model):
 
         invoice = order._create_invoices()
         invoice.action_post()
+        self.pending_change_invoice_id = invoice[:1]
 
         self.message_post(body=_(
             "Upgrade to %s (%s) requested. Invoice %s (%.2f) — awaiting payment."
@@ -7975,6 +8065,7 @@ class SaasInstance(models.Model):
             'billing_period': billing_period,
             'pending_plan_id': False,
             'pending_billing_period': False,
+            'pending_change_invoice_id': False,
         })
 
         # Reset billing cycle from today
@@ -9977,6 +10068,7 @@ class SaasInstance(models.Model):
             'sale_order_id': False,
             'pending_plan_id': False,
             'pending_billing_period': False,
+            'pending_change_invoice_id': False,
             'scheduled_plan_id': False,
             'scheduled_billing_period': False,
             'suspension_warning_sent': False,
