@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowRight, Check, ShieldCheck, Cpu, HardDrive, Globe, Sparkles, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, Check, ShieldCheck, Cpu, HardDrive, Globe, Sparkles, SlidersHorizontal, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertBanner } from "@/components/AlertBanner";
@@ -194,6 +194,10 @@ export default function Hosting() {
   const setCycle = (cycle: "monthly" | "yearly") =>
     setConfig((c) => (c ? { ...c, cycle } : c));
 
+  // Sizing hint: recommended users = workers × this (operator-tunable,
+  // default 6). Shown on tier cards and next to the workers slider.
+  const usersPerWorker = meta?.hosting_config.users_per_worker || 6;
+
   const limits = meta
     ? {
         workers: { min: meta.hosting_config.min_workers, max: meta.hosting_config.max_workers },
@@ -353,6 +357,9 @@ export default function Hosting() {
                         <Cpu className="size-4 text-primary-glow" /> {t.workers} dedicated workers
                       </li>
                       <li className="flex items-center gap-2">
+                        <Users className="size-4 text-primary-glow" /> Recommended for ~{t.workers * usersPerWorker} users
+                      </li>
+                      <li className="flex items-center gap-2">
                         <HardDrive className="size-4 text-primary-glow" /> {formatBytes(t.storage)} storage
                       </li>
                     </ul>
@@ -390,6 +397,7 @@ export default function Hosting() {
               limits={limits}
               price={price}
               currency={price?.currency || meta?.hosting_config.currency}
+              usersPerWorker={usersPerWorker}
               footer={
                 <Button
                   className="w-full"

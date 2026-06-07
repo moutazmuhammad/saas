@@ -543,16 +543,10 @@ class SaasWebsite(http.Controller):
         ], limit=1)
 
         if not plan:
-            cpu_limit = max(1.0, workers * config['cpu_per_worker'])
-            ram_mb = workers * config['ram_per_worker']
-            # Format RAM: use 'g' for >= 1024 MB, else 'm'
-            if ram_mb >= 1024:
-                ram_limit = '%dg' % (ram_mb // 1024)
-            else:
-                ram_limit = '%dm' % ram_mb
-
+            # One sizing formula everywhere (admin form onchange, custom
+            # builder, trial) — see saas.plan._recommended_resources.
+            res = Plan._recommended_resources('services', workers)
             yearly_price = _q['yearly']
-            recommended_users = workers * config['users_per_worker_max']
 
             # Backup retention is FIXED — same as hosting (no scaling by
             # plan size). Every Services plan keeps the last
@@ -565,10 +559,10 @@ class SaasWebsite(http.Controller):
                 'yearly_price': yearly_price,
                 'workers': workers,
                 'storage_limit': float(storage),
-                'cpu_limit': cpu_limit,
-                'ram_limit': ram_limit,
+                'cpu_limit': res['cpu_limit'],
+                'ram_limit': res['ram_limit'],
                 'max_backups': DEFAULT_MAX_BACKUPS,
-                'recommended_users': recommended_users,
+                'recommended_users': res['recommended_users'],
                 'saas_product_ids': [(4, product.id)],
                 'sequence': 999,
             })
@@ -724,6 +718,10 @@ class SaasWebsite(http.Controller):
             'max_storage': int(ICP.get_param('saas_master.hosting_max_storage', '200')),
             'cpu_per_worker': float(ICP.get_param('saas_master.hosting_cpu_per_worker', '0.5')),
             'ram_per_worker': int(ICP.get_param('saas_master.hosting_ram_per_worker', '512')),
+            # Sizing guidance shown next to the workers slider:
+            # recommended users = workers × this (default 6).
+            'users_per_worker': int(ICP.get_param(
+                'saas_master.custom_plan_users_per_worker_min', '6')),
             'yearly_discount_pct': int(ICP.get_param('saas_master.hosting_yearly_discount_pct', '20')),
             # Engine quote so this matches what the invoice will charge.
             # Usage-based pricing with nothing measured yet = the 1 GB
@@ -819,10 +817,9 @@ class SaasWebsite(http.Controller):
         ], limit=1)
 
         if not plan:
-            cpu_limit = max(1.0, workers * config['cpu_per_worker'])
-            ram_mb = workers * config['ram_per_worker']
-            ram_limit = '%dg' % (ram_mb // 1024) if ram_mb >= 1024 else '%dm' % ram_mb
-
+            # One sizing formula everywhere (admin form onchange, custom
+            # builder, trial) — see saas.plan._recommended_resources.
+            res = Plan._recommended_resources('hosting', workers)
             yearly_price = _q['yearly']
 
             plan = Plan.create({
@@ -832,8 +829,9 @@ class SaasWebsite(http.Controller):
                 'yearly_price': yearly_price,
                 'workers': workers,
                 'storage_limit': float(storage),
-                'cpu_limit': cpu_limit,
-                'ram_limit': ram_limit,
+                'cpu_limit': res['cpu_limit'],
+                'ram_limit': res['ram_limit'],
+                'recommended_users': res['recommended_users'],
                 # Hosting snapshot retention is fixed (HOSTING_MAX_SNAPSHOTS=7
                 # in saas.instance.backup); plan.max_backups is not consulted
                 # for hosting, so we don't compute a per-plan backup count.
@@ -852,6 +850,7 @@ class SaasWebsite(http.Controller):
         ], limit=1)
 
         if not plan:
+            res = Plan._recommended_resources('hosting', config['min_workers'])
             plan = Plan.create({
                 'name': 'Hosting Trial',
                 'is_trial_plan': True,
@@ -860,8 +859,8 @@ class SaasWebsite(http.Controller):
                 'yearly_price': 0,
                 'workers': config['min_workers'],
                 'storage_limit': float(config['min_storage']),
-                'cpu_limit': max(1.0, config['min_workers'] * config['cpu_per_worker']),
-                'ram_limit': '%dm' % (config['min_workers'] * config['ram_per_worker']),
+                'cpu_limit': res['cpu_limit'],
+                'ram_limit': res['ram_limit'],
                 'max_backups': 0,
                 'saas_product_ids': [(4, product.id)],
                 'sequence': 0,

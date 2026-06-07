@@ -384,10 +384,18 @@ class SaasApi(http.Controller):
         browser. The client only needs limits / discount / currency — the
         actual price comes from the calculate endpoint (engine), so the
         rates never leave the server."""
-        return {
+        out = {
             k: v for k, v in cfg.items()
             if k not in ('worker_price', 'storage_price_per_gb')
         }
+        # Normalised sizing hint for the workers slider (the custom config
+        # carries users_per_worker_min; hosting carries users_per_worker).
+        out['users_per_worker'] = int(
+            cfg.get('users_per_worker')
+            or cfg.get('users_per_worker_min')
+            or 6
+        )
+        return out
 
     def _resolve_region(self, region):
         """Resolve a region id or code to an ACTIVE region record, or an

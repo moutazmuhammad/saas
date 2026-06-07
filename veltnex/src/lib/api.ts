@@ -132,6 +132,8 @@ export interface PlanConfigMeta {
   max_storage: number;
   yearly_discount_pct: number;
   currency: string;
+  /** Sizing hint: recommended users = workers × this (default 6). */
+  users_per_worker?: number;
 }
 
 export interface TrialInfo {
