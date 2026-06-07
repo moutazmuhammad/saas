@@ -725,9 +725,11 @@ class SaasWebsite(http.Controller):
             'cpu_per_worker': float(ICP.get_param('saas_master.hosting_cpu_per_worker', '0.5')),
             'ram_per_worker': int(ICP.get_param('saas_master.hosting_ram_per_worker', '512')),
             'yearly_discount_pct': int(ICP.get_param('saas_master.hosting_yearly_discount_pct', '20')),
-            'daily_backup_price': float(ICP.get_param(
-                'saas_master.hosting_daily_backup_price', '5.0',
-            )),
+            # Engine quote so this matches what the invoice will charge.
+            # Usage-based pricing with nothing measured yet = the 1 GB
+            # minimum, i.e. the "from" price.
+            'daily_backup_price': request.env['saas.pricing.engine'].daily_backup_price(),
+            'snapshot_price_per_gb': request.env['saas.pricing.engine'].snapshot_price_per_gb(),
             'currency': request.env.company.currency_id.name or 'USD',
         }
 
@@ -933,15 +935,15 @@ class SaasWebsite(http.Controller):
         # Resource (plan) portion — the named-tier price or the linear
         # compute, shown as its own line so the breakdown is transparent.
         plan_cost = _q['breakdown']['resource_monthly']
-        # Daily-backup add-on priced the SAME way it is billed (a percentage
-        # of the plan price — see saas.pricing.engine.daily_backup_price /
-        # saas.instance._get_daily_backup_price) so the checkout quote
-        # matches the invoice. ``backup_unit_price`` is the per-month figure
+        # Daily-backup add-on priced the SAME way it is billed (per GB of
+        # used storage — see saas.pricing.engine.daily_backup_price /
+        # saas.instance._get_daily_backup_price). A new instance has no
+        # data yet, so the quote is the 1 GB minimum; renewals re-price
+        # from actual usage. ``backup_unit_price`` is the per-month figure
         # used for the toggle; ``backup_cost`` is what's added to the total
-        # only when the box is ticked. It is a FLAT monthly fee — billed x12
+        # only when the box is ticked. It is a MONTHLY fee — billed x12
         # on yearly with NO discount.
-        backup_unit_price = request.env['saas.pricing.engine'].daily_backup_price(
-            plan_cost)
+        backup_unit_price = request.env['saas.pricing.engine'].daily_backup_price()
         backup_cost = backup_unit_price if daily_backup else 0.0
         # The yearly discount applies ONLY to the infra (plan) portion.
         # Support and the backup add-on are flat monthly fees billed x12 at
@@ -1025,7 +1027,7 @@ class SaasWebsite(http.Controller):
         )
         support_cost = _q['breakdown']['support_monthly']
         plan_cost = _q['breakdown']['resource_monthly']
-        backup_unit_price = engine.daily_backup_price(plan_cost)
+        backup_unit_price = engine.daily_backup_price()
         backup_cost = backup_unit_price if daily else 0.0
         monthly_total = _q['monthly'] + backup_cost
         yearly_total = _q['yearly'] + backup_cost * 12

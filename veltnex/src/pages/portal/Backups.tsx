@@ -329,7 +329,7 @@ function DailyBackupCard({
           <div>
             <p className="font-medium">Daily snapshots are on</p>
             <p className="text-xs text-muted">
-              Billed monthly{next ? ` · next charge ${formatDate(next)}` : ""}.
+              Billed monthly by used storage{price > 0 ? ` · currently ${price}/month` : ""}{next ? ` · next charge ${formatDate(next)}` : ""}.
             </p>
           </div>
         </div>
@@ -389,7 +389,7 @@ function DailyBackupCard({
         <div>
           <p className="font-medium">Daily snapshots are off<HelpHint anchor="daily-backup" className="ml-1.5" /></p>
           <p className="text-xs text-muted">
-            Automatic daily full-instance snapshots{price > 0 ? `, billed ${price}/month` : ""}. Renews monthly; pauses if a renewal goes unpaid.
+            Automatic daily full-instance snapshots, billed monthly by used storage{price > 0 ? ` (currently ${price}/month)` : ""}. Renews monthly; pauses if a renewal goes unpaid.
           </p>
         </div>
       </div>

@@ -144,30 +144,15 @@ class ResConfigSettings(models.TransientModel):
         config_parameter='saas_master.hosting_yearly_discount_pct',
         default=20,
     )
-    saas_backup_price_pct = fields.Float(
-        string='Backup Price (% of instance price)',
-        config_parameter='saas_master.backup_price_pct',
-        default=20.0,
-        help='Daily-backup add-on price as a percentage of the instance\'s '
-             'monthly plan price (DigitalOcean-style). Deterministic and '
-             'predictable: the customer always pays this fixed share of '
-             'their plan. Set to 0 to fall back to the flat price below.',
-    )
-    saas_backup_price_min = fields.Float(
-        string='Backup Price: Minimum (monthly)',
-        config_parameter='saas_master.backup_price_min',
-        default=0.0,
-        help='Optional flat floor on the percentage price, so tiny plans '
-             'still cover fixed backup overhead. 0 = no minimum.',
-    )
-    saas_hosting_daily_backup_price = fields.Float(
-        string='Hosting: Daily Backup Flat Price (legacy / grandfathered)',
-        config_parameter='saas_master.hosting_daily_backup_price',
-        default=5.0,
-        help='Flat monthly price used only when the percentage above is 0, '
-             'or for instances whose price is grandfathered '
-             '(backup_price_locked_until in the future). Retention is fixed '
-             'at 7 days per database.',
+    saas_snapshot_price_per_gb = fields.Float(
+        string='Snapshot Price per GB (monthly)',
+        config_parameter='saas_master.snapshot_price_per_gb',
+        default=0.40,
+        help='Usage-based snapshot pricing: the storage actually consumed '
+             'by the instance\'s snapshots is rounded UP to the next whole '
+             'GB and charged at this monthly rate (1 GB minimum). '
+             'Re-evaluated on every monthly renewal. Retention is fixed at '
+             '7 days per database.',
     )
     saas_hosting_snapshot_retention_surcharge = fields.Float(
         string='Hosting: Snapshot Retention Surcharge (post-cancellation)',

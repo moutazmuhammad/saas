@@ -392,11 +392,6 @@ class SaasInstance(models.Model):
              'portal; cleared (and daily_backup_enabled flipped to True) '
              'as soon as the invoice transitions to paid / in_payment.',
     )
-    daily_backup_pending_state = fields.Selection(
-        related='daily_backup_pending_invoice_id.payment_state',
-        string='Daily Backup Pending Payment State',
-        readonly=True,
-    )
     daily_backup_suspended = fields.Boolean(
         string='Daily Backups Paused',
         default=False,
@@ -418,22 +413,6 @@ class SaasInstance(models.Model):
              'shared with the customer. Loss of this value renders '
              'all daily snapshots unrecoverable — back up the saas '
              'master database appropriately.',
-    )
-    daily_backup_monthly_price = fields.Float(
-        string='Daily Backup Monthly Price',
-        compute='_compute_daily_backup_monthly_price',
-        help='Monthly add-on price charged for this instance when daily '
-             'backups are enabled. Pulled from SaaS settings at compute time.',
-    )
-    backup_price_locked_until = fields.Date(
-        string='Backup Price Locked Until',
-        copy=False,
-        help='Grandfathering (P4): while set and in the future, the daily '
-             'backup add-on keeps its FLAT settings price even after the '
-             'add-on is switched to storage-based pricing — so an existing '
-             "subscriber's recurring charge doesn't jump mid-subscription. "
-             'Set on migration to the next backup-invoice date; cleared once '
-             'past. New activations price with the current model immediately.',
     )
     last_restic_prune = fields.Date(
         string='Last Restic Prune',
@@ -548,18 +527,6 @@ class SaasInstance(models.Model):
              'cancellation. Cleared once the retry succeeds.',
     )
 
-    @api.depends('daily_backup_enabled')
-    def _compute_daily_backup_monthly_price(self):
-        ICP = self.env['ir.config_parameter'].sudo()
-        try:
-            price = float(ICP.get_param(
-                'saas_master.hosting_daily_backup_price', '0.0',
-            ))
-        except (TypeError, ValueError):
-            price = 0.0
-        for rec in self:
-            rec.daily_backup_monthly_price = price if rec.daily_backup_enabled else 0.0
-
     # ========== Free Trial ==========
     is_trial = fields.Boolean(
         string='Free Trial',
@@ -636,10 +603,6 @@ class SaasInstance(models.Model):
         'saas.instance.backup', 'instance_id',
         string='Backups',
     )
-    backup_count = fields.Integer(
-        string='Backup Count', compute='_compute_backup_count',
-        store=True,
-    )
 
     # ========== Resource Usage ==========
     cpu_usage = fields.Char(
@@ -686,14 +649,6 @@ class SaasInstance(models.Model):
         string='Total Storage Size',
         readonly=True,
         help='Total storage: container files + PostgreSQL database.',
-    )
-    disk_usage_bytes = fields.Float(
-        string='Container Disk (bytes)',
-        readonly=True,
-    )
-    db_size_bytes = fields.Float(
-        string='Database Size (bytes)',
-        readonly=True,
     )
     total_storage_bytes = fields.Float(
         string='Total Storage (bytes)',
@@ -1105,17 +1060,6 @@ class SaasInstance(models.Model):
             else:
                 rec.url = ''
 
-    @api.depends('backup_ids')
-    def _compute_backup_count(self):
-        data = self.env['saas.instance.backup']._read_group(
-            [('instance_id', 'in', self.ids)],
-            ['instance_id'],
-            ['__count'],
-        )
-        counts = {instance.id: count for instance, count in data}
-        for rec in self:
-            rec.backup_count = counts.get(rec.id, 0)
-
     @api.depends('sale_order_id')
     def _compute_sale_order_count(self):
         for rec in self:
@@ -1297,49 +1241,26 @@ class SaasInstance(models.Model):
             'saas_master.merge_snapshot_into_renewal_invoice', 'False',
         ) == 'True'
 
-    def _backup_flat_price(self):
-        """The flat daily-backup price from SaaS settings (the legacy /
-        grandfathered amount)."""
-        try:
-            return float(
-                self.env['ir.config_parameter'].sudo().get_param(
-                    'saas_master.hosting_daily_backup_price', '0.0',
-                )
-            )
-        except (TypeError, ValueError):
-            return 0.0
-
     def _get_daily_backup_price(self):
         """Monthly price of the daily-backup add-on for THIS instance.
 
-        Percentage model: the price is a fixed % of the instance's monthly
-        plan price (``saas_master.backup_price_pct``, e.g. 20%). Because the
-        plan price already embeds workers + storage, this scales with the
-        instance's value/cost without exposing any per-GB metering — and
-        it's fully deterministic (the customer always pays the same share
-        of their plan). An optional flat floor
-        (``saas_master.backup_price_min``) keeps tiny plans above fixed
-        overhead.
-
-        Grandfathering: while ``backup_price_locked_until`` is set and in
-        the future, the FLAT legacy price is kept, so an existing
-        subscriber's recurring charge doesn't jump mid-subscription.
-
-        Fallback: when the percentage is 0 (not configured), the flat
-        legacy price (``hosting_daily_backup_price``) is used — so the
-        behaviour is unchanged until a percentage is set.
+        Usage-based: the storage actually consumed is rounded UP to the
+        next whole GB and charged at the configured per-GB rate
+        (``saas_master.snapshot_price_per_gb``, default $0.40/GB), 1 GB
+        minimum. "Consumed" = the deduplicated snapshot repo footprint
+        (what the snapshots really occupy in the bucket); before the
+        first snapshot exists (activation invoice) we fall back to the
+        instance's measured used storage, since that is what the first
+        snapshot will capture. Re-evaluated on every monthly renewal, so
+        the charge follows the customer's data over time.
         """
         self.ensure_one()
-        flat = self._backup_flat_price()
-        lock = self.backup_price_locked_until
-        if lock and lock >= fields.Date.today():
-            return flat
         # Delegate to the pricing engine so the checkout quote, the portal
         # and the recurring invoice all charge the SAME number.
-        plan_monthly = (
-            self.plan_id._get_price_for_period('monthly') if self.plan_id else 0.0
+        used_bytes = self._snapshot_total_bytes() or self.total_storage_bytes or 0
+        return self.env['saas.pricing.engine'].daily_backup_price(
+            used_bytes=used_bytes,
         )
-        return self.env['saas.pricing.engine'].daily_backup_price(plan_monthly)
 
     def _get_snapshot_retention_surcharge(self):
         """One-time fee for keeping a snapshot through cancellation.
@@ -2895,7 +2816,6 @@ class SaasInstance(models.Model):
             except (ValueError, TypeError):
                 pass
         self.disk_usage = self._format_bytes(disk_bytes) if disk_bytes else ''
-        self.disk_usage_bytes = disk_bytes
 
         # -- Fetch database size from PostgreSQL server (in bytes) --
         # Use the precomputed batched value when the caller (cron) has
@@ -2917,7 +2837,6 @@ class SaasInstance(models.Model):
                     "Failed to fetch DB size for instance %s", self.subdomain,
                 )
         self.db_size = self._format_bytes(db_bytes) if db_bytes else ''
-        self.db_size_bytes = db_bytes
 
         # -- Total storage = instance data + db + HALF the snapshot footprint --
         # Per product policy: the customer's full instance data (the
@@ -7255,8 +7174,8 @@ class SaasInstance(models.Model):
         snapshot_line = self._snapshot_order_line()
         if not snapshot_line:
             _logger.warning(
-                "Skipping daily-backup renewal for %s: monthly price is "
-                "not configured (saas_master.hosting_daily_backup_price).",
+                "Skipping daily-backup renewal for %s: per-GB rate is "
+                "not configured (saas_master.snapshot_price_per_gb).",
                 self.subdomain,
             )
             return

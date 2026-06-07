@@ -122,7 +122,7 @@ class TestPricingEngine(TransactionCase):
         # pushes pre_minimum above the floor, the floor doesn't apply.
         if self.env['saas.addon'].sudo().search_count(
                 [('code', '=', 'daily_snapshots')]):
-            self._set({'saas_master.hosting_daily_backup_price': '12'})
+            self._set({'saas_master.snapshot_price_per_gb': '12'})
             qa = self.engine.compute('hosting', 2, 5, 'monthly',
                                      addon_codes=['daily_snapshots'])
             # 21.5 + 12 = 33.5 > 30 minimum -> not floored.
@@ -249,7 +249,7 @@ class TestPricingEngine(TransactionCase):
 
     def test_addon_sum(self):
         """The daily_snapshots add-on adds the Settings price to the quote."""
-        self._set({'saas_master.hosting_daily_backup_price': '7.0'})
+        self._set({'saas_master.snapshot_price_per_gb': '7.0'})
         if not self.env['saas.addon'].sudo().search_count(
                 [('code', '=', 'daily_snapshots')]):
             self.skipTest('daily_snapshots add-on not seeded in this DB')
@@ -393,7 +393,7 @@ class TestPricingEngine(TransactionCase):
         # Add-ons are NOT scaled by region.
         if self.env['saas.addon'].sudo().search_count(
                 [('code', '=', 'daily_snapshots')]):
-            self._set({'saas_master.hosting_daily_backup_price': '7.0'})
+            self._set({'saas_master.snapshot_price_per_gb': '7.0'})
             rega = self.engine.compute(
                 'hosting', 4, 50, 'monthly',
                 addon_codes=['daily_snapshots'], region=region.id)

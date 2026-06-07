@@ -18,7 +18,7 @@ class TestSnapshotBilling(TransactionCase):
     def setUp(self):
         super().setUp()
         self.icp = self.env['ir.config_parameter'].sudo()
-        self.icp.set_param('saas_master.hosting_daily_backup_price', '5.0')
+        self.icp.set_param('saas_master.snapshot_price_per_gb', '5.0')
         self.icp.set_param('saas_master.hosting_worker_price', '10.0')
         self.icp.set_param('saas_master.hosting_storage_price_per_gb', '0.3')
         self.product = self.env['saas.product'].sudo().search(

@@ -42,7 +42,7 @@ _PARAM_SUFFIXES = [
     'hosting_min_workers', 'hosting_max_workers',
     'hosting_min_storage', 'hosting_max_storage',
     'hosting_cpu_per_worker', 'hosting_ram_per_worker',
-    'hosting_yearly_discount_pct', 'hosting_daily_backup_price',
+    'hosting_yearly_discount_pct',
 ]
 
 

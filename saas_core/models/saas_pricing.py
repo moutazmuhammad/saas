@@ -1,3 +1,5 @@
+import math
+
 from odoo import api, models
 
 # ----------------------------------------------------------------------
@@ -373,36 +375,38 @@ class SaasPricingEngine(models.AbstractModel):
                 'charge': round(over_gb * per_gb, 2)}
 
     @api.model
-    def daily_backup_price(self, plan_monthly):
-        """Monthly price of the daily-backup add-on for a plan whose monthly
-        price is ``plan_monthly``.
+    def snapshot_price_per_gb(self):
+        """Per-GB monthly rate for the usage-based snapshot add-on
+        (``saas_master.snapshot_price_per_gb``, default $0.40/GB).
+        0 makes the add-on free / unpurchasable (price 0 hides it)."""
+        icp = self.env['ir.config_parameter'].sudo()
+        try:
+            return float(icp.get_param(
+                'saas_master.snapshot_price_per_gb', '0.40') or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @api.model
+    def daily_backup_price(self, used_bytes=None):
+        """Monthly price of the daily-backup add-on.
 
         SINGLE source of truth for the snapshot add-on price so the checkout
-        quote, the portal, and the recurring invoice all agree. Percentage
-        model: a fixed % of the plan's monthly price
-        (``saas_master.backup_price_pct``, default 20) with an optional flat
-        floor (``saas_master.backup_price_min``). Falls back to the legacy
-        flat price (``saas_master.hosting_daily_backup_price``) when the
-        percentage is 0. This is a flat MONTHLY fee — never discounted on
-        yearly billing.
+        quote, the portal, and the recurring invoice all agree.
+
+        Usage-based: the space actually consumed (``used_bytes``) is
+        rounded UP to the next whole GB and charged at the per-GB rate
+        (``saas_master.snapshot_price_per_gb``, default $0.40/GB), with a
+        1 GB minimum so the add-on never prices at $0. ``used_bytes=None``
+        (configure-time quote — nothing measured yet) quotes the 1 GB
+        minimum, i.e. the "from" price.
+
+        This is a MONTHLY fee — never discounted on yearly billing.
         """
-        icp = self.env['ir.config_parameter'].sudo()
-
-        def _f(key, default='0'):
-            try:
-                return float(icp.get_param(key, default) or 0)
-            except (TypeError, ValueError):
-                return 0.0
-
-        flat = _f('saas_master.hosting_daily_backup_price', '0.0')
-        pct = _f('saas_master.backup_price_pct', '20')
-        if pct <= 0:
-            return flat  # percentage disabled -> legacy flat price
-        minimum = _f('saas_master.backup_price_min', '0')
-        price = (plan_monthly or 0.0) * pct / 100.0
-        if minimum > 0:
-            price = max(price, minimum)
-        return round(price, 2)
+        per_gb = self.snapshot_price_per_gb()
+        if per_gb <= 0:
+            return 0.0
+        billable_gb = max(1, math.ceil((used_bytes or 0) / (1024 ** 3)))
+        return round(billable_gb * per_gb, 2)
 
     @api.model
     def monthly_price(self, kind, workers, storage, region=None):

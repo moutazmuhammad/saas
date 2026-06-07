@@ -8,7 +8,7 @@ class SaasAddon(models.Model):
     Add-ons are summed into a quote by the pricing engine
     (`saas.pricing.engine._addons_total`). New add-ons are created as
     records here — no code change. An add-on whose price already lives in
-    Settings (Daily Snapshots → `hosting_daily_backup_price`) can point at
+    Settings (Daily Snapshots → `snapshot_price_per_gb`) can point at
     that config key via ``price_config_param`` so there is a single source
     of truth and the existing billing flow is undisturbed.
     """
@@ -40,7 +40,7 @@ class SaasAddon(models.Model):
         help='Optional: read the FLAT price from this ir.config_parameter '
              'key instead of the stored monthly price — keeps a single '
              'source of truth for add-ons whose price already lives in '
-             'Settings (e.g. saas_master.hosting_daily_backup_price). '
+             'Settings (e.g. saas_master.snapshot_price_per_gb). '
              'Used as the flat amount / base fee.',
     )
     # P4: storage-aware pricing. One formula covers all three modes:
