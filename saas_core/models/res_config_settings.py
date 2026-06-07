@@ -318,9 +318,14 @@ class ResConfigSettings(models.TransientModel):
     )
 
     # ========== Rate Limiting ==========
+    # NO config_parameter= here — deliberately. The framework persists
+    # integer settings as ``repr(value) if value else False`` and
+    # ``set_param(key, False)`` DELETES the parameter, so saving 0
+    # ("unlimited", per the help text) silently reverted to the default
+    # on reload. Handled manually in get_values/set_values instead,
+    # like the Boolean settings below (same falsy-value trap).
     saas_max_instances_per_user = fields.Integer(
         string='Max Instances Per User',
-        config_parameter='saas_master.max_instances_per_user',
         default=5,
         help='Maximum number of active instances a single customer can have. '
              '0 = unlimited.',
@@ -398,6 +403,12 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.merge_snapshot_into_renewal_invoice',
             'True' if self.saas_merge_snapshot_into_renewal_invoice else 'False',
         )
+        # Always write the string — '0' (unlimited) included. See the
+        # field definition for why config_parameter= can't be used.
+        ICP.set_param(
+            'saas_master.max_instances_per_user',
+            str(int(self.saas_max_instances_per_user or 0)),
+        )
         return res
 
     @api.model
@@ -419,6 +430,12 @@ class ResConfigSettings(models.TransientModel):
         res['saas_merge_snapshot_into_renewal_invoice'] = ICP.get_param(
             'saas_master.merge_snapshot_into_renewal_invoice', 'False',
         ) == 'True'
+        try:
+            res['saas_max_instances_per_user'] = int(
+                ICP.get_param('saas_master.max_instances_per_user', '5') or 0
+            )
+        except (TypeError, ValueError):
+            res['saas_max_instances_per_user'] = 5
         return res
 
     def action_apply_bucket_cors(self):
