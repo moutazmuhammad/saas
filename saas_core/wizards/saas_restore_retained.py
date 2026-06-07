@@ -44,9 +44,11 @@ class SaasRestoreRetainedWizard(models.TransientModel):
     )
     restoration_fee = fields.Float(
         string='Restoration Fee',
-        help='Fee to charge the customer. An invoice will be created '
-             'and sent. The restore happens automatically when the '
-             'invoice is paid. Set to 0 for free restore.',
+        help='Computed default: months the snapshot was retained after '
+             'deletion × snapshot size rounded up to the next whole GB '
+             '× the per-GB monthly rate from SaaS settings. An invoice '
+             'will be created and sent; the restore happens '
+             'automatically when it is paid. Set to 0 for free restore.',
     )
     delete_retained_after = fields.Boolean(
         string='Delete backup from cloud after restore',
@@ -64,11 +66,9 @@ class SaasRestoreRetainedWizard(models.TransientModel):
             )
             if instance.exists():
                 res['source_instance_id'] = instance.id
-        # Default fee from settings
-        fee = float(self.env['ir.config_parameter'].sudo().get_param(
-            'saas_master.data_restoration_fee', '0'
-        ))
-        res['restoration_fee'] = fee
+                # Computed retained-storage fee: months retained ×
+                # ceil(snapshot GB) × per-GB monthly rate.
+                res['restoration_fee'] = instance._get_retained_snapshot_fee()
         return res
 
     def _validate(self):

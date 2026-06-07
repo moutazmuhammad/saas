@@ -1066,11 +1066,6 @@ class SaasPortal(CustomerPortal):
         # the 1st or the 28th). Renewal cron then bills monthly,
         # exactly one month after the activation payment.
         monthly_price = instance.sudo()._get_daily_backup_price()
-        # Retention surcharge — only on the first activation after a
-        # reactivation where we kept a snapshot for the customer.
-        retention_surcharge = 0.0
-        if instance.sudo().pending_retention_surcharge:
-            retention_surcharge = instance.sudo()._get_snapshot_retention_surcharge()
 
         values = self._prepare_portal_layout_values()
         values.update({
@@ -1078,7 +1073,6 @@ class SaasPortal(CustomerPortal):
             'invoice': invoice,
             'monthly_price': monthly_price,
             'period': 'monthly',
-            'retention_surcharge': retention_surcharge,
             'page_name': 'saas_daily_backup_checkout',
             # Same shape as portal_checkout uses, so the same
             # ``payment.form`` macro renders.

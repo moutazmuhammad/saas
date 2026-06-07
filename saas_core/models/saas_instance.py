@@ -414,34 +414,6 @@ class SaasInstance(models.Model):
              'all daily snapshots unrecoverable — back up the saas '
              'master database appropriately.',
     )
-    last_restic_prune = fields.Date(
-        string='Last Restic Prune',
-        copy=False,
-        help='When the heavy restic prune last reclaimed space for this '
-             'instance. Nightly forget keeps retention at 7; prune is '
-             'gated to saas_master.restic_prune_interval_days (default 7) '
-             'to cut object-storage churn at scale.',
-    )
-    # --- Hidden safety layer: bound backup storage cost per instance. ---
-    # The backup repo footprint is compared (internally only) against a
-    # per-instance ceiling derived from the provisioned storage. Over the
-    # ceiling => recommend an instance upgrade. Never metered to the
-    # customer, never a surprise charge.
-    backup_over_budget = fields.Boolean(
-        string='Backup Over Budget (internal)',
-        default=False, copy=False,
-        help='Internal: the deduplicated backup footprint exceeded the '
-             'hidden per-instance ceiling (provisioned storage × '
-             'saas_master.backup_budget_factor). Drives an upgrade '
-             'recommendation; never exposed as a charge.',
-    )
-    backup_upgrade_recommended = fields.Boolean(
-        string='Backup Upgrade Recommended',
-        default=False, copy=False,
-        help='Set when backups have outgrown the instance plan. The '
-             'dashboard surfaces a soft "time to upgrade" nudge; backups '
-             'keep running at full quality regardless.',
-    )
     # Backup billing runs on its own monthly cycle, independent of the
     # main subscription's billing_period. This way a customer on a
     # yearly plan still pays the backup add-on once a month.
@@ -458,22 +430,6 @@ class SaasInstance(models.Model):
         copy=False,
         help='Most recent month the daily-backup add-on was billed for.',
     )
-    # Set to True by ``_do_delete_instance`` when a snapshot is
-    # retained at cancellation time. Cleared by the daily-backup
-    # payment hook in ``account_move`` when the customer pays the
-    # next activation invoice. While True, ``action_purchase_daily_backup``
-    # appends a one-time retention-surcharge line so the customer
-    # covers the storage cost we ate during their cancellation period.
-    pending_retention_surcharge = fields.Boolean(
-        string='Snapshot Retention Surcharge Pending',
-        copy=False,
-        default=False,
-        help='Flag set on cancellation when a snapshot is retained, '
-             'cleared on payment of the next daily-backup activation '
-             'invoice. While True, the next activation invoice carries '
-             'an extra one-time fee for retaining the snapshot.',
-    )
-
     # ---------- Saved card + auto-renewal ----------
     # ``payment_token_id`` holds the saved card that renewal crons
     # charge automatically. It's captured the first time the customer
@@ -1262,24 +1218,33 @@ class SaasInstance(models.Model):
             used_bytes=used_bytes,
         )
 
-    def _get_snapshot_retention_surcharge(self):
-        """One-time fee for keeping a snapshot through cancellation.
+    def _get_retained_snapshot_fee(self):
+        """One-off charge for restoring the snapshot retained after the
+        instance was deleted.
 
-        Operator-configurable in SaaS settings under the parameter
-        ``saas_master.hosting_snapshot_retention_surcharge``. Added
-        to the customer's first daily-backup activation invoice
-        after reactivation, *only* if their cancellation left a
-        retained snapshot in storage (see ``_do_delete_instance``
-        and ``pending_retention_surcharge``).
+        Computed, not configured: the number of months the snapshot sat
+        in cloud storage after cancellation × its size rounded UP to the
+        next whole GB × the per-GB monthly rate
+        (``saas_master.snapshot_price_per_gb``). A started month counts
+        as a whole month (minimum 1). No retained snapshot → 0.
         """
-        try:
-            return float(
-                self.env['ir.config_parameter'].sudo().get_param(
-                    'saas_master.hosting_snapshot_retention_surcharge', '0.0',
-                )
-            )
-        except (TypeError, ValueError):
+        self.ensure_one()
+        retained = self.env['saas.instance.backup'].sudo().search([
+            ('instance_id', '=', self.id),
+            ('is_full_instance', '=', True),
+            ('state', '=', 'done'),
+        ], order='create_date desc', limit=1)
+        if not retained and not self.retained_backup_path:
             return 0.0
+        per_gb = self.env['saas.pricing.engine'].snapshot_price_per_gb()
+        if per_gb <= 0:
+            return 0.0
+        gb = max(1, math.ceil((retained.size_mb or 0.0) / 1024.0))
+        months = 1
+        if retained and retained.create_date:
+            days = (fields.Date.today() - retained.create_date.date()).days
+            months = max(1, math.ceil(days / 30.0))
+        return round(months * gb * per_gb, 2)
 
     def action_purchase_daily_backup(self):
         """Create an unpaid invoice for the backup add-on.
@@ -1350,28 +1315,6 @@ class SaasInstance(models.Model):
             'price_unit': monthly_price,
         })]
 
-        # Retention surcharge — added only once, on the first
-        # activation invoice after the customer comes back from a
-        # cancellation that retained a snapshot. The flag is cleared
-        # by the payment hook in account_move once this invoice is
-        # paid, so subsequent enables (e.g. customer disables then
-        # re-enables in the future without cancelling) don't re-charge.
-        retention_surcharge = 0.0
-        if self.pending_retention_surcharge:
-            retention_surcharge = self._get_snapshot_retention_surcharge()
-            if retention_surcharge > 0:
-                surcharge_label = _(
-                    'Snapshot retention fee — one-time charge for '
-                    'keeping your last snapshot in cloud storage '
-                    'through the cancellation period.'
-                )
-                order_lines.append((0, 0, {
-                    'product_id': product.id,
-                    'name': surcharge_label,
-                    'product_uom_qty': 1,
-                    'price_unit': retention_surcharge,
-                }))
-
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': ORIGIN_BACKUP_ADDON % (self.name or self.subdomain),
@@ -1383,25 +1326,10 @@ class SaasInstance(models.Model):
         order.action_confirm()
         invoice = order._create_invoices()
         invoice.action_post()
-        # Clear the retention-surcharge flag the moment the invoice
-        # is POSTED — not at payment. Otherwise, a customer who
-        # enables → cancels-without-paying → re-enables would have
-        # the surcharge appear on a SECOND invoice on top of the
-        # first (still unpaid). The surcharge is a "we ate the
-        # storage cost, here is the bill" — once we billed it, we
-        # billed it; the unpaid invoice remains for them to pay.
-        write_vals = {'daily_backup_pending_invoice_id': invoice.id}
-        if retention_surcharge > 0:
-            write_vals['pending_retention_surcharge'] = False
-        self.write(write_vals)
+        self.write({'daily_backup_pending_invoice_id': invoice.id})
         self._append_log(
             "Daily-backup add-on activation invoice %s created — "
-            "full month %.2f%s."
-            % (
-                invoice.name, monthly_price,
-                (' + %.2f retention surcharge' % retention_surcharge)
-                if retention_surcharge > 0 else '',
-            )
+            "full month %.2f." % (invoice.name, monthly_price)
         )
         return invoice
 
@@ -4405,21 +4333,15 @@ class SaasInstance(models.Model):
         # Active" and an unlocked Restore button next to the retained
         # snapshot — both wrong. The customer can re-subscribe after
         # they reactivate; ``action_reactivate`` already clears these
-        # again as a belt-and-braces.
-        #
-        # ``pending_retention_surcharge`` is set when we have an actual
-        # retained snapshot — the next time the customer enables Daily
-        # Backups (typically after reactivation), they'll be charged a
-        # one-time fee on top of the regular activation invoice for
-        # keeping that snapshot in cloud storage during cancellation.
-        # If nothing was retained (instance was never deployed, no
-        # snapshot to keep), there's nothing extra to charge for.
+        # again as a belt-and-braces. The storage cost of the retained
+        # snapshot is recovered later by ``_get_retained_snapshot_fee``
+        # (months retained × size × per-GB rate) when the customer
+        # restores it.
         self.write({
             'daily_backup_enabled': False,
             'daily_backup_pending_invoice_id': False,
             'daily_backup_next_invoice_date': False,
             'daily_backup_last_invoice_date': False,
-            'pending_retention_surcharge': bool(retained_backup),
         })
         if retained_backup:
             self._append_log(
@@ -7067,60 +6989,6 @@ class SaasInstance(models.Model):
             self.message_post(body=_(
                 "Daily snapshots resumed — your backup add-on is paid up."
             ))
-
-    def _backup_budget_bytes(self):
-        """Hidden per-instance backup ceiling in bytes: provisioned
-        storage × the configured factor. 0 = no plan/limit → no ceiling."""
-        self.ensure_one()
-        limit_gb = (self.plan_id.storage_limit or 0) if self.plan_id else 0
-        if limit_gb <= 0:
-            return 0
-        try:
-            factor = float(self.env['ir.config_parameter'].sudo().get_param(
-                'saas_master.backup_budget_factor', '2.5') or 0)
-        except (TypeError, ValueError):
-            factor = 0.0
-        if factor <= 0:
-            return 0
-        return int(limit_gb * factor * (1024 ** 3))
-
-    def _cron_check_backup_budgets(self):
-        """Hidden safety monitor (point 2): flag instances whose backup
-        footprint outgrew their plan, so the dashboard can nudge an
-        upgrade. Pure internal check against the already-collected restic
-        footprint — no extra metering, no customer-facing GB, no charge.
-        Backups keep running at full quality regardless of the flag.
-        """
-        instances = self.search([
-            ('state', '=', 'running'),
-            ('is_hosting', '=', True),
-            ('daily_backup_enabled', '=', True),
-        ])
-        for inst in instances:
-            try:
-                ceiling = inst._backup_budget_bytes()
-                over = bool(ceiling) and inst._snapshot_total_bytes() > ceiling
-                vals = {}
-                if inst.backup_over_budget != over:
-                    vals['backup_over_budget'] = over
-                # Recommendation latches on; it only clears when the
-                # instance is no longer over budget (e.g. after upgrade).
-                if over and not inst.backup_upgrade_recommended:
-                    vals['backup_upgrade_recommended'] = True
-                    inst._append_log(
-                        "Backups have outgrown the plan — upgrade "
-                        "recommended (backups continue at full quality)."
-                    )
-                elif not over and inst.backup_upgrade_recommended:
-                    vals['backup_upgrade_recommended'] = False
-                if vals:
-                    inst.write(vals)
-                self.env.cr.commit()
-            except Exception:
-                self.env.cr.rollback()
-                _logger.exception(
-                    "Backup budget check failed for %s", inst.subdomain,
-                )
 
     def _cron_renew_daily_backup_addons(self):
         """Maintain the daily-backup add-on: pause/resume snapshots on

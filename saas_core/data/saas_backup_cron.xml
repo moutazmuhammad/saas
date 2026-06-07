@@ -15,21 +15,6 @@
         <field name="active">True</field>
     </record>
 
-    <!-- Hidden safety monitor: flag instances whose backup footprint
-         outgrew their plan so the dashboard can nudge an upgrade. Runs an
-         hour after the 03:00 backup so footprints are fresh. Pure internal
-         check — no customer-facing metering, no charge. -->
-    <record id="ir_cron_saas_backup_budget_check" model="ir.cron">
-        <field name="name">SaaS: Check Backup Budgets</field>
-        <field name="model_id" ref="model_saas_instance"/>
-        <field name="state">code</field>
-        <field name="code">model._cron_check_backup_budgets()</field>
-        <field name="interval_number">1</field>
-        <field name="interval_type">days</field>
-        <field name="nextcall" eval="(DateTime.now().replace(hour=4, minute=0, second=0, microsecond=0) + relativedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S')"/>
-        <field name="active">True</field>
-    </record>
-
     <!-- On-demand backups have a fixed 1-hour download window. After
          that, the bucket object is reaped and the local record removed
          so we don't accumulate orphans. 5-minute granularity is plenty:

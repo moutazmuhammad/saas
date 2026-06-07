@@ -154,35 +154,6 @@ class ResConfigSettings(models.TransientModel):
              'Re-evaluated on every monthly renewal. Retention is fixed at '
              '7 days per database.',
     )
-    saas_hosting_snapshot_retention_surcharge = fields.Float(
-        string='Hosting: Snapshot Retention Surcharge (post-cancellation)',
-        config_parameter='saas_master.hosting_snapshot_retention_surcharge',
-        default=0.0,
-        help='One-time fee charged on the first Daily Backups activation '
-             'invoice AFTER a reactivation, only when we kept a snapshot in '
-             'cloud storage through the cancellation period. Covers the '
-             'storage cost. Set to 0 to disable.',
-    )
-    saas_restic_prune_interval_days = fields.Integer(
-        string='Restic Prune Interval (days)',
-        config_parameter='saas_master.restic_prune_interval_days',
-        default=7,
-        help='How often the heavy restic prune (repack + re-upload) runs '
-             'per instance. Nightly retention (keep last 7) is unaffected; '
-             'this only spaces out space reclamation to cut object-storage '
-             'churn at scale. 1 = prune every night (old behaviour).',
-    )
-    saas_backup_budget_factor = fields.Float(
-        string='Backup Budget Factor (internal cost guard)',
-        config_parameter='saas_master.backup_budget_factor',
-        default=2.5,
-        help='Hidden safety ceiling: an instance\'s backup footprint may '
-             'reach provisioned storage × this factor before the system '
-             'flags an upgrade recommendation. Bounds worst-case backup '
-             'cost per instance. Never shown to customers, never billed '
-             'per-GB. 7-day restic dedup means ~1.5–2x is typical, so 2.5 '
-             'leaves headroom.',
-    )
     # Hosting snapshot retention is fixed (HOSTING_MAX_SNAPSHOTS=7 in
     # saas.instance.backup); there is no per-plan hosting backup count, so
     # no hosting_min_backups / hosting_max_backups settings here.
@@ -316,15 +287,10 @@ class ResConfigSettings(models.TransientModel):
         help='Support email address shown to clients in email notifications '
              'and portal pages when they need to contact support.',
     )
-    saas_data_restoration_fee = fields.Float(
-        string='Data Restoration Fee',
-        config_parameter='saas_master.data_restoration_fee',
-        default=0.0,
-        help='Fee charged to clients when restoring data from a retained '
-             'backup of a cancelled instance. An invoice is created '
-             'automatically when the admin performs the restoration. '
-             'Set to 0 for no charge.',
-    )
+    # The retained-snapshot restoration fee is COMPUTED, not configured:
+    # months retained after cancellation × snapshot size (rounded up to
+    # the next whole GB) × saas_master.snapshot_price_per_gb. See
+    # saas.instance._get_retained_snapshot_fee().
 
     # ========== Website Sections ==========
     # Toggle visibility of the public Services / Hosting sections.

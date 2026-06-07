@@ -134,23 +134,6 @@ export default function Backups() {
             />
           )}
 
-          {instance?.backup_upgrade_recommended && (
-            <AlertBanner
-              className="mt-6"
-              variant="info"
-              title="Your backups have outgrown this plan"
-              description="Your data has grown, so backups now need more headroom than this plan provides. Your snapshots keep running at full quality — upgrading to a larger plan keeps that protection comfortable as you grow."
-              action={
-                <Button
-                  size="sm"
-                  onClick={() => (window.location.href = `/my/instances/${id}/change-plan`)}
-                >
-                  Upgrade plan
-                </Button>
-              }
-            />
-          )}
-
           {error && <AlertBanner className="mt-6" variant="danger" title="Snapshots" description={error} />}
 
           {!backups && !error ? (

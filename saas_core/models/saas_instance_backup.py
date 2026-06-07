@@ -1599,29 +1599,13 @@ fi
                 # protected from this round of pruning regardless of
                 # its age.
                 #
-                # Prune cadence (point 4): ``forget`` runs every night (it
-                # only updates the snapshot index — cheap), but the heavy
-                # ``--prune`` (repacks + re-uploads to the bucket) is gated
-                # to once every ``restic_prune_interval_days`` (default 7)
-                # per instance. This cuts nightly object-storage churn at
-                # scale while bounding reclaimable garbage to one interval.
-                # Safe by construction: a never-pruned instance prunes on
-                # its first run, then on the interval — so we never prune
-                # *less* than once per interval.
-                try:
-                    interval = int(self.env['ir.config_parameter'].sudo()
-                                   .get_param('saas_master.restic_prune_interval_days', '7') or 7)
-                except (TypeError, ValueError):
-                    interval = 7
-                last_prune = instance.last_restic_prune
-                do_prune = (
-                    not last_prune
-                    or (fields.Date.today() - last_prune).days >= interval
-                )
-                forget_args = ['forget']
-                if do_prune:
-                    forget_args.append('--prune')
-                forget_args += ['--keep-last', '7', '--group-by', 'host,tags', '--quiet']
+                # ``--prune`` runs with every nightly forget so space
+                # freed by retention is reclaimed from the bucket
+                # immediately.
+                forget_args = [
+                    'forget', '--prune',
+                    '--keep-last', '7', '--group-by', 'host,tags', '--quiet',
+                ]
                 if keep_target_run_tag:
                     forget_args.extend(
                         ['--keep-tag', 'run=' + keep_target_run_tag],
@@ -1635,10 +1619,6 @@ fi
                         "restic forget for %s exit=%s out=%s err=%s",
                         instance.name, ec, fout[-200:], ferr[-200:],
                     )
-                elif do_prune:
-                    # Record the prune so the interval gate works; only on
-                    # success so a failed prune is retried next night.
-                    instance.sudo().last_restic_prune = fields.Date.today()
 
                 # 5) Stats — read the repo size for display. Optional;
                 # if it fails we just skip size_mb.

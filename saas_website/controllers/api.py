@@ -1128,9 +1128,6 @@ class SaasApi(http.Controller):
                 'daily_backup_next_invoice_date': fields.Date.to_string(
                     instance.daily_backup_next_invoice_date
                 ) if instance.daily_backup_next_invoice_date else '',
-                # Hidden safety layer surfaces only a soft upgrade nudge —
-                # never a GB number, never a charge.
-                'backup_upgrade_recommended': instance.backup_upgrade_recommended,
                 # Post-purchase custom code & packages (hosting only).
                 'pip_packages': instance.pip_packages or '',
                 'pip_install_error': instance.pip_install_error or '',
@@ -1179,11 +1176,9 @@ class SaasApi(http.Controller):
             ('state', '=', 'done'),
         ], order='create_date desc', limit=1)
         has_retained = bool(retained) or bool(instance.retained_backup_path)
-        icp = request.env['ir.config_parameter'].sudo()
-        try:
-            fee = float(icp.get_param('saas_master.data_restoration_fee', '0') or 0)
-        except (TypeError, ValueError):
-            fee = 0.0
+        # Computed: months retained after deletion × ceil(snapshot GB)
+        # × the per-GB monthly rate.
+        fee = instance._get_retained_snapshot_fee()
         return {
             'is_cancelled': True,
             'has_retained_snapshot': has_retained,

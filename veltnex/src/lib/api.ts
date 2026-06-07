@@ -247,7 +247,6 @@ export interface ApiInstance {
   daily_backup_pending?: boolean;
   daily_backup_price?: number;
   daily_backup_next_invoice_date?: string;
-  backup_upgrade_recommended?: boolean;
   pip_packages?: string;
   pip_install_error?: string;
   last_error?: string;
