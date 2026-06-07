@@ -373,6 +373,15 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.max_instances_per_user',
             str(int(self.saas_max_instances_per_user or 0)),
         )
+        # Re-derive every named tier's stored price from the (possibly
+        # just-changed) per-worker / per-GB rates, so editing the rates
+        # here reprices the published packages immediately — without this
+        # each plan had to be re-saved by hand to pick up new rates.
+        # Custom/trial plans are untouched (_sync_auto_price skips them).
+        self.env['saas.plan'].sudo().search([
+            ('is_public_tier', '=', True),
+            ('is_trial_plan', '=', False),
+        ])._sync_auto_price()
         return res
 
     @api.model
