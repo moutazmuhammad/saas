@@ -237,15 +237,6 @@ class ResConfigSettings(models.TransientModel):
     # NOT use ``config_parameter=`` — see the note there. We read/write the
     # ir.config_parameter rows by hand in get_values / set_values, storing
     # the literal strings 'True'/'False'.
-    saas_snapshots_count_toward_storage = fields.Boolean(
-        string='Count Snapshots Toward Storage',
-        default=False,
-        help='OFF (default, recommended): backups are covered solely by the '
-             'Daily Backups add-on and do NOT consume the plan storage '
-             'allowance — counting them would double-charge the customer. '
-             'ON: half the deduplicated snapshot footprint counts against '
-             'the allowance.',
-    )
     saas_merge_snapshot_into_renewal_invoice = fields.Boolean(
         string='Merge Snapshot into Renewal Invoice',
         default=False,
@@ -373,10 +364,6 @@ class ResConfigSettings(models.TransientModel):
             'True' if self.saas_show_hosting_section else 'False',
         )
         ICP.set_param(
-            'saas_master.snapshots_count_toward_storage',
-            'True' if self.saas_snapshots_count_toward_storage else 'False',
-        )
-        ICP.set_param(
             'saas_master.merge_snapshot_into_renewal_invoice',
             'True' if self.saas_merge_snapshot_into_renewal_invoice else 'False',
         )
@@ -398,9 +385,6 @@ class ResConfigSettings(models.TransientModel):
         res['saas_show_hosting_section'] = ICP.get_param(
             'saas_master.show_hosting_section', 'True',
         ) != 'False'
-        res['saas_snapshots_count_toward_storage'] = ICP.get_param(
-            'saas_master.snapshots_count_toward_storage', 'False',
-        ) == 'True'
         res['saas_merge_snapshot_into_renewal_invoice'] = ICP.get_param(
             'saas_master.merge_snapshot_into_renewal_invoice', 'False',
         ) == 'True'

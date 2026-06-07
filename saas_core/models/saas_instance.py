@@ -2767,21 +2767,10 @@ class SaasInstance(models.Model):
         self.db_size = self._format_bytes(db_bytes) if db_bytes else ''
 
         # -- Total storage = instance data + db + HALF the snapshot footprint --
-        # Per product policy: the customer's full instance data (the
-        # server-side folder) + their database + HALF of the total
-        # snapshot size count against the plan's storage allowance.
-        # Snapshots are restic (deduplicated): each full-instance backup
-        # record stores the WHOLE repo's current size, so the latest
-        # record is the current total snapshot footprint — we do NOT sum
-        # records (that would multiply the repo by the record count).
-        # Backups are a separate paid add-on and do NOT consume the plan's
-        # storage allowance (default OFF) — counting them would double-charge
-        # the customer. An operator can opt in by turning the flag ON, in
-        # which case half the deduplicated snapshot footprint counts.
+        # Snapshots NEVER consume the plan storage allowance: they are a
+        # separate paid add-on billed per GB of their own footprint —
+        # counting them here too would double-charge the customer.
         total_bytes = disk_bytes + db_bytes
-        if self.env['ir.config_parameter'].sudo().get_param(
-                'saas_master.snapshots_count_toward_storage', 'False') == 'True':
-            total_bytes += self._snapshot_total_bytes() // 2
         self.total_storage = self._format_bytes(total_bytes) if total_bytes else ''
         self.total_storage_bytes = total_bytes
 

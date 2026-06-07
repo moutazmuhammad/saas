@@ -233,11 +233,6 @@
                                  help="ON: the monthly Daily Backups charge rides on the main renewal invoice whenever the backup month is due on the same date as the renewal — so the customer gets a single bill (Plan + Support + Snapshot + Overage). The snapshot stays monthly: monthly plans merge every month; yearly plans merge once a year and bill separately the other 11 months. OFF (default): a separate monthly backup invoice.">
                             <field name="saas_merge_snapshot_into_renewal_invoice"/>
                         </setting>
-                        <setting id="saas_snapshots_count_toward_storage_setting"
-                                 string="Count snapshots toward storage allowance"
-                                 help="OFF (default, recommended): backups are covered by the Daily Backups add-on and do NOT consume the plan storage allowance — counting them would double-charge the customer. ON: half the deduplicated snapshot footprint counts against the allowance.">
-                            <field name="saas_snapshots_count_toward_storage"/>
-                        </setting>
                     </block>
 
                     <!-- ==================== 5. Storage Overage ====================
