@@ -337,6 +337,14 @@ class SaasInstanceBackup(models.Model):
             # Endpoint: https://{region}.digitaloceanspaces.com
             kwargs['endpoint_url'] = 'https://%s.digitaloceanspaces.com' % region
             kwargs['config'] = BotoConfig(s3={'addressing_style': 'virtual'})
+        elif cfg['provider'] == 'hetzner':
+            # Hetzner Object Storage — virtual-hosted style, endpoint
+            # derived from the region (fsn1 / nbg1 / hel1).
+            # Endpoint: https://{region}.your-objectstorage.com
+            region = cfg['region'] or 'fsn1'
+            kwargs['region_name'] = region
+            kwargs['endpoint_url'] = 'https://%s.your-objectstorage.com' % region
+            kwargs['config'] = BotoConfig(s3={'addressing_style': 'virtual'})
         elif cfg['endpoint']:
             kwargs['endpoint_url'] = cfg['endpoint']
             kwargs['config'] = BotoConfig(s3={'addressing_style': 'path'})
@@ -722,7 +730,7 @@ class SaasInstanceBackup(models.Model):
                     "CORS policy (Access Denied on PutBucketCORS).\n\n"
                     "Pick one:\n\n"
                     "1) Grant the key the 's3:PutBucketCORS' permission "
-                    "(AWS), or use a Spaces key with full access "
+                    "(AWS / Hetzner), or use a Spaces key with full access "
                     "(DigitalOcean), then click this button again.\n\n"
                     "2) Or add this CORS rule once in your provider's "
                     "console:\n"
@@ -1082,6 +1090,9 @@ fi
         elif not endpoint and cfg['provider'] == 'digitalocean':
             region = cfg.get('region') or 'nyc3'
             endpoint = 'https://%s.digitaloceanspaces.com' % region
+        elif not endpoint and cfg['provider'] == 'hetzner':
+            region = cfg.get('region') or 'fsn1'
+            endpoint = 'https://%s.your-objectstorage.com' % region
         endpoint = (endpoint or '').rstrip('/')
         # strip scheme — restic expects s3:host/bucket/path
         host = endpoint.split('://', 1)[-1] if endpoint else 's3.amazonaws.com'

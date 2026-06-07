@@ -199,6 +199,11 @@ class SaasProduct(models.Model):
             }
             if cfg['provider'] == 'digitalocean':
                 kwargs['endpoint_url'] = 'https://%s.digitaloceanspaces.com' % region
+            elif cfg['provider'] == 'hetzner':
+                region = cfg['region'] or 'fsn1'
+                kwargs['region_name'] = region
+                kwargs['endpoint_url'] = 'https://%s.your-objectstorage.com' % region
+                kwargs['config'] = BotoConfig(s3={'addressing_style': 'virtual'})
             elif cfg['endpoint_url']:
                 kwargs['endpoint_url'] = cfg['endpoint_url']
                 kwargs['config'] = BotoConfig(s3={'addressing_style': 'path'})

@@ -307,6 +307,7 @@ class ResConfigSettings(models.TransientModel):
     saas_backup_provider = fields.Selection([
         ('aws', 'AWS S3'),
         ('digitalocean', 'DigitalOcean Spaces'),
+        ('hetzner', 'Hetzner Object Storage'),
     ], string='Backup Provider',
         config_parameter='saas_backup.provider',
     )
@@ -317,7 +318,7 @@ class ResConfigSettings(models.TransientModel):
     saas_backup_region = fields.Char(
         string='Region',
         config_parameter='saas_backup.region',
-        help='e.g. us-east-1, europe-west1, nyc3',
+        help='e.g. us-east-1, europe-west1, nyc3, fsn1',
     )
     saas_backup_access_key = fields.Char(
         string='Access Key',
@@ -330,7 +331,8 @@ class ResConfigSettings(models.TransientModel):
     saas_backup_endpoint = fields.Char(
         string='Endpoint URL',
         config_parameter='saas_backup.endpoint',
-        help='Custom S3-compatible endpoint. Required for DigitalOcean Spaces. '
+        help='Custom S3-compatible endpoint. Not needed for DigitalOcean '
+             'Spaces or Hetzner Object Storage (derived from the region). '
              'e.g. https://nyc3.digitaloceanspaces.com',
     )
     # Dedicated, broader-privilege credentials used ONLY by the "Allow

@@ -358,9 +358,9 @@
                                 </div>
                                 <div class="row mt8">
                                     <label for="saas_backup_region" string="Region" class="col-3 col-lg-3 o_light_label"/>
-                                    <field name="saas_backup_region" class="col-4" placeholder="e.g. us-east-1"/>
+                                    <field name="saas_backup_region" class="col-4" placeholder="e.g. us-east-1, nyc3, fsn1"/>
                                 </div>
-                                <div class="row mt8" invisible="saas_backup_provider == 'digitalocean'">
+                                <div class="row mt8" invisible="saas_backup_provider in ('digitalocean', 'hetzner')">
                                     <label for="saas_backup_endpoint" string="Endpoint URL" class="col-3 col-lg-3 o_light_label"/>
                                     <field name="saas_backup_endpoint" class="col-4"
                                            placeholder="https://s3.amazonaws.com"/>
