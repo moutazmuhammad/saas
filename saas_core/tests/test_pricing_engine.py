@@ -43,8 +43,6 @@ class TestPricingEngine(TransactionCase):
             # legacy-formula grid deterministic).
             'saas_master.hosting_minimum_monthly': '0',
             'saas_master.minimum_monthly': '0',
-            # Tier soft-floor buffer 0 -> P2 = original hard floor.
-            'saas_master.tier_floor_buffer_pct': '0',
         })
 
     def _set(self, mapping):

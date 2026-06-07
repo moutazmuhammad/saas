@@ -211,21 +211,6 @@
                                 </tbody>
                             </table>
                         </setting>
-                        <setting id="saas_custom_min_is_nearest_tier_setting"
-                                 string="Custom price can't undercut a tier"
-                                 help="When on, a custom (slider) configuration is never priced below the nearest public tier with equal-or-greater resources — protects the value of your named plans.">
-                            <field name="saas_custom_min_is_nearest_tier"/>
-                            <div class="content-group mt8"
-                                 invisible="not saas_custom_min_is_nearest_tier">
-                                <div>
-                                    <label for="saas_tier_floor_buffer_pct"
-                                           string="Allow custom up to"
-                                           class="o_light_label" style="display:inline-block;min-width:140px;"/>
-                                    <field name="saas_tier_floor_buffer_pct" class="oe_inline" style="max-width:5rem;"/>
-                                    <span class="text-muted ms-2">% below the nearest tier (0 = hard floor)</span>
-                                </div>
-                            </div>
-                        </setting>
                     </block>
 
                     <!-- ==================== 4. Backups &amp; Snapshots ====================

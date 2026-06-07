@@ -90,45 +90,15 @@ class SaasPricingEngine(models.AbstractModel):
         """S3/S4: cost-derived price floor. Default rates 0 -> 0.0."""
         return (workers * cfg['worker_floor']) + (storage * cfg['storage_floor'])
 
-    def _tier_floor(self, kind, workers, storage):
-        """Tier protection (S4 + P2 soft floor): when the 'custom >= nearest
-        tier' policy is ON, a custom config may not be priced below the
-        highest public-tier monthly price whose resources it fully contains
-        (workers AND storage both >= the tier's) — minus a configurable
-        buffer.
-
-        ``tier_floor_buffer_pct`` (default 0 = the original hard floor)
-        lets a custom config sit up to N% under the nearest tier, so e.g.
-        a 3w/95GB config can be a bit cheaper than the 4w/100GB Pro tier
-        instead of pinned to it (which felt rigged). The tier is still the
-        better value per resource. Returns 0.0 when the policy is OFF
-        (default) or no tier qualifies -> no-op."""
-        icp = self.env['ir.config_parameter'].sudo()
-        if icp.get_param('saas_master.custom_min_is_nearest_tier', 'False') != 'True':
-            return 0.0
-        tiers = self.env['saas.plan'].sudo().search([
-            ('is_public_tier', '=', True),
-            ('workers', '<=', workers),
-            ('storage_limit', '<=', storage),
-        ])
-        best = 0.0
-        for t in tiers:
-            t_kind = 'hosting' if any(
-                p.is_hosting for p in t.saas_product_ids
-            ) else 'services'
-            if t_kind == kind and t.price > best:
-                best = t.price
-        if not best:
-            return 0.0
-        try:
-            buffer_pct = float(icp.get_param(
-                'saas_master.tier_floor_buffer_pct', '0') or 0)
-        except (TypeError, ValueError):
-            buffer_pct = 0.0
-        # Clamp to a sane 0..100 range; the floor is the tier price less
-        # the allowed buffer.
-        buffer_pct = min(max(buffer_pct, 0.0), 100.0)
-        return best * (1.0 - buffer_pct / 100.0)
+    # NOTE: the old "custom price can't undercut a tier" floor
+    # (saas_master.custom_min_is_nearest_tier) was removed: under the
+    # UNIFIED pricing model it is mathematically a no-op. A named tier's
+    # price is its own linear rate minus a discount (never above the
+    # linear rate), and the linear rate is monotonic in resources — so a
+    # custom config that contains a tier always prices at or above that
+    # tier's published price. Undercutting is structurally impossible;
+    # the always-on _tier_ceiling is what keeps tiers and customs
+    # consistent.
 
     def _exact_public_tier(self, kind, workers, storage):
         """The published public tier whose resources EXACTLY match this
@@ -164,7 +134,7 @@ class SaasPricingEngine(models.AbstractModel):
         covers this config, so no cap). MONOTONIC: a bigger config is
         covered by fewer tiers, so the ceiling only rises or disappears, so
         capping by it keeps the slider monotonic. Always on (purely
-        customer-fair); independent of the optional ``_tier_floor``."""
+        customer-fair)."""
         tiers = self.env['saas.plan'].sudo().search([
             ('is_public_tier', '=', True),
             ('workers', '>=', workers),
@@ -243,9 +213,7 @@ class SaasPricingEngine(models.AbstractModel):
         # No exact-match override (it spiked the price up at tier sizes and
         # broke monotonicity); the ceiling does the job, monotonically.
         resource_base = base
-        cost_floor = self._cost_floor(cfg, workers, storage)
-        tier_floor = self._tier_floor(kind, workers, storage)
-        floor = max(cost_floor, tier_floor)
+        floor = self._cost_floor(cfg, workers, storage)
         region_factor = self._region_multiplier(region)
 
         # Cost floor first (never below cost), then the tier CEILING (never
@@ -324,9 +292,11 @@ class SaasPricingEngine(models.AbstractModel):
                 # no tier covers it, so the linear rate stands).
                 'tier_ceiling': round(ceiling['monthly'], 2) if ceiling['monthly'] is not None else 0.0,
                 'resource_base': round(resource_base, 2),
+                # The only floor left is the cost floor (the tier floor was
+                # removed — a no-op under unified pricing); both keys kept
+                # for breakdown consumers.
                 'floor': round(floor, 2),
-                'cost_floor': round(cost_floor, 2),
-                'tier_floor': round(tier_floor, 2),
+                'cost_floor': round(floor, 2),
                 'resource_monthly': round(resource_monthly, 2),
                 'addons_monthly': round(addons_monthly, 2),
                 # P3: flat support-plan fee (not region-scaled).

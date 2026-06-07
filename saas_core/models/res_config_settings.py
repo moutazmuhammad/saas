@@ -246,13 +246,6 @@ class ResConfigSettings(models.TransientModel):
              'ON: half the deduplicated snapshot footprint counts against '
              'the allowance.',
     )
-    saas_custom_min_is_nearest_tier = fields.Boolean(
-        string='Custom Price >= Nearest Tier',
-        default=False,
-        help='When ON, a custom (slider) configuration is never priced below '
-             'the nearest public tier with equal-or-greater resources — '
-             'protects tier value. Wired in S4.',
-    )
     saas_merge_snapshot_into_renewal_invoice = fields.Boolean(
         string='Merge Snapshot into Renewal Invoice',
         default=False,
@@ -268,18 +261,6 @@ class ResConfigSettings(models.TransientModel):
              'month). OFF (default) = separate backup billing cycle '
              '(current behaviour).',
     )
-    saas_tier_floor_buffer_pct = fields.Float(
-        string='Custom-vs-Tier Buffer %',
-        config_parameter='saas_master.tier_floor_buffer_pct',
-        default=0.0,
-        help='Soft floor (P2): with the "Custom Price >= Nearest Tier" '
-             'switch ON, a custom config may be priced up to this % BELOW '
-             'the nearest tier instead of pinned to it. e.g. 10 lets a '
-             '3w/95GB config sit ~10% under the 4w/100GB Pro tier — cheaper '
-             'for the customer, but the tier is still the better value per '
-             'resource. 0 = the original hard floor (no discount allowed).',
-    )
-
     # ========== Support ==========
     saas_support_email = fields.Char(
         string='Support Email',
@@ -396,10 +377,6 @@ class ResConfigSettings(models.TransientModel):
             'True' if self.saas_snapshots_count_toward_storage else 'False',
         )
         ICP.set_param(
-            'saas_master.custom_min_is_nearest_tier',
-            'True' if self.saas_custom_min_is_nearest_tier else 'False',
-        )
-        ICP.set_param(
             'saas_master.merge_snapshot_into_renewal_invoice',
             'True' if self.saas_merge_snapshot_into_renewal_invoice else 'False',
         )
@@ -423,9 +400,6 @@ class ResConfigSettings(models.TransientModel):
         ) != 'False'
         res['saas_snapshots_count_toward_storage'] = ICP.get_param(
             'saas_master.snapshots_count_toward_storage', 'False',
-        ) == 'True'
-        res['saas_custom_min_is_nearest_tier'] = ICP.get_param(
-            'saas_master.custom_min_is_nearest_tier', 'False',
         ) == 'True'
         res['saas_merge_snapshot_into_renewal_invoice'] = ICP.get_param(
             'saas_master.merge_snapshot_into_renewal_invoice', 'False',
