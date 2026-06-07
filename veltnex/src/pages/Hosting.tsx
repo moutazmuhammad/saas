@@ -160,14 +160,13 @@ export default function Hosting() {
 
   const selectedRegion = regions.find((r) => r.id === regionId) || null;
   const showRegionPicker = regions.length > 1;
-  // Cheapest-first so the lowest entry price sits at the top. Switch to a
-  // dropdown when there are many regions (the platform may have 15+).
+  // Cheapest-first so the lowest entry price sits at the top of the
+  // dropdown (and is the pre-selected default).
   const sortedRegions = React.useMemo(
     () => [...regions].sort((a, b) => a.multiplier - b.multiplier),
     [regions],
   );
   const cheapestRegion = sortedRegions[0] || null;
-  const manyRegions = sortedRegions.length > 6;
 
   // Largest yearly saving (as an AMOUNT) across tiers — drives the
   // "Save up to $X/yr" badge on the billing toggle.
@@ -260,49 +259,27 @@ export default function Hosting() {
                 </span>
               )}
             </p>
-            {manyRegions ? (
-              <select
-                value={regionId ?? ""}
-                onChange={(e) => setRegionId(Number(e.target.value))}
-                className="w-full max-w-xs rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground outline-none ring-primary/40 focus:ring-1"
-              >
-                {sortedRegions.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name}
-                    {cheapestRegion && r.id === cheapestRegion.id
-                      ? " — cheapest"
-                      : r.multiplier !== 1
-                        ? ` (×${r.multiplier.toFixed(2)})`
-                        : ""}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className="inline-flex flex-wrap justify-center gap-1 rounded-xl border border-border bg-card p-1">
-                {sortedRegions.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => setRegionId(r.id)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                      r.id === regionId
-                        ? "bg-primary/20 text-foreground ring-1 ring-primary/40"
-                        : "text-muted hover:text-foreground",
-                    )}
-                  >
-                    {r.name}
-                    {cheapestRegion && r.id === cheapestRegion.id && (
-                      <span className="rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold text-success">
-                        Cheapest
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-            <p className="text-xs text-muted">
-              Server cost varies by location, so prices adjust per region. The
-              cheapest is selected by default.
+            <select
+              value={regionId ?? ""}
+              onChange={(e) => setRegionId(Number(e.target.value))}
+              className="w-full max-w-xs cursor-pointer rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground outline-none ring-primary/40 transition-colors hover:border-primary/40 focus:ring-1"
+            >
+              {sortedRegions.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                  {cheapestRegion && r.id === cheapestRegion.id
+                    ? " — best price"
+                    : r.multiplier !== 1
+                      ? ` (×${r.multiplier.toFixed(2)})`
+                      : ""}
+                </option>
+              ))}
+            </select>
+            <p className="max-w-md text-center text-xs text-muted">
+              Infrastructure costs differ between data centers, so prices are
+              adjusted per region — we've pre-selected the most affordable one
+              for you. Choose the region closest to your users for the best
+              performance.
             </p>
           </div>
         )}
