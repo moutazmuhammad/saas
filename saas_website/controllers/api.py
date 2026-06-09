@@ -388,10 +388,13 @@ class SaasApi(http.Controller):
             k: v for k, v in cfg.items()
             if k not in ('worker_price', 'storage_price_per_gb')
         }
-        # Normalised sizing hint for the workers slider (the custom config
-        # carries users_per_worker_min; hosting carries users_per_worker).
-        out['users_per_worker'] = int(
-            cfg.get('users_per_worker')
+        # Normalised sizing hint for the workers slider: recommended users =
+        # workers × [min..max] (light → heavy usage). Both hosting and custom
+        # config carry the min/max pair tuned in Settings.
+        out['users_per_worker_min'] = int(
+            cfg.get('users_per_worker_min') or 6)
+        out['users_per_worker_max'] = int(
+            cfg.get('users_per_worker_max')
             or cfg.get('users_per_worker_min')
             or 6
         )
@@ -1279,7 +1282,6 @@ class SaasApi(http.Controller):
                 'workers': p.workers,
                 'storage_gb': int(p.storage_limit),
                 'is_trial': p.is_trial_plan,
-                'recommended_users': p.recommended_users,
             } for p in product.plan_ids.sorted('sequence') if not p.is_custom]
         else:
             data['highlights'] = [f.name for f in product.feature_line_ids][:3]

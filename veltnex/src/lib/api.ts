@@ -132,8 +132,9 @@ export interface PlanConfigMeta {
   max_storage: number;
   yearly_discount_pct: number;
   currency: string;
-  /** Sizing hint: recommended users = workers × this (default 6). */
-  users_per_worker?: number;
+  /** Sizing hint: recommended users = workers × [min..max] (light → heavy). */
+  users_per_worker_min?: number;
+  users_per_worker_max?: number;
 }
 
 export interface TrialInfo {
@@ -170,7 +171,6 @@ export interface ApiService {
     workers: number;
     storage_gb: number;
     is_trial: boolean;
-    recommended_users: number;
   }[];
 }
 

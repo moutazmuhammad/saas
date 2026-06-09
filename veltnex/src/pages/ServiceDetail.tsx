@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Check, PackageX, Server, Users, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, PackageX, Server, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/EmptyState";
@@ -133,12 +133,6 @@ export default function ServiceDetail() {
                     <Server className="size-4 text-primary-glow" />
                     {p.workers} workers · {p.storage_gb} GB storage
                   </li>
-                  {p.recommended_users > 0 && (
-                    <li className="flex items-center gap-2">
-                      <Users className="size-4 text-primary-glow" />
-                      Recommended for ~{p.recommended_users} users
-                    </li>
-                  )}
                 </ul>
                 <Button className="mt-6 w-full" onClick={() => configure(p.id)}>
                   Get started

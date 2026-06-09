@@ -22,6 +22,17 @@ export function formatBytes(gb: number) {
   return `${gb} GB`;
 }
 
+/**
+ * Recommended-users sizing hint as a light → heavy range, e.g. "~12–20".
+ * `min`/`max` are the per-worker factors tuned in Settings ("Users / worker:
+ * light → heavy"); the range collapses to a single number when they're equal.
+ */
+export function recommendedUsers(workers: number, min: number, max: number) {
+  const low = workers * min;
+  const high = workers * max;
+  return high > low ? `~${low}–${high}` : `~${low}`;
+}
+
 /** Human-readable size from a value in megabytes (KB / MB / GB). */
 export function formatSizeMb(mb: number) {
   if (!mb || mb <= 0) return "—";

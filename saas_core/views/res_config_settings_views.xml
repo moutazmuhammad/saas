@@ -289,6 +289,17 @@
                                 </div>
                             </div>
                         </setting>
+                        <setting id="saas_grace_period_days_setting"
+                                 string="Grace period"
+                                 help="Days after an invoice due date before the instance is suspended for non-payment. Applies to all plans. 0 = suspend the day after the due date.">
+                            <div class="content-group">
+                                <div class="mt8">
+                                    <label for="saas_grace_period_days" string="Duration" class="o_light_label" style="display:inline-block;min-width:90px;"/>
+                                    <field name="saas_grace_period_days" class="oe_inline" style="max-width:6rem;"/>
+                                    <span class="text-muted ms-2">days</span>
+                                </div>
+                            </div>
+                        </setting>
                     </block>
 
                     <!-- ==================== 7. Support ==================== -->

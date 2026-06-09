@@ -39,7 +39,6 @@
                 <field name="cpu_limit" optional="show"/>
                 <field name="ram_limit" optional="show"/>
                 <field name="storage_limit" optional="show"/>
-                <field name="recommended_users" optional="hide"/>
                 <field name="instance_count"/>
             </list>
         </field>
@@ -77,7 +76,6 @@
                                    readonly="is_public_tier"/>
                             <field name="yearly_discount_pct" string="Yearly Savings"/>
                             <field name="currency_id" groups="base.group_multi_currency"/>
-                            <field name="grace_period_days"/>
                         </group>
                     </group>
                     <group>
@@ -86,7 +84,6 @@
                             <field name="ram_limit"/>
                             <field name="workers"/>
                             <field name="storage_limit"/>
-                            <field name="recommended_users"/>
                         </group>
                         <group string="Public Storefront" invisible="is_trial_plan or is_custom">
                             <field name="is_public_tier"

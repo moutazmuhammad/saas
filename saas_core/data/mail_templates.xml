@@ -95,13 +95,14 @@
         <field name="body_html" type="html">
 <div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
     <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
+    <t t-set="grace_days" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.grace_period_days', '7')"/>
     <p>Dear <t t-out="object.partner_id.name"/>,</p>
     <p>This is a reminder that payment is due for your instance
        <strong><t t-out="object.name"/></strong>.</p>
     <p>Plan: <t t-out="object.plan_id.name or 'N/A'"/></p>
     <p>Please settle any outstanding invoices to avoid service interruption.
        Your instance may be suspended if payment is not received within the
-       grace period (<t t-out="object.plan_id.grace_period_days"/> days).</p>
+       grace period (<t t-out="grace_days"/> days).</p>
     <p>Visit the <a t-attf-href="/my/instances/{{ object.id }}">customer portal</a>
        to view your invoices and make a payment.</p>
     <p t-if="support_email">Need help? Contact us at

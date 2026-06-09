@@ -12,7 +12,7 @@ import {
   type ApiTier,
   type ApiRegion,
 } from "@/lib/api";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, recommendedUsers } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 function money(amount: number, currency = "USD") {
@@ -194,9 +194,12 @@ export default function Hosting() {
   const setCycle = (cycle: "monthly" | "yearly") =>
     setConfig((c) => (c ? { ...c, cycle } : c));
 
-  // Sizing hint: recommended users = workers × this (operator-tunable,
-  // default 6). Shown on tier cards and next to the workers slider.
-  const usersPerWorker = meta?.hosting_config.users_per_worker || 6;
+  // Sizing hint: recommended users = workers × [min..max] (light → heavy
+  // usage), tuned in Settings → "Users / worker: light → heavy". Shown on
+  // tier cards and next to the workers slider.
+  const usersPerWorkerMin = meta?.hosting_config.users_per_worker_min || 6;
+  const usersPerWorkerMax =
+    meta?.hosting_config.users_per_worker_max || usersPerWorkerMin;
 
   const limits = meta
     ? {
@@ -357,7 +360,7 @@ export default function Hosting() {
                         <Cpu className="size-4 text-primary-glow" /> {t.workers} dedicated workers
                       </li>
                       <li className="flex items-center gap-2">
-                        <Users className="size-4 text-primary-glow" /> Recommended for ~{t.workers * usersPerWorker} users
+                        <Users className="size-4 text-primary-glow" /> Recommended for {recommendedUsers(t.workers, usersPerWorkerMin, usersPerWorkerMax)} users
                       </li>
                       <li className="flex items-center gap-2">
                         <HardDrive className="size-4 text-primary-glow" /> {formatBytes(t.storage)} storage
@@ -397,7 +400,8 @@ export default function Hosting() {
               limits={limits}
               price={price}
               currency={price?.currency || meta?.hosting_config.currency}
-              usersPerWorker={usersPerWorker}
+              usersPerWorkerMin={usersPerWorkerMin}
+              usersPerWorkerMax={usersPerWorkerMax}
               footer={
                 <Button
                   className="w-full"

@@ -303,6 +303,20 @@ class ResConfigSettings(models.TransientModel):
              '0 = unlimited.',
     )
 
+    # ========== Dunning / Grace ==========
+    # Single platform-wide grace period (no longer per-plan). NO
+    # config_parameter= here for the same falsy-value reason as above:
+    # 0 ("no grace — suspend the day after the due date") is a meaningful
+    # value, and set_param(key, False) would delete the row. Handled
+    # manually in get_values/set_values.
+    saas_grace_period_days = fields.Integer(
+        string='Grace Period (Days)',
+        default=7,
+        help='Days after an invoice due date before the instance is '
+             'automatically suspended for non-payment. Applies to all '
+             'plans. 0 = suspend the day after the due date.',
+    )
+
     # ========== Backup Storage ==========
     saas_backup_provider = fields.Selection([
         ('aws', 'AWS S3'),
@@ -375,6 +389,12 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.max_instances_per_user',
             str(int(self.saas_max_instances_per_user or 0)),
         )
+        # Always write the string — '0' (no grace) included. See the field
+        # definition for why config_parameter= can't be used.
+        ICP.set_param(
+            'saas_master.grace_period_days',
+            str(int(self.saas_grace_period_days or 0)),
+        )
         # Re-derive every named tier's stored price from the (possibly
         # just-changed) per-worker / per-GB rates, so editing the rates
         # here reprices the published packages immediately — without this
@@ -405,6 +425,12 @@ class ResConfigSettings(models.TransientModel):
             )
         except (TypeError, ValueError):
             res['saas_max_instances_per_user'] = 5
+        try:
+            res['saas_grace_period_days'] = int(
+                ICP.get_param('saas_master.grace_period_days', '7') or 0
+            )
+        except (TypeError, ValueError):
+            res['saas_grace_period_days'] = 7
         return res
 
     def action_apply_bucket_cors(self):

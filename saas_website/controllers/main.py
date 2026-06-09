@@ -559,7 +559,6 @@ class SaasWebsite(http.Controller):
                 'storage_limit': float(storage),
                 'cpu_limit': res['cpu_limit'],
                 'ram_limit': res['ram_limit'],
-                'recommended_users': res['recommended_users'],
                 'saas_product_ids': [(4, product.id)],
                 'sequence': 999,
             })
@@ -715,10 +714,13 @@ class SaasWebsite(http.Controller):
             'max_storage': int(ICP.get_param('saas_master.hosting_max_storage', '200')),
             'cpu_per_worker': float(ICP.get_param('saas_master.hosting_cpu_per_worker', '0.5')),
             'ram_per_worker': int(ICP.get_param('saas_master.hosting_ram_per_worker', '512')),
-            # Sizing guidance shown next to the workers slider:
-            # recommended users = workers × this (default 6).
-            'users_per_worker': int(ICP.get_param(
+            # Sizing guidance shown next to the workers slider: recommended
+            # users = workers × [min..max] (light → heavy usage), tuned in
+            # Settings → "Users / worker: light → heavy".
+            'users_per_worker_min': int(ICP.get_param(
                 'saas_master.custom_plan_users_per_worker_min', '6')),
+            'users_per_worker_max': int(ICP.get_param(
+                'saas_master.custom_plan_users_per_worker_max', '10')),
             'yearly_discount_pct': int(ICP.get_param('saas_master.hosting_yearly_discount_pct', '20')),
             # Engine quote so this matches what the invoice will charge.
             # Usage-based pricing with nothing measured yet = the 1 GB
@@ -828,7 +830,6 @@ class SaasWebsite(http.Controller):
                 'storage_limit': float(storage),
                 'cpu_limit': res['cpu_limit'],
                 'ram_limit': res['ram_limit'],
-                'recommended_users': res['recommended_users'],
                 # Hosting snapshot retention is fixed (HOSTING_MAX_SNAPSHOTS=7
                 # in saas.instance.backup), so there is no per-plan backup
                 # count to compute.

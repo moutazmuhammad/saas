@@ -4,7 +4,7 @@ import { Card } from "./ui/card";
 import { SliderControl } from "./SliderControl";
 import { BreakdownRow } from "./BreakdownRow";
 import { Spinner } from "./Spinner";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, recommendedUsers } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { PriceResult } from "@/lib/api";
 
@@ -28,8 +28,9 @@ interface PlanBuilderProps {
   /** Server-computed price for the current config; null while loading. */
   price: PriceResult | null;
   currency?: string;
-  /** Sizing hint: recommended users = workers × this (default 6). */
-  usersPerWorker?: number;
+  /** Sizing hint: recommended users = workers × [min..max] (light → heavy). */
+  usersPerWorkerMin?: number;
+  usersPerWorkerMax?: number;
   footer?: React.ReactNode;
   className?: string;
 }
@@ -53,12 +54,17 @@ export function PlanBuilder({
   limits,
   price,
   currency = "USD",
-  usersPerWorker = 6,
+  usersPerWorkerMin = 6,
+  usersPerWorkerMax = 10,
   footer,
   className,
 }: PlanBuilderProps) {
   const savingsPercent = price?.savings_percent ?? 20;
-  const recommendedUsers = config.workers * usersPerWorker;
+  const usersLabel = recommendedUsers(
+    config.workers,
+    usersPerWorkerMin,
+    usersPerWorkerMax,
+  );
 
   return (
     <div className={cn("grid gap-6 lg:grid-cols-[1fr_360px]", className)}>
@@ -101,7 +107,7 @@ export function PlanBuilder({
             step={1}
             onChange={(v) => onChange({ ...config, workers: v })}
             format={(v) => `${v} ${v === 1 ? "worker" : "workers"}`}
-            hint={`Concurrent request capacity · recommended for ~${recommendedUsers} users`}
+            hint={`Concurrent request capacity · recommended for ${usersLabel} users`}
           />
           <SliderControl
             label="Storage"
@@ -120,7 +126,6 @@ export function PlanBuilder({
         <p className="text-sm font-medium text-muted">Your configuration</p>
         <div className="mt-2">
           <BreakdownRow label="Workers" value={config.workers} />
-          <BreakdownRow label="Recommended users" value={`~${recommendedUsers}`} />
           <BreakdownRow label="Storage" value={formatBytes(config.storageGb)} />
           <BreakdownRow
             label="Billing"

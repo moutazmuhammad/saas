@@ -20,6 +20,12 @@
             <field name="value">5</field>
         </record>
 
+        <record id="config_param_grace_period_days"
+                model="ir.config_parameter">
+            <field name="key">saas_master.grace_period_days</field>
+            <field name="value">7</field>
+        </record>
+
         <!-- Custom Plan Builder Pricing -->
         <record id="config_param_worker_price"
                 model="ir.config_parameter">

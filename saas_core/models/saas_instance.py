@@ -7270,6 +7270,17 @@ class SaasInstance(models.Model):
     # ========== Dunning / Grace Period ==========
 
     @api.model
+    def _grace_period_days(self):
+        """Platform-wide grace period (days) before an overdue instance is
+        suspended. Configured once in Settings → 'Grace Period (Days)' and
+        applied to every plan (no longer a per-plan field)."""
+        try:
+            return int(self.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.grace_period_days', '7') or 0)
+        except (TypeError, ValueError):
+            return 7
+
+    @api.model
     def _cron_check_overdue_invoices(self):
         """Suspend instances whose invoices are overdue past the grace period.
 
@@ -7360,7 +7371,7 @@ class SaasInstance(models.Model):
             return
         overdue_invoices = mandatory_overdue
 
-        grace_days = self.plan_id.grace_period_days if self.plan_id else 7
+        grace_days = self._grace_period_days()
         oldest = min(overdue_invoices, key=lambda m: m.invoice_date_due)
         oldest_due = oldest.invoice_date_due
         days_overdue = (today - oldest_due).days
@@ -9727,7 +9738,7 @@ class SaasInstance(models.Model):
         )
         if not overdue:
             return False
-        grace_days = self.plan_id.grace_period_days if self.plan_id else 7
+        grace_days = self._grace_period_days()
         oldest_due = min(overdue, key=lambda m: m.invoice_date_due).invoice_date_due
         return (today - oldest_due).days > grace_days
 

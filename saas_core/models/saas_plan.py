@@ -118,29 +118,19 @@ class SaasPlan(models.Model):
         string='Instances',
         compute='_compute_instance_count',
     )
-    recommended_users = fields.Integer(
-        string='Recommended Users',
-        default=0,
-        help='Recommended number of internal users for this plan. '
-             'Displayed as a guideline on the pricing page. 0 = not shown.',
-    )
 
-    # ========== Dunning / Grace ==========
-    grace_period_days = fields.Integer(
-        string='Grace Period (Days)',
-        default=7,
-        help='Number of days after invoice due date before the instance '
-             'is automatically suspended for non-payment.',
-    )
+    # Grace period before suspension is a single platform-wide Setting
+    # (Settings → 'Grace Period (Days)'), no longer per-plan. See
+    # saas.instance._grace_period_days().
 
     # ========== Worker-driven resource sizing ==========
     @api.model
     def _recommended_resources(self, kind, workers):
         """Recommended resource allocation for ``workers`` (the platform's
-        equivalent of Odoo's deployment sizing guidance): CPU, RAM and the
-        user count that worker count serves comfortably. Driven by the
-        per-worker Settings so the operator tunes ONE place and every
-        surface (admin plan form, custom builder, trial plan) agrees.
+        equivalent of Odoo's deployment sizing guidance): CPU and RAM.
+        Driven by the per-worker Settings so the operator tunes ONE place
+        and every surface (admin plan form, custom builder, trial plan)
+        agrees.
 
         RAM only collapses to the 'Ng' form when it's an exact number of
         GB — '%dg' % (1536 // 1024) would silently strip 512 MB from every
@@ -153,10 +143,8 @@ class SaasPlan(models.Model):
                 'saas_master.%s_cpu_per_worker' % prefix, '0.5') or 0.5)
             ram_per = int(icp.get_param(
                 'saas_master.%s_ram_per_worker' % prefix, '512') or 512)
-            users_per = int(icp.get_param(
-                'saas_master.custom_plan_users_per_worker_min', '6') or 6)
         except (TypeError, ValueError):
-            cpu_per, ram_per, users_per = 0.5, 512, 6
+            cpu_per, ram_per = 0.5, 512
         workers = max(int(workers or 0), 0)
         ram_mb = workers * ram_per
         if ram_mb and ram_mb % 1024 == 0:
@@ -166,22 +154,20 @@ class SaasPlan(models.Model):
         return {
             'cpu_limit': max(1.0, workers * cpu_per) if workers else 0.0,
             'ram_limit': ram_limit,
-            'recommended_users': workers * users_per,
         }
 
     @api.onchange('workers', 'saas_product_ids')
     def _onchange_workers_resources(self):
-        """Auto-fill CPU / RAM / recommended users from the worker count so
-        every plan delivers the same per-worker experience — like Odoo's
-        own sizing recommendation. Pre-fill only: the operator can still
-        override any value after typing the worker count."""
+        """Auto-fill CPU / RAM from the worker count so every plan delivers
+        the same per-worker experience — like Odoo's own sizing
+        recommendation. Pre-fill only: the operator can still override any
+        value after typing the worker count."""
         for rec in self:
             if rec.is_trial_plan or not rec.workers:
                 continue
             vals = rec._recommended_resources(rec._kind(), rec.workers)
             rec.cpu_limit = vals['cpu_limit']
             rec.ram_limit = vals['ram_limit']
-            rec.recommended_users = vals['recommended_users']
 
     @api.onchange('is_trial_plan')
     def _onchange_is_trial_plan(self):
