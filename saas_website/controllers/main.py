@@ -5,7 +5,6 @@ from odoo.exceptions import UserError, ValidationError
 from odoo.http import request
 
 from odoo.addons.saas_core.models.saas_instance import SUBDOMAIN_RE
-from odoo.addons.saas_core.models.saas_instance_backup import DEFAULT_MAX_BACKUPS
 
 # States that BLOCK a new subdomain claim. Cancelled instances are
 # included on purpose: a cancelled instance still has its retained
@@ -548,10 +547,9 @@ class SaasWebsite(http.Controller):
             res = Plan._recommended_resources('services', workers)
             yearly_price = _q['yearly']
 
-            # Backup retention is FIXED — same as hosting (no scaling by
-            # plan size). Every Services plan keeps the last
-            # DEFAULT_MAX_BACKUPS copies, mirroring hosting's fixed
-            # HOSTING_MAX_SNAPSHOTS retention.
+            # Backup retention is FIXED platform-wide (no per-plan setting):
+            # every Services instance keeps the last DEFAULT_MAX_BACKUPS
+            # copies, mirroring hosting's fixed HOSTING_MAX_SNAPSHOTS.
             plan = Plan.create({
                 'name': plan_name,
                 'is_custom': True,
@@ -561,7 +559,6 @@ class SaasWebsite(http.Controller):
                 'storage_limit': float(storage),
                 'cpu_limit': res['cpu_limit'],
                 'ram_limit': res['ram_limit'],
-                'max_backups': DEFAULT_MAX_BACKUPS,
                 'recommended_users': res['recommended_users'],
                 'saas_product_ids': [(4, product.id)],
                 'sequence': 999,
@@ -833,8 +830,8 @@ class SaasWebsite(http.Controller):
                 'ram_limit': res['ram_limit'],
                 'recommended_users': res['recommended_users'],
                 # Hosting snapshot retention is fixed (HOSTING_MAX_SNAPSHOTS=7
-                # in saas.instance.backup); plan.max_backups is not consulted
-                # for hosting, so we don't compute a per-plan backup count.
+                # in saas.instance.backup), so there is no per-plan backup
+                # count to compute.
                 'saas_product_ids': [(4, product.id)],
                 'sequence': 999,
             })
@@ -861,7 +858,6 @@ class SaasWebsite(http.Controller):
                 'storage_limit': float(config['min_storage']),
                 'cpu_limit': res['cpu_limit'],
                 'ram_limit': res['ram_limit'],
-                'max_backups': 0,
                 'saas_product_ids': [(4, product.id)],
                 'sequence': 0,
             })

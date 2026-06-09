@@ -1735,7 +1735,7 @@ fi
         skipped unless ``daily_backup_enabled`` and not
         ``daily_backup_suspended``. Hosting takes a full-instance snapshot
         (capped at ``HOSTING_MAX_SNAPSHOTS``); services take a per-DB zip
-        backup (capped at ``plan.max_backups``) — both via
+        backup (capped at ``DEFAULT_MAX_BACKUPS``) — both via
         ``_cleanup_old_backups``. Trial-plan instances are skipped.
         """
         instances = self.env['saas.instance'].search([
@@ -2023,8 +2023,8 @@ fi
     def _cleanup_old_backups(self):
         """Trim old backups.
 
-        - Service instances: keep at most ``plan.max_backups`` per
-          instance (legacy behavior).
+        - Service instances: keep at most ``DEFAULT_MAX_BACKUPS`` per
+          instance (fixed platform-wide retention).
         - Hosting instances: keep at most ``HOSTING_MAX_SNAPSHOTS``
           full-instance snapshots per instance, drop the oldest.
         - Stale ``running`` backups older than 1 day are dropped.
@@ -2053,7 +2053,7 @@ fi
         for instance in instances:
             self._trim_hosting_snapshots(instance)
 
-        # --- Service instances: keep at most plan.max_backups per instance.
+        # --- Service instances: keep at most DEFAULT_MAX_BACKUPS per instance.
         # Ephemeral excluded for the same reason as hosting above.
         data = self._read_group(
             [
@@ -2065,11 +2065,9 @@ fi
             ['__count'],
         )
         for instance, count in data:
-            # Get the actual limit from the plan (may be lower than
-            # DEFAULT_MAX_BACKUPS after a downgrade)
+            # Retention is fixed platform-wide; every Services instance keeps
+            # the last DEFAULT_MAX_BACKUPS copies.
             max_backups = DEFAULT_MAX_BACKUPS
-            if instance.plan_id and instance.plan_id.max_backups > 0:
-                max_backups = instance.plan_id.max_backups
             if count <= max_backups:
                 continue
             backups = self.search([
@@ -2086,14 +2084,11 @@ fi
                     _logger.error("Failed to cleanup backup %s: %s", backup.name, e)
 
     def _cleanup_excess_for_instance(self, instance):
-        """Remove excess backups for a single instance based on its plan limit.
-
-        Called immediately after a plan downgrade to enforce the new
-        lower backup limit without waiting for the daily cron.
+        """Remove excess backups for a single instance against the fixed
+        retention limit (DEFAULT_MAX_BACKUPS), without waiting for the
+        daily cron.
         """
         max_backups = DEFAULT_MAX_BACKUPS
-        if instance.plan_id and instance.plan_id.max_backups > 0:
-            max_backups = instance.plan_id.max_backups
         backups = self.search([
             ('instance_id', '=', instance.id),
             ('state', '=', 'done'),

@@ -128,8 +128,8 @@
                                 <div class="summary-item">
                                     <span class="label"><i class="fas fa-shield-alt me-2"></i>Backups</span>
                                     <span class="value">
-                                        <t t-if="plan.max_backups"><t t-esc="plan.max_backups"/></t>
-                                        <t t-else="">Not included</t>
+                                        <t t-if="is_trial">Not included</t>
+                                        <t t-else="">Last 7 copies</t>
                                     </span>
                                 </div>
 

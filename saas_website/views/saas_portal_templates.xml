@@ -408,7 +408,6 @@
                          t-att-data-yearly-discount-pct="custom_config.get('yearly_discount_pct', 20)"
                          t-att-data-currency="custom_config.get('currency', 'USD')"
                          t-att-data-min-backups="custom_config.get('min_backups', 5)"
-                         t-att-data-max-backups="custom_config.get('max_backups', 14)"
                          data-mode="upgrade"
                          data-current-workers="0"
                          data-current-storage="0">
@@ -672,7 +671,7 @@
                                     <t t-esc="current_plan.workers"/> Workers
                                     <t t-if="not instance.is_hosting">
                                         <span class="mx-1">·</span>
-                                        <t t-esc="current_plan.max_backups"/> Backups
+                                        7 Backups
                                     </t>
                                 </div>
                             </div>
@@ -873,7 +872,6 @@
                          t-att-data-yearly-discount-pct="custom_config.get('yearly_discount_pct', 20)"
                          t-att-data-currency="custom_config.get('currency', 'USD')"
                          t-att-data-min-backups="custom_config.get('min_backups', 5)"
-                         t-att-data-max-backups="custom_config.get('max_backups', 14)"
                          data-mode="change"
                          t-att-data-current-workers="current_workers"
                          t-att-data-current-storage="current_storage"
@@ -1073,7 +1071,6 @@
                          t-att-data-yearly-discount-pct="custom_config.get('yearly_discount_pct', 20)"
                          t-att-data-currency="custom_config.get('currency', 'USD')"
                          t-att-data-min-backups="custom_config.get('min_backups', 5)"
-                         t-att-data-max-backups="custom_config.get('max_backups', 14)"
                          data-mode="reactivate"
                          t-att-data-current-workers="current_workers"
                          t-att-data-current-storage="current_storage"

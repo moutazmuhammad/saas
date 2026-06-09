@@ -15,6 +15,7 @@ from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
 from ..utils import run_in_background
+from .saas_instance_backup import DEFAULT_MAX_BACKUPS
 
 _logger = logging.getLogger(__name__)
 
@@ -4508,19 +4509,21 @@ class SaasInstance(models.Model):
             'state': 'running',
         })
 
-        # Auto-rotate AFTER creating the new record: if we're now at plan
-        # limit + 1, delete the oldest. Doing this before creation could
-        # leave the customer with one fewer backup if creation fails.
-        if self.plan_id and self.plan_id.max_backups > 0:
+        # Auto-rotate AFTER creating the new record: if we're now at the
+        # retention limit + 1, delete the oldest. Doing this before creation
+        # could leave the customer with one fewer backup if creation fails.
+        # Trials get no backups; everyone else keeps the last
+        # DEFAULT_MAX_BACKUPS copies (fixed platform-wide retention).
+        if self.plan_id and not self.plan_id.is_trial_plan:
             done_backups = Backup.search([
                 ('instance_id', '=', self.id),
                 ('state', '=', 'done'),
             ], order='create_date asc')
-            while len(done_backups) >= self.plan_id.max_backups:
+            while len(done_backups) >= DEFAULT_MAX_BACKUPS:
                 oldest = done_backups[0]
                 self._append_log(
                     "Auto-removing oldest backup '%s' (limit: %d)."
-                    % (oldest.name, self.plan_id.max_backups)
+                    % (oldest.name, DEFAULT_MAX_BACKUPS)
                 )
                 oldest._delete_from_bucket()
                 oldest.unlink()

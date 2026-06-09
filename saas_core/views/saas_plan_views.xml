@@ -40,7 +40,6 @@
                 <field name="ram_limit" optional="show"/>
                 <field name="storage_limit" optional="show"/>
                 <field name="recommended_users" optional="hide"/>
-                <field name="max_backups" optional="hide"/>
                 <field name="instance_count"/>
             </list>
         </field>
@@ -87,7 +86,6 @@
                             <field name="ram_limit"/>
                             <field name="workers"/>
                             <field name="storage_limit"/>
-                            <field name="max_backups" invisible="is_trial_plan"/>
                             <field name="recommended_users"/>
                         </group>
                         <group string="Public Storefront" invisible="is_trial_plan or is_custom">

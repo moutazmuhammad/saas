@@ -12,6 +12,7 @@ from odoo.http import request
 from odoo.addons.portal.controllers.portal import CustomerPortal
 from odoo.addons.portal.controllers.portal import pager as portal_pager
 from odoo.addons.payment.controllers.portal import PaymentPortal
+from odoo.addons.saas_core.models.saas_instance_backup import DEFAULT_MAX_BACKUPS
 
 _logger = logging.getLogger(__name__)
 
@@ -2063,21 +2064,21 @@ class SaasPortal(CustomerPortal):
         if running:
             return {'error': _('A backup is already in progress.')}
 
-        # Auto-rotate: delete oldest if at plan limit
-        plan = instance_sudo.plan_id
-        if plan and plan.max_backups > 0:
-            done_backups = instance_sudo.backup_ids.filtered(
-                lambda b: b.state == 'done'
-            ).sorted('create_date')
-            while len(done_backups) >= plan.max_backups:
-                oldest = done_backups[0]
-                instance_sudo._append_log(
-                    "Auto-removing oldest backup '%s' (limit: %d)."
-                    % (oldest.name, plan.max_backups)
-                )
-                oldest._delete_from_bucket()
-                oldest.unlink()
-                done_backups -= oldest
+        # Auto-rotate: delete oldest if at the fixed retention limit.
+        # Trials are already rejected above, so every instance here keeps
+        # the last DEFAULT_MAX_BACKUPS copies.
+        done_backups = instance_sudo.backup_ids.filtered(
+            lambda b: b.state == 'done'
+        ).sorted('create_date')
+        while len(done_backups) >= DEFAULT_MAX_BACKUPS:
+            oldest = done_backups[0]
+            instance_sudo._append_log(
+                "Auto-removing oldest backup '%s' (limit: %d)."
+                % (oldest.name, DEFAULT_MAX_BACKUPS)
+            )
+            oldest._delete_from_bucket()
+            oldest.unlink()
+            done_backups -= oldest
 
         # Create the backup record NOW (state=running) so polling detects it
         Backup = request.env['saas.instance.backup'].sudo()

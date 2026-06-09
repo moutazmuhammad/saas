@@ -114,13 +114,6 @@ class SaasPlan(models.Model):
              'Also used for downgrade eligibility (blocked if current '
              'usage >= 75%% of target plan limit).',
     )
-    max_backups = fields.Integer(
-        string='Max Backups',
-        default=7,
-        help='Maximum number of backups to keep per instance. '
-             'Older backups are automatically deleted during cleanup. '
-             'Set to 0 to disable backups (forced to 0 for trial plans).',
-    )
     instance_count = fields.Integer(
         string='Instances',
         compute='_compute_instance_count',
@@ -197,17 +190,14 @@ class SaasPlan(models.Model):
             if rec.is_trial_plan:
                 rec.price = 0.0
                 rec.yearly_price = 0.0
-                rec.max_backups = 0
 
-    @api.constrains('is_trial_plan', 'price', 'yearly_price', 'max_backups')
+    @api.constrains('is_trial_plan', 'price', 'yearly_price')
     def _check_trial_plan_zero(self):
         for rec in self:
-            if rec.is_trial_plan and (
-                rec.price or rec.yearly_price or rec.max_backups
-            ):
+            if rec.is_trial_plan and (rec.price or rec.yearly_price):
                 raise UserError(_(
-                    "Trial plans must have price = 0, yearly_price = 0 and "
-                    "max_backups = 0. Plan: %s"
+                    "Trial plans must have price = 0 and yearly_price = 0. "
+                    "Plan: %s"
                 ) % rec.name)
 
     @api.constrains('price', 'yearly_price', 'workers', 'storage_limit',
