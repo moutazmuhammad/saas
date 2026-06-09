@@ -164,18 +164,31 @@ class TestPricingEngine(TransactionCase):
             'saas_product_ids': [(6, 0, [product.id])],
         })
 
-    def test_tier_auto_priced_from_resources(self):
-        """A named tier's price is auto-derived = linear rate − discount
-        (floored at cost); yearly applies the global yearly discount. Any
-        raw price written is overridden by the auto value."""
-        # 4w/50 -> linear 55. discount 5 -> 50. Pass a bogus price: ignored.
+    def test_tier_auto_priced_until_manual_override(self):
+        """A named tier is auto-priced = linear rate − discount (floored at
+        cost), yearly applying the global yearly discount, UNTIL the operator
+        types a price: a divergent price write sticks and flips the tier to
+        manual; clearing the flag returns it to the formula."""
+        # 4w/50 -> linear 55. discount 5 -> 50.
         tier = self._make_tier(4, 50, discount=5.0, name='TEST Auto Pro')
-        tier.write({'price': 9999.0})  # must be re-synced to the auto value
+        self.assertFalse(tier.manual_price)
         self.assertAlmostEqual(tier.price, 50.0, places=2)
         self.assertAlmostEqual(tier.yearly_price, 50.0 * 12 * 0.8, places=2)
-        # No discount -> full linear.
+        # While auto, changing the discount reprices. No discount -> full linear.
         tier.write({'discount_amount': 0.0})
         self.assertAlmostEqual(tier.price, 55.0, places=2)
+        # A hand-typed price that diverges from the formula now STICKS and
+        # flags the tier manual (the operator can always edit the price).
+        tier.write({'price': 9999.0})
+        self.assertTrue(tier.manual_price)
+        self.assertAlmostEqual(tier.price, 9999.0, places=2)
+        # A later rate/discount change no longer overrides the manual price.
+        tier.write({'discount_amount': 5.0})
+        self.assertAlmostEqual(tier.price, 9999.0, places=2)
+        # Clearing the flag returns the tier to the automatic formula (55-5=50).
+        tier.write({'manual_price': False})
+        self.assertFalse(tier.manual_price)
+        self.assertAlmostEqual(tier.price, 50.0, places=2)
 
     def test_tier_price_respects_cost_floor(self):
         """A tier's auto price never drops below the cost floor, even with a

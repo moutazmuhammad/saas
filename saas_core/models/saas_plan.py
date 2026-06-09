@@ -60,14 +60,26 @@ class SaasPlan(models.Model):
         string='Monthly Price',
         default=0.0,
         help='Monthly recurring price. For named tiers this is computed '
-             'automatically from the resources minus the discount; edit the '
-             'discount, not this field.',
+             'automatically from the resources minus the discount UNTIL you '
+             'type a price here — a hand-set price sticks and flips the tier '
+             'to "Set price manually". Custom plans are priced by the engine.',
     )
     yearly_price = fields.Float(
         string='Yearly Price',
         default=0.0,
         help='Yearly recurring price. Derived from the monthly price and the '
-             'global yearly discount for named tiers.',
+             'global yearly discount for auto-priced named tiers; freely '
+             'editable once the tier is set to manual pricing.',
+    )
+    manual_price = fields.Boolean(
+        string='Set Price Manually',
+        default=False,
+        help='When set, this tier\'s monthly/yearly price is entered by hand '
+             'and is NEVER overwritten by the automatic resource-based '
+             'formula or by a global per-worker/per-GB rate change. It is '
+             'set automatically the moment you type a price that differs '
+             'from the formula; clear it to return the tier to automatic '
+             'pricing. Ignored for custom and trial plans.',
     )
     discount_amount = fields.Float(
         string='Plan Discount ($/mo)',
@@ -257,18 +269,31 @@ class SaasPlan(models.Model):
                   'saas_product_ids', 'is_public_tier')
     def _onchange_auto_price(self):
         """Live-fill a named tier's price from its resources in the form, so
-        the operator tunes the discount and sees the resulting price."""
+        the operator tunes the discount and sees the resulting price — unless
+        the tier is manually priced, in which case the hand-set price stays."""
         for rec in self:
-            if rec.is_public_tier and not rec.is_trial_plan and rec.workers:
+            if (rec.is_public_tier and not rec.is_trial_plan
+                    and not rec.manual_price and rec.workers):
+                rec.price, rec.yearly_price = rec._auto_price_vals()
+
+    @api.onchange('manual_price')
+    def _onchange_manual_price(self):
+        """Clearing 'Set price manually' returns the tier to the automatic
+        formula immediately in the form; ticking it keeps the current price
+        (now hand-editable)."""
+        for rec in self:
+            if (not rec.manual_price and rec.is_public_tier
+                    and not rec.is_trial_plan and rec.workers):
                 rec.price, rec.yearly_price = rec._auto_price_vals()
 
     def _sync_auto_price(self):
-        """Enforce the automatic resource-based price on named tiers so the
-        STORED price always equals linear - discount (floored at cost),
-        regardless of what was written. Custom/trial/manual plans are left
-        untouched (custom plans are priced by the engine at creation)."""
+        """Enforce the automatic resource-based price on named tiers that are
+        NOT manually priced, so their STORED price always equals
+        linear - discount (floored at cost). Manually-priced, custom and trial
+        plans are left untouched (custom plans are priced by the engine)."""
         for rec in self:
-            if rec.is_public_tier and not rec.is_trial_plan and rec.workers:
+            if (rec.is_public_tier and not rec.is_trial_plan
+                    and not rec.manual_price and rec.workers):
                 price, yearly = rec._auto_price_vals()
                 if (abs(rec.price - price) > 0.005
                         or abs(rec.yearly_price - yearly) > 0.005):
@@ -313,14 +338,26 @@ class SaasPlan(models.Model):
 
     def write(self, vals):
         res = super().write(vals)
-        # Re-derive a named tier's auto price whenever the inputs change — or
-        # when the raw price/yearly is written directly (a tier's price is
-        # operator-readonly and always overridden by the auto value).
-        if not self.env.context.get('_skip_auto_price') and (
-            {'workers', 'storage_limit', 'discount_amount', 'is_public_tier',
-             'is_trial_plan', 'saas_product_ids', 'price', 'yearly_price'}
-            & set(vals)
-        ):
+        if self.env.context.get('_skip_auto_price'):
+            return res
+        # A hand-typed price that DIVERGES from the formula flags the tier as
+        # manually priced, so neither the formula nor a later global rate
+        # change overrides it again. A price equal to the formula (e.g. the
+        # form's live pre-fill) leaves the tier on automatic pricing.
+        if ('price' in vals or 'yearly_price' in vals) \
+                and 'manual_price' not in vals:
+            for rec in self:
+                if (rec.is_public_tier and not rec.is_trial_plan
+                        and not rec.manual_price and rec.workers):
+                    ap, ay = rec._auto_price_vals()
+                    if (abs((rec.price or 0.0) - ap) > 0.005
+                            or abs((rec.yearly_price or 0.0) - ay) > 0.005):
+                        rec.with_context(_skip_auto_price=True).write(
+                            {'manual_price': True})
+        # Re-derive an auto-priced tier whenever its resource inputs change, or
+        # when the manual flag is cleared (which returns it to the formula).
+        if ({'workers', 'storage_limit', 'discount_amount', 'is_public_tier',
+             'is_trial_plan', 'saas_product_ids', 'manual_price'} & set(vals)):
             self._sync_auto_price()
         return res
 

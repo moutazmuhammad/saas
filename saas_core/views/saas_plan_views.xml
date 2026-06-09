@@ -65,15 +65,18 @@
                         </group>
                         <group string="Pricing" invisible="is_trial_plan">
                             <!-- For named tiers the price is auto-derived from
-                                 resources minus the discount; tune the discount,
-                                 not the raw price. -->
+                                 resources minus the discount. Tick "Set price
+                                 manually" (or just type a price) to override it
+                                 by hand — a manual price is never repriced by
+                                 the formula or a global rate change. -->
+                            <field name="manual_price"
+                                   string="Set price manually"
+                                   invisible="not is_public_tier"/>
                             <field name="discount_amount" widget="monetary"
                                    string="Plan Discount ($/mo)"
-                                   invisible="not is_public_tier"/>
-                            <field name="price" widget="monetary" string="Monthly Price"
-                                   readonly="is_public_tier"/>
-                            <field name="yearly_price" widget="monetary"
-                                   readonly="is_public_tier"/>
+                                   invisible="not is_public_tier or manual_price"/>
+                            <field name="price" widget="monetary" string="Monthly Price"/>
+                            <field name="yearly_price" widget="monetary"/>
                             <field name="yearly_discount_pct" string="Yearly Savings"/>
                             <field name="currency_id" groups="base.group_multi_currency"/>
                         </group>
