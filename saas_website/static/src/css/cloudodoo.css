@@ -162,7 +162,9 @@ html {
 /* Style Odoo's default form controls on portal/login */
 #wrapwrap .form-control,
 #wrapwrap .form-select {
-    background: var(--bg-input) !important;
+    /* background-COLOR (not the `background` shorthand) so the dropdown
+       caret image set on .form-select below is not wiped out. */
+    background-color: var(--bg-input) !important;
     border-color: var(--border-color) !important;
     color: var(--text-primary) !important;
 }
@@ -771,7 +773,9 @@ footer a[href*="odoo.com"],
 #wrapwrap .o_portal_sidebar .form-control,
 #wrapwrap .o_portal .form-select,
 #wrapwrap .o_portal_sidebar .form-select {
-    background: var(--bg-input) !important;
+    /* background-COLOR (not the shorthand) so the global .form-select
+       caret image survives on portal dropdowns too. */
+    background-color: var(--bg-input) !important;
     border-color: var(--border-color) !important;
     color: var(--text-primary) !important;
 }
@@ -969,26 +973,46 @@ footer a[href*="odoo.com"],
     display: none !important;
 }
 
-/* Style database selector dropdown */
+/* Style database selector dropdown — same light chevron + dark,
+   legible option list as the rest of the site. */
 .co-login-page select,
 .co-login-page .form-select {
-    background: var(--bg-input) !important;
+    background-color: var(--bg-input) !important;
     border: 1px solid var(--border-color) !important;
     border-radius: 10px !important;
     color: var(--text-primary) !important;
-    padding: 0.7rem 1rem !important;
+    /* extra right padding leaves room for the chevron */
+    padding: 0.7rem 2.75rem 0.7rem 1rem !important;
     font-size: 0.95rem !important;
-    appearance: auto;
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    appearance: none !important;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23A1A1AA' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 1rem;
 }
 .co-login-page select:focus,
 .co-login-page .form-select:focus {
     border-color: var(--primary) !important;
     box-shadow: 0 0 0 3px var(--primary-light) !important;
     outline: none !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23FAFAFA' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
 }
-.co-login-page select option {
-    background: var(--bg-card);
+.co-login-page select option,
+.co-login-page .form-select option {
+    background-color: var(--bg-elevated);
     color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    font-weight: 500;
+}
+.co-login-page select option:checked,
+.co-login-page select option:hover,
+.co-login-page .form-select option:checked,
+.co-login-page .form-select option:hover {
+    background-color: var(--primary);
+    color: #ffffff;
 }
 
 /* Hide Odoo branding in password manager / autofill suggestions */
@@ -2449,7 +2473,7 @@ h1, h2, h3, h4, h5, h6 {
 /* Form Styles */
 .form-control,
 .form-select {
-    background: var(--bg-input);
+    background-color: var(--bg-input);
     border: 1px solid var(--border-color);
     color: var(--text-primary);
     padding: 0.75rem 1rem;
@@ -2460,13 +2484,63 @@ h1, h2, h3, h4, h5, h6 {
 
 .form-control:focus,
 .form-select:focus {
-    background: var(--bg-input);
+    background-color: var(--bg-input);
     border-color: var(--primary);
     color: var(--text-primary);
     box-shadow: 0 0 0 3px var(--primary-light);
 }
 
 .form-control::placeholder {
+    color: var(--text-muted);
+}
+
+/* ============================================
+   Dropdowns (<select>) — dark-theme friendly
+   Used by Region / Odoo Version / Support plan and every other
+   select. We draw our own light chevron (the Bootstrap default is a
+   dark SVG, invisible here) and style the native option list so the
+   values are dark-surfaced and legible when the menu is open.
+   ============================================ */
+.form-select {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    cursor: pointer;
+    padding-right: 2.75rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23A1A1AA' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 1rem;
+}
+
+.form-select:hover {
+    border-color: var(--border-light);
+}
+
+.form-select:focus {
+    /* brighten the chevron to match the focused border */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23FAFAFA' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+}
+
+/* The native popup list — give every value a dark surface, readable
+   text and breathing room (respected by Chrome/Firefox on Linux &
+   Windows). The selected row picks up the brand colour. */
+.form-select option,
+.form-select optgroup {
+    background-color: var(--bg-elevated);
+    color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    font-weight: 500;
+}
+
+.form-select option:checked,
+.form-select option:hover,
+.form-select option:focus {
+    background-color: var(--primary);
+    color: #ffffff;
+}
+
+.form-select option[value=""] {
     color: var(--text-muted);
 }
 
