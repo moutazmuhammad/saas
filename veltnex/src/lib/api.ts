@@ -236,23 +236,35 @@ export interface ApiPaymentMethod {
   is_default: boolean;
 }
 
-export interface StorageSummary {
-  included_gb: number;
+/** v47 capacity ("upgrade experience") — positive framing, never overage. */
+export interface CapacitySummary {
+  /** internal state: ok | warn80 | full | grace | restricted */
+  state: string;
+  /** plain-language headline + body the UI shows verbatim */
+  title: string;
+  message: string;
+  tone: "neutral" | "info" | "warning" | "paused";
   used_gb: number;
+  capacity_gb: number;
   usage_pct: number;
+  /** purchased storage blocks + the block size/price for the "Add storage" CTA */
+  blocks_owned: number;
   block_gb: number;
   block_price: number;
-  overage_blocks: number;
-  overage_over_gb: number;
-  estimated_overage_charge: number;
+  /** grace countdown when at capacity */
+  grace_days_left: number | null;
   currency: string;
 }
 
-export interface TrialPromo {
-  active: boolean;
-  pct: number;
-  cycles_remaining: number;
-  total_saved: number;
+export interface WalletInline {
+  /** customer's own money — never expires */
+  funded: number;
+  /** bonus/system credit — may expire */
+  bonus: number;
+  total: number;
+  /** soonest bonus expiry date, if any bonus credit exists */
+  bonus_expiry: string | null;
+  currency: string;
 }
 
 export interface WalletTransaction {
@@ -260,13 +272,19 @@ export interface WalletTransaction {
   date: string;
   amount: number;
   balance_after: number;
-  type: string;
+  kind: string;
+  credit_class: "customer_funded" | "system_issued" | false;
   description: string;
 }
 
 export interface WalletData {
+  /** customer's own money — never expires */
+  balance_funded: number;
+  /** bonus/system credit — may expire */
+  balance_bonus: number;
   balance: number;
   currency: string;
+  bonus_expiry: string | null;
   transactions: WalletTransaction[];
 }
 
@@ -314,19 +332,18 @@ export interface ApiInstance {
   restoration_fee?: number;
   currency?: string;
   reactivate_url?: string;
-  // A1 / A2 / A4 billing (detail-only)
+  // billing (detail-only)
   auto_renew_subscription?: boolean;
   auto_renew_daily_backup?: boolean;
   payment_method?: ApiPaymentMethod | null;
-  storage_summary?: StorageSummary;
-  wallet_balance?: number;
-  trial_promo?: TrialPromo;
+  capacity?: CapacitySummary;
+  wallet?: WalletInline;
 }
 
 export interface DashboardData {
   instances: ApiInstance[];
   recent_invoices: ApiInvoice[];
-  wallet_balance?: number;
+  wallet?: WalletInline;
   currency?: string;
   stats: {
     instances: number;
@@ -434,6 +451,16 @@ export const api = {
     rpc<{ auto_renew_subscription: boolean; auto_renew_daily_backup: boolean }>(
       `/saas/api/v1/instances/${instanceId}/auto-renew`,
       opts,
+    ),
+  addStorageBlock: (instanceId: number, qty = 1) =>
+    rpc<{ invoice_id?: number; checkout_url?: string; amount?: number; activated?: boolean }>(
+      `/saas/api/v1/instances/${instanceId}/storage/add`,
+      { qty },
+    ),
+  releaseStorageBlock: (instanceId: number, qty = 1) =>
+    rpc<{ released: boolean; blocks_owned: number }>(
+      `/saas/api/v1/instances/${instanceId}/storage/release`,
+      { qty },
     ),
 
   // portal

@@ -35,8 +35,12 @@ class AccountMove(models.Model):
             if move.payment_state in ('paid', 'in_payment'):
                 continue
             wallet = Wallet._for_partner(move.partner_id, create=False)
-            if wallet:
-                wallet._refund_move(move)
+            if not wallet:
+                continue
+            # Partial payments (F5): only the still-unpaid residual is
+            # refundable — the paid-down portion stays consumed.
+            cap = move.amount_residual if move.payment_state == 'partial' else None
+            wallet._refund_move(move, max_amount=cap)
 
     def _compute_payment_state(self):
         # Capture state before recomputation
@@ -107,6 +111,19 @@ class AccountMove(models.Model):
                 "cron will create the first snapshot, and renewal "
                 "invoices will be issued monthly."
             ))
+
+        # --- Handle storage-block purchases (v47) ---
+        block_instances = self.env['saas.instance'].search([
+            ('storage_block_pending_invoice_id', 'in', paid_invoices.ids),
+        ])
+        for instance in block_instances:
+            _logger.info(
+                "SaaS instance %s: storage-block purchase paid (invoice %s), "
+                "expanding capacity.", instance.subdomain,
+                instance.storage_block_pending_invoice_id.name)
+            instance._capture_payment_token_from_invoice(
+                instance.storage_block_pending_invoice_id)
+            instance._activate_pending_storage_blocks()
 
         # --- Resume paused snapshots when a renewal is paid ---
         # A monthly add-on invoice going unpaid pauses snapshots

@@ -325,6 +325,24 @@ class ResConfigSettings(models.TransientModel):
              'automatically suspended for non-payment. Applies to all '
              'plans. 0 = suspend the day after the due date.',
     )
+    # v47 storage capacity grace + bonus-credit expiry. storage_grace_days
+    # uses manual get/set (0 = pause as soon as full, a meaningful value —
+    # falsy-trap, see grace_period_days). system_credit_expiry_months uses
+    # config_parameter (0 is never valid; min 1 enforced in the wallet).
+    saas_storage_grace_days = fields.Integer(
+        string='Storage Capacity Grace (Days)',
+        default=7,
+        help='Days a workspace can stay at full capacity before it is '
+             'paused (reversible). The customer is guided to upgrade or add '
+             'storage throughout. 0 = pause as soon as capacity is reached.',
+    )
+    saas_system_credit_expiry_months = fields.Integer(
+        string='Bonus Credit Expiry (Months)',
+        config_parameter='saas_master.system_credit_expiry_months',
+        default=12,
+        help='How long system-issued BONUS wallet credit stays valid. The '
+             'customer\'s own money (customer-funded credit) NEVER expires.',
+    )
 
     # ========== Backup Storage ==========
     saas_backup_provider = fields.Selection([
@@ -404,6 +422,10 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.grace_period_days',
             str(int(self.saas_grace_period_days or 0)),
         )
+        ICP.set_param(
+            'saas_master.storage_grace_days',
+            str(int(self.saas_storage_grace_days or 0)),
+        )
         # Re-derive every named tier's stored price from the (possibly
         # just-changed) per-worker / per-GB rates, so editing the rates
         # here reprices the published packages immediately — without this
@@ -440,6 +462,12 @@ class ResConfigSettings(models.TransientModel):
             )
         except (TypeError, ValueError):
             res['saas_grace_period_days'] = 7
+        try:
+            res['saas_storage_grace_days'] = int(
+                ICP.get_param('saas_master.storage_grace_days', '7') or 0
+            )
+        except (TypeError, ValueError):
+            res['saas_storage_grace_days'] = 7
         return res
 
     def action_apply_bucket_cors(self):

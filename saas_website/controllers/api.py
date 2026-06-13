@@ -467,19 +467,18 @@ class SaasApi(http.Controller):
         invoices = self._partner_invoices(partner)
         open_invoices = [i for i in invoices if i.payment_state not in ('paid', 'in_payment')
                          and i.state == 'posted']
-        wallet = request.env['saas.wallet'].sudo()._for_partner(
-            partner, create=False)
+        wallet_inline = self._serialize_wallet_inline(partner)
         return ok({
             'instances': [self._serialize_instance(i) for i in instances],
             'recent_invoices': [self._serialize_invoice(i) for i in invoices[:5]],
-            'wallet_balance': round(wallet.balance, 2) if wallet else 0.0,
+            'wallet': wallet_inline,
             'currency': request.env.company.currency_id.name or 'USD',
             'stats': {
                 'instances': len(instances),
                 'running': len(instances.filtered(lambda i: i.state == 'running')),
                 'open_invoices': len(open_invoices),
                 'outstanding': round(sum(i.amount_residual for i in open_invoices), 2),
-                'wallet_balance': round(wallet.balance, 2) if wallet else 0.0,
+                'wallet_balance': wallet_inline['total'],
             },
         })
 
@@ -1078,30 +1077,101 @@ class SaasApi(http.Controller):
     # ==================================================================
     @http.route('/saas/api/v1/wallet', type='json', auth='public')
     def wallet(self):
-        """Wallet balance + recent ledger entries for the signed-in
-        customer. Non-refundable, non-withdrawable platform credit."""
+        """Two-class wallet for the signed-in customer: 'Your balance'
+        (customer money, never expires) and 'Bonus credit' (may expire),
+        plus the recent ledger. UX must surface the two clearly."""
         partner = self._partner()
         if not partner:
             return err(_("Please sign in."), 'auth_required')
+        cur = request.env.company.currency_id.name or 'USD'
         wallet = request.env['saas.wallet'].sudo()._for_partner(
             partner, create=False)
         if not wallet:
-            return ok({'balance': 0.0, 'currency':
-                       request.env.company.currency_id.name or 'USD',
-                       'transactions': []})
+            return ok({'balance_funded': 0.0, 'balance_bonus': 0.0,
+                       'balance': 0.0, 'currency': cur,
+                       'bonus_expiry': None, 'transactions': []})
         txns = wallet.transaction_ids.sorted('id', reverse=True)[:50]
         return ok({
+            'balance_funded': round(wallet.balance_funded, 2),
+            'balance_bonus': round(wallet.balance_bonus, 2),
             'balance': round(wallet.balance, 2),
-            'currency': wallet.currency_id.name or 'USD',
+            'currency': wallet.currency_id.name or cur,
+            'bonus_expiry': self._wallet_bonus_expiry(wallet),
             'transactions': [{
                 'id': t.id,
                 'date': fields.Datetime.to_string(t.create_date),
                 'amount': round(t.amount, 2),
                 'balance_after': round(t.balance_after, 2),
-                'type': t.origin,
+                'kind': t.kind,
+                'credit_class': t.credit_class or False,
                 'description': t.reason or '',
             } for t in txns],
         })
+
+    def _wallet_bonus_expiry(self, wallet):
+        """Soonest expiry across live bonus lots (None if no bonus credit)."""
+        if not wallet:
+            return None
+        today = fields.Date.today()
+        dates = [lot.expiry_date for lot in wallet.lot_ids
+                 if lot.credit_class == 'system_issued' and lot._is_live(today)
+                 and lot.expiry_date]
+        return fields.Date.to_string(min(dates)) if dates else None
+
+    def _serialize_wallet_inline(self, partner):
+        """Compact two-class wallet for instance/dashboard payloads."""
+        cur = request.env.company.currency_id.name or 'USD'
+        wallet = request.env['saas.wallet'].sudo()._for_partner(
+            partner, create=False)
+        if not wallet:
+            return {'funded': 0.0, 'bonus': 0.0, 'total': 0.0,
+                    'bonus_expiry': None, 'currency': cur}
+        return {
+            'funded': round(wallet.balance_funded, 2),
+            'bonus': round(wallet.balance_bonus, 2),
+            'total': round(wallet.balance, 2),
+            'bonus_expiry': self._wallet_bonus_expiry(wallet),
+            'currency': wallet.currency_id.name or cur,
+        }
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/storage/add',
+                type='json', auth='public')
+    def add_storage_block(self, instance_id, qty=1):
+        """Buy ``qty`` storage blocks (capacity upgrade). Returns the
+        activation invoice's checkout URL so the SPA can collect payment."""
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        instance = request.env['saas.instance'].sudo().browse(instance_id)
+        if not instance.exists() or instance.partner_id != partner:
+            return err(_("Workspace not found."), 'not_found')
+        try:
+            invoice = instance.action_purchase_storage_block(int(qty or 1))
+        except Exception as e:
+            return err(str(e), 'error')
+        if invoice is True or not getattr(invoice, 'id', False):
+            return ok({'activated': True})
+        return ok({
+            'invoice_id': invoice.id,
+            'checkout_url': '/my/instances/%s/checkout' % instance.id,
+            'amount': round(invoice.amount_total, 2),
+        })
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/storage/release',
+                type='json', auth='public')
+    def release_storage_block(self, instance_id, qty=1):
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        instance = request.env['saas.instance'].sudo().browse(instance_id)
+        if not instance.exists() or instance.partner_id != partner:
+            return err(_("Workspace not found."), 'not_found')
+        try:
+            instance.action_release_storage_block(int(qty or 1))
+        except Exception as e:
+            return err(str(e), 'error')
+        return ok({'released': True,
+                   'blocks_owned': instance.extra_storage_blocks})
 
     @http.route('/saas/api/v1/billing/payment-methods', type='json', auth='public')
     def payment_methods(self):
@@ -1258,24 +1328,15 @@ class SaasApi(http.Controller):
                 # of paying (plan upgrade / add-on). Mandatory invoices
                 # (initial / renewal / restoration) are not cancellable.
                 'cancellable_invoice_id': instance._get_cancellable_unpaid_invoice().id or False,
-                # A1 — auto-renew + saved payment method.
+                # Auto-renew + saved payment method.
                 'auto_renew_subscription': instance.auto_renew_subscription,
                 'auto_renew_daily_backup': instance.auto_renew_daily_backup,
                 'payment_method': self._serialize_payment_method(
                     instance._auto_renew_method()),
-                # A2 — storage usage / overage summary.
-                'storage_summary': instance._storage_billing_summary(),
-                # A4 — wallet balance (shared across the customer's instances).
-                'wallet_balance': round(
-                    (instance._wallet(create=False).balance
-                     if instance._wallet(create=False) else 0.0), 2),
-                # Trial-conversion promo state (A-Trial).
-                'trial_promo': {
-                    'active': instance.trial_promo_cycles_remaining > 0,
-                    'pct': instance.trial_promo_pct,
-                    'cycles_remaining': instance.trial_promo_cycles_remaining,
-                    'total_saved': round(instance.trial_promo_total_saved, 2),
-                },
+                # v47 — capacity ("upgrade experience") summary.
+                'capacity': instance._capacity_summary(),
+                # Wallet: two-class balance (customer money vs bonus).
+                'wallet': self._serialize_wallet_inline(instance.partner_id),
             })
             # Cancelled instances: surface the retained snapshot (if any) so
             # the customer knows their data is kept and can reactivate to

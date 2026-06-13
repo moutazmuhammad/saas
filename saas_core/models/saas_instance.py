@@ -58,25 +58,25 @@ ORIGIN_SUBSCRIPTION = 'SAAS:SUBSCRIPTION:%s'
 ORIGIN_PLAN_UPGRADE = 'SAAS:UPGRADE:%s'
 ORIGIN_DATA_RESTORATION = 'SAAS:RESTORATION:%s'
 ORIGIN_BACKUP_ADDON = 'SAAS:BACKUP-ADDON:%s'
+ORIGIN_STORAGE_BLOCK = 'SAAS:STORAGE-BLOCK:%s'
 # Origins considered "optional" for dunning purposes (won't trigger suspension).
 # Daily-backup add-on is opt-in — a missed payment for it shouldn't take down
 # the whole instance the customer still uses every day.
 OPTIONAL_INVOICE_ORIGIN_PREFIXES = (
     'SAAS:SUBSCRIPTION:', 'SAAS:UPGRADE:', 'SAAS:BACKUP-ADDON:',
+    # Buying storage blocks is opt-in — an unpaid block invoice must not
+    # suspend the workspace (the customer simply doesn't get the extra room).
+    'SAAS:STORAGE-BLOCK:',
 )
 # Days past a daily-backup add-on invoice's due date before snapshots are
 # paused. Snapshots resume automatically once the invoice is paid.
 DAILY_BACKUP_SUSPEND_GRACE_DAYS = 3
 
-# Trial-conversion incentive (A-Trial): a customer converting from a free
-# trial to a paid plan gets this discount off the subscription RESOURCE
-# price for this many of the first billing cycles. The discount never
-# touches support / snapshot / overage / other fixed fees (A5 discount
-# scope).
-TRIAL_CONVERSION_DISCOUNT_PCT = 25.0
-TRIAL_CONVERSION_CYCLES = 3
+# v47: ALL promotions and discounts are removed. The only pricing
+# variation is monthly vs annual (computed in saas.pricing.engine). There
+# is no trial promo, no promo cycles, no stacking.
 
-# Auto-renew retry schedule (A1): days AFTER the invoice date on which the
+# Auto-renew retry schedule (A1): days AFTER the invoice DUE date on which the
 # saved payment method is re-charged if still unpaid. The renewal-date
 # attempt is day 0; these are the follow-ups. All fall inside the default
 # 7-day grace period, so suspension only happens after the last retry.
@@ -594,28 +594,60 @@ class SaasInstance(models.Model):
         string='Pending Wallet Credit', copy=False, default=0.0,
     )
 
-    # Trial-conversion promo (A-Trial): 25% off the subscription RESOURCE
-    # price for the first 3 billing cycles after converting from a trial.
-    trial_promo_cycles_remaining = fields.Integer(
-        string='Trial Promo Cycles Left', copy=False, default=0,
-        help='Remaining billing cycles that still receive the '
-             'trial-conversion discount.',
+    # ===== Storage capacity (v47) — "capacity upgrade experience" =====
+    # Storage is handled ONLY via plan upgrade or purchased storage blocks.
+    # There is NO usage-based / per-GB billing. These fields drive a
+    # positive, never-punitive capacity flow (warn → full → grace →
+    # paused-until-upgrade), with messaging framed as scaling, not penalty.
+    extra_storage_blocks = fields.Integer(
+        string='Purchased Storage Blocks', copy=False, default=0,
+        help='Storage blocks the customer bought to expand capacity. Each '
+             'block adds saas_master.storage_block_gb GB and is billed at '
+             'the block price every cycle (a deliberate purchase, never an '
+             'automatic overage charge).',
     )
-    trial_promo_pct = fields.Float(
-        string='Trial Promo Discount %', copy=False, default=0.0,
+    pending_storage_blocks = fields.Integer(
+        string='Pending Storage Blocks', copy=False, default=0,
+        help='Blocks from a storage purchase awaiting payment; added to '
+             'extra_storage_blocks once the activation invoice is paid.',
     )
-    trial_promo_total_saved = fields.Float(
-        string='Trial Promo Total Saved', copy=False, default=0.0,
-        help='Cumulative discount granted by the trial-conversion promo '
-             '(reporting / analytics).',
+    storage_block_pending_invoice_id = fields.Many2one(
+        'account.move', string='Storage Block Invoice', copy=False,
+        ondelete='set null',
     )
+    effective_storage_limit_gb = fields.Float(
+        string='Total Capacity (GB)', compute='_compute_effective_storage_limit',
+        store=True,
+        help='Included plan storage plus purchased storage blocks.',
+    )
+    storage_state = fields.Selection([
+        ('ok', 'OK'),
+        ('warn80', 'Reaching capacity (80%)'),
+        ('full', 'At capacity (100%)'),
+        ('grace', 'At capacity — grace period'),
+        ('restricted', 'Paused — awaiting upgrade'),
+    ], string='Capacity State', default='ok', copy=False, index=True,
+        help='Internal capacity state. Customer-facing copy is always '
+             'positive (see _capacity_summary).')
+    storage_over_since = fields.Date(
+        string='At Capacity Since', copy=False,
+        help='Date usage first reached 100% of total capacity — anchors the '
+             'configurable grace period before the workspace is paused.',
+    )
+    storage_last_notice = fields.Selection([
+        ('warn80', '80%'), ('full', '100%'),
+        ('grace', 'grace'), ('restricted', 'paused'),
+    ], string='Last Capacity Notice', copy=False,
+        help='Highest capacity notice already sent, so each stage notifies '
+             'once. Reset when usage falls back to healthy.')
 
-    # Storage usage notification high-water mark (A2): the last threshold
-    # (80/90/100) the customer was emailed about, so we notify once per
-    # threshold crossed and reset when usage falls back below 80%.
-    storage_notice_level = fields.Integer(
-        string='Storage Notice Level', copy=False, default=0,
-    )
+    @api.depends('plan_id.storage_limit', 'extra_storage_blocks')
+    def _compute_effective_storage_limit(self):
+        block_gb, _bp = self.env['saas.pricing.engine'].storage_block_config()
+        for rec in self:
+            base = rec.plan_id.storage_limit or 0.0
+            rec.effective_storage_limit_gb = base + (
+                (rec.extra_storage_blocks or 0) * (block_gb or 0))
 
     # ========== Backups ==========
     backup_ids = fields.One2many(
@@ -1485,7 +1517,147 @@ class SaasInstance(models.Model):
         })
 
     # ==================================================================
-    #  Wallet credit (A4) + trial-conversion promo (A-Trial) helpers
+    #  Storage blocks (v47) — a PURCHASED recurring add-on that expands
+    #  capacity. Never an automatic usage charge.
+    # ==================================================================
+    def _get_storage_block_product(self):
+        product = self.env['product.product'].sudo().search(
+            [('default_code', '=', 'SAAS-STORAGE-BLOCK')], limit=1)
+        if not product:
+            product = self.env['product.product'].sudo().create({
+                'name': 'Extra Storage Block',
+                'default_code': 'SAAS-STORAGE-BLOCK',
+                'type': 'service', 'list_price': 0.0,
+                'sale_ok': True, 'purchase_ok': False, 'taxes_id': [(5, 0, 0)],
+            })
+        return product
+
+    def _storage_block_order_line(self, period, blocks=None):
+        """Recurring SO line for PURCHASED storage blocks on the given period
+        (qty = blocks × months), or None. Block price is a flat monthly fee —
+        billed ×months on yearly, never discounted (only resources are)."""
+        self.ensure_one()
+        blocks = self.extra_storage_blocks if blocks is None else blocks
+        if blocks <= 0:
+            return None
+        block_gb, block_price = self.env['saas.pricing.engine'].storage_block_config()
+        if block_gb <= 0 or block_price <= 0:
+            return None
+        months = self.env['saas.pricing.engine'].period_months(period)
+        return (0, 0, {
+            'product_id': self._get_storage_block_product().id,
+            'name': _('Storage: %d × %d GB block(s) (%s) — %s') % (
+                blocks, block_gb,
+                'Yearly' if period == 'yearly' else 'Monthly',
+                self.name or self.subdomain),
+            'product_uom_qty': blocks * months,
+            'price_unit': block_price,
+        })
+
+    def action_purchase_storage_block(self, qty=1):
+        """Buy ``qty`` storage blocks: issue a prorated activation invoice for
+        the remainder of the current cycle; on payment, increment
+        ``extra_storage_blocks`` (raising effective capacity). Recurs on every
+        renewal thereafter via ``_storage_block_order_line``."""
+        self.ensure_one()
+        qty = max(1, int(qty or 1))
+        block_gb, block_price = self.env['saas.pricing.engine'].storage_block_config()
+        if block_gb <= 0 or block_price <= 0:
+            raise UserError(_(
+                "Storage blocks aren't available yet. Please contact support "
+                "or upgrade your plan to expand capacity."))
+        # Prorate the first charge over the days left in the current cycle so
+        # the customer only pays for what's left until it joins the renewal.
+        months = self.env['saas.pricing.engine'].period_months(
+            self.billing_period or 'monthly')
+        full = qty * block_price * months
+        charge = full
+        if self.next_invoice_date and self.last_invoice_date:
+            total_days = (self.next_invoice_date - self.last_invoice_date).days
+            left = (self.next_invoice_date - fields.Date.today()).days
+            if total_days > 0 and 0 < left < total_days:
+                charge = round(full * left / total_days, 2)
+        pricelist = self.partner_id.property_product_pricelist
+        order_lines = [(0, 0, {
+            'product_id': self._get_storage_block_product().id,
+            'name': _('Add %d × %d GB storage block(s) — %s (prorated)') % (
+                qty, block_gb, self.name or self.subdomain),
+            'product_uom_qty': 1,
+            'price_unit': charge,
+        })]
+        wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
+        if wallet_line:
+            order_lines.append(wallet_line)
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': ORIGIN_STORAGE_BLOCK % (self.name or self.subdomain),
+            'order_line': order_lines,
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].sudo().create(order_vals)
+        order.action_confirm()
+        invoice = order._create_invoices()
+        invoice.action_post()
+        self._wallet_settle_consumption(invoice, wallet_amount)
+        # Remember how many blocks this purchase activates on payment.
+        self.write({
+            'pending_storage_blocks': (self.pending_storage_blocks or 0) + qty,
+            'storage_block_pending_invoice_id': invoice.id,
+        })
+        self._append_log(
+            "Storage block purchase: %d × %d GB, activation invoice %s (%.2f)."
+            % (qty, block_gb, invoice.name, charge))
+        if invoice.amount_total <= 0:
+            self._activate_pending_storage_blocks()
+        return invoice
+
+    def _activate_pending_storage_blocks(self):
+        """Apply purchased blocks after payment: raise capacity + clear the
+        capacity warning immediately (instant 'Fix Now' recovery)."""
+        self.ensure_one()
+        pending = self.pending_storage_blocks or 0
+        if pending <= 0:
+            return
+        self.write({
+            'extra_storage_blocks': (self.extra_storage_blocks or 0) + pending,
+            'pending_storage_blocks': 0,
+            'storage_block_pending_invoice_id': False,
+        })
+        self._append_log("Storage capacity expanded by %d block(s)." % pending)
+        self.message_post(body=_(
+            "Storage expanded — your workspace now has more room. Thanks for "
+            "scaling with us."))
+        # Re-evaluate so a paused/at-capacity workspace recovers at once.
+        try:
+            if self.state == 'suspended':
+                self.action_reactivate() if hasattr(self, 'action_reactivate') else None
+            self._evaluate_capacity()
+        except Exception:
+            _logger.exception("Capacity re-eval after block activation failed for %s",
+                              self.subdomain)
+
+    def action_release_storage_block(self, qty=1):
+        """Release ``qty`` storage blocks at the next cycle (lowers capacity +
+        recurring charge). Blocked if releasing would drop capacity below
+        current usage (same 75% headroom guard as a plan downgrade)."""
+        self.ensure_one()
+        qty = max(1, int(qty or 1))
+        if qty > (self.extra_storage_blocks or 0):
+            raise UserError(_("You don't have that many storage blocks."))
+        block_gb, _bp = self.env['saas.pricing.engine'].storage_block_config()
+        new_cap = self.effective_storage_limit_gb - qty * block_gb
+        used = (self.total_storage_bytes or 0.0) / (1024 ** 3)
+        if new_cap > 0 and used >= self.DOWNGRADE_THRESHOLD * new_cap:
+            raise UserError(_(
+                "You're using too much storage to release that capacity. "
+                "Free up space first, then you can release storage."))
+        self.write({'extra_storage_blocks': self.extra_storage_blocks - qty})
+        self._append_log("Released %d storage block(s)." % qty)
+        return True
+
+    # ==================================================================
+    #  Wallet credit (A4) helpers
     #  ─ the single, reusable plumbing every invoice-creating flow uses
     #    so prepaid value is never lost and the promo / wallet are shown
     #    explicitly on the invoice as their own lines.
@@ -1559,43 +1731,6 @@ class SaasInstance(models.Model):
         self.message_post(body=_(
             "%.2f added to your wallet — %s. Wallet balance: %.2f."
         ) % (amount, reason or origin, wallet.balance))
-
-    # ---------- Trial-conversion promo ----------
-    def _trial_promo_credit_line(self, base_resource_price):
-        """Negative SO line for the active trial-conversion promo applied to
-        the subscription RESOURCE price (never to support / snapshot /
-        overage — A5 discount scope). Returns ``(line, discount)`` or
-        ``(None, 0.0)``. Does NOT decrement — call
-        ``_consume_trial_promo_cycle`` once the invoice is created."""
-        self.ensure_one()
-        if (self.trial_promo_cycles_remaining <= 0
-                or self.trial_promo_pct <= 0 or base_resource_price <= 0):
-            return None, 0.0
-        disc = round(base_resource_price * self.trial_promo_pct / 100.0, 2)
-        if disc <= 0:
-            return None, 0.0
-        cycle_no = (TRIAL_CONVERSION_CYCLES
-                    - self.trial_promo_cycles_remaining + 1)
-        line = (0, 0, {
-            'product_id': self._get_billing_product().id,
-            'name': _('Trial welcome discount %g%% (cycle %d of %d) — %s') % (
-                self.trial_promo_pct, cycle_no, TRIAL_CONVERSION_CYCLES,
-                self.name or self.subdomain),
-            'product_uom_qty': 1,
-            'price_unit': -disc,
-        })
-        return line, disc
-
-    def _consume_trial_promo_cycle(self, discount_applied):
-        """Burn one promo cycle and record the saving for reporting."""
-        self.ensure_one()
-        if self.trial_promo_cycles_remaining > 0:
-            self.write({
-                'trial_promo_cycles_remaining':
-                    self.trial_promo_cycles_remaining - 1,
-                'trial_promo_total_saved':
-                    self.trial_promo_total_saved + (discount_applied or 0.0),
-            })
 
     def action_confirm_and_bill(self):
         """Validate instance, create sale order, confirm it, and generate invoice.
@@ -6615,83 +6750,181 @@ class SaasInstance(models.Model):
                             )
                             continue
 
-                        total_bytes = instance.total_storage_bytes
-                        limit_bytes = int(round(instance.plan_id.storage_limit * (1024 ** 3)))
-                        # A2: usage notifications at 80 / 90 / 100% — the
-                        # service is NEVER suspended for storage; overage is
-                        # billed in blocks on the next renewal.
-                        instance._notify_storage_usage(total_bytes, limit_bytes)
-                        if total_bytes > limit_bytes:
-                            overage = self.env['saas.pricing.engine'].storage_overage(
-                                total_bytes, instance.plan_id.storage_limit)
-                            instance._append_log(
-                                "STORAGE OVERAGE: %.2f GB used, plan limit %.2f GB, "
-                                "%d GB over → %d block(s) (billed on next renewal)."
-                                % (total_bytes / (1024 ** 3),
-                                   instance.plan_id.storage_limit,
-                                   overage['over_gb'], overage['blocks'])
-                            )
-                            _logger.info(
-                                "Instance %s: storage %.2f GB exceeds %.2f GB "
-                                "limit → %d block(s) will be billed",
-                                instance.subdomain, total_bytes / (1024 ** 3),
-                                instance.plan_id.storage_limit, overage['blocks'],
-                            )
+                        # v47: evaluate the capacity state machine (warn →
+                        # full → grace → paused). NEVER an automatic charge.
+                        try:
+                            instance._evaluate_capacity()
+                        except Exception:
+                            _logger.exception(
+                                "Capacity evaluation failed for %s",
+                                instance.subdomain)
             except Exception:
                 _logger.exception(
                     "Failed to connect to docker server id=%s for storage checks", server_id,
                 )
 
-    def _notify_storage_usage(self, total_bytes, limit_bytes):
-        """Send an 80 / 90 / 100% storage-usage notice at most once per
-        threshold crossed (A2). NEVER suspends — informational only. The
-        high-water mark resets once usage falls back below 80% so the
-        customer is notified again on the next climb."""
-        self.ensure_one()
-        if limit_bytes <= 0:
-            return
-        pct = (total_bytes or 0) / limit_bytes * 100.0
-        if pct >= 100:
-            threshold = 100
-        elif pct >= 90:
-            threshold = 90
-        elif pct >= 80:
-            threshold = 80
-        else:
-            threshold = 0
-        if threshold == 0:
-            if self.storage_notice_level:
-                self.storage_notice_level = 0
-            return
-        if threshold <= self.storage_notice_level:
-            return
-        self.storage_notice_level = threshold
+    # ================================================================
+    #  Storage capacity (v47) — the "capacity upgrade experience"
+    #  Positive framing only. Two remedies: upgrade OR buy storage blocks.
+    #  Suspension happens ONLY after a configurable grace period, and is
+    #  presented as a reversible "paused" state, never a penalty.
+    # ================================================================
+    @api.model
+    def _storage_grace_days(self):
         try:
-            self._send_notification('saas_core.mail_template_saas_storage_usage')
-        except Exception:
-            _logger.exception(
-                "Storage-usage notice failed for %s", self.subdomain)
-        self._append_log(
-            "Storage usage notice: %.0f%% of the %g GB plan limit used "
-            "(threshold %d%%). Service continues normally; overage is "
-            "billed in blocks." % (pct, self.plan_id.storage_limit, threshold))
+            return max(0, int(self.env['ir.config_parameter'].sudo().get_param(
+                'saas_master.storage_grace_days', '7') or 0))
+        except (TypeError, ValueError):
+            return 7
 
-    def _storage_billing_summary(self):
-        """Portal/API view of storage billing (A2): included GB, current
-        usage, overage block count and the estimated next-invoice charge."""
+    def _evaluate_capacity(self):
+        """Advance the capacity state machine from the latest usage and send
+        AT MOST one friendly notice per stage. Transitions:
+
+            <80%  → ok        (clears any prior state, re-arms notices)
+            ≥80%  → warn80    (soft, proactive "expand any time")
+            ≥100% → full      (anchor grace clock; "expand to keep scaling")
+            full > grace days → restricted (workspace paused; instant fix)
+
+        Dropping back below 100% clears the grace clock immediately, and
+        below 80% returns to ok — a customer who expands or frees space is
+        never penalised. Returns the new state."""
         self.ensure_one()
-        limit = self.plan_id.storage_limit or 0.0
-        overage = self.env['saas.pricing.engine'].storage_overage(
-            self.total_storage_bytes, limit)
+        limit = self.effective_storage_limit_gb or 0.0
+        if limit <= 0:
+            return self.storage_state
+        used = (self.total_storage_bytes or 0.0) / (1024 ** 3)
+        pct = used / limit * 100.0
+        today = fields.Date.today()
+        vals = {}
+        new_state = self.storage_state
+
+        if pct < 80:
+            new_state = 'ok'
+            if self.storage_over_since:
+                vals['storage_over_since'] = False
+            if self.storage_last_notice:
+                vals['storage_last_notice'] = False
+        elif pct < 100:
+            new_state = 'warn80'
+            if self.storage_over_since:
+                vals['storage_over_since'] = False
+        else:
+            # At/over capacity.
+            if not self.storage_over_since:
+                vals['storage_over_since'] = today
+                over_days = 0
+            else:
+                over_days = (today - self.storage_over_since).days
+            grace = self._storage_grace_days()
+            new_state = 'restricted' if over_days > grace else (
+                'grace' if self.storage_over_since and over_days >= 1 else 'full')
+
+        if new_state != self.storage_state:
+            vals['storage_state'] = new_state
+        if vals:
+            self.write(vals)
+
+        # Notify once per stage (warn80 / full / grace reminders / restricted).
+        self._notify_capacity(new_state, pct)
+        # Enforce only at restricted, only after grace, framed as "paused".
+        if new_state == 'restricted':
+            self._capacity_pause()
+        return new_state
+
+    def _notify_capacity(self, state, pct):
+        """One friendly, positively-framed notice per stage. Grace sends a
+        gentle reminder each day it advances."""
+        self.ensure_one()
+        if state in ('ok', None):
+            return
+        # grace reminders repeat (one per day); others fire once per stage.
+        already = self.storage_last_notice
+        if state != 'grace' and already == state:
+            return
+        if state == 'grace' and already == 'grace':
+            # still remind, but don't spam more than once per cron/day
+            pass
+        template = {
+            'warn80': 'saas_core.mail_template_saas_capacity_warn',
+            'full': 'saas_core.mail_template_saas_capacity_full',
+            'grace': 'saas_core.mail_template_saas_capacity_full',
+            'restricted': 'saas_core.mail_template_saas_capacity_paused',
+        }.get(state)
+        if template:
+            try:
+                self._send_notification(template)
+            except Exception:
+                _logger.exception("Capacity notice failed for %s", self.subdomain)
+        self.storage_last_notice = state
+        self._append_log(
+            "Capacity notice (%s): %.0f%% of %g GB used."
+            % (state, pct, self.effective_storage_limit_gb))
+
+    def _capacity_pause(self):
+        """Pause the workspace after grace — reversible the instant the
+        customer upgrades or adds storage. Reuses the suspend path but is
+        ALWAYS presented as 'paused, data safe', never a penalty."""
+        self.ensure_one()
+        if self.state == 'running':
+            try:
+                self.action_suspend()
+            except Exception:
+                _logger.exception(
+                    "Capacity pause: suspend failed for %s; marking suspended.",
+                    self.subdomain)
+                self.state = 'suspended'
+        elif self.state == 'stopped':
+            self.state = 'suspended'
+
+    def _capacity_summary(self):
+        """Customer-facing capacity view — POSITIVE framing only, two clear
+        actions. Drives the portal banner, emails and the 'Fix Now' buttons.
+        Never uses punitive/limit-violation language."""
+        self.ensure_one()
+        block_gb, block_price = self.env['saas.pricing.engine'].storage_block_config()
+        cap = self.effective_storage_limit_gb or 0.0
+        used = round((self.total_storage_bytes or 0.0) / (1024 ** 3), 2)
+        pct = round(used / cap * 100, 1) if cap > 0 else 0.0
+        state = self.storage_state or 'ok'
+        grace = self._storage_grace_days()
+        grace_left = None
+        if self.storage_over_since:
+            grace_left = max(0, grace - (fields.Date.today() - self.storage_over_since).days)
+        copy = {
+            'ok': ("", "", "neutral"),
+            'warn80': (
+                "Your workspace is filling up",
+                "You've used %.0f%% of your storage. Expand any time to keep "
+                "scaling smoothly — upgrade your plan or add a storage block."
+                % pct, "info"),
+            'full': (
+                "Your workspace has reached capacity",
+                "Your service is running normally. To keep adding data, "
+                "expand your capacity — upgrade your plan or add storage.",
+                "warning"),
+            'grace': (
+                "Time to expand your workspace",
+                "You're at full capacity. Upgrade your plan or add storage "
+                "within %s day(s) to keep everything running smoothly."
+                % (grace_left if grace_left is not None else grace), "warning"),
+            'restricted': (
+                "Your workspace is paused — your data is safe",
+                "Upgrade your plan or add storage to switch it back on "
+                "instantly. Nothing has been lost.", "paused"),
+        }.get(state, ("", "", "neutral"))
         return {
-            'included_gb': limit,
-            'used_gb': round((self.total_storage_bytes or 0.0) / (1024 ** 3), 2),
-            'usage_pct': self.storage_usage_pct,
-            'block_gb': overage['block_gb'],
-            'block_price': overage['block_price'],
-            'overage_blocks': overage['blocks'],
-            'overage_over_gb': overage['over_gb'],
-            'estimated_overage_charge': overage['charge'],
+            'state': state,
+            'title': copy[0],
+            'message': copy[1],
+            'tone': copy[2],
+            'used_gb': used,
+            'capacity_gb': cap,
+            'usage_pct': pct,
+            'blocks_owned': self.extra_storage_blocks,
+            'block_gb': block_gb,
+            'block_price': round(block_price, 2),
+            'grace_days_left': grace_left,
             'currency': self.env.company.currency_id.name or 'USD',
         }
 
@@ -7089,9 +7322,18 @@ class SaasInstance(models.Model):
                 _logger.exception(
                     "Payment retry failed for %s", instance.subdomain)
 
+    @staticmethod
+    def _payment_due_date(move):
+        """THE single payment timing anchor (v47/F4): every retry, reminder,
+        dunning and suspension decision derives from this — the invoice due
+        date, falling back to the invoice date. No other date math is used
+        for payment timing anywhere, so the schedules can never diverge."""
+        return move.invoice_date_due or move.invoice_date
+
     def _retry_failed_payments(self, today):
-        """Retry every still-unpaid MANDATORY invoice whose age matches the
-        retry schedule and that hasn't already been attempted today."""
+        """Retry every still-unpaid MANDATORY invoice whose age (measured
+        from its DUE date — F4) matches the retry schedule and that hasn't
+        already been attempted today."""
         self.ensure_one()
         if not self._auto_renew_method():
             return
@@ -7100,18 +7342,18 @@ class SaasInstance(models.Model):
             lambda m: m.move_type == 'out_invoice'
             and m.state == 'posted'
             and m.payment_state not in ('paid', 'in_payment')
-            and m.invoice_date
+            and self._payment_due_date(m)
             and not self._is_optional_invoice(m)
         )
         for inv in invoices:
-            age = (today - inv.invoice_date).days
+            age = (today - self._payment_due_date(inv)).days
             if age not in PAYMENT_RETRY_OFFSET_DAYS:
                 continue
             if Attempt.search_count([
                     ('move_id', '=', inv.id), ('attempted_on', '=', today)]):
                 continue  # already tried today
             self._append_log(
-                "Auto-renew retry (day %d) for invoice %s." % (age, inv.name))
+                "Auto-renew retry (due+%d) for invoice %s." % (age, inv.name))
             self._try_auto_charge_invoice(inv, kind='retry')
 
     @api.model
@@ -7463,12 +7705,6 @@ class SaasInstance(models.Model):
             'price_unit': price,
         })]
 
-        # Trial-conversion promo (A-Trial): 25% off the subscription
-        # RESOURCE price for the first 3 cycles, shown as its own line.
-        promo_line, promo_disc = self._trial_promo_credit_line(price)
-        if promo_line:
-            order_lines.append(promo_line)
-
         # Support plan (P5): a flat monthly fee billed on the SAME cycle as
         # the plan (see _support_order_line). The free/default plan and
         # unpriced plans add nothing (behaviour-neutral until configured).
@@ -7500,25 +7736,13 @@ class SaasInstance(models.Model):
                 # advance the backup date for a line we didn't add.
                 merge_snapshot_month = False
 
-        # Add extra storage charge if usage exceeds the plan limit (A2:
-        # blocks-only — one line per block, billed at the block price; the
-        # customer was never suspended for going over).
-        overage = self.env['saas.pricing.engine'].storage_overage(
-            self.total_storage_bytes, plan.storage_limit,
-        )
-        if overage['charge'] > 0:
-            order_lines.append((0, 0, {
-                'product_id': self._get_billing_product().id,
-                'name': _(
-                    'Extra storage: %d × %d GB block(s) '
-                    '(%d GB over %g GB plan limit) — %s'
-                ) % (
-                    overage['blocks'], overage['block_gb'], overage['over_gb'],
-                    plan.storage_limit, self.name or self.subdomain,
-                ),
-                'product_uom_qty': overage['blocks'],
-                'price_unit': overage['block_price'],
-            }))
+        # v47: storage is billed ONLY for blocks the customer deliberately
+        # PURCHASED (extra_storage_blocks) — never an automatic usage-based
+        # overage. The recurring block line tracks the same period as the
+        # plan (qty = blocks × months) so it matches monthly/yearly cadence.
+        block_line = self._storage_block_order_line(period)
+        if block_line:
+            order_lines.append(block_line)
 
         # Wallet (A4): consume available account credit on this renewal.
         wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
@@ -7566,15 +7790,12 @@ class SaasInstance(models.Model):
             )
         self.write(renewal_vals)
         invoice.action_post()
-        # Settle wallet consumption + burn one trial-promo cycle now that
-        # the invoice exists (so the ledger entry links to the move).
+        # Settle wallet consumption now that the invoice exists (so the
+        # ledger entry links to the move).
         self._wallet_settle_consumption(invoice, wallet_amount)
-        if promo_line:
-            self._consume_trial_promo_cycle(promo_disc)
         self._append_log(
-            "Renewal invoice %s created for %s period.%s"
-            % (invoice.name, period_label,
-               (" Trial promo -%.2f applied." % promo_disc) if promo_line else "")
+            "Renewal invoice %s created for %s period."
+            % (invoice.name, period_label)
         )
         self.message_post(body=_(
             "Renewal invoice %s created (%s). Payment due.",
@@ -7814,14 +8035,10 @@ class SaasInstance(models.Model):
         price = new_plan._get_price_for_period(billing_period)
         period_label = 'Monthly' if billing_period == 'monthly' else 'Yearly'
 
-        # Trial-conversion incentive (A-Trial): arm the 25%-for-3-cycles
-        # promo so it applies to this first invoice and the next two
-        # renewals. Re-armed every time a trial converts.
+        # Store the chosen plan + period — applied on payment. v47: no promo.
         self.write({
             'pending_plan_id': new_plan.id,
             'pending_billing_period': billing_period,
-            'trial_promo_pct': TRIAL_CONVERSION_DISCOUNT_PCT,
-            'trial_promo_cycles_remaining': TRIAL_CONVERSION_CYCLES,
         })
 
         order_lines = [(0, 0, {
@@ -7832,11 +8049,7 @@ class SaasInstance(models.Model):
             'product_uom_qty': 1,
             'price_unit': price,
         })]
-        # 25% welcome discount on the subscription resource price (cycle 1/3).
-        promo_line, promo_disc = self._trial_promo_credit_line(price)
-        if promo_line:
-            order_lines.append(promo_line)
-        # Consume any existing wallet balance too.
+        # Consume any existing wallet balance.
         wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
         if wallet_line:
             order_lines.append(wallet_line)
@@ -7857,23 +8070,15 @@ class SaasInstance(models.Model):
         invoice = order._create_invoices()
         invoice.action_post()
         self._wallet_settle_consumption(invoice, wallet_amount)
-        if promo_line:
-            self._consume_trial_promo_cycle(promo_disc)
         self.pending_change_invoice_id = invoice[:1]
 
         self._append_log(
             "Upgrade to %s (%s) requested. Invoice %s created — awaiting "
-            "payment.%s" % (
-                new_plan.name, period_label, invoice.name,
-                (" Trial welcome discount -%.2f applied (cycle 1 of %d)."
-                 % (promo_disc, TRIAL_CONVERSION_CYCLES)) if promo_line else "")
+            "payment." % (new_plan.name, period_label, invoice.name)
         )
         self.message_post(body=_(
-            "Upgrade to %s (%s) requested. Awaiting payment.%s"
-        ) % (new_plan.name, period_label,
-             _(" You get %g%% off for your first %d billing cycles.")
-             % (TRIAL_CONVERSION_DISCOUNT_PCT, TRIAL_CONVERSION_CYCLES)
-             if promo_line else ""))
+            "Upgrade to %s (%s) requested. Awaiting payment."
+        ) % (new_plan.name, period_label))
 
         # Zero-amount plan: apply immediately
         if invoice.amount_total <= 0:

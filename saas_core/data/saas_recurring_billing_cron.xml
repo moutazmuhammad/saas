@@ -75,6 +75,18 @@
         <field name="active" eval="True"/>
     </record>
 
+    <!-- Wallet: expire spent-down system-issued (bonus) credit lots past
+         their expiry date. Customer-funded money is never touched (v47). -->
+    <record id="ir_cron_saas_wallet_expire_credits" model="ir.cron">
+        <field name="name">SaaS: Expire Bonus Wallet Credits</field>
+        <field name="model_id" ref="saas_core.model_saas_wallet"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_expire_credits()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">days</field>
+        <field name="active" eval="True"/>
+    </record>
+
     <!-- Daily-backup add-on: monthly renewal invoices, independent of the
          main subscription billing cycle. -->
     <record id="ir_cron_saas_daily_backup_renewal" model="ir.cron">

@@ -19,7 +19,9 @@
         <field name="arch" type="xml">
             <list>
                 <field name="partner_id"/>
-                <field name="balance"/>
+                <field name="balance_funded" string="Your balance"/>
+                <field name="balance_bonus" string="Bonus"/>
+                <field name="balance" string="Total"/>
                 <field name="transaction_count"/>
                 <field name="currency_id" column_invisible="1"/>
             </list>
@@ -37,20 +39,43 @@
                 </header>
                 <sheet>
                     <group>
-                        <field name="partner_id"/>
-                        <field name="balance"/>
-                        <field name="currency_id"/>
+                        <group>
+                            <field name="partner_id"/>
+                            <field name="currency_id"/>
+                        </group>
+                        <group>
+                            <field name="balance_funded" string="Your balance (never expires)"/>
+                            <field name="balance_bonus" string="Bonus credit (may expire)"/>
+                            <field name="balance" string="Total"/>
+                        </group>
                     </group>
-                    <field name="transaction_ids" readonly="1">
-                        <list>
-                            <field name="create_date"/>
-                            <field name="origin"/>
-                            <field name="reason"/>
-                            <field name="move_id"/>
-                            <field name="amount"/>
-                            <field name="balance_after"/>
-                        </list>
-                    </field>
+                    <notebook>
+                        <page string="Credit Lots">
+                            <field name="lot_ids" readonly="1">
+                                <list>
+                                    <field name="credit_class"/>
+                                    <field name="amount_initial"/>
+                                    <field name="amount_remaining"/>
+                                    <field name="expiry_date"/>
+                                    <field name="state" widget="badge"/>
+                                    <field name="source_origin"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Ledger">
+                            <field name="transaction_ids" readonly="1">
+                                <list>
+                                    <field name="create_date"/>
+                                    <field name="kind"/>
+                                    <field name="credit_class"/>
+                                    <field name="reason"/>
+                                    <field name="move_id"/>
+                                    <field name="amount"/>
+                                    <field name="balance_after"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
                 </sheet>
             </form>
         </field>
@@ -69,7 +94,8 @@
             <list create="0">
                 <field name="create_date"/>
                 <field name="partner_id"/>
-                <field name="origin"/>
+                <field name="kind"/>
+                <field name="credit_class"/>
                 <field name="reason"/>
                 <field name="move_id"/>
                 <field name="instance_id"/>

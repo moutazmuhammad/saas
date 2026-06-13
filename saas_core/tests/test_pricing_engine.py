@@ -305,36 +305,17 @@ class TestPricingEngine(TransactionCase):
         # 200 GB -> 20 blocks -> 5 + 20 = 25
         self.assertAlmostEqual(q['breakdown']['addons_monthly'], 25.0, places=2)
 
-    def test_storage_overage_blocks_only(self):
-        """A2: overage is BLOCKS-ONLY (per-GB removed). Block counts use
-        ceil(over_gb / block_gb); the spec example must hold exactly."""
-        GB = 1024 ** 3
-        # 20 GB plan, 10 GB block @ $5.
-        self._set({
-            'saas_master.storage_block_gb': '10',
-            'saas_master.storage_block_price': '5',
-        })
-        cases = {21: 1, 29: 1, 30: 1, 31: 2, 40: 2, 41: 3}
-        for used, blocks in cases.items():
-            o = self.engine.storage_overage(used * GB, 20)
-            self.assertEqual(o['mode'], 'block', used)
-            self.assertEqual(o['blocks'], blocks, 'used=%d' % used)
-            self.assertAlmostEqual(o['charge'], blocks * 5.0, places=2)
-        # Under / at the limit -> nothing.
-        o = self.engine.storage_overage(20 * GB, 20)
-        self.assertEqual(o['mode'], 'none')
-        self.assertAlmostEqual(o['charge'], 0.0, places=2)
-        # Block count is shown even when no price set (charge 0).
-        self._set({'saas_master.storage_block_price': '0'})
-        o = self.engine.storage_overage(31 * GB, 20)
-        self.assertEqual(o['blocks'], 2)
-        self.assertAlmostEqual(o['charge'], 0.0, places=2)
-        # There is NO per-GB mode anymore, regardless of legacy param.
-        self._set({'saas_master.extra_storage_price_per_gb': '0.5',
-                   'saas_master.storage_block_gb': '0'})
-        o = self.engine.storage_overage(60 * GB, 50)
-        self.assertEqual(o['mode'], 'none')
-        self.assertAlmostEqual(o['charge'], 0.0, places=2)
+    def test_no_storage_overage_method(self):
+        """v47: usage-based overage is REMOVED — the engine no longer exposes
+        ``storage_overage`` at all. Extra storage is only ever a purchased
+        block or a plan upgrade."""
+        self.assertFalse(hasattr(self.engine, 'storage_overage'))
+        # The block config used by the PURCHASE path still exists.
+        self._set({'saas_master.storage_block_gb': '10',
+                   'saas_master.storage_block_price': '5'})
+        block_gb, block_price = self.engine.storage_block_config()
+        self.assertEqual(block_gb, 10)
+        self.assertAlmostEqual(block_price, 5.0, places=2)
 
     def test_support_plan_flat_not_region_scaled(self):
         """P3: a support plan adds a flat monthly fee, after infra, and is

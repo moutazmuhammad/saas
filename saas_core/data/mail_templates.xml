@@ -249,33 +249,89 @@
     </record>
 
     <!-- ============================================================ -->
-    <!--  Storage usage notice (80 / 90 / 100%) (A2)                   -->
+    <!--  Capacity "upgrade experience" — positive framing only (v47)  -->
+    <!--  Shared body: the capacity summary supplies title + message,  -->
+    <!--  and both CTAs (Upgrade / Add storage) are always present.    -->
     <!-- ============================================================ -->
-    <record id="mail_template_saas_storage_usage" model="mail.template">
-        <field name="name">SaaS: Storage Usage Notice</field>
+    <template id="saas_capacity_email_body">
+        <div style="margin:0;padding:0;font-family:Arial,sans-serif;">
+            <t t-set="cap" t-value="object._capacity_summary()"/>
+            <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
+            <p>Hi <t t-out="object.partner_id.name"/>,</p>
+            <p style="font-size:16px;"><strong><t t-out="cap['title']"/></strong></p>
+            <p t-out="cap['message']"/>
+            <p>You're using <strong><t t-out="'%.1f' % cap['used_gb']"/> GB</strong>
+               of <strong><t t-out="'%g' % cap['capacity_gb']"/> GB</strong>
+               (<t t-out="'%.0f' % cap['usage_pct']"/>%).</p>
+            <p style="margin:24px 0;">
+                <a t-attf-href="/my/instances/{{ object.id }}/change-plan"
+                   style="background:#4f46e5;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:10px;">Upgrade plan</a>
+                <a t-attf-href="/my/instances/{{ object.id }}/add-storage"
+                   style="background:#0ea5e9;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;">Add storage</a>
+            </p>
+            <p>You're always in control — pick whichever option fits best, and
+               your workspace keeps scaling smoothly.</p>
+            <p t-if="support_email">Questions? We're happy to help at
+               <a t-att-href="'mailto:' + support_email"><t t-out="support_email"/></a>.</p>
+            <p>— <t t-out="object.company_id.name"/></p>
+        </div>
+    </template>
+
+    <record id="mail_template_saas_capacity_warn" model="mail.template">
+        <field name="name">SaaS: Capacity — filling up (80%)</field>
         <field name="model_id" ref="saas_core.model_saas_instance"/>
-        <field name="subject">Storage usage at {{ '%.0f' % object.storage_usage_pct }}% for {{ object.name }}</field>
+        <field name="subject">Your workspace {{ object.name }} is filling up</field>
         <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
         <field name="email_to">{{ object.partner_id.email }}</field>
         <field name="body_html" type="html">
-<div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
-    <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
-    <p>Dear <t t-out="object.partner_id.name"/>,</p>
-    <p>Your instance <strong><t t-out="object.name"/></strong> is using
-       <strong><t t-out="'%.1f' % object.storage_used_gb"/> GB</strong>
-       of its <strong><t t-out="'%g' % object.storage_limit_gb"/> GB</strong>
-       included storage
-       (<strong><t t-out="'%.0f' % object.storage_usage_pct"/>%</strong>).</p>
-    <p><strong>Your service continues to run normally</strong> — you are not
-       suspended for going over your plan's storage. Any usage above your
-       included storage is billed automatically in storage blocks on your
-       next invoice.</p>
-    <p>To avoid overage charges you can free up space or upgrade your plan
-       from the <a t-attf-href="/my/instances/{{ object.id }}">customer
-       portal</a>.</p>
-    <p t-if="support_email">Need help? Contact us at
-       <a t-att-href="'mailto:' + support_email"><t t-out="support_email"/></a>.</p>
-    <p>Best regards,<br/><t t-out="object.company_id.name"/></p>
+            <t t-call="saas_core.saas_capacity_email_body"/>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
+    <record id="mail_template_saas_capacity_full" model="mail.template">
+        <field name="name">SaaS: Capacity — reached (100%)</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">Time to expand your workspace {{ object.name }}</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+            <t t-call="saas_core.saas_capacity_email_body"/>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
+    <record id="mail_template_saas_capacity_paused" model="mail.template">
+        <field name="name">SaaS: Capacity — workspace paused</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">Your workspace {{ object.name }} is paused — your data is safe</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+            <t t-call="saas_core.saas_capacity_email_body"/>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
+    <!-- ============================================================ -->
+    <!--  Bonus wallet credit expiring soon (v47)                      -->
+    <!--  Customer money NEVER expires — only labeled bonus credit.    -->
+    <!-- ============================================================ -->
+    <record id="mail_template_saas_wallet_bonus_expiring" model="mail.template">
+        <field name="name">SaaS: Bonus Credit Expiring</field>
+        <field name="model_id" ref="saas_core.model_saas_wallet"/>
+        <field name="subject">You have bonus credit expiring soon</field>
+        <field name="email_from">{{ (object.env.company.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+<div style="margin:0;padding:0;font-family:Arial,sans-serif;">
+    <p>Hi <t t-out="object.partner_id.name"/>,</p>
+    <p>You have <strong><t t-out="object.currency_id.symbol or ''"/><t t-out="'%.2f' % object.balance_bonus"/></strong>
+       of <strong>bonus credit</strong> that will expire soon. It is applied
+       to your invoices automatically — no action needed to use it.</p>
+    <p><strong>Your own balance never expires</strong> — only promotional
+       bonus credit has an expiry date.</p>
+    <p>Best regards,<br/><t t-out="object.env.company.name"/></p>
 </div>
         </field>
         <field name="auto_delete" eval="True"/>

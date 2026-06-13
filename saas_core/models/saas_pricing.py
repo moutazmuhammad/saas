@@ -370,42 +370,11 @@ class SaasPricingEngine(models.AbstractModel):
             block_price = 0.0
         return block_gb, block_price
 
-    @api.model
-    def storage_overage(self, total_bytes, plan_storage_limit_gb):
-        """Monthly charge for storage ABOVE the plan allowance, billed in
-        whole BLOCKS only (A2 — per-GB overage was removed).
-
-        A block is ``saas_master.storage_block_gb`` GB at
-        ``saas_master.storage_block_price`` per month. Usage above the
-        plan limit is billed as ``ceil(over_gb / block_gb)`` whole blocks
-        (e.g. 20 GB plan, 10 GB block: 21→1, 29→1, 30→1, 31→2 blocks).
-
-        Block COUNT is always computed for display; ``charge`` is 0 until
-        the operator sets a block price. Returns
-        ``{mode, over_gb, block_gb, block_price, blocks, charge}``.
-        Service is NEVER suspended for overage — the customer keeps
-        operating and the blocks are billed on the next renewal.
-        """
-        block_gb, block_price = self.storage_block_config()
-        limit_gb = plan_storage_limit_gb or 0
-        result = {
-            'mode': 'none', 'over_gb': 0, 'block_gb': block_gb,
-            'block_price': round(block_price, 2), 'blocks': 0, 'charge': 0.0,
-        }
-        if limit_gb <= 0 or block_gb <= 0:
-            return result
-        limit_bytes = int(round(limit_gb * (1024 ** 3)))
-        if (total_bytes or 0) <= limit_bytes:
-            return result
-        over_gb = math.ceil((total_bytes - limit_bytes) / (1024 ** 3))
-        blocks = math.ceil(over_gb / block_gb)
-        result.update({
-            'mode': 'block',
-            'over_gb': over_gb,
-            'blocks': blocks,
-            'charge': round(blocks * block_price, 2),
-        })
-        return result
+    # v47: ``storage_overage`` was REMOVED. There is no usage-based / per-GB
+    # overage billing anywhere. Extra storage is sold ONLY as purchased
+    # blocks (a deliberate recurring add-on) or via a plan upgrade — see
+    # ``saas.instance.action_purchase_storage_block`` and the capacity state
+    # machine (``_evaluate_capacity``).
 
     @api.model
     def snapshot_price_per_gb(self):
