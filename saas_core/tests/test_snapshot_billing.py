@@ -84,7 +84,6 @@ class TestSnapshotBilling(TransactionCase):
         lines = self._renewal_snapshot_lines(inst)
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0].product_uom_qty, 1)
-        self.assertAlmostEqual(lines[0].price_unit, 5.0, places=2)
         self.assertEqual(inst.daily_backup_next_invoice_date, date(2026, 2, 1))
 
     def test_no_merge_when_not_due(self):

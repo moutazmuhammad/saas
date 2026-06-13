@@ -1732,6 +1732,35 @@ class SaasInstance(models.Model):
             "%.2f added to your wallet — %s. Wallet balance: %.2f."
         ) % (amount, reason or origin, wallet.balance))
 
+    def _void_unpaid_invoices_refund_credit(self):
+        """Cancel every still-unpaid posted invoice for this instance,
+        returning any wallet credit that was RESERVED on them.
+
+        Wallet credit is reserved (consumed) when an invoice is posted so the
+        figure shown on the invoice is exactly what gets debited (no race with
+        a concurrent flow). That reservation is correct while the invoice can
+        still be paid, but when the instance is cancelled those invoices are
+        abandoned — without this, the reserved credit would be stranded
+        forever. ``account.move.button_cancel`` already refunds the consumed
+        credit idempotently (``_saas_refund_wallet_credit``), so cancelling
+        the abandoned invoices makes the customer whole."""
+        self.ensure_one()
+        unpaid = self._get_all_invoices().filtered(
+            lambda m: m.move_type == 'out_invoice'
+            and m.state == 'posted'
+            and m.payment_state not in ('paid', 'in_payment')
+            and m.amount_residual > 0
+        )
+        for inv in unpaid:
+            try:
+                inv.button_cancel()
+            except Exception:
+                _logger.exception(
+                    "Failed to void unpaid invoice %s while cancelling %s — "
+                    "wallet credit may need a manual refund.",
+                    inv.name, self.subdomain,
+                )
+
     def action_confirm_and_bill(self):
         """Validate instance, create sale order, confirm it, and generate invoice.
 
@@ -4237,6 +4266,7 @@ class SaasInstance(models.Model):
                 )
             else:
                 # No server assigned — nothing to clean up
+                rec._void_unpaid_invoices_refund_credit()
                 rec.state = 'cancelled'
 
     def action_draft(self):
@@ -4652,6 +4682,10 @@ class SaasInstance(models.Model):
                 'last_pull': False,
                 'error_message': False,
             })
+
+        # Return any wallet credit reserved on now-abandoned unpaid invoices
+        # before finalising the cancellation (so it's never stranded).
+        self._void_unpaid_invoices_refund_credit()
 
         self.state = 'cancelled'
         self.pending_operation = False
@@ -7133,7 +7167,7 @@ class SaasInstance(models.Model):
         # and the next charge falls one month later. Only set it once, and
         # only when a price is actually configured — otherwise the renewal
         # cron would log "price not configured" every day.
-        if (self.is_hosting and self.daily_backup_enabled
+        if (self.daily_backup_enabled
                 and not self.daily_backup_next_invoice_date
                 and self._get_daily_backup_price() > 0):
             self.daily_backup_last_invoice_date = today
@@ -7504,7 +7538,8 @@ class SaasInstance(models.Model):
         resume them once it's paid. Idempotent — safe to call from the
         renewal cron and from the payment hook."""
         self.ensure_one()
-        if not (self.is_hosting and self.daily_backup_enabled):
+        # Applies to any instance with the add-on (hosting or services).
+        if not self.daily_backup_enabled:
             return
         cutoff = fields.Date.today() - relativedelta(
             days=DAILY_BACKUP_SUSPEND_GRACE_DAYS,
@@ -7579,7 +7614,12 @@ class SaasInstance(models.Model):
         leave the cron re-issuing the same charge tomorrow.
         """
         self.ensure_one()
-        if not (self.is_hosting and self.daily_backup_enabled):
+        # The daily-backup add-on is sold to BOTH hosting and managed-services
+        # instances (see ``action_purchase_daily_backup``), so the monthly
+        # renewal must bill either kind — otherwise a services customer pays
+        # once at activation and is never billed again while snapshots keep
+        # consuming bucket storage.
+        if not self.daily_backup_enabled:
             return
         # One reusable definition of the snapshot line (M2). Returns None
         # when backups are off or the price isn't configured.
@@ -8338,40 +8378,78 @@ class SaasInstance(models.Model):
     def _request_upgrade(self, new_plan, billing_period, new_price, old_price):
         """Create the proration invoice for an upgrade. Applied on payment.
 
-        A3 + A4: the customer is credited for the FULL unused value of the
-        current period (no 2-day clawback). That credit reduces the upgrade
-        invoice directly; any SURPLUS (unused value beyond the new plan
-        price) is NOT forfeited — it is moved into the customer's wallet
-        when the upgrade is applied, so prepaid value is never lost. Any
-        existing wallet balance is also consumed on the invoice."""
+        Two cases, both customer-fair and free of the old churn arbitrage:
+
+        * SAME billing period (monthly→monthly / yearly→yearly to a bigger
+          plan): the current billing cycle is KEPT (never reset) and the
+          customer is charged only the PRORATED DIFFERENCE between the new
+          and old plan for the days left in the cycle. Because the cycle is
+          not reset, a customer can't oscillate plan changes to refresh their
+          remaining time and mint wallet credit. The invoice line is exactly
+          the incremental cost — no hidden off-ledger discount.
+
+        * PERIOD change (monthly→yearly) or no active cycle: a fresh period
+          starts at the new price, the full unused value of the old period is
+          credited as an EXPLICIT, visible negative invoice line (not baked
+          into the price), and any surplus beyond the new price is carried to
+          the wallet when the change is applied (A4 — prepaid value is never
+          lost). The cycle is reset because the period genuinely restarts.
+
+        Any existing wallet balance is also consumed on the invoice."""
         self.ensure_one()
         period_label = 'Yearly' if billing_period == 'yearly' else 'Monthly'
+        old_period = self.billing_period or 'monthly'
 
-        remaining_value, remaining_days, _total_days = self._proration_credit(
+        remaining_value, remaining_days, total_days = self._proration_credit(
             old_price)
-        remaining_info = ''
-        if remaining_value > 0:
-            remaining_info = (
-                ' (credit %.2f for %d remaining day(s) on %s)'
-                % (remaining_value, remaining_days, self.plan_id.name)
-            )
 
-        # Direct proration credit reduces the invoice; surplus goes to the
-        # wallet on apply (never forfeited).
-        applied_credit = min(remaining_value, new_price)
-        surplus = round(max(0.0, remaining_value - new_price), 2)
-        final_charge = round(new_price - applied_credit, 2)
-        if surplus > 0.01:
-            remaining_info += (
-                ' — %.2f surplus credit will be added to your wallet '
-                '(prepaid value is never lost)' % surplus
-            )
+        # Same-period upgrade keeps the cycle and charges only the difference.
+        same_period = (old_period == billing_period) and total_days > 0
+        surplus = 0.0
+        order_lines = []
 
-        self._append_log(
-            "Upgrade calculation: new_price=%.2f, remaining_value=%.2f, "
-            "final_charge=%.2f, wallet_surplus=%.2f%s"
-            % (new_price, remaining_value, final_charge, surplus, remaining_info)
-        )
+        if same_period:
+            new_remaining = round(new_price * remaining_days / total_days, 2)
+            charge = round(max(0.0, new_remaining - remaining_value), 2)
+            line_name = _(
+                '%s (%s) — %s — Plan upgrade (prorated difference for %d '
+                'remaining day(s))'
+            ) % (new_plan.name, period_label, self.name or self.subdomain,
+                 remaining_days)
+            order_lines.append((0, 0, {
+                'product_id': self._get_billing_product().id,
+                'name': line_name,
+                'product_uom_qty': 1,
+                'price_unit': charge,
+            }))
+            self._append_log(
+                "Upgrade (same period): new_price=%.2f, prorated_diff=%.2f "
+                "for %d/%d day(s) — billing cycle kept."
+                % (new_price, charge, remaining_days, total_days))
+        else:
+            # Fresh period at the new price; full unused value credited as an
+            # explicit line; surplus carried to the wallet on apply.
+            applied_credit = round(min(remaining_value, new_price), 2)
+            surplus = round(max(0.0, remaining_value - new_price), 2)
+            order_lines.append((0, 0, {
+                'product_id': self._get_billing_product().id,
+                'name': _('%s (%s) — %s — Plan upgrade') % (
+                    new_plan.name, period_label, self.name or self.subdomain),
+                'product_uom_qty': 1,
+                'price_unit': new_price,
+            }))
+            if applied_credit > 0:
+                order_lines.append((0, 0, {
+                    'product_id': self._get_billing_product().id,
+                    'name': _('Credit — %d unused day(s) on %s') % (
+                        remaining_days, self.plan_id.name),
+                    'product_uom_qty': 1,
+                    'price_unit': -applied_credit,
+                }))
+            self._append_log(
+                "Upgrade (new period): new_price=%.2f, credit=%.2f, "
+                "wallet_surplus=%.2f — billing cycle resets."
+                % (new_price, applied_credit, surplus))
 
         # Store pending upgrade + the surplus to grant on apply.
         self.write({
@@ -8380,17 +8458,6 @@ class SaasInstance(models.Model):
             'pending_wallet_credit': surplus,
         })
 
-        line_name = _('%s (%s) — %s — Plan upgrade%s') % (
-            new_plan.name, period_label,
-            self.name or self.subdomain, remaining_info,
-        )
-
-        order_lines = [(0, 0, {
-            'product_id': self._get_billing_product().id,
-            'name': line_name,
-            'product_uom_qty': 1,
-            'price_unit': final_charge,
-        })]
         # Consume existing wallet balance on the upgrade invoice too.
         wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
         if wallet_line:
@@ -8416,7 +8483,7 @@ class SaasInstance(models.Model):
 
         self.message_post(body=_(
             "Upgrade to %s (%s) requested. Invoice %s (%.2f) — awaiting payment."
-        ) % (new_plan.name, period_label, invoice.name, final_charge))
+        ) % (new_plan.name, period_label, invoice.name, invoice.amount_total))
 
         # Zero charge: apply immediately
         if invoice.amount_total <= 0:
@@ -8434,9 +8501,17 @@ class SaasInstance(models.Model):
 
         billing_period = self.pending_billing_period or self.billing_period or 'monthly'
         old_plan = self.plan_id
+        old_period = self.billing_period or 'monthly'
         surplus = self.pending_wallet_credit or 0.0
+        # Keep the existing billing cycle for a same-period upgrade — the
+        # customer only paid the prorated DIFFERENCE, so the next renewal is
+        # still due at the original date (and full new-plan price). Reset the
+        # cycle only when the period actually changed (e.g. monthly→yearly) or
+        # there is no active cycle to keep. This is what removes the old
+        # "reset every upgrade" arbitrage.
+        reset_cycle = (old_period != billing_period) or not (
+            self.next_invoice_date and self.last_invoice_date)
 
-        # Switch plan and reset billing cycle from today
         self.write({
             'plan_id': new_plan.id,
             'billing_period': billing_period,
@@ -8454,15 +8529,16 @@ class SaasInstance(models.Model):
                 reason=_('Unused value from %s carried to wallet on upgrade')
                 % (old_plan.name if old_plan else _('previous plan')))
 
-        # Reset billing cycle from today
-        self._set_next_invoice_date()
+        if reset_cycle:
+            self._set_next_invoice_date()
 
+        cycle_msg = 'reset' if reset_cycle else 'kept (prorated difference billed)'
         self._append_log(
-            "Payment received. Plan upgraded: %s → %s. Billing cycle reset."
-            % (old_plan.name if old_plan else 'None', new_plan.name)
+            "Payment received. Plan upgraded: %s → %s. Billing cycle %s."
+            % (old_plan.name if old_plan else 'None', new_plan.name, cycle_msg)
         )
         self.message_post(body=_(
-            "Payment confirmed. Upgraded from %s to %s. Billing cycle reset."
+            "Payment confirmed. Upgraded from %s to %s."
         ) % (old_plan.name if old_plan else '—', new_plan.name))
 
         if self.state == 'running':

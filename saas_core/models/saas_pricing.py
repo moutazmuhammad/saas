@@ -238,7 +238,11 @@ class SaasPricingEngine(models.AbstractModel):
         if ceiling['monthly'] is not None:
             resource_pre = min(resource_pre, ceiling['monthly'])
         floored = floor > resource_base
-        resource_monthly = resource_pre * region_factor
+        # Region scaling, then re-apply the cost floor AFTER it: a region
+        # ``price_multiplier`` below 1.0 must never scale a config below the
+        # real infra cost. With the default floor of 0 this is a no-op
+        # (``max(x, 0) == x``), so existing prices are unchanged.
+        resource_monthly = max(resource_pre * region_factor, floor)
         addons_monthly = self._addons_total(kind, addon_codes, storage)
         # Support plan (P3): flat monthly fee, NOT scaled by region, added
         # after infra. 0 when no plan / the free default / unknown code.
@@ -266,7 +270,11 @@ class SaasPricingEngine(models.AbstractModel):
         resource_yearly = max(resource_base, floor) * 12 * (1 - discount)
         if ceiling['yearly'] is not None:
             resource_yearly = min(resource_yearly, ceiling['yearly'])
-        resource_yearly *= region_factor
+        # Same region-then-floor guard as the monthly path: a sub-1.0 region
+        # multiplier can never pull the yearly infra price below the (yearly-
+        # equivalent) cost floor. No-op when the floor is 0.
+        floor_yearly = floor * 12 * (1 - discount)
+        resource_yearly = max(resource_yearly * region_factor, floor_yearly)
         # Flat extras: full monthly price x12, NO yearly discount.
         other_yearly = (addons_monthly + support_monthly) * 12
         pre_minimum_yearly = resource_yearly + other_yearly
