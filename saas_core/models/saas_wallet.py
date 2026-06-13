@@ -41,7 +41,7 @@ class SaasWallet(models.Model):
     transaction_ids = fields.One2many(
         'saas.wallet.transaction', 'wallet_id', string='Ledger',
     )
-    transaction_count = fields.Integer(compute='_compute_balance')
+    transaction_count = fields.Integer(compute='_compute_transaction_count')
 
     _sql_constraints = [
         ('partner_uniq', 'unique(partner_id)',
@@ -51,9 +51,13 @@ class SaasWallet(models.Model):
     @api.depends('transaction_ids.amount')
     def _compute_balance(self):
         for wallet in self:
-            txns = wallet.transaction_ids
-            wallet.balance = round(sum(txns.mapped('amount')), 2)
-            wallet.transaction_count = len(txns)
+            wallet.balance = round(
+                sum(wallet.transaction_ids.mapped('amount')), 2)
+
+    @api.depends('transaction_ids')
+    def _compute_transaction_count(self):
+        for wallet in self:
+            wallet.transaction_count = len(wallet.transaction_ids)
 
     # ------------------------------------------------------------------
     # Lookup / creation
