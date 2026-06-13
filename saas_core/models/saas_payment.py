@@ -77,7 +77,9 @@ class SaasPaymentMethod(models.Model):
         'payment.provider', string='Payment Provider', required=True,
         ondelete='cascade',
     )
-    provider_code = fields.Char(
+    # payment.provider.code is a Selection, so the related field must be a
+    # Selection too (matching type) — not Char.
+    provider_code = fields.Selection(
         related='provider_id.code', store=True, string='Provider Code',
     )
     token_id = fields.Many2one(

@@ -84,6 +84,8 @@ class SaasWallet(models.Model):
         """Row-lock this wallet so concurrent credit/consume calls (renewal
         cron + portal action) can't race on the balance."""
         self.ensure_one()
+        # Make sure a just-created wallet is in the DB before we lock its row.
+        self.flush_recordset()
         self.env.cr.execute(
             "SELECT id FROM saas_wallet WHERE id = %s FOR UPDATE", (self.id,))
         self.invalidate_recordset(['balance'])

@@ -195,29 +195,6 @@
         </field>
     </record>
 
-    <!-- ================= Menus ================= -->
-    <menuitem id="saas_master_menu_billing"
-              name="Billing"
-              parent="saas_master_menu_root"
-              sequence="20"/>
-    <menuitem id="saas_master_menu_wallets"
-              name="Customer Wallets"
-              parent="saas_master_menu_billing"
-              action="saas_wallet_action"
-              sequence="10"/>
-    <menuitem id="saas_master_menu_payment_methods"
-              name="Saved Payment Methods"
-              parent="saas_master_menu_billing"
-              action="saas_payment_method_action"
-              sequence="20"/>
-    <menuitem id="saas_master_menu_payment_attempts"
-              name="Payment Attempts"
-              parent="saas_master_menu_billing"
-              action="saas_payment_attempt_action"
-              sequence="30"/>
-    <menuitem id="saas_master_menu_payment_routing"
-              name="Payment Provider Routing"
-              parent="saas_master_menu_configuration"
-              action="saas_payment_provider_config_action"
-              sequence="60"/>
+    <!-- Menus live in saas_menus.xml (loaded last, after the root /
+         configuration parent menus exist). -->
 </odoo>
