@@ -121,10 +121,12 @@ class SaasPlan(models.Model):
     storage_limit = fields.Float(
         string='Storage Limit (GB)',
         default=5.0,
-        help='Maximum total storage (container disk + database) in GB. '
-             'Instances exceeding this limit will be suspended. '
-             'Also used for downgrade eligibility (blocked if current '
-             'usage >= 75%% of target plan limit).',
+        help='Included total storage (container disk + database) in GB. '
+             'Usage above this is NOT suspended (A2) — it keeps running and '
+             'is billed in storage blocks on the next renewal. The customer '
+             'is notified at 80/90/100%% of the limit. Also used for '
+             'downgrade eligibility (blocked if current usage >= 75%% of '
+             'the target plan limit).',
     )
     instance_count = fields.Integer(
         string='Instances',

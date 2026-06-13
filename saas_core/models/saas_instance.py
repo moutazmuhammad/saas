@@ -68,6 +68,23 @@ OPTIONAL_INVOICE_ORIGIN_PREFIXES = (
 # paused. Snapshots resume automatically once the invoice is paid.
 DAILY_BACKUP_SUSPEND_GRACE_DAYS = 3
 
+# Trial-conversion incentive (A-Trial): a customer converting from a free
+# trial to a paid plan gets this discount off the subscription RESOURCE
+# price for this many of the first billing cycles. The discount never
+# touches support / snapshot / overage / other fixed fees (A5 discount
+# scope).
+TRIAL_CONVERSION_DISCOUNT_PCT = 25.0
+TRIAL_CONVERSION_CYCLES = 3
+
+# Auto-renew retry schedule (A1): days AFTER the invoice date on which the
+# saved payment method is re-charged if still unpaid. The renewal-date
+# attempt is day 0; these are the follow-ups. All fall inside the default
+# 7-day grace period, so suspension only happens after the last retry.
+PAYMENT_RETRY_OFFSET_DAYS = (1, 3, 5)
+
+# Auto-renew reminders (A1): days BEFORE the renewal date to notify.
+RENEWAL_REMINDER_OFFSET_DAYS = (7, 1)
+
 # ----------------------------------------------------------------------
 # Live metrics sampling — measurement is decoupled from viewing so it
 # scales with the number of *watched instances*, not the number of
@@ -178,7 +195,8 @@ class SaasInstance(models.Model):
         string='Region',
         index=True,
         ondelete='restrict',
-        default=lambda self: self.env['saas.region']._get_default(),
+        default=lambda self: self.env['saas.region']._recommended_available()
+        or self.env['saas.region']._get_default(),
         help='Region the instance is hosted in. Chosen at creation and '
              'fixed thereafter — drives region pricing and constrains '
              'server allocation (proxy/docker/db all in this region). '
@@ -554,6 +572,50 @@ class SaasInstance(models.Model):
         help='Whether a suspension warning email has been sent for the '
              'current overdue period.',
     )
+    # Auto-renew reminder flags (A1) — reset every cycle in
+    # ``_set_next_invoice_date`` / on renewal so the 7-day and 1-day
+    # notices fire once per period.
+    renewal_reminder_7d_sent = fields.Boolean(default=False, copy=False)
+    renewal_reminder_1d_sent = fields.Boolean(default=False, copy=False)
+
+    # Saved payment method chosen for auto-renew (A1). Provider-agnostic
+    # wrapper that stores ONLY safe references (provider id + external
+    # customer / token refs); the legacy ``payment_token_id`` is kept in
+    # sync for the existing charge path.
+    saas_payment_method_id = fields.Many2one(
+        'saas.payment.method', string='Auto-renew Payment Method',
+        copy=False, ondelete='set null',
+    )
+
+    # Wallet (A4): surplus prepaid value to move into the customer's
+    # wallet when a pending plan change is actually applied (on payment),
+    # so unused subscription value is never forfeited on an upgrade.
+    pending_wallet_credit = fields.Float(
+        string='Pending Wallet Credit', copy=False, default=0.0,
+    )
+
+    # Trial-conversion promo (A-Trial): 25% off the subscription RESOURCE
+    # price for the first 3 billing cycles after converting from a trial.
+    trial_promo_cycles_remaining = fields.Integer(
+        string='Trial Promo Cycles Left', copy=False, default=0,
+        help='Remaining billing cycles that still receive the '
+             'trial-conversion discount.',
+    )
+    trial_promo_pct = fields.Float(
+        string='Trial Promo Discount %', copy=False, default=0.0,
+    )
+    trial_promo_total_saved = fields.Float(
+        string='Trial Promo Total Saved', copy=False, default=0.0,
+        help='Cumulative discount granted by the trial-conversion promo '
+             '(reporting / analytics).',
+    )
+
+    # Storage usage notification high-water mark (A2): the last threshold
+    # (80/90/100) the customer was emailed about, so we notify once per
+    # threshold crossed and reset when usage falls back below 80%.
+    storage_notice_level = fields.Integer(
+        string='Storage Notice Level', copy=False, default=0,
+    )
 
     # ========== Backups ==========
     backup_ids = fields.One2many(
@@ -611,6 +673,24 @@ class SaasInstance(models.Model):
         string='Total Storage (bytes)',
         readonly=True,
     )
+    # A2: storage display (included / used) — cheap non-stored computes used
+    # by the portal, the storage-usage email and the overage summary. NOTE:
+    # ``storage_usage_pct`` already exists above (kept by the usage refresh
+    # cron); these two only add the absolute GB figures.
+    storage_used_gb = fields.Float(
+        string='Storage Used (GB)', compute='_compute_storage_gb',
+    )
+    storage_limit_gb = fields.Float(
+        string='Storage Included (GB)', compute='_compute_storage_gb',
+    )
+
+    @api.depends('total_storage_bytes', 'plan_id.storage_limit')
+    def _compute_storage_gb(self):
+        for rec in self:
+            rec.storage_used_gb = round(
+                (rec.total_storage_bytes or 0.0) / (1024 ** 3), 2)
+            rec.storage_limit_gb = rec.plan_id.storage_limit or 0.0
+
     usage_last_updated = fields.Datetime(
         string='Usage Last Updated',
         readonly=True,
@@ -1243,8 +1323,11 @@ class SaasInstance(models.Model):
         gb = max(1, math.ceil((retained.size_mb or 0.0) / 1024.0))
         months = 1
         if retained and retained.create_date:
-            days = (fields.Date.today() - retained.create_date.date()).days
-            months = max(1, math.ceil(days / 30.0))
+            # A5: whole CALENDAR months retained (no days/30 approximation).
+            months = max(1, self.env['saas.pricing.engine'].months_between(
+                retained.create_date.date(), fields.Date.today()))
+        # This is a FIXED one-off fee — never touched by the yearly
+        # subscription discount (A5 discount scope).
         return round(months * gb * per_gb, 2)
 
     def action_purchase_daily_backup(self):
@@ -1401,6 +1484,119 @@ class SaasInstance(models.Model):
             'price_unit': price,
         })
 
+    # ==================================================================
+    #  Wallet credit (A4) + trial-conversion promo (A-Trial) helpers
+    #  ─ the single, reusable plumbing every invoice-creating flow uses
+    #    so prepaid value is never lost and the promo / wallet are shown
+    #    explicitly on the invoice as their own lines.
+    # ==================================================================
+    def _wallet(self, create=True):
+        """This instance's customer wallet (commercial partner)."""
+        self.ensure_one()
+        return self.env['saas.wallet']._for_partner(
+            self.partner_id, create=create)
+
+    @staticmethod
+    def _order_lines_subtotal(order_lines):
+        """Sum of (qty × unit) over a list of (0,0,vals) SO-line commands."""
+        total = 0.0
+        for cmd in order_lines:
+            vals = cmd[2] if len(cmd) > 2 and isinstance(cmd[2], dict) else {}
+            total += (vals.get('price_unit') or 0.0) * (
+                vals.get('product_uom_qty') or 0.0)
+        return round(total, 2)
+
+    def _wallet_credit_line(self, order_lines):
+        """Negative SO line that applies available wallet credit to these
+        lines, capped at their positive subtotal. Returns ``(line, amount)``
+        or ``(None, 0.0)``. Locks the wallet so the amount shown on the
+        invoice is exactly what gets debited (no race with another flow).
+        The caller MUST call ``_wallet_settle_consumption`` after the
+        invoice is posted."""
+        self.ensure_one()
+        wallet = self._wallet(create=False)
+        if not wallet or wallet.balance <= 0:
+            return None, 0.0
+        wallet._lock()
+        subtotal = self._order_lines_subtotal(order_lines)
+        if subtotal <= 0:
+            return None, 0.0
+        amount = round(min(wallet.balance, subtotal), 2)
+        if amount <= 0:
+            return None, 0.0
+        line = (0, 0, {
+            'product_id': self._get_billing_product().id,
+            'name': _('Wallet credit applied — %s') % (
+                self.name or self.subdomain),
+            'product_uom_qty': 1,
+            'price_unit': -amount,
+        })
+        return line, amount
+
+    def _wallet_settle_consumption(self, invoice, amount):
+        """Debit the wallet for credit applied to ``invoice`` and link the
+        ledger entry to the move (so it can be refunded if cancelled)."""
+        self.ensure_one()
+        if amount <= 0 or not invoice:
+            return
+        self._wallet(create=True)._consume(
+            amount, origin='invoice_consumption',
+            reason=_('Applied to invoice %s') % (invoice.name or ''),
+            move=invoice, instance=self)
+
+    def _grant_wallet_credit(self, amount, origin, reason=''):
+        """Move unused/forfeited subscription value into the wallet so it is
+        never lost (A4). No-op for non-positive amounts."""
+        self.ensure_one()
+        if (amount or 0.0) <= 0:
+            return
+        wallet = self._wallet(create=True)
+        wallet._credit(round(amount, 2), origin=origin, reason=reason,
+                       instance=self)
+        self._append_log(
+            "Wallet credited %.2f (%s). New balance: %.2f."
+            % (amount, origin, wallet.balance))
+        self.message_post(body=_(
+            "%.2f added to your wallet — %s. Wallet balance: %.2f."
+        ) % (amount, reason or origin, wallet.balance))
+
+    # ---------- Trial-conversion promo ----------
+    def _trial_promo_credit_line(self, base_resource_price):
+        """Negative SO line for the active trial-conversion promo applied to
+        the subscription RESOURCE price (never to support / snapshot /
+        overage — A5 discount scope). Returns ``(line, discount)`` or
+        ``(None, 0.0)``. Does NOT decrement — call
+        ``_consume_trial_promo_cycle`` once the invoice is created."""
+        self.ensure_one()
+        if (self.trial_promo_cycles_remaining <= 0
+                or self.trial_promo_pct <= 0 or base_resource_price <= 0):
+            return None, 0.0
+        disc = round(base_resource_price * self.trial_promo_pct / 100.0, 2)
+        if disc <= 0:
+            return None, 0.0
+        cycle_no = (TRIAL_CONVERSION_CYCLES
+                    - self.trial_promo_cycles_remaining + 1)
+        line = (0, 0, {
+            'product_id': self._get_billing_product().id,
+            'name': _('Trial welcome discount %g%% (cycle %d of %d) — %s') % (
+                self.trial_promo_pct, cycle_no, TRIAL_CONVERSION_CYCLES,
+                self.name or self.subdomain),
+            'product_uom_qty': 1,
+            'price_unit': -disc,
+        })
+        return line, disc
+
+    def _consume_trial_promo_cycle(self, discount_applied):
+        """Burn one promo cycle and record the saving for reporting."""
+        self.ensure_one()
+        if self.trial_promo_cycles_remaining > 0:
+            self.write({
+                'trial_promo_cycles_remaining':
+                    self.trial_promo_cycles_remaining - 1,
+                'trial_promo_total_saved':
+                    self.trial_promo_total_saved + (discount_applied or 0.0),
+            })
+
     def action_confirm_and_bill(self):
         """Validate instance, create sale order, confirm it, and generate invoice.
 
@@ -1445,6 +1641,11 @@ class SaasInstance(models.Model):
             if snapshot_line:
                 order_lines.append(snapshot_line)
 
+        # Wallet (A4): consume any available account credit on this invoice.
+        wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
+        if wallet_line:
+            order_lines.append(wallet_line)
+
         # -- Create & confirm sale order --
         order_vals = {
             'partner_id': self.partner_id.id,
@@ -1460,6 +1661,7 @@ class SaasInstance(models.Model):
         # -- Create & post invoice --
         invoice = order._create_invoices()
         invoice.action_post()
+        self._wallet_settle_consumption(invoice, wallet_amount)
 
         # -- Transition state & auto-deploy --
         if invoice.amount_total <= 0:
@@ -6415,25 +6617,83 @@ class SaasInstance(models.Model):
 
                         total_bytes = instance.total_storage_bytes
                         limit_bytes = int(round(instance.plan_id.storage_limit * (1024 ** 3)))
+                        # A2: usage notifications at 80 / 90 / 100% — the
+                        # service is NEVER suspended for storage; overage is
+                        # billed in blocks on the next renewal.
+                        instance._notify_storage_usage(total_bytes, limit_bytes)
                         if total_bytes > limit_bytes:
-                            # Log overage — extra GB will be charged on next renewal
-                            extra_gb = (total_bytes - limit_bytes) / (1024 ** 3)
+                            overage = self.env['saas.pricing.engine'].storage_overage(
+                                total_bytes, instance.plan_id.storage_limit)
                             instance._append_log(
                                 "STORAGE OVERAGE: %.2f GB used, plan limit %.2f GB, "
-                                "extra %.2f GB (will be charged on next renewal)."
+                                "%d GB over → %d block(s) (billed on next renewal)."
                                 % (total_bytes / (1024 ** 3),
-                                   instance.plan_id.storage_limit, extra_gb)
+                                   instance.plan_id.storage_limit,
+                                   overage['over_gb'], overage['blocks'])
                             )
                             _logger.info(
-                                "Instance %s: storage %.2f GB exceeds %.2f GB limit, "
-                                "extra %.2f GB will be billed",
+                                "Instance %s: storage %.2f GB exceeds %.2f GB "
+                                "limit → %d block(s) will be billed",
                                 instance.subdomain, total_bytes / (1024 ** 3),
-                                instance.plan_id.storage_limit, extra_gb,
+                                instance.plan_id.storage_limit, overage['blocks'],
                             )
             except Exception:
                 _logger.exception(
                     "Failed to connect to docker server id=%s for storage checks", server_id,
                 )
+
+    def _notify_storage_usage(self, total_bytes, limit_bytes):
+        """Send an 80 / 90 / 100% storage-usage notice at most once per
+        threshold crossed (A2). NEVER suspends — informational only. The
+        high-water mark resets once usage falls back below 80% so the
+        customer is notified again on the next climb."""
+        self.ensure_one()
+        if limit_bytes <= 0:
+            return
+        pct = (total_bytes or 0) / limit_bytes * 100.0
+        if pct >= 100:
+            threshold = 100
+        elif pct >= 90:
+            threshold = 90
+        elif pct >= 80:
+            threshold = 80
+        else:
+            threshold = 0
+        if threshold == 0:
+            if self.storage_notice_level:
+                self.storage_notice_level = 0
+            return
+        if threshold <= self.storage_notice_level:
+            return
+        self.storage_notice_level = threshold
+        try:
+            self._send_notification('saas_core.mail_template_saas_storage_usage')
+        except Exception:
+            _logger.exception(
+                "Storage-usage notice failed for %s", self.subdomain)
+        self._append_log(
+            "Storage usage notice: %.0f%% of the %g GB plan limit used "
+            "(threshold %d%%). Service continues normally; overage is "
+            "billed in blocks." % (pct, self.plan_id.storage_limit, threshold))
+
+    def _storage_billing_summary(self):
+        """Portal/API view of storage billing (A2): included GB, current
+        usage, overage block count and the estimated next-invoice charge."""
+        self.ensure_one()
+        limit = self.plan_id.storage_limit or 0.0
+        overage = self.env['saas.pricing.engine'].storage_overage(
+            self.total_storage_bytes, limit)
+        return {
+            'included_gb': limit,
+            'used_gb': round((self.total_storage_bytes or 0.0) / (1024 ** 3), 2),
+            'usage_pct': self.storage_usage_pct,
+            'block_gb': overage['block_gb'],
+            'block_price': overage['block_price'],
+            'overage_blocks': overage['blocks'],
+            'overage_over_gb': overage['over_gb'],
+            'estimated_overage_charge': overage['charge'],
+            'currency': self.env.company.currency_id.name or 'USD',
+        }
 
     # ========== Trial Expiry ==========
 
@@ -6628,6 +6888,9 @@ class SaasInstance(models.Model):
         self.next_invoice_date = today + interval
         self.last_invoice_date = today
         self.suspension_warning_sent = False
+        # New cycle anchor: re-arm the auto-renew reminders (A1).
+        self.renewal_reminder_7d_sent = False
+        self.renewal_reminder_1d_sent = False
 
         # Anchor the daily-backup add-on's monthly billing cycle the first
         # time the instance is activated with backups already enabled (e.g.
@@ -6647,40 +6910,44 @@ class SaasInstance(models.Model):
     # Saved card + auto-renewal
     # ============================================================
     def _capture_payment_token_from_invoice(self, invoice):
-        """Persist the tokenized card used to pay ``invoice``.
+        """Persist the SAFE references of the tokenized method used to pay
+        ``invoice`` so auto-renew can charge it later (A1).
 
-        Called from the payment-confirmation hook in ``account_move``
-        after activation / upgrade / daily-backup invoices are paid.
-        Only stores the token if the customer ticked "Save my card"
-        (Odoo's payment.transaction.tokenize), so customers retain
-        control — no silent retention.
+        PCI scope: NOTHING sensitive is stored. We persist only the
+        provider id + external customer ref + external token ref via
+        ``saas.payment.method`` (which wraps Odoo's ``payment.token`` —
+        itself SAQ-A: a provider-side reference plus a masked label). The
+        token only exists when the customer opted to save the method
+        (Odoo's ``tokenize`` flag), so retention stays customer-controlled.
 
-        Accepts ``done`` and ``pending`` transactions: a transaction
-        that's still pending 3DS verification at the moment the
-        invoice's payment_state flips can hold a fully-formed token —
-        Odoo creates payment.token rows before the transaction
-        terminates. The token is gated by ``active`` anyway, so a
-        pending tx that ultimately fails won't be silently used.
-        """
+        Accepts ``done`` and ``pending`` transactions: a token row is
+        created before a 3DS-pending tx terminates, and it's gated by
+        ``active`` so a tx that ultimately fails is never used."""
         self.ensure_one()
-        # Card retention is disabled as a matter of policy: we never store
-        # a customer's card token (the "Save my card" option is removed
-        # from every checkout). Bail out before persisting anything, even
-        # if a token somehow reaches us from another payment entry point.
-        return
-        if not invoice or self.payment_token_id:  # pragma: no cover
-            # Don't overwrite an existing token here — switching
-            # cards is an explicit portal action.
+        if not invoice or self.saas_payment_method_id:
+            # Don't overwrite an existing saved method — switching methods
+            # is an explicit portal action.
             return
-        token = invoice.transaction_ids.filtered(
+        tx = invoice.transaction_ids.filtered(
             lambda t: t.state in ('done', 'pending') and t.token_id
-        ).mapped('token_id').filtered(lambda t: t.active)[:1]
-        if not token:
+            and t.token_id.active
+        )[:1]
+        if not tx:
             return
-        self.payment_token_id = token.id
+        method = self.env['saas.payment.gateway']._save_method_from_transaction(
+            self.partner_id, tx)
+        if not method:
+            return
+        # Keep the legacy pointer in sync for the existing charge path and
+        # make this the instance's auto-renew method.
+        self.write({
+            'saas_payment_method_id': method.id,
+            'payment_token_id': method.token_id.id,
+        })
         self._append_log(
-            "Card saved for auto-renewal: %s. You can remove it any "
-            "time from Billing settings." % token.display_name
+            "Payment method saved for auto-renewal: %s (provider %s). You "
+            "can remove or replace it any time from Billing settings."
+            % (method.display_label or 'card', method.provider_code or '—')
         )
 
     def _try_auto_charge_invoice(self, invoice, kind):
@@ -6708,101 +6975,144 @@ class SaasInstance(models.Model):
         self.ensure_one()
         if not invoice or invoice.payment_state in ('paid', 'in_payment'):
             return False
-        token = self.payment_token_id
-        if not token or not token.active:
+        method = self._auto_renew_method()
+        if not method:
+            self._record_payment_attempt(
+                invoice, 'failed',
+                _("No saved payment method on file."))
             self._append_log(
-                "Auto-renew skipped for invoice %s — your saved card "
-                "is no longer on file. Please add a card from "
-                "Billing settings."
-                % invoice.name
-            )
+                "Auto-renew skipped for invoice %s — no saved payment "
+                "method. Please add one from Billing settings." % invoice.name)
             return False
-        if not token.provider_id or not token.provider_id.active:
+        # Delegate the actual charge to the provider-agnostic gateway.
+        state, message = self.env['saas.payment.gateway']._charge(method, invoice)
+        self._record_payment_attempt(invoice, state, message)
+        if state == 'done':
             self._append_log(
-                "Auto-renew skipped for invoice %s — your saved "
-                "card's payment provider is currently unavailable. "
-                "Please add a new card to continue."
-                % invoice.name
-            )
-            return False
-        if not token.payment_method_id:
-            self._append_log(
-                "Auto-renew skipped for invoice %s — please re-save "
-                "your card from Billing settings."
-                % invoice.name
-            )
-            return False
-        # Currency sanity: the provider's journal currency must match
-        # the invoice (or the journal must accept any). A mismatch
-        # would either fail or charge the wrong amount.
-        prov_journal_cur = token.provider_id.journal_id.currency_id \
-            if token.provider_id.journal_id else None
-        if prov_journal_cur and prov_journal_cur != invoice.currency_id:
-            _logger.warning(
-                "[AUTO-RENEW:%s] currency mismatch for %s — invoice %s "
-                "(%s) vs provider journal (%s). Skipping auto-charge.",
-                kind, self.subdomain, invoice.name,
-                invoice.currency_id.name, prov_journal_cur.name,
-            )
-            return False
-        try:
-            tx = self.env['payment.transaction'].sudo().create({
-                'amount': invoice.amount_residual,
-                'currency_id': invoice.currency_id.id,
-                'partner_id': invoice.partner_id.id,
-                'provider_id': token.provider_id.id,
-                'payment_method_id': token.payment_method_id.id,
-                'token_id': token.id,
-                'operation': 'offline',
-                'invoice_ids': [(6, 0, [invoice.id])],
-            })
-            tx._send_payment_request()
-        except Exception:
-            _logger.exception(
-                "[AUTO-RENEW:%s] auto-charge crashed for %s invoice %s",
-                kind, self.subdomain, invoice.name,
-            )
-            self._append_log(
-                "Auto-renew couldn't charge your saved card for "
-                "invoice %s — please pay manually from the portal."
-                % invoice.name
-            )
-            return False
-        if tx.state == 'done':
-            self._append_log(
-                "Auto-renew charged your saved card for invoice %s "
-                "(%.2f %s)." % (
-                    invoice.name, invoice.amount_total,
-                    invoice.currency_id.name,
-                )
-            )
+                "Auto-renew charged %s for invoice %s (%.2f %s)." % (
+                    method.display_label or 'saved method', invoice.name,
+                    invoice.amount_total, invoice.currency_id.name))
             return True
-        if tx.state == 'pending':
-            # In-flight (3DS, async gateway). The caller should NOT
-            # send the payment-due email — the transaction may still
-            # complete asynchronously via webhook. The dunning cron
-            # picks it up later if it never settles.
+        if state == 'pending':
+            # In-flight (3DS / async gateway). Suppress the payment-due
+            # email; the dunning + retry crons revisit a stuck pending.
             _logger.info(
-                "[AUTO-RENEW:%s] tx %s pending for %s invoice %s — "
-                "waiting on async settlement.",
-                kind, tx.reference, self.subdomain, invoice.name,
-            )
+                "[AUTO-RENEW:%s] pending for %s invoice %s.",
+                kind, self.subdomain, invoice.name)
             self._append_log(
-                "Auto-renew for invoice %s is awaiting confirmation "
-                "from your bank. We'll let you know if it doesn't "
-                "go through." % invoice.name
-            )
-            # Treat as "don't bother the customer yet" — return True
-            # to suppress the payment-due email; the dunning cron
-            # will catch a stuck pending later.
+                "Auto-renew for invoice %s is awaiting bank confirmation."
+                % invoice.name)
             return True
-        # Terminal failure (error / cancel).
+        # Failure — leave the invoice for the retry schedule + dunning.
+        _logger.info(
+            "[AUTO-RENEW:%s] charge failed for %s invoice %s: %s",
+            kind, self.subdomain, invoice.name, message)
         self._append_log(
-            "Auto-renew charge for invoice %s did not go through. "
-            "Please pay manually from the portal."
-            % invoice.name
-        )
+            "Auto-renew charge for invoice %s did not go through (%s)."
+            % (invoice.name, message))
         return False
+
+    def _auto_renew_method(self):
+        """The saved payment method auto-renew should use: the instance's
+        chosen method, else the customer's default. Empty if none/disabled."""
+        self.ensure_one()
+        method = self.saas_payment_method_id
+        if method and method.active and method.token_id and method.token_id.active:
+            return method
+        return self.env['saas.payment.method']._default_for_partner(
+            self.partner_id)
+
+    def _record_payment_attempt(self, invoice, state, message=''):
+        """Append a ``saas.payment.attempt`` audit row for the retry trail."""
+        self.ensure_one()
+        if not invoice:
+            return
+        prior = self.env['saas.payment.attempt'].sudo().search_count(
+            [('move_id', '=', invoice.id)])
+        self.env['saas.payment.attempt'].sudo().create({
+            'move_id': invoice.id,
+            'instance_id': self.id,
+            'attempt_no': prior + 1,
+            'attempted_on': fields.Date.today(),
+            'state': state,
+            'message': (message or '')[:500],
+        })
+
+    # ========== Auto-renew reminders + retry schedule (A1) ==========
+    @api.model
+    def _cron_send_renewal_reminders(self):
+        """Notify customers 7 days and 1 day before their renewal date so
+        they (and their saved card) are ready for the auto-charge."""
+        today = fields.Date.today()
+        for offset, flag in (
+            (7, 'renewal_reminder_7d_sent'),
+            (1, 'renewal_reminder_1d_sent'),
+        ):
+            target = today + relativedelta(days=offset)
+            instances = self.search([
+                ('state', '=', 'running'),
+                ('is_trial', '=', False),
+                ('plan_id', '!=', False),
+                ('next_invoice_date', '=', target),
+                (flag, '=', False),
+            ])
+            for instance in instances:
+                try:
+                    instance._send_notification(
+                        'saas_core.mail_template_saas_renewal_reminder')
+                    instance.write({flag: True})
+                    self.env.cr.commit()
+                except Exception:
+                    self.env.cr.rollback()
+                    _logger.exception(
+                        "Renewal reminder (%dd) failed for %s",
+                        offset, instance.subdomain)
+
+    @api.model
+    def _cron_retry_failed_payments(self):
+        """Re-attempt the auto-charge of still-unpaid mandatory invoices on
+        the retry schedule (1, 3 and 5 days after the invoice date). Runs
+        within the grace period, so suspension only follows the LAST retry
+        (handled by the dunning cron)."""
+        today = fields.Date.today()
+        instances = self.search([
+            ('state', 'in', ('running', 'stopped')),
+            ('is_trial', '=', False),
+            ('auto_renew_subscription', '=', True),
+        ])
+        for instance in instances:
+            try:
+                instance._retry_failed_payments(today)
+                self.env.cr.commit()
+            except Exception:
+                self.env.cr.rollback()
+                _logger.exception(
+                    "Payment retry failed for %s", instance.subdomain)
+
+    def _retry_failed_payments(self, today):
+        """Retry every still-unpaid MANDATORY invoice whose age matches the
+        retry schedule and that hasn't already been attempted today."""
+        self.ensure_one()
+        if not self._auto_renew_method():
+            return
+        Attempt = self.env['saas.payment.attempt'].sudo()
+        invoices = self._get_all_invoices().filtered(
+            lambda m: m.move_type == 'out_invoice'
+            and m.state == 'posted'
+            and m.payment_state not in ('paid', 'in_payment')
+            and m.invoice_date
+            and not self._is_optional_invoice(m)
+        )
+        for inv in invoices:
+            age = (today - inv.invoice_date).days
+            if age not in PAYMENT_RETRY_OFFSET_DAYS:
+                continue
+            if Attempt.search_count([
+                    ('move_id', '=', inv.id), ('attempted_on', '=', today)]):
+                continue  # already tried today
+            self._append_log(
+                "Auto-renew retry (day %d) for invoice %s." % (age, inv.name))
+            self._try_auto_charge_invoice(inv, kind='retry')
 
     @api.model
     def _cron_generate_recurring_invoices(self):
@@ -7075,7 +7385,7 @@ class SaasInstance(models.Model):
         # Auto-charge the saved card if both the per-instance toggle
         # and the card are present. On failure the invoice remains
         # unpaid and the dunning cron + customer email take over.
-        if self.auto_renew_daily_backup and self.payment_token_id:
+        if self.auto_renew_daily_backup and self._auto_renew_method():
             self._try_auto_charge_invoice(invoice, kind='snapshot')
         return invoice
 
@@ -7153,6 +7463,12 @@ class SaasInstance(models.Model):
             'price_unit': price,
         })]
 
+        # Trial-conversion promo (A-Trial): 25% off the subscription
+        # RESOURCE price for the first 3 cycles, shown as its own line.
+        promo_line, promo_disc = self._trial_promo_credit_line(price)
+        if promo_line:
+            order_lines.append(promo_line)
+
         # Support plan (P5): a flat monthly fee billed on the SAME cycle as
         # the plan (see _support_order_line). The free/default plan and
         # unpriced plans add nothing (behaviour-neutral until configured).
@@ -7184,22 +7500,30 @@ class SaasInstance(models.Model):
                 # advance the backup date for a line we didn't add.
                 merge_snapshot_month = False
 
-        # Add extra storage charge if usage exceeds the plan limit.
-        # Centralised in the pricing engine: block-based when a storage
-        # block price is configured, else the legacy per-GB rate.
+        # Add extra storage charge if usage exceeds the plan limit (A2:
+        # blocks-only — one line per block, billed at the block price; the
+        # customer was never suspended for going over).
         overage = self.env['saas.pricing.engine'].storage_overage(
             self.total_storage_bytes, plan.storage_limit,
         )
         if overage['charge'] > 0:
             order_lines.append((0, 0, {
                 'product_id': self._get_billing_product().id,
-                'name': _('Extra storage: %d GB over %s limit (%s)') % (
-                    overage['over_gb'], '%.2f GB' % plan.storage_limit,
-                    self.name or self.subdomain,
+                'name': _(
+                    'Extra storage: %d × %d GB block(s) '
+                    '(%d GB over %g GB plan limit) — %s'
+                ) % (
+                    overage['blocks'], overage['block_gb'], overage['over_gb'],
+                    plan.storage_limit, self.name or self.subdomain,
                 ),
-                'product_uom_qty': 1,
-                'price_unit': overage['charge'],
+                'product_uom_qty': overage['blocks'],
+                'price_unit': overage['block_price'],
             }))
+
+        # Wallet (A4): consume available account credit on this renewal.
+        wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
+        if wallet_line:
+            order_lines.append(wallet_line)
 
         order_vals = {
             'partner_id': self.partner_id.id,
@@ -7226,6 +7550,9 @@ class SaasInstance(models.Model):
             'next_invoice_date': self.next_invoice_date + interval,
             'last_invoice_date': fields.Date.today(),
             'suspension_warning_sent': False,
+            # New cycle: re-arm the 7-day / 1-day auto-renew reminders.
+            'renewal_reminder_7d_sent': False,
+            'renewal_reminder_1d_sent': False,
         }
         # M3: if this invoice merged the snapshot month, advance the
         # backup's own monthly date by ONE month (it's always monthly) so
@@ -7239,9 +7566,15 @@ class SaasInstance(models.Model):
             )
         self.write(renewal_vals)
         invoice.action_post()
+        # Settle wallet consumption + burn one trial-promo cycle now that
+        # the invoice exists (so the ledger entry links to the move).
+        self._wallet_settle_consumption(invoice, wallet_amount)
+        if promo_line:
+            self._consume_trial_promo_cycle(promo_disc)
         self._append_log(
-            "Renewal invoice %s created for %s period."
-            % (invoice.name, period_label)
+            "Renewal invoice %s created for %s period.%s"
+            % (invoice.name, period_label,
+               (" Trial promo -%.2f applied." % promo_disc) if promo_line else "")
         )
         self.message_post(body=_(
             "Renewal invoice %s created (%s). Payment due.",
@@ -7252,7 +7585,7 @@ class SaasInstance(models.Model):
         # the charge succeeds so customers aren't pinged for a bill
         # that's already settled.
         auto_paid = False
-        if self.auto_renew_subscription and self.payment_token_id:
+        if self.auto_renew_subscription and self._auto_renew_method():
             auto_paid = self._try_auto_charge_invoice(invoice, kind='subscription')
 
         # Send payment-due notification (best-effort: never roll back the
@@ -7481,26 +7814,39 @@ class SaasInstance(models.Model):
         price = new_plan._get_price_for_period(billing_period)
         period_label = 'Monthly' if billing_period == 'monthly' else 'Yearly'
 
-        # Store the chosen plan and period — applied on payment
+        # Trial-conversion incentive (A-Trial): arm the 25%-for-3-cycles
+        # promo so it applies to this first invoice and the next two
+        # renewals. Re-armed every time a trial converts.
         self.write({
             'pending_plan_id': new_plan.id,
             'pending_billing_period': billing_period,
+            'trial_promo_pct': TRIAL_CONVERSION_DISCOUNT_PCT,
+            'trial_promo_cycles_remaining': TRIAL_CONVERSION_CYCLES,
         })
+
+        order_lines = [(0, 0, {
+            'product_id': self._get_billing_product().id,
+            'name': _('%s (%s) — %s') % (
+                new_plan.name, period_label, self.name or self.subdomain,
+            ),
+            'product_uom_qty': 1,
+            'price_unit': price,
+        })]
+        # 25% welcome discount on the subscription resource price (cycle 1/3).
+        promo_line, promo_disc = self._trial_promo_credit_line(price)
+        if promo_line:
+            order_lines.append(promo_line)
+        # Consume any existing wallet balance too.
+        wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
+        if wallet_line:
+            order_lines.append(wallet_line)
 
         # Create sale order and invoice
         pricelist = self.partner_id.property_product_pricelist
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': ORIGIN_SUBSCRIPTION % (self.name or self.subdomain),
-            'order_line': [(0, 0, {
-                'product_id': self._get_billing_product().id,
-                'name': _('%s (%s) — %s') % (
-                    new_plan.name, period_label,
-                    self.name or self.subdomain,
-                ),
-                'product_uom_qty': 1,
-                'price_unit': price,
-            })],
+            'order_line': order_lines,
         }
         if pricelist:
             order_vals['pricelist_id'] = pricelist.id
@@ -7510,15 +7856,24 @@ class SaasInstance(models.Model):
 
         invoice = order._create_invoices()
         invoice.action_post()
+        self._wallet_settle_consumption(invoice, wallet_amount)
+        if promo_line:
+            self._consume_trial_promo_cycle(promo_disc)
         self.pending_change_invoice_id = invoice[:1]
 
         self._append_log(
-            "Upgrade to %s (%s) requested. Invoice %s created — awaiting payment."
-            % (new_plan.name, period_label, invoice.name)
+            "Upgrade to %s (%s) requested. Invoice %s created — awaiting "
+            "payment.%s" % (
+                new_plan.name, period_label, invoice.name,
+                (" Trial welcome discount -%.2f applied (cycle 1 of %d)."
+                 % (promo_disc, TRIAL_CONVERSION_CYCLES)) if promo_line else "")
         )
         self.message_post(body=_(
-            "Upgrade to %s (%s) requested. Awaiting payment."
-        ) % (new_plan.name, period_label))
+            "Upgrade to %s (%s) requested. Awaiting payment.%s"
+        ) % (new_plan.name, period_label,
+             _(" You get %g%% off for your first %d billing cycles.")
+             % (TRIAL_CONVERSION_DISCOUNT_PCT, TRIAL_CONVERSION_CYCLES)
+             if promo_line else ""))
 
         # Zero-amount plan: apply immediately
         if invoice.amount_total <= 0:
@@ -7755,50 +8110,69 @@ class SaasInstance(models.Model):
 
     # ---------- UPGRADE ----------
 
-    def _request_upgrade(self, new_plan, billing_period, new_price, old_price):
-        """Create proration invoice for an upgrade. Applied on payment."""
+    def _proration_credit(self, old_price):
+        """Unused value of the CURRENT subscription period for ``old_price``,
+        prorated over the ACTUAL elapsed cycle (A3).
+
+        No artificial day deductions: the customer is credited for the full
+        unused time (``remaining_days / total_days × old_price``). Uses the
+        real cycle length (last_invoice_date → next_invoice_date), never a
+        days/30 approximation. Returns ``(remaining_value, remaining_days,
+        total_days)``."""
         self.ensure_one()
         today = fields.Date.today()
+        if not (self.next_invoice_date and self.last_invoice_date):
+            return 0.0, 0, 0
+        total_days = (self.next_invoice_date - self.last_invoice_date).days
+        remaining_days = (self.next_invoice_date - today).days
+        if total_days <= 0 or remaining_days <= 0:
+            return 0.0, max(0, remaining_days), max(0, total_days)
+        remaining_value = round((old_price / total_days) * remaining_days, 2)
+        return remaining_value, remaining_days, total_days
+
+    def _request_upgrade(self, new_plan, billing_period, new_price, old_price):
+        """Create the proration invoice for an upgrade. Applied on payment.
+
+        A3 + A4: the customer is credited for the FULL unused value of the
+        current period (no 2-day clawback). That credit reduces the upgrade
+        invoice directly; any SURPLUS (unused value beyond the new plan
+        price) is NOT forfeited — it is moved into the customer's wallet
+        when the upgrade is applied, so prepaid value is never lost. Any
+        existing wallet balance is also consumed on the invoice."""
+        self.ensure_one()
         period_label = 'Yearly' if billing_period == 'yearly' else 'Monthly'
 
-        # Calculate remaining value of current subscription
-        # Deduct 2 days (today + processing day) from remaining days
-        remaining_value = 0.0
+        remaining_value, remaining_days, _total_days = self._proration_credit(
+            old_price)
         remaining_info = ''
-        if self.next_invoice_date and self.last_invoice_date:
-            total_days = (self.next_invoice_date - self.last_invoice_date).days
-            remaining_days = (self.next_invoice_date - today).days - 2
-            if total_days > 0 and remaining_days > 0:
-                remaining_value = (old_price / total_days) * remaining_days
-                remaining_info = (
-                    ' (credit %.2f for %d remaining days on %s)'
-                    % (remaining_value, remaining_days, self.plan_id.name)
-                )
+        if remaining_value > 0:
+            remaining_info = (
+                ' (credit %.2f for %d remaining day(s) on %s)'
+                % (remaining_value, remaining_days, self.plan_id.name)
+            )
 
-        # Final charge = new plan price - remaining value (min 0). The
-        # applied credit is capped at the new price — an upgrade is not
-        # refunded in cash — so if the remaining value of the current plan
-        # exceeds the new price, the surplus is forfeited. Disclose it
-        # rather than dropping it silently (see review finding #6).
+        # Direct proration credit reduces the invoice; surplus goes to the
+        # wallet on apply (never forfeited).
         applied_credit = min(remaining_value, new_price)
-        forfeited_credit = remaining_value - applied_credit
-        final_charge = new_price - applied_credit
-        if forfeited_credit > 0.01:
+        surplus = round(max(0.0, remaining_value - new_price), 2)
+        final_charge = round(new_price - applied_credit, 2)
+        if surplus > 0.01:
             remaining_info += (
-                ' — note: %.2f of unused credit is forfeited '
-                '(upgrades are credited, not cash-refunded)' % forfeited_credit
+                ' — %.2f surplus credit will be added to your wallet '
+                '(prepaid value is never lost)' % surplus
             )
 
         self._append_log(
             "Upgrade calculation: new_price=%.2f, remaining_value=%.2f, "
-            "final_charge=%.2f%s"
-            % (new_price, remaining_value, final_charge, remaining_info)
+            "final_charge=%.2f, wallet_surplus=%.2f%s"
+            % (new_price, remaining_value, final_charge, surplus, remaining_info)
         )
 
-        # Store pending upgrade
+        # Store pending upgrade + the surplus to grant on apply.
         self.write({
             'pending_plan_id': new_plan.id,
             'pending_billing_period': billing_period,
+            'pending_wallet_credit': surplus,
         })
 
         line_name = _('%s (%s) — %s — Plan upgrade%s') % (
@@ -7806,17 +8180,23 @@ class SaasInstance(models.Model):
             self.name or self.subdomain, remaining_info,
         )
 
+        order_lines = [(0, 0, {
+            'product_id': self._get_billing_product().id,
+            'name': line_name,
+            'product_uom_qty': 1,
+            'price_unit': final_charge,
+        })]
+        # Consume existing wallet balance on the upgrade invoice too.
+        wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
+        if wallet_line:
+            order_lines.append(wallet_line)
+
         # Create invoice
         pricelist = self.partner_id.property_product_pricelist
         order_vals = {
             'partner_id': self.partner_id.id,
             'origin': ORIGIN_PLAN_UPGRADE % (self.name or self.subdomain),
-            'order_line': [(0, 0, {
-                'product_id': self._get_billing_product().id,
-                'name': line_name,
-                'product_uom_qty': 1,
-                'price_unit': final_charge,
-            })],
+            'order_line': order_lines,
         }
         if pricelist:
             order_vals['pricelist_id'] = pricelist.id
@@ -7826,6 +8206,7 @@ class SaasInstance(models.Model):
 
         invoice = order._create_invoices()
         invoice.action_post()
+        self._wallet_settle_consumption(invoice, wallet_amount)
         self.pending_change_invoice_id = invoice[:1]
 
         self.message_post(body=_(
@@ -7848,6 +8229,7 @@ class SaasInstance(models.Model):
 
         billing_period = self.pending_billing_period or self.billing_period or 'monthly'
         old_plan = self.plan_id
+        surplus = self.pending_wallet_credit or 0.0
 
         # Switch plan and reset billing cycle from today
         self.write({
@@ -7856,7 +8238,16 @@ class SaasInstance(models.Model):
             'pending_plan_id': False,
             'pending_billing_period': False,
             'pending_change_invoice_id': False,
+            'pending_wallet_credit': 0.0,
         })
+
+        # A4: any unused-value surplus beyond the upgrade price is moved into
+        # the wallet now that the change is paid/applied — never forfeited.
+        if surplus > 0:
+            self._grant_wallet_credit(
+                surplus, origin='upgrade_surplus',
+                reason=_('Unused value from %s carried to wallet on upgrade')
+                % (old_plan.name if old_plan else _('previous plan')))
 
         # Reset billing cycle from today
         self._set_next_invoice_date()

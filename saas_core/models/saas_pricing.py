@@ -1,6 +1,20 @@
 import math
 
+from dateutil.relativedelta import relativedelta
+
 from odoo import api, models
+
+# ----------------------------------------------------------------------
+# A5 — ONE billing methodology for the whole platform.
+#
+# A billing period is an exact number of CALENDAR months: monthly = 1,
+# yearly = 12. All recurrence math uses ``relativedelta`` (calendar
+# months/years), and all "how many months between two dates" math uses
+# ``months_between`` below. The platform NEVER approximates a month as
+# "days / 30" anywhere (that drifts ~6 days/year and made fixed fees
+# inconsistent across flows).
+# ----------------------------------------------------------------------
+PERIOD_MONTHS = {'monthly': 1, 'yearly': 12}
 
 # ----------------------------------------------------------------------
 # Pricing engine — the SINGLE source of truth for every price the
@@ -314,35 +328,84 @@ class SaasPricingEngine(models.AbstractModel):
             },
         }
 
+    # ------------------------------------------------------------------
+    # A5 — billing-period helpers (single methodology, no days/30).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def period_months(period):
+        """Number of CALENDAR months in a billing period."""
+        return PERIOD_MONTHS.get(period, 1)
+
+    @staticmethod
+    def period_delta(period):
+        """``relativedelta`` to advance one billing period."""
+        return (relativedelta(years=1) if period == 'yearly'
+                else relativedelta(months=1))
+
+    @staticmethod
+    def months_between(start, end):
+        """Whole calendar months elapsed between two dates, rounded UP so a
+        started month counts as one (minimum 1 when end > start). Replaces
+        every ``days / 30`` approximation in the codebase."""
+        if not start or not end or end <= start:
+            return 0
+        months = (end.year - start.year) * 12 + (end.month - start.month)
+        # A partial month past the day-of-month anchor counts as one more.
+        if end.day > start.day:
+            months += 1
+        return max(1, months)
+
+    @api.model
+    def storage_block_config(self):
+        """The platform's storage-expansion block (size GB, monthly price)."""
+        icp = self.env['ir.config_parameter'].sudo()
+        try:
+            block_gb = int(icp.get_param('saas_master.storage_block_gb', '0') or 0)
+        except (TypeError, ValueError):
+            block_gb = 0
+        try:
+            block_price = float(
+                icp.get_param('saas_master.storage_block_price', '0') or 0)
+        except (TypeError, ValueError):
+            block_price = 0.0
+        return block_gb, block_price
+
     @api.model
     def storage_overage(self, total_bytes, plan_storage_limit_gb):
-        """Monthly charge for storage above the plan allowance.
+        """Monthly charge for storage ABOVE the plan allowance, billed in
+        whole BLOCKS only (A2 — per-GB overage was removed).
 
-        Block-based when configured (storage_block_gb>0 AND
-        storage_block_price>0) — storage above the limit is billed in
-        whole blocks. Otherwise falls back to the legacy per-GB rate
-        (``extra_storage_price_per_gb``), so this is behaviour-neutral
-        until a block price is set. Returns
-        ``{mode, over_gb, blocks?, charge}``.
+        A block is ``saas_master.storage_block_gb`` GB at
+        ``saas_master.storage_block_price`` per month. Usage above the
+        plan limit is billed as ``ceil(over_gb / block_gb)`` whole blocks
+        (e.g. 20 GB plan, 10 GB block: 21→1, 29→1, 30→1, 31→2 blocks).
+
+        Block COUNT is always computed for display; ``charge`` is 0 until
+        the operator sets a block price. Returns
+        ``{mode, over_gb, block_gb, block_price, blocks, charge}``.
+        Service is NEVER suspended for overage — the customer keeps
+        operating and the blocks are billed on the next renewal.
         """
-        import math
-        icp = self.env['ir.config_parameter'].sudo()
+        block_gb, block_price = self.storage_block_config()
         limit_gb = plan_storage_limit_gb or 0
-        if limit_gb <= 0:
-            return {'mode': 'none', 'over_gb': 0, 'charge': 0.0}
+        result = {
+            'mode': 'none', 'over_gb': 0, 'block_gb': block_gb,
+            'block_price': round(block_price, 2), 'blocks': 0, 'charge': 0.0,
+        }
+        if limit_gb <= 0 or block_gb <= 0:
+            return result
         limit_bytes = int(round(limit_gb * (1024 ** 3)))
         if (total_bytes or 0) <= limit_bytes:
-            return {'mode': 'none', 'over_gb': 0, 'charge': 0.0}
+            return result
         over_gb = math.ceil((total_bytes - limit_bytes) / (1024 ** 3))
-        block_gb = int(icp.get_param('saas_master.storage_block_gb', '0') or 0)
-        block_price = float(icp.get_param('saas_master.storage_block_price', '0') or 0)
-        if block_gb > 0 and block_price > 0:
-            blocks = math.ceil(over_gb / block_gb)
-            return {'mode': 'block', 'over_gb': over_gb, 'blocks': blocks,
-                    'charge': round(blocks * block_price, 2)}
-        per_gb = float(icp.get_param('saas_master.extra_storage_price_per_gb', '0') or 0)
-        return {'mode': 'per_gb', 'over_gb': over_gb,
-                'charge': round(over_gb * per_gb, 2)}
+        blocks = math.ceil(over_gb / block_gb)
+        result.update({
+            'mode': 'block',
+            'over_gb': over_gb,
+            'blocks': blocks,
+            'charge': round(blocks * block_price, 2),
+        })
+        return result
 
     @api.model
     def snapshot_price_per_gb(self):

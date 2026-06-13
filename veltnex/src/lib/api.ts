@@ -102,7 +102,12 @@ export interface ApiRegion {
   name: string;
   /** Price multiplier applied to the compute+storage portion (1.0 = base). */
   multiplier: number;
+  /** Pre-selected default at checkout — now the RECOMMENDED region. */
   default: boolean;
+  /** The recommended region (badge "Recommended"). */
+  recommended?: boolean;
+  /** The cheapest available region (badge "Budget"). */
+  budget?: boolean;
   available: boolean;
 }
 
@@ -224,6 +229,47 @@ export interface ApiInvoice {
   tax?: number;
 }
 
+export interface ApiPaymentMethod {
+  id: number;
+  provider: string;
+  label: string;
+  is_default: boolean;
+}
+
+export interface StorageSummary {
+  included_gb: number;
+  used_gb: number;
+  usage_pct: number;
+  block_gb: number;
+  block_price: number;
+  overage_blocks: number;
+  overage_over_gb: number;
+  estimated_overage_charge: number;
+  currency: string;
+}
+
+export interface TrialPromo {
+  active: boolean;
+  pct: number;
+  cycles_remaining: number;
+  total_saved: number;
+}
+
+export interface WalletTransaction {
+  id: number;
+  date: string;
+  amount: number;
+  balance_after: number;
+  type: string;
+  description: string;
+}
+
+export interface WalletData {
+  balance: number;
+  currency: string;
+  transactions: WalletTransaction[];
+}
+
 export interface ApiInstance {
   id: number;
   name: string;
@@ -268,16 +314,26 @@ export interface ApiInstance {
   restoration_fee?: number;
   currency?: string;
   reactivate_url?: string;
+  // A1 / A2 / A4 billing (detail-only)
+  auto_renew_subscription?: boolean;
+  auto_renew_daily_backup?: boolean;
+  payment_method?: ApiPaymentMethod | null;
+  storage_summary?: StorageSummary;
+  wallet_balance?: number;
+  trial_promo?: TrialPromo;
 }
 
 export interface DashboardData {
   instances: ApiInstance[];
   recent_invoices: ApiInvoice[];
+  wallet_balance?: number;
+  currency?: string;
   stats: {
     instances: number;
     running: number;
     open_invoices: number;
     outstanding: number;
+    wallet_balance?: number;
   };
 }
 
@@ -362,6 +418,23 @@ export const api = {
       subdomain,
       domain_id,
     }),
+
+  // portal — billing (A1 + A4)
+  wallet: () => rpc<WalletData>("/saas/api/v1/wallet"),
+  paymentMethods: () =>
+    rpc<ApiPaymentMethod[]>("/saas/api/v1/billing/payment-methods"),
+  removePaymentMethod: (methodId: number) =>
+    rpc<{ removed: boolean }>(
+      `/saas/api/v1/billing/payment-methods/${methodId}/remove`,
+    ),
+  setAutoRenew: (
+    instanceId: number,
+    opts: { subscription?: boolean; daily_backup?: boolean },
+  ) =>
+    rpc<{ auto_renew_subscription: boolean; auto_renew_daily_backup: boolean }>(
+      `/saas/api/v1/instances/${instanceId}/auto-renew`,
+      opts,
+    ),
 
   // portal
   dashboard: () => rpc<DashboardData>("/saas/api/v1/dashboard"),

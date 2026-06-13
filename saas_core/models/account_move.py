@@ -17,6 +17,27 @@ class AccountMove(models.Model):
             self._saas_check_instance_payment()
         return result
 
+    def button_cancel(self):
+        """Refund any wallet credit consumed by an invoice before cancelling
+        it, so cancelling an optional/unpaid invoice (e.g. a declined
+        upgrade) returns the customer's credit to their wallet (A4)."""
+        self._saas_refund_wallet_credit()
+        return super().button_cancel()
+
+    def _saas_refund_wallet_credit(self):
+        """Return wallet credit applied to these (unpaid) invoices. Idempotent
+        — ``saas.wallet._refund_move`` only refunds what wasn't already
+        refunded."""
+        Wallet = self.env['saas.wallet'].sudo()
+        for move in self:
+            if move.move_type != 'out_invoice':
+                continue
+            if move.payment_state in ('paid', 'in_payment'):
+                continue
+            wallet = Wallet._for_partner(move.partner_id, create=False)
+            if wallet:
+                wallet._refund_move(move)
+
     def _compute_payment_state(self):
         # Capture state before recomputation
         old_states = {inv.id: inv.payment_state for inv in self}

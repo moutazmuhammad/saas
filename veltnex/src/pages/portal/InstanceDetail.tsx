@@ -27,6 +27,7 @@ import { AlertBanner } from "@/components/AlertBanner";
 import { InfoCard } from "@/components/InfoCard";
 import { HelpHint } from "@/components/HelpHint";
 import { EmptyState } from "@/components/EmptyState";
+import { BillingPanel } from "@/components/BillingPanel";
 import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useInstances } from "@/context/InstancesContext";
@@ -412,6 +413,8 @@ export default function InstanceDetail() {
           {instance.is_trial ? "Upgrade plan" : "Change plan"}
         </Button>
       </Card>
+
+      {!instance.is_trial && <BillingPanel instance={instance} onChange={load} />}
 
       <h2 className="mt-10 text-lg font-semibold">Manage</h2>
       <div className="mt-4 grid gap-4 sm:grid-cols-3">

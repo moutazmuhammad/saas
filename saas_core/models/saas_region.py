@@ -24,6 +24,12 @@ class SaasRegion(models.Model):
         string='Default Region',
         help='Region used when a customer does not pick one. Keep exactly one.',
     )
+    is_recommended = fields.Boolean(
+        string='Recommended Region',
+        help='The region pre-selected during checkout and shown as '
+             '"Recommended". Keep exactly one. The cheapest available region '
+             'is separately labelled "Budget".',
+    )
     price_multiplier = fields.Float(
         string='Price Multiplier', default=1.0,
         help='Multiplies the compute+storage portion of the price for '
@@ -42,6 +48,12 @@ class SaasRegion(models.Model):
         if self.search_count([('is_default', '=', True)]) > 1:
             raise ValidationError(_("Only one region may be marked as default."))
 
+    @api.constrains('is_recommended')
+    def _check_single_recommended(self):
+        if self.search_count([('is_recommended', '=', True)]) > 1:
+            raise ValidationError(_(
+                "Only one region may be marked as recommended."))
+
     @api.constrains('price_multiplier')
     def _check_multiplier(self):
         for rec in self:
@@ -52,12 +64,31 @@ class SaasRegion(models.Model):
 
     @api.model
     def _get_default(self):
-        """The region assigned when the customer doesn't choose one."""
+        """The INFRASTRUCTURE default region — the home of un-regioned
+        servers (see ``saas.server._region_match_domain``). This is the
+        ``is_default`` flag, NOT the customer-facing checkout default
+        (which is recommended-first — see ``_recommended_available``)."""
         return self.sudo().search(
             [('active', '=', True), ('is_default', '=', True)], limit=1,
         ) or self.sudo().search(
             [('active', '=', True)], order='sequence, id', limit=1,
         )
+
+    @api.model
+    def _recommended_available(self):
+        """The recommended region that can actually host (proxy+docker+db).
+        Falls back to the explicit default, then the cheapest available, then
+        the first available — so checkout always has a region to pre-select."""
+        regions = self._available_regions()
+        if not regions:
+            return self.browse()
+        rec = regions.filtered('is_recommended')[:1]
+        if rec:
+            return rec
+        dflt = regions.filtered('is_default')[:1]
+        if dflt:
+            return dflt
+        return self._cheapest_available() or regions[:1]
 
     def has_capacity(self):
         """True when this region can actually host an instance: it must

@@ -71,12 +71,14 @@ export default function Hosting() {
       .then(([m, regs]) => {
         setMeta(m);
         setRegions(regs);
-        // Default to the CHEAPEST region (lowest multiplier) so the entry
-        // price is always the lowest — independent of API ordering/flags.
+        // Pre-select the RECOMMENDED region (the API marks it `default`).
+        // Fall back to the cheapest by multiplier, then the first region.
+        const recommended = regs.find((r) => r.default || r.recommended);
         const cheapest = regs.length
           ? regs.reduce((a, b) => (b.multiplier < a.multiplier ? b : a))
           : null;
-        setRegionId(cheapest ? cheapest.id : null);
+        const chosen = recommended ?? cheapest;
+        setRegionId(chosen ? chosen.id : null);
       })
       .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load hosting plans."));
   }, []);
@@ -271,22 +273,26 @@ export default function Hosting() {
               onChange={(e) => setRegionId(Number(e.target.value))}
               className="w-full max-w-xs cursor-pointer rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground outline-none ring-primary/40 transition-colors hover:border-primary/40 focus:ring-1"
             >
-              {sortedRegions.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                  {cheapestRegion && r.id === cheapestRegion.id
-                    ? " — best price"
+              {sortedRegions.map((r) => {
+                const tag = (r.default || r.recommended)
+                  ? " — Recommended"
+                  : (r.budget || (cheapestRegion && r.id === cheapestRegion.id))
+                    ? " — Budget"
                     : r.multiplier !== 1
                       ? ` (×${r.multiplier.toFixed(2)})`
-                      : ""}
-                </option>
-              ))}
+                      : "";
+                return (
+                  <option key={r.id} value={r.id}>
+                    {r.name}{tag}
+                  </option>
+                );
+              })}
             </select>
             <p className="max-w-md text-center text-xs text-muted">
               Infrastructure costs differ between data centers, so prices are
-              adjusted per region — we've pre-selected the most affordable one
-              for you. Choose the region closest to your users for the best
-              performance.
+              adjusted per region — we've pre-selected the recommended one for
+              you, and marked the cheapest as “Budget”. Choose the region
+              closest to your users for the best performance.
             </p>
           </div>
         )}

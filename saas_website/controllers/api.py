@@ -361,16 +361,20 @@ class SaasApi(http.Controller):
         Region = request.env['saas.region']
         regs = Region._available_regions()
         cheapest = Region._cheapest_available()
-        # Cheapest-first so the customer sees the lowest entry price at the
-        # top — important when there are many (15+) regions. The cheapest is
-        # marked the default so the picker pre-selects it.
+        recommended = Region._recommended_available()
+        # Cheapest-first so the customer still sees the lowest entry price at
+        # the top, but the RECOMMENDED region is the one pre-selected at
+        # checkout; the cheapest is labelled "Budget".
         regs = regs.sorted(key=lambda r: (r.price_multiplier or 1.0, r.sequence, r.id))
         return ok([{
             'id': r.id,
             'code': r.code,
             'name': r.name,
             'multiplier': r.price_multiplier or 1.0,
-            'default': bool(cheapest) and r.id == cheapest.id,
+            # The pre-selected default is now the recommended region.
+            'default': bool(recommended) and r.id == recommended.id,
+            'recommended': bool(recommended) and r.id == recommended.id,
+            'budget': bool(cheapest) and r.id == cheapest.id,
             'available': True,
         } for r in regs])
 
@@ -463,14 +467,19 @@ class SaasApi(http.Controller):
         invoices = self._partner_invoices(partner)
         open_invoices = [i for i in invoices if i.payment_state not in ('paid', 'in_payment')
                          and i.state == 'posted']
+        wallet = request.env['saas.wallet'].sudo()._for_partner(
+            partner, create=False)
         return ok({
             'instances': [self._serialize_instance(i) for i in instances],
             'recent_invoices': [self._serialize_invoice(i) for i in invoices[:5]],
+            'wallet_balance': round(wallet.balance, 2) if wallet else 0.0,
+            'currency': request.env.company.currency_id.name or 'USD',
             'stats': {
                 'instances': len(instances),
                 'running': len(instances.filtered(lambda i: i.state == 'running')),
                 'open_invoices': len(open_invoices),
                 'outstanding': round(sum(i.amount_residual for i in open_invoices), 2),
+                'wallet_balance': round(wallet.balance, 2) if wallet else 0.0,
             },
         })
 
@@ -1065,6 +1074,91 @@ class SaasApi(http.Controller):
         ], order='invoice_date desc, create_date desc')
 
     # ==================================================================
+    #  Billing: wallet, auto-renew, payment methods (A1 + A4)
+    # ==================================================================
+    @http.route('/saas/api/v1/wallet', type='json', auth='public')
+    def wallet(self):
+        """Wallet balance + recent ledger entries for the signed-in
+        customer. Non-refundable, non-withdrawable platform credit."""
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        wallet = request.env['saas.wallet'].sudo()._for_partner(
+            partner, create=False)
+        if not wallet:
+            return ok({'balance': 0.0, 'currency':
+                       request.env.company.currency_id.name or 'USD',
+                       'transactions': []})
+        txns = wallet.transaction_ids.sorted('id', reverse=True)[:50]
+        return ok({
+            'balance': round(wallet.balance, 2),
+            'currency': wallet.currency_id.name or 'USD',
+            'transactions': [{
+                'id': t.id,
+                'date': fields.Datetime.to_string(t.create_date),
+                'amount': round(t.amount, 2),
+                'balance_after': round(t.balance_after, 2),
+                'type': t.origin,
+                'description': t.reason or '',
+            } for t in txns],
+        })
+
+    @http.route('/saas/api/v1/billing/payment-methods', type='json', auth='public')
+    def payment_methods(self):
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        methods = request.env['saas.payment.method'].sudo()._for_partner(partner)
+        return ok([self._serialize_payment_method(m) for m in methods])
+
+    @http.route('/saas/api/v1/billing/payment-methods/<int:method_id>/remove',
+                type='json', auth='public')
+    def remove_payment_method(self, method_id):
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        method = request.env['saas.payment.method'].sudo().browse(method_id)
+        if not method.exists() or method.partner_id != partner.commercial_partner_id:
+            return err(_("Payment method not found."), 'not_found')
+        method.action_remove()
+        return ok({'removed': True})
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/auto-renew',
+                type='json', auth='public')
+    def set_auto_renew(self, instance_id, subscription=None, daily_backup=None):
+        """Toggle auto-renew for an instance (A1). Customers can turn the
+        automatic charge on/off; invoices are still issued either way."""
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        instance = request.env['saas.instance'].sudo().browse(instance_id)
+        if not instance.exists() or instance.partner_id != partner:
+            return err(_("Instance not found."), 'not_found')
+        vals = {}
+        if subscription is not None:
+            vals['auto_renew_subscription'] = bool(subscription)
+        if daily_backup is not None:
+            vals['auto_renew_daily_backup'] = bool(daily_backup)
+        if vals:
+            instance.write(vals)
+        return ok({
+            'auto_renew_subscription': instance.auto_renew_subscription,
+            'auto_renew_daily_backup': instance.auto_renew_daily_backup,
+        })
+
+    def _serialize_payment_method(self, method):
+        """Safe, PCI-free view of a saved payment method (no PAN/CVV/expiry —
+        only the provider + a masked label)."""
+        if not method:
+            return None
+        return {
+            'id': method.id,
+            'provider': method.provider_code or '',
+            'label': method.display_label or _('Saved method'),
+            'is_default': method.is_default,
+        }
+
+    # ==================================================================
     #  Serializers
     # ==================================================================
 
@@ -1164,6 +1258,24 @@ class SaasApi(http.Controller):
                 # of paying (plan upgrade / add-on). Mandatory invoices
                 # (initial / renewal / restoration) are not cancellable.
                 'cancellable_invoice_id': instance._get_cancellable_unpaid_invoice().id or False,
+                # A1 — auto-renew + saved payment method.
+                'auto_renew_subscription': instance.auto_renew_subscription,
+                'auto_renew_daily_backup': instance.auto_renew_daily_backup,
+                'payment_method': self._serialize_payment_method(
+                    instance._auto_renew_method()),
+                # A2 — storage usage / overage summary.
+                'storage_summary': instance._storage_billing_summary(),
+                # A4 — wallet balance (shared across the customer's instances).
+                'wallet_balance': round(
+                    (instance._wallet(create=False).balance
+                     if instance._wallet(create=False) else 0.0), 2),
+                # Trial-conversion promo state (A-Trial).
+                'trial_promo': {
+                    'active': instance.trial_promo_cycles_remaining > 0,
+                    'pct': instance.trial_promo_pct,
+                    'cycles_remaining': instance.trial_promo_cycles_remaining,
+                    'total_saved': round(instance.trial_promo_total_saved, 2),
+                },
             })
             # Cancelled instances: surface the retained snapshot (if any) so
             # the customer knows their data is kept and can reactivate to

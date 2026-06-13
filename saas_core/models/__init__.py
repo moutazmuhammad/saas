@@ -1,5 +1,7 @@
 from . import saas_product
 from . import saas_pricing
+from . import saas_wallet
+from . import saas_payment
 from . import saas_addon
 from . import saas_region
 from . import saas_support_plan

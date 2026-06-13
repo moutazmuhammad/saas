@@ -21,6 +21,7 @@
                 <field name="name"/>
                 <field name="code"/>
                 <field name="price_multiplier"/>
+                <field name="is_recommended"/>
                 <field name="is_default"/>
                 <field name="active" widget="boolean_toggle"/>
             </list>
@@ -37,6 +38,7 @@
                         <group>
                             <field name="name"/>
                             <field name="code"/>
+                            <field name="is_recommended"/>
                             <field name="is_default"/>
                             <field name="active"/>
                         </group>

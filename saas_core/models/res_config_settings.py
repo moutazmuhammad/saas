@@ -158,14 +158,19 @@ class ResConfigSettings(models.TransientModel):
     # saas.instance.backup); there is no per-plan hosting backup count, so
     # no hosting_min_backups / hosting_max_backups settings here.
 
-    # ========== Extra Storage Pricing ==========
+    # ========== Extra Storage Pricing (DEPRECATED — A2) ==========
+    # Per-GB overage was removed in favour of blocks-only billing. This
+    # field is kept ONLY so existing config rows don't error on upgrade; it
+    # is no longer read by the pricing engine. Configure the storage block
+    # size + price below instead.
     saas_extra_storage_price_per_gb = fields.Float(
-        string='Extra Storage Price per GB',
+        string='Extra Storage Price per GB (deprecated)',
         config_parameter='saas_master.extra_storage_price_per_gb',
         default=0.0,
-        help='Price charged per extra GB of storage that exceeds the plan limit. '
-             'Added as a separate line on the renewal invoice. '
-             'Set to 0 to suspend instances instead of charging.',
+        help='DEPRECATED: per-GB overage was replaced by blocks-only '
+             'billing (see Storage Expansion Block below). This value is '
+             'ignored by the pricing engine and kept only for backward '
+             'compatibility.',
     )
 
     # ========== Pricing Engine: cost floor & storage blocks ==========
@@ -219,17 +224,21 @@ class ResConfigSettings(models.TransientModel):
     saas_storage_block_gb = fields.Integer(
         string='Storage Expansion Block (GB)',
         config_parameter='saas_master.storage_block_gb',
-        default=50,
+        default=10,
         help='Size of one storage-expansion block (GB). Storage above the '
-             'plan allowance is sold/billed in whole blocks of this size '
-             '(wired from S6). Keeps storage pricing predictable for users.',
+             'plan allowance is billed in whole blocks of this size — e.g. '
+             'with a 10 GB block and a 20 GB plan, 21 GB → 1 block, '
+             '31 GB → 2 blocks. This is the ONLY overage mechanism (A2); '
+             'the service is never suspended for going over.',
     )
     saas_storage_block_price = fields.Float(
         string='Storage Expansion Block Price (monthly)',
         config_parameter='saas_master.storage_block_price',
         default=0.0,
-        help='Monthly price for one storage-expansion block. 0 = not yet '
-             'configured (no block-based charging until set).',
+        help='Monthly price for one storage-expansion block. Overage block '
+             'COUNTS are always shown to the customer; they are only '
+             'charged once this price is set (0 = blocks shown but not '
+             'billed).',
     )
 
     # ========== Pricing Policy (Booleans) ==========

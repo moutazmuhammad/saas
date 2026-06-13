@@ -762,7 +762,9 @@ class SaasWebsite(http.Controller):
             region = Region.browse(rid)
             if not region.exists() or not region.active:
                 region = None
-        return region or Region._cheapest_available()
+        # Default to the RECOMMENDED region (not the cheapest) when the
+        # customer didn't pick one.
+        return region or Region._recommended_available()
 
     def _resolve_region_id_strict(self, region_id):
         """Resolve a region id to an ACTIVE region record WITHOUT defaulting.

@@ -211,4 +211,74 @@
         <field name="auto_delete" eval="True"/>
     </record>
 
+    <!-- ============================================================ -->
+    <!--  Auto-renew reminder (7 days / 1 day before renewal) (A1)     -->
+    <!-- ============================================================ -->
+    <record id="mail_template_saas_renewal_reminder" model="mail.template">
+        <field name="name">SaaS: Renewal Reminder</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">Your subscription for {{ object.name }} renews on {{ object.next_invoice_date }}</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+<div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
+    <p>Dear <t t-out="object.partner_id.name"/>,</p>
+    <p>Your subscription for <strong><t t-out="object.name"/></strong>
+       (<t t-out="object.plan_id.name or 'N/A'"/>,
+       <t t-out="dict(object._fields['billing_period'].selection).get(object.billing_period, object.billing_period)"/>)
+       is scheduled to renew on
+       <strong><t t-out="object.next_invoice_date"/></strong>.</p>
+    <p t-if="object.auto_renew_subscription and object._auto_renew_method()">
+       We'll automatically charge your saved payment method
+       (<t t-out="object._auto_renew_method().display_label or 'on file'"/>)
+       on the renewal date. No action is needed.</p>
+    <p t-else="">
+       Auto-renew is off (or no payment method is saved), so please pay the
+       renewal invoice from the
+       <a t-attf-href="/my/instances/{{ object.id }}">customer portal</a>
+       to avoid any interruption.</p>
+    <p>You can review or change your plan, payment method and auto-renew
+       setting any time in the portal.</p>
+    <p t-if="support_email">Questions? Contact us at
+       <a t-att-href="'mailto:' + support_email"><t t-out="support_email"/></a>.</p>
+    <p>Best regards,<br/><t t-out="object.company_id.name"/></p>
+</div>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
+    <!-- ============================================================ -->
+    <!--  Storage usage notice (80 / 90 / 100%) (A2)                   -->
+    <!-- ============================================================ -->
+    <record id="mail_template_saas_storage_usage" model="mail.template">
+        <field name="name">SaaS: Storage Usage Notice</field>
+        <field name="model_id" ref="saas_core.model_saas_instance"/>
+        <field name="subject">Storage usage at {{ '%.0f' % object.storage_usage_pct }}% for {{ object.name }}</field>
+        <field name="email_from">{{ (object.company_id.email or user.email) }}</field>
+        <field name="email_to">{{ object.partner_id.email }}</field>
+        <field name="body_html" type="html">
+<div style="margin: 0; padding: 0; font-family: Arial, sans-serif;">
+    <t t-set="support_email" t-value="object.env['ir.config_parameter'].sudo().get_param('saas_master.support_email', '')"/>
+    <p>Dear <t t-out="object.partner_id.name"/>,</p>
+    <p>Your instance <strong><t t-out="object.name"/></strong> is using
+       <strong><t t-out="'%.1f' % object.storage_used_gb"/> GB</strong>
+       of its <strong><t t-out="'%g' % object.storage_limit_gb"/> GB</strong>
+       included storage
+       (<strong><t t-out="'%.0f' % object.storage_usage_pct"/>%</strong>).</p>
+    <p><strong>Your service continues to run normally</strong> — you are not
+       suspended for going over your plan's storage. Any usage above your
+       included storage is billed automatically in storage blocks on your
+       next invoice.</p>
+    <p>To avoid overage charges you can free up space or upgrade your plan
+       from the <a t-attf-href="/my/instances/{{ object.id }}">customer
+       portal</a>.</p>
+    <p t-if="support_email">Need help? Contact us at
+       <a t-att-href="'mailto:' + support_email"><t t-out="support_email"/></a>.</p>
+    <p>Best regards,<br/><t t-out="object.company_id.name"/></p>
+</div>
+        </field>
+        <field name="auto_delete" eval="True"/>
+    </record>
+
 </odoo>
