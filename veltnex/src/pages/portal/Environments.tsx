@@ -40,15 +40,12 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
-import { formatDateTime } from "@/lib/format";
 import {
   api,
   ApiError,
   type EnvChild,
   type ProjectEnvironments,
   type StatusData,
-  type ApiBuild,
-  type ApiBuildDetail,
 } from "@/lib/api";
 
 const TRANSIENT = new Set([
@@ -178,8 +175,8 @@ export default function Environments() {
       />
 
       <div className="mt-2 flex flex-col gap-5 lg:flex-row">
-        {/* ───────── Left sidebar: branches ───────── */}
-        <aside className="lg:w-64 lg:shrink-0">
+        {/* ───────── Left sidebar: branches (sticky per-project bar) ───── */}
+        <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-64 lg:shrink-0 lg:self-start lg:overflow-y-auto">
           <div className="rounded-xl border border-border bg-card/40">
             <div className="border-b border-border p-3">
               <div className="relative">
@@ -506,9 +503,6 @@ function MainPanel({
   const [pending, setPending] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
-  const [builds, setBuilds] = React.useState<ApiBuild[] | null>(null);
-  const [openBuildId, setOpenBuildId] = React.useState<number | null>(null);
-
   const refreshStatus = React.useCallback(async () => {
     try {
       setStatus(await api.instanceStatus(env.id));
@@ -516,32 +510,19 @@ function MainPanel({
       /* ignore */
     }
   }, [env.id]);
-  const refreshBuilds = React.useCallback(async () => {
-    try {
-      setBuilds(await api.builds(env.id));
-    } catch {
-      setBuilds([]);
-    }
-  }, [env.id]);
 
   React.useEffect(() => {
     setStatus(null);
-    setBuilds(null);
     refreshStatus();
-    refreshBuilds();
-  }, [refreshStatus, refreshBuilds]);
+  }, [refreshStatus]);
 
   const liveState = status?.state || env.state;
-  const buildRunning = !!builds?.some((b) => b.state === "running");
-  const transient = TRANSIENT.has(liveState) || buildRunning;
+  const transient = TRANSIENT.has(liveState);
   React.useEffect(() => {
     if (!transient) return;
-    const t = setInterval(() => {
-      refreshStatus();
-      refreshBuilds();
-    }, 4000);
+    const t = setInterval(refreshStatus, 4000);
     return () => clearInterval(t);
-  }, [transient, refreshStatus, refreshBuilds]);
+  }, [transient, refreshStatus]);
 
   const run = async (action: string, ok: string) => {
     setPending(action);
@@ -587,7 +568,7 @@ function MainPanel({
   ];
 
   const subtabs: { label: string; icon: React.ComponentType<{ className?: string }>; to?: string }[] = [
-    { label: "History", icon: Clock },
+    { label: "Overview", icon: Clock },
     { label: "Databases", icon: Database, to: `/my/instances/${env.id}/databases` },
     { label: "Code", icon: Code2, to: `/my/instances/${env.id}/code` },
     { label: "Logs", icon: ScrollText, to: `/my/instances/${env.id}/logs` },
@@ -596,7 +577,6 @@ function MainPanel({
   ];
 
   return (
-    <>
     <Card className="overflow-hidden">
       {/* Header */}
       <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-start lg:justify-between">
@@ -672,7 +652,7 @@ function MainPanel({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
         <div className="flex flex-wrap">
           {subtabs.map((t) => {
-            const active = t.label === "History";
+            const active = t.label === "Overview";
             return (
               <button
                 key={t.label}
@@ -776,175 +756,29 @@ function MainPanel({
               </div>
             )}
 
-            {/* History — per-commit build timeline */}
+            {/* Current deployment */}
             <div className="mt-6">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">History</p>
-              {builds === null ? (
-                <div className="flex justify-center py-8">
-                  <Spinner label="Loading…" />
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Deployment</p>
+              <div className="rounded-lg border border-border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-sm font-medium">Current deployment</span>
+                  <StatusBadge status={liveState} />
                 </div>
-              ) : builds.length > 0 ? (
-                <div className="relative pl-6">
-                  <span className="absolute bottom-2 left-[7px] top-2 w-px bg-border" />
-                  <div className="space-y-3">
-                    {builds.map((b) => {
-                      const badge =
-                        b.state === "success" ? "success" : b.state === "failed" ? "failed" : "building";
-                      return (
-                        <div key={b.id} className="relative">
-                          <span
-                            className={cn(
-                              "absolute -left-[22px] top-4 size-3.5 rounded-full ring-4 ring-card",
-                              b.state === "success"
-                                ? "bg-success"
-                                : b.state === "failed"
-                                  ? "bg-danger"
-                                  : "bg-info animate-pulse-soft",
-                            )}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setOpenBuildId(b.id)}
-                            className="block w-full rounded-lg border border-border p-4 text-left transition-colors hover:border-primary/40 hover:bg-card/60"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex min-w-0 items-center gap-2.5">
-                                <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground/5 text-[11px] font-bold text-muted">
-                                  {(b.author || env.environment).charAt(0).toUpperCase()}
-                                </span>
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-medium">
-                                    {b.commit_message || b.source_label}
-                                  </p>
-                                  <p className="text-xs text-muted">
-                                    {b.source_label}
-                                    {(b.date_done || b.date_start) && ` · ${formatDateTime(b.date_done || b.date_start)}`}
-                                  </p>
-                                </div>
-                              </div>
-                              <StatusBadge status={badge} />
-                            </div>
-                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted">
-                              <span className="inline-flex items-center gap-1">
-                                <GitBranch className="size-3" />
-                                {b.branch || env.branch}
-                              </span>
-                              {b.commit_short && <span>commit {b.commit_short}</span>}
-                              {b.author && <span>{b.author}</span>}
-                            </div>
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">
+                  <GitBranch className="size-3" />
+                  {env.branch}
                 </div>
-              ) : (
-                // No build records yet — show the current deployment + log.
-                <div className="rounded-lg border border-border p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-sm font-medium">Current deployment</span>
-                    <StatusBadge status={liveState} />
-                  </div>
-                  <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">
-                    <GitBranch className="size-3" />
-                    {env.branch}
-                  </div>
-                  {status?.provisioning_log && (
-                    <pre className="mt-3 max-h-72 overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
-                      {status.provisioning_log.trimEnd()}
-                    </pre>
-                  )}
-                </div>
-              )}
+                {status?.provisioning_log && (
+                  <pre className="mt-3 max-h-72 overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
+                    {status.provisioning_log.trimEnd()}
+                  </pre>
+                )}
+              </div>
             </div>
           </>
         )}
       </div>
     </Card>
-    <BuildLogDialog
-      envId={env.id}
-      buildId={openBuildId}
-      onClose={() => setOpenBuildId(null)}
-    />
-    </>
-  );
-}
-
-function BuildLogDialog({
-  envId,
-  buildId,
-  onClose,
-}: {
-  envId: number;
-  buildId: number | null;
-  onClose: () => void;
-}) {
-  const [build, setBuild] = React.useState<ApiBuildDetail | null>(null);
-  const [loading, setLoading] = React.useState(false);
-
-  React.useEffect(() => {
-    if (!buildId) return;
-    setBuild(null);
-    setLoading(true);
-    api
-      .build(envId, buildId)
-      .then(setBuild)
-      .catch(() => setBuild(null))
-      .finally(() => setLoading(false));
-  }, [envId, buildId]);
-
-  const badge = build
-    ? build.state === "success"
-      ? "success"
-      : build.state === "failed"
-        ? "failed"
-        : "building"
-    : "building";
-
-  return (
-    <Dialog open={!!buildId} onClose={onClose} title="Build details">
-      {loading || !build ? (
-        <div className="flex justify-center py-10">
-          <Spinner label="Loading build…" />
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="font-medium">{build.commit_message_full || build.source_label}</p>
-              <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted">
-                <span className="inline-flex items-center gap-1">
-                  <GitBranch className="size-3" />
-                  {build.branch}
-                </span>
-                {build.commit_short && <span>commit {build.commit_short}</span>}
-                {build.author && <span>{build.author}</span>}
-              </p>
-            </div>
-            <StatusBadge status={badge} />
-          </div>
-          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted">
-            <span>Trigger: <span className="text-foreground">{build.source_label}</span></span>
-            {build.date_done && <span>Finished: <span className="text-foreground">{formatDateTime(build.date_done)}</span></span>}
-          </div>
-          <div>
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">Deploy log</p>
-            {build.log ? (
-              <pre className="max-h-[50vh] overflow-auto rounded-lg border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
-                {build.log.trimEnd()}
-              </pre>
-            ) : (
-              <p className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted">
-                No log captured for this build.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-      <div className="mt-6 flex justify-end">
-        <Button variant="secondary" onClick={onClose}>Close</Button>
-      </div>
-    </Dialog>
   );
 }
 
