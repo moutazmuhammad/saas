@@ -39,12 +39,12 @@ export default function Instances() {
     <div className="animate-fade-in">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Instances</h1>
-          <p className="mt-1 text-sm text-muted">Manage and monitor all your Odoo deployments.</p>
+          <h1 className="text-2xl font-bold tracking-tight">Projects</h1>
+          <p className="mt-1 text-sm text-muted">Manage and monitor all your Odoo projects.</p>
         </div>
         <Button onClick={() => navigate(createTo)}>
           <Plus className="size-4" />
-          New instance
+          New project
         </Button>
       </div>
 
@@ -56,7 +56,7 @@ export default function Instances() {
           <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" />
           <Input
             className="pl-9"
-            placeholder="Search instances…"
+            placeholder="Search projects…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />

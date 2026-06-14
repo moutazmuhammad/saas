@@ -1,28 +1,37 @@
 import * as React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
-  Server,
-  Receipt,
   Plus,
   ArrowRight,
-  Activity,
-  CircleDollarSign,
-  Database,
+  Wallet,
+  CheckCircle2,
+  AlertTriangle,
+  Server,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { InfoCard } from "@/components/InfoCard";
+import { Skeleton, SkeletonCard } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
-import { Spinner } from "@/components/Spinner";
 import { AlertBanner } from "@/components/AlertBanner";
 import { useAuth } from "@/context/AuthContext";
 import { useSections } from "@/lib/useSections";
-import { api, ApiError, type DashboardData } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { api, ApiError, type DashboardData, type ApiInstance } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 function money(n: number, c = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: c }).format(n);
+}
+
+interface ActionItem {
+  id: string;
+  text: string;
+  cta: string;
+  to: string;
+}
+
+function projectLink(i: ApiInstance) {
+  return i.is_hosting ? `/my/instances/${i.id}/environments` : `/my/instances/${i.id}`;
 }
 
 export default function Dashboard() {
@@ -40,6 +49,37 @@ export default function Dashboard() {
       .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load your dashboard."));
   }, []);
 
+  const currency = data?.currency || data?.wallet?.currency || "USD";
+  const outstanding = data?.stats.outstanding ?? 0;
+  const openInvoices = data?.stats.open_invoices ?? 0;
+  const total = data?.stats.instances ?? 0;
+  const running = data?.stats.running ?? 0;
+  const wallet = data?.wallet?.total ?? data?.stats.wallet_balance ?? 0;
+
+  const actions: ActionItem[] = React.useMemo(() => {
+    if (!data) return [];
+    const items: ActionItem[] = [];
+    for (const inv of data.recent_invoices) {
+      if (inv.status === "open" || inv.status === "overdue") {
+        items.push({
+          id: `inv-${inv.id}`,
+          text: `Invoice ${inv.number} ${inv.status}`,
+          cta: "Pay",
+          to: `/my/billing/${inv.id}`,
+        });
+      }
+    }
+    for (const i of data.instances) {
+      if (i.state === "suspended")
+        items.push({ id: `s-${i.id}`, text: `${i.name} is suspended`, cta: "Resolve", to: projectLink(i) });
+      else if (i.state === "failed")
+        items.push({ id: `f-${i.id}`, text: `${i.name} failed to deploy`, cta: "View", to: projectLink(i) });
+      else if (i.state === "pending_payment")
+        items.push({ id: `p-${i.id}`, text: `${i.name} is awaiting payment`, cta: "Checkout", to: `/my/instances/${i.id}/checkout` });
+    }
+    return items.slice(0, 6);
+  }, [data]);
+
   return (
     <div className="animate-fade-in">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -47,115 +87,159 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold tracking-tight">
             Welcome back{user ? `, ${user.name.split(" ")[0]}` : ""}
           </h1>
-          <p className="mt-1 text-sm text-muted">
-            Here's what's happening across your {user?.company} workspace.
-          </p>
+          <p className="mt-1 text-sm text-muted">Everything across your account at a glance.</p>
         </div>
         <Button onClick={() => navigate(createTo)}>
           <Plus className="size-4" />
-          New instance
+          New project
         </Button>
       </div>
 
       {error && <AlertBanner className="mt-6" variant="danger" title="Couldn't load dashboard" description={error} />}
 
-      {!data && !error && (
-        <div className="mt-20 flex justify-center">
-          <Spinner size="lg" label="Loading your workspace…" />
-        </div>
-      )}
-
-      {data && (
-        <>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <InfoCard label="Instances" value={data.stats.instances} icon={Server} hint={`${data.stats.running} running`} />
-            <InfoCard label="Running" value={data.stats.running} icon={Activity} />
-            <InfoCard
-              label="Outstanding"
-              value={money(data.stats.outstanding)}
-              icon={CircleDollarSign}
-              hint={`${data.stats.open_invoices} open invoice${data.stats.open_invoices === 1 ? "" : "s"}`}
-            />
-            <InfoCard
-              label="Hosting"
-              value={data.instances.filter((i) => i.is_hosting).length}
-              icon={Database}
-              hint="Self-managed instances"
-            />
+      {!data && !error ? (
+        <div className="mt-8 space-y-6">
+          <Skeleton className="h-24 w-full rounded-xl" />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <SkeletonCard />
+            <SkeletonCard />
           </div>
+        </div>
+      ) : data ? (
+        <>
+          {/* Hero: needs attention (balance owed) */}
+          {outstanding > 0 ? (
+            <Card className="mt-6 flex flex-col gap-4 border-warning/40 bg-warning/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-warning/15 text-warning">
+                  <AlertTriangle className="size-5" />
+                </span>
+                <div>
+                  <p className="text-lg font-semibold">{money(outstanding, currency)} due</p>
+                  <p className="text-sm text-muted">
+                    {openInvoices} open invoice{openInvoices === 1 ? "" : "s"} awaiting payment.
+                  </p>
+                </div>
+              </div>
+              <Button className="shrink-0" onClick={() => navigate("/my/billing")}>
+                Pay now
+              </Button>
+            </Card>
+          ) : (
+            <Card className="mt-6 flex items-center gap-3 border-success/30 bg-success/5 p-5">
+              <span className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-success/15 text-success">
+                <CheckCircle2 className="size-5" />
+              </span>
+              <div>
+                <p className="font-semibold">You're all paid up</p>
+                <p className="text-sm text-muted">No outstanding invoices.</p>
+              </div>
+            </Card>
+          )}
 
-          <div className="mt-8 grid gap-6 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
-              <div className="flex items-center justify-between border-b border-border p-5">
-                <h2 className="font-semibold">Your instances</h2>
-                <Link to="/my/instances" className="inline-flex items-center gap-1 text-sm text-primary-glow hover:underline">
-                  View all <ArrowRight className="size-3.5" />
+          {/* Fleet + wallet */}
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <Card className="p-5">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-muted">Fleet health</p>
+                <Link to="/my/instances" className="text-xs text-primary-glow hover:underline">
+                  View projects
                 </Link>
               </div>
-              {data.instances.length === 0 ? (
-                <div className="p-5">
-                  <EmptyState
-                    icon={Server}
-                    title="No instances yet"
-                    description="Deploy your first Odoo instance to get started."
-                    action={<Button onClick={() => navigate(createTo)}>Create instance</Button>}
+              <p className="mt-2 text-2xl font-bold tracking-tight">
+                {running}
+                <span className="text-base font-medium text-muted"> / {total} running</span>
+              </p>
+              <div className="mt-3 flex gap-1">
+                {Array.from({ length: Math.max(total, 1) }).map((_, i) => (
+                  <span
+                    key={i}
+                    className={cn(
+                      "h-2 flex-1 rounded-full",
+                      total === 0 ? "bg-border" : i < running ? "bg-success" : "bg-border",
+                    )}
                   />
-                </div>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {data.instances.slice(0, 5).map((i) => (
-                    <li key={i.id}>
-                      <Link
-                        to={i.is_hosting ? `/my/instances/${i.id}/environments` : `/my/instances/${i.id}`}
-                        className="flex items-center justify-between gap-4 p-5 transition-colors hover:bg-card/60"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{i.name}</p>
-                          <p className="truncate text-sm text-muted">{i.region || i.domain}</p>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <span className="hidden text-sm text-muted sm:block">{i.workers} workers</span>
-                          <StatusBadge status={i.state} label={i.state_label} />
-                        </div>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                ))}
+              </div>
             </Card>
 
-            <Card>
-              <div className="flex items-center justify-between border-b border-border p-5">
-                <h2 className="font-semibold">Recent invoices</h2>
-                <Receipt className="size-4 text-muted" />
+            <Card className="flex items-center justify-between p-5">
+              <div>
+                <p className="text-sm font-medium text-muted">Wallet balance</p>
+                <p className="mt-2 text-2xl font-bold tracking-tight">{money(wallet, currency)}</p>
               </div>
-              {data.recent_invoices.length === 0 ? (
-                <div className="p-5 text-sm text-muted">No invoices yet.</div>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {data.recent_invoices.map((inv) => (
-                    <li key={inv.id}>
-                      <Link
-                        to={`/my/billing/${inv.id}`}
-                        className="flex items-center justify-between gap-3 p-5 transition-colors hover:bg-card/60"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{inv.number}</p>
-                          <p className="text-xs text-muted">{inv.issued ? formatDate(inv.issued) : ""}</p>
-                        </div>
-                        <div className="flex flex-col items-end gap-1">
-                          <span className="text-sm font-medium tabular-nums">{money(inv.total, inv.currency)}</span>
-                          <StatusBadge status={inv.status} />
-                        </div>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <Button variant="secondary" onClick={() => navigate("/my/billing")}>
+                <Wallet className="size-4" />
+                Top up
+              </Button>
             </Card>
           </div>
+
+          {/* Needs attention list */}
+          {actions.length > 0 && (
+            <Card className="mt-6">
+              <div className="border-b border-border p-5">
+                <h2 className="font-semibold">Needs your attention</h2>
+              </div>
+              <ul className="divide-y divide-border">
+                {actions.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between gap-3 p-4 px-5">
+                    <span className="flex items-center gap-2.5 text-sm">
+                      <span className="size-2 shrink-0 rounded-full bg-warning" />
+                      {a.text}
+                    </span>
+                    <Button size="sm" variant="secondary" onClick={() => navigate(a.to)}>
+                      {a.cta}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+
+          {/* Projects */}
+          <div className="mt-8 flex items-center justify-between">
+            <h2 className="font-semibold">Your projects</h2>
+            <Link to="/my/instances" className="inline-flex items-center gap-1 text-sm text-primary-glow hover:underline">
+              View all <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+          {data.instances.length === 0 ? (
+            <Card className="mt-3 p-5">
+              <EmptyState
+                icon={Server}
+                title="No projects yet"
+                description="Create your first project to deploy an Odoo environment."
+                action={<Button onClick={() => navigate(createTo)}>Create project</Button>}
+              />
+            </Card>
+          ) : (
+            <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {data.instances.slice(0, 6).map((i) => (
+                <Link key={i.id} to={projectLink(i)}>
+                  <Card className="group p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold">{i.name}</p>
+                        <p className="truncate text-xs text-muted">{i.region || i.domain}</p>
+                      </div>
+                      <StatusBadge status={i.state} label={i.state_label} />
+                    </div>
+                    <p className="mt-4 text-xs text-muted">{i.is_hosting ? "Hosting project" : "Managed service"}</p>
+                  </Card>
+                </Link>
+              ))}
+              <button
+                onClick={() => navigate(createTo)}
+                className="flex min-h-[7rem] items-center justify-center rounded-xl border border-dashed border-border text-sm text-muted transition-colors hover:border-primary/40 hover:text-foreground"
+              >
+                <Plus className="mr-2 size-4" />
+                New project
+              </button>
+            </div>
+          )}
         </>
-      )}
+      ) : null}
     </div>
   );
 }

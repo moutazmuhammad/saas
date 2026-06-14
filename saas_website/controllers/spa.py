@@ -235,6 +235,10 @@ class SaasPortalSpa(SaasPortal):
     def portal_billing(self, **kw):
         return spa_shell()
 
+    @http.route('/my/settings', type='http', auth='public', website=True)
+    def portal_settings(self, **kw):
+        return spa_shell()
+
     @http.route('/my/billing/<int:invoice_id>',
                 type='http', auth='public', website=True)
     def portal_billing_detail(self, invoice_id, **kw):

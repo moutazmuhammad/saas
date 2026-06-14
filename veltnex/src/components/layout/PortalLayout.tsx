@@ -4,23 +4,26 @@ import {
   LayoutDashboard,
   Server,
   Receipt,
+  Settings,
   LogOut,
   Menu,
-  X,
+  Search,
   LifeBuoy,
   LayoutGrid,
   ChevronRight,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { CommandPalette } from "@/components/CommandPalette";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/my", label: "Overview", icon: LayoutDashboard, end: true },
-  { to: "/my/instances", label: "Instances", icon: Server, end: false },
+  { to: "/my/instances", label: "Projects", icon: Server, end: false },
   { to: "/my/billing", label: "Billing", icon: Receipt, end: false },
+  { to: "/my/settings", label: "Settings", icon: Settings, end: false },
 ];
 
 export function PortalLayout() {
@@ -29,11 +32,24 @@ export function PortalLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const [paletteOpen, setPaletteOpen] = React.useState(false);
 
   React.useEffect(() => {
     setMobileOpen(false);
     document.querySelector("main")?.scrollTo({ top: 0 });
   }, [pathname]);
+
+  // Global ⌘K / Ctrl+K opens the command palette.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleLogout = () => {
     logout();
@@ -45,6 +61,16 @@ export function PortalLayout() {
     <div className="flex h-full flex-col">
       <div className="flex h-16 items-center border-b border-border px-5">
         <Logo />
+      </div>
+      <div className="px-3 pt-3">
+        <button
+          onClick={() => setPaletteOpen(true)}
+          className="flex w-full items-center gap-2.5 rounded-lg border border-border bg-background/40 px-3 py-2 text-sm text-muted transition-colors hover:text-foreground"
+        >
+          <Search className="size-4" />
+          <span className="flex-1 text-left">Search…</span>
+          <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px]">⌘K</kbd>
+        </button>
       </div>
       <nav className="flex-1 space-y-1 p-3">
         {NAV.map((item) => (
@@ -72,7 +98,7 @@ export function PortalLayout() {
           className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-muted transition-colors hover:bg-card hover:text-foreground"
         >
           <LifeBuoy className="size-4" />
-          Documentation
+          Help &amp; support
         </NavLink>
         {/* Internal (backend) users get a jump-link into the Odoo backend.
             `/odoo` is the Odoo web client root → full navigation. */}
@@ -136,7 +162,14 @@ export function PortalLayout() {
             <Menu className="size-5" />
           </button>
           <Logo />
-          <ThemeToggle className="ml-auto" />
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="ml-auto rounded-md p-2 text-muted"
+            aria-label="Search"
+          >
+            <Search className="size-5" />
+          </button>
+          <ThemeToggle />
         </header>
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
@@ -144,6 +177,8 @@ export function PortalLayout() {
           </div>
         </main>
       </div>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );
 }

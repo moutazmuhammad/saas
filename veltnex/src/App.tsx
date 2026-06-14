@@ -26,6 +26,7 @@ import Logs from "./pages/portal/Logs";
 import Backups from "./pages/portal/Backups";
 import Invoices from "./pages/portal/Invoices";
 import InvoiceDetail from "./pages/portal/InvoiceDetail";
+import Settings from "./pages/portal/Settings";
 
 // Hard guard: a disabled section's pages aren't reachable even by typing
 // the URL. Sections default to enabled while loading, so we never flash a
@@ -77,6 +78,7 @@ export default function App() {
           <Route path="instances/:id/backups" element={<Backups />} />
           <Route path="billing" element={<Invoices />} />
           <Route path="billing/:id" element={<InvoiceDetail />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
       </Route>
 

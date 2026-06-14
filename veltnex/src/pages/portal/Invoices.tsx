@@ -1,14 +1,15 @@
 import * as React from "react";
 import { Link } from "react-router-dom";
-import { Receipt, ChevronRight, CircleDollarSign, CheckCircle2 } from "lucide-react";
+import { Receipt, ChevronRight, CircleDollarSign, CheckCircle2, Wallet } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { InfoCard } from "@/components/InfoCard";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { AlertBanner } from "@/components/AlertBanner";
 import { HelpHint } from "@/components/HelpHint";
-import { api, ApiError, type ApiInvoice } from "@/lib/api";
+import { api, ApiError, type ApiInvoice, type WalletData } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ const FILTERS = [
 
 export default function Invoices() {
   const [invoices, setInvoices] = React.useState<ApiInvoice[] | null>(null);
+  const [walletData, setWalletData] = React.useState<WalletData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [filter, setFilter] = React.useState<(typeof FILTERS)[number]["value"]>("all");
 
@@ -33,6 +35,7 @@ export default function Invoices() {
       .invoices()
       .then(setInvoices)
       .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load invoices."));
+    api.wallet().then(setWalletData).catch(() => setWalletData(null));
   }, []);
 
   const list = invoices ?? [];
@@ -56,8 +59,9 @@ export default function Invoices() {
         </div>
       ) : (
         <>
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-            <InfoCard label="Outstanding" value={money(outstanding, currency)} icon={CircleDollarSign} hint="Across open invoices" />
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <InfoCard label="Outstanding" value={money(outstanding, currency)} icon={CircleDollarSign} hint={`${list.filter((i) => i.status === "open" || i.status === "overdue").length} open`} />
+            <InfoCard label="Wallet balance" value={money(walletData?.balance ?? 0, walletData?.currency || currency)} icon={Wallet} hint={walletData && walletData.balance_bonus > 0 ? `${money(walletData.balance_bonus, walletData.currency)} bonus` : undefined} />
             <InfoCard label="Paid to date" value={money(paid, currency)} icon={CheckCircle2} />
             <InfoCard label="Invoices" value={list.length} icon={Receipt} />
           </div>
@@ -106,9 +110,16 @@ export default function Invoices() {
                         <td className="px-5 py-4"><StatusBadge status={inv.status} /></td>
                         <td className="px-5 py-4 text-right font-medium tabular-nums">{money(inv.total, inv.currency)}</td>
                         <td className="px-5 py-4 text-right">
-                          <Link to={`/my/billing/${inv.id}`} className="inline-flex text-muted transition-colors hover:text-foreground" aria-label="View invoice">
-                            <ChevronRight className="size-4" />
-                          </Link>
+                          <div className="flex items-center justify-end gap-2">
+                            {inv.payable && inv.portal_url && (
+                              <Button size="sm" onClick={() => (window.location.href = inv.portal_url)}>
+                                Pay
+                              </Button>
+                            )}
+                            <Link to={`/my/billing/${inv.id}`} className="inline-flex text-muted transition-colors hover:text-foreground" aria-label="View invoice">
+                              <ChevronRight className="size-4" />
+                            </Link>
+                          </div>
                         </td>
                       </tr>
                     ))}
