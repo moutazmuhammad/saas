@@ -1278,6 +1278,30 @@ class SaasApi(http.Controller):
             return err(str(e), 'error')
         return ok({'deleted': True})
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/environments/merge',
+                type='json', auth='public')
+    def environment_merge(self, instance_id, source_id=None, target_id=None):
+        """Odoo.sh-style drag-to-merge: merge the source server's branch into
+        the target server's branch (and redeploy the target)."""
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        Inst = request.env['saas.instance'].sudo()
+        target = Inst.browse(int(target_id or 0))
+        source = Inst.browse(int(source_id or 0))
+        if not target.exists() or not source.exists() \
+                or target.partner_id != partner or source.partner_id != partner:
+            return err(_("Environment not found."), 'not_found')
+        try:
+            result = target.action_merge_environment(source.id)
+        except (UserError, ValidationError) as e:
+            return err(str(e), 'error')
+        except Exception:
+            _logger.exception("Merge failed %s->%s", source_id, target_id)
+            return err(_("The merge couldn't be completed. Please try again."),
+                       'error')
+        return ok(result)
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/branches',
                 type='json', auth='public')
     def instance_branches(self, instance_id, access_token=None):

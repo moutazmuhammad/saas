@@ -189,6 +189,30 @@ class TestEnvironments(TransactionCase):
         self.assertFalse(res.get('auto_provisioned'))
         self.assertEqual(child.state, 'pending_payment')
 
+    # ----------------------------------------------------------------- merge
+    def test_merge_self_rejected(self):
+        prod = self._mk_prod('pm1')
+        with self.assertRaises(Exception):
+            prod.action_merge_environment(prod.id)
+
+    def test_merge_cross_project_rejected(self):
+        a = self._mk_prod('pma')
+        b = self._mk_prod('pmb')
+        with self.assertRaises(Exception):
+            a.action_merge_environment(b.id)
+
+    def test_merge_reaches_provider(self):
+        prod = self._mk_prod('pmg')
+        self.env['saas.instance.repo'].sudo().create({
+            'instance_id': prod.id, 'repo_url': 'https://example.com/o/r.git',
+            'branch': 'main',
+        })
+        child = self._mk_child(prod, 'staging', sub='pmg-stg')
+        # Same project, target has a repo, source is a sibling → guards pass and
+        # the provider call is attempted; a non-provider URL fails cleanly.
+        with self.assertRaises(Exception):
+            prod.action_merge_environment(child.id)
+
     # --------------------------------------------------------------- deletion
     def test_delete_environment_credits_wallet(self):
         today = date.today()

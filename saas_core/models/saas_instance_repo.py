@@ -666,6 +666,45 @@ class SaasInstanceRepo(models.Model):
                      branch, source_branch, owner, repo)
         return True
 
+    def _merge_branch_on_provider(self, target_branch, source_branch):
+        """Merge ``source_branch`` INTO ``target_branch`` on the Git provider
+        (Odoo.sh-style drag-to-merge). Returns a short status string:
+        'merged', 'up_to_date'. Raises UserError on conflict / unsupported
+        provider so the caller can surface a clear message."""
+        self.ensure_one()
+        if not target_branch or not source_branch \
+                or target_branch == source_branch:
+            raise UserError(_("Pick two different branches to merge."))
+        provider, base, owner, repo, token = self._branch_provider_context()
+        if provider == 'github':
+            resp = http_requests.post(
+                '%s/repos/%s/%s/merges' % (base, owner, repo),
+                headers={'Authorization': 'token %s' % token,
+                         'Accept': 'application/vnd.github+json'},
+                json={'base': target_branch, 'head': source_branch,
+                      'commit_message': 'Merge %s into %s (via VELTNEX)'
+                                        % (source_branch, target_branch)},
+                timeout=30)
+            if resp.status_code == 201:
+                return 'merged'
+            if resp.status_code == 204:
+                return 'up_to_date'
+            if resp.status_code == 409:
+                raise UserError(_(
+                    "Merge conflict between '%s' and '%s'. Resolve it in Git, "
+                    "then try again.") % (source_branch, target_branch))
+            raise UserError(_(
+                "Couldn't merge '%s' into '%s' (%s): %s")
+                % (source_branch, target_branch, resp.status_code,
+                   (resp.text or '')[:200]))
+        # Other providers: a one-call branch merge isn't uniformly available
+        # (GitLab/Gitea/Bitbucket go through merge requests). Be honest rather
+        # than half-do it.
+        raise UserError(_(
+            "Drag-to-merge is currently supported for GitHub repositories. "
+            "Please merge '%s' into '%s' from your Git host.")
+            % (source_branch, target_branch))
+
     def _delete_branch_on_provider(self, branch):
         """Delete ``branch`` on the Git provider. Tolerates an already-gone
         branch; refuses to delete the project's protected main branch."""

@@ -2103,6 +2103,51 @@ class SaasInstance(models.Model):
         self.action_cancel()
         return True
 
+    def action_merge_environment(self, source_id):
+        """Odoo.sh-style drag-to-merge: merge the SOURCE environment's branch
+        into THIS environment's branch on the Git provider, then redeploy this
+        environment so it runs the merged code. ``self`` is the merge TARGET."""
+        self.ensure_one()
+        source = self.env['saas.instance'].sudo().browse(int(source_id))
+        if not source.exists():
+            raise UserError(_("Source environment not found."))
+        # Both must be in the same project and owned by the same customer.
+        if source.partner_id != self.partner_id:
+            raise UserError(_("These environments belong to different customers."))
+        if self._env_anchor() != source._env_anchor():
+            raise UserError(_("You can only merge between servers of the same "
+                              "project."))
+        if source == self:
+            raise UserError(_("Pick two different servers to merge."))
+        repo = self.repo_ids[:1]
+        if not repo:
+            raise UserError(_("This environment has no connected repository."))
+        target_branch = self._env_branch()
+        source_branch = source._env_branch()
+        status = repo._merge_branch_on_provider(target_branch, source_branch)
+        self._append_log(
+            "Merged branch '%s' into '%s' (%s)."
+            % (source_branch, target_branch, status))
+        self.message_post(body=_(
+            "Merged <b>%s</b> into <b>%s</b> (%s).") % (
+            source_branch, target_branch, status))
+        # Pull the merged code and restart — only when there was something to
+        # merge and the server is in a redeployable state.
+        redeployed = False
+        if status == 'merged' and self.state in ('running', 'stopped'):
+            try:
+                self.action_redeploy()
+                redeployed = True
+            except Exception:
+                _logger.exception(
+                    "Redeploy after merge failed for %s", self.subdomain)
+        return {
+            'status': status,
+            'source_branch': source_branch,
+            'target_branch': target_branch,
+            'redeployed': redeployed,
+        }
+
     # ==================================================================
     #  Wallet credit (A4) helpers
     #  ─ the single, reusable plumbing every invoice-creating flow uses

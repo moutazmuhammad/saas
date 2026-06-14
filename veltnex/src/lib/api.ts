@@ -609,6 +609,16 @@ export const api = {
       `/saas/api/v1/instances/${id}/environments/${childId}/delete`,
       { delete_branch: deleteBranch },
     ),
+  environmentMerge: (id: number, sourceId: number, targetId: number) =>
+    rpc<{
+      status: "merged" | "up_to_date";
+      source_branch: string;
+      target_branch: string;
+      redeployed: boolean;
+    }>(`/saas/api/v1/instances/${id}/environments/merge`, {
+      source_id: sourceId,
+      target_id: targetId,
+    }),
   instanceBranches: (id: number) =>
     rpc<{ branches: string[]; main_branch: string }>(
       `/saas/api/v1/instances/${id}/branches`,

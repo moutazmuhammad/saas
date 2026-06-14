@@ -1,8 +1,8 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  Boxes,
   GitBranch,
+  GitMerge,
   Plus,
   Trash2,
   ExternalLink,
@@ -10,6 +10,8 @@ import {
   FlaskConical,
   Server,
   Link2,
+  GripVertical,
+  ArrowRight,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +23,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
+import { cn } from "@/lib/utils";
 import {
   api,
   ApiError,
@@ -28,13 +31,18 @@ import {
   type ProjectEnvironments,
 } from "@/lib/api";
 
-// States that mean a server is still settling — poll while any child is here.
 const TRANSIENT = new Set([
   "pending_payment",
   "paid",
   "pending_provision",
   "provisioning",
 ]);
+
+const STAGE_META = {
+  production: { icon: Server, accent: "text-success", ring: "ring-success/40" },
+  staging: { icon: FlaskConical, accent: "text-info", ring: "ring-info/40" },
+  development: { icon: Rocket, accent: "text-primary-glow", ring: "ring-primary-glow/40" },
+} as const;
 
 export default function Environments() {
   const { id = "" } = useParams();
@@ -46,14 +54,17 @@ export default function Environments() {
   const [createType, setCreateType] =
     React.useState<"staging" | "development" | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<EnvChild | null>(null);
+  const [mergePrompt, setMergePrompt] =
+    React.useState<{ source: EnvChild; target: EnvChild } | null>(null);
+  // Drag-and-drop merge state.
+  const [draggingId, setDraggingId] = React.useState<number | null>(null);
+  const [dragOverId, setDragOverId] = React.useState<number | null>(null);
 
   const load = React.useCallback(async () => {
     try {
       setData(await api.environments(instanceId));
     } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : "Could not load environments.",
-      );
+      setError(e instanceof ApiError ? e.message : "Could not load environments.");
     }
   }, [instanceId]);
 
@@ -61,7 +72,6 @@ export default function Environments() {
     load();
   }, [load]);
 
-  // Poll while any environment is provisioning / awaiting payment.
   const hasTransient = !!data?.environments.some((c) => TRANSIENT.has(c.state));
   React.useEffect(() => {
     if (!hasTransient) return;
@@ -71,10 +81,47 @@ export default function Environments() {
 
   const cycle = data?.billing_cycle === "yearly" ? "yr" : "mo";
   const prodId = data?.production.id ?? instanceId;
+  const allEnvs: EnvChild[] = data
+    ? [data.production, ...data.environments]
+    : [];
   const staging = data?.environments.filter((e) => e.environment === "staging") ?? [];
   const development =
     data?.environments.filter((e) => e.environment === "development") ?? [];
   const canCreate = !!data?.has_repo;
+
+  const onDrop = (target: EnvChild) => {
+    const source = allEnvs.find((e) => e.id === draggingId) || null;
+    setDraggingId(null);
+    setDragOverId(null);
+    if (source && source.id !== target.id) setMergePrompt({ source, target });
+  };
+
+  const cardProps = (env: EnvChild) => ({
+    env,
+    mainBranch: data?.main_branch || "main",
+    draggable: canCreate,
+    isDragging: draggingId === env.id,
+    isDropTarget: dragOverId === env.id && draggingId !== null && draggingId !== env.id,
+    onDragStart: () => setDraggingId(env.id),
+    onDragEnd: () => {
+      setDraggingId(null);
+      setDragOverId(null);
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (draggingId !== null && draggingId !== env.id) {
+        e.preventDefault();
+        setDragOverId(env.id);
+      }
+    },
+    onDragLeave: () =>
+      setDragOverId((prev) => (prev === env.id ? null : prev)),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      onDrop(env);
+    },
+    onOpen: () => navigate(`/my/instances/${env.id}`),
+    onDelete: env.is_production ? undefined : () => setDeleteTarget(env),
+  });
 
   return (
     <div className="animate-fade-in">
@@ -86,24 +133,17 @@ export default function Environments() {
         ]}
       />
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Environments</h1>
-          <p className="mt-1 text-sm text-muted">
-            One Production server plus any number of Staging and Development
-            servers — each on its own Git branch, like Odoo.sh. Open a server to
-            manage it.
-          </p>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Environments</h1>
+        <p className="mt-1 text-sm text-muted">
+          Your project's servers, organised by stage — just like Odoo.sh. Open a
+          server to manage it, or <strong className="text-foreground">drag one
+          server onto another to merge its branch</strong> and redeploy.
+        </p>
       </div>
 
       {error && (
-        <AlertBanner
-          className="mt-6"
-          variant="danger"
-          title="Environments"
-          description={error}
-        />
+        <AlertBanner className="mt-6" variant="danger" title="Environments" description={error} />
       )}
 
       {!data && !error ? (
@@ -112,94 +152,93 @@ export default function Environments() {
         </div>
       ) : data ? (
         <>
-          {/* Repo gate: env servers need a repo on Production first. */}
           {!canCreate && (
-            <Card className="mt-6 flex flex-col gap-3 border-info/40 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <Card className="mt-6 flex flex-col gap-3 border-info/40 bg-info/5 p-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
                   <Link2 className="size-5" />
                 </span>
                 <div>
-                  <p className="font-medium">Connect a Git repository first</p>
+                  <p className="font-medium">Connect a Git repository to get started</p>
                   <p className="text-xs text-muted">
                     Staging and Development servers run on branches of your repo.
-                    Link a repository to your Production server to unlock them.
+                    Link a repository to Production to unlock them.
                   </p>
                 </div>
               </div>
-              <Button
-                className="shrink-0"
-                onClick={() => navigate(`/my/instances/${prodId}/code`)}
-              >
+              <Button className="shrink-0" onClick={() => navigate(`/my/instances/${prodId}/code`)}>
                 <GitBranch className="size-4" />
                 Connect repository
               </Button>
             </Card>
           )}
 
-          <p className="mt-6 text-xs text-muted">
-            Each additional Staging or Development server (lowest spec) costs{" "}
-            <strong className="text-foreground">
-              {data.env_server_price}/{cycle}
-            </strong>{" "}
-            and is added to your subscription. Main branch:{" "}
-            <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-foreground">
-              {data.main_branch}
-            </code>
-          </p>
+          {/* Project facts */}
+          <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted">
+            <span className="inline-flex items-center gap-1.5">
+              <GitBranch className="size-3.5" />
+              Main branch:{" "}
+              <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-foreground">
+                {data.main_branch}
+              </code>
+            </span>
+            <span>
+              Each extra Staging / Development server (lowest spec):{" "}
+              <strong className="text-foreground">
+                {data.env_server_price}/{cycle}
+              </strong>
+            </span>
+          </div>
 
           {/* Odoo.sh-style three-stage board */}
-          <div className="mt-4 grid gap-5 lg:grid-cols-3">
+          <div className="mt-5 grid gap-4 lg:grid-cols-3">
             <StageColumn
+              stage="production"
               title="Production"
-              icon={Server}
-              hint="Always one, on your main branch."
+              hint="Always one server, on your main branch."
+              count={1}
             >
-              <EnvironmentCard env={data.production} mainBranch={data.main_branch} />
+              <EnvironmentCard {...cardProps(data.production)} />
             </StageColumn>
 
             <StageColumn
+              stage="staging"
               title="Staging"
-              icon={FlaskConical}
               hint="Pre-production copies on a chosen branch."
+              count={staging.length}
               onAdd={canCreate ? () => setCreateType("staging") : undefined}
               addDisabledReason={canCreate ? undefined : "Connect a repository first"}
             >
               {staging.length === 0 ? (
                 <EmptyStage label="No staging servers yet." />
               ) : (
-                staging.map((env) => (
-                  <EnvironmentCard
-                    key={env.id}
-                    env={env}
-                    mainBranch={data.main_branch}
-                    onDelete={() => setDeleteTarget(env)}
-                  />
-                ))
+                staging.map((env) => <EnvironmentCard key={env.id} {...cardProps(env)} />)
               )}
             </StageColumn>
 
             <StageColumn
+              stage="development"
               title="Development"
-              icon={Rocket}
-              hint="Throwaway servers, each on its own new branch."
+              hint="Throwaway servers, each on its own branch."
+              count={development.length}
               onAdd={canCreate ? () => setCreateType("development") : undefined}
               addDisabledReason={canCreate ? undefined : "Connect a repository first"}
             >
               {development.length === 0 ? (
                 <EmptyStage label="No development servers yet." />
               ) : (
-                development.map((env) => (
-                  <EnvironmentCard
-                    key={env.id}
-                    env={env}
-                    mainBranch={data.main_branch}
-                    onDelete={() => setDeleteTarget(env)}
-                  />
-                ))
+                development.map((env) => <EnvironmentCard key={env.id} {...cardProps(env)} />)
               )}
             </StageColumn>
           </div>
+
+          {canCreate && allEnvs.length > 1 && (
+            <p className="mt-4 flex items-center gap-1.5 text-xs text-muted">
+              <GitMerge className="size-3.5" />
+              Tip: drag a server card onto another to merge its branch into that
+              server and redeploy it.
+            </p>
+          )}
         </>
       ) : null}
 
@@ -207,13 +246,10 @@ export default function Environments() {
         instanceId={instanceId}
         type={createType}
         onClose={() => setCreateType(null)}
-        onCreated={(autoProvisioned) => {
+        onCreated={(auto) => {
           setCreateType(null);
-          if (autoProvisioned)
-            toast.success(
-              "Environment created",
-              "We're provisioning your new server now.",
-            );
+          if (auto)
+            toast.success("Environment created", "We're provisioning your new server now.");
           load();
         }}
       />
@@ -228,54 +264,65 @@ export default function Environments() {
           load();
         }}
       />
+
+      <MergeEnvDialog
+        instanceId={instanceId}
+        prompt={mergePrompt}
+        onClose={() => setMergePrompt(null)}
+        onMerged={(msg) => {
+          setMergePrompt(null);
+          toast.success("Merge complete", msg);
+          load();
+        }}
+      />
     </div>
   );
 }
 
 function StageColumn({
+  stage,
   title,
-  icon: Icon,
   hint,
+  count,
   onAdd,
   addDisabledReason,
   children,
 }: {
+  stage: keyof typeof STAGE_META;
   title: string;
-  icon: React.ComponentType<{ className?: string }>;
   hint: string;
+  count: number;
   onAdd?: () => void;
   addDisabledReason?: string;
   children: React.ReactNode;
 }) {
+  const { icon: Icon, accent } = STAGE_META[stage];
   return (
-    <div className="flex flex-col">
-      <div className="flex items-center justify-between gap-2">
+    <div className="flex flex-col rounded-xl border border-border bg-card/40 p-3">
+      <div className="flex items-center justify-between gap-2 px-1">
         <div className="flex items-center gap-2">
-          <Icon className="size-4 text-muted" />
+          <Icon className={cn("size-4", accent)} />
           <h2 className="text-sm font-semibold">{title}</h2>
+          <span className="rounded-full bg-border/60 px-1.5 py-0.5 text-[11px] font-medium text-muted">
+            {count}
+          </span>
         </div>
         {(onAdd || addDisabledReason) && (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={onAdd}
-            disabled={!onAdd}
-            title={addDisabledReason}
-          >
+          <Button size="sm" variant="ghost" onClick={onAdd} disabled={!onAdd} title={addDisabledReason}>
             <Plus className="size-4" />
             Add
           </Button>
         )}
       </div>
-      <p className="mt-0.5 text-xs text-muted">{hint}</p>
-      <div className="mt-3 flex flex-col gap-3">{children}</div>
+      <p className="mt-0.5 px-1 text-xs text-muted">{hint}</p>
+      <div className="mt-3 flex flex-1 flex-col gap-2.5">{children}</div>
     </div>
   );
 }
 
 function EmptyStage({ label }: { label: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-border p-5 text-center text-xs text-muted">
+    <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted">
       {label}
     </div>
   );
@@ -284,63 +331,202 @@ function EmptyStage({ label }: { label: string }) {
 function EnvironmentCard({
   env,
   mainBranch,
+  draggable,
+  isDragging,
+  isDropTarget,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onOpen,
   onDelete,
 }: {
   env: EnvChild;
   mainBranch: string;
+  draggable: boolean;
+  isDragging: boolean;
+  isDropTarget: boolean;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (e: React.DragEvent) => void;
+  onOpen: () => void;
   onDelete?: () => void;
 }) {
-  const navigate = useNavigate();
-  const Icon = env.is_production
-    ? Server
-    : env.environment === "staging"
-      ? FlaskConical
-      : Rocket;
+  const { icon: Icon, ring } = STAGE_META[env.environment];
   return (
-    <Card className="flex flex-col gap-3 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-muted">
+    <Card
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      className={cn(
+        "group flex flex-col gap-2.5 p-3.5 transition-all",
+        draggable && "cursor-grab active:cursor-grabbing",
+        isDragging && "opacity-40",
+        isDropTarget && cn("ring-2", ring),
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2.5">
+          {draggable && (
+            <GripVertical className="mt-0.5 size-4 shrink-0 text-muted/50 transition-colors group-hover:text-muted" />
+          )}
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-muted">
             <Icon className="size-4" />
           </span>
-          <div>
-            <p className="font-medium leading-tight">{env.name}</p>
-            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
-              <GitBranch className="size-3" />
-              {env.branch || mainBranch}
+          <div className="min-w-0">
+            <p className="truncate font-medium leading-tight">{env.name}</p>
+            <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-muted">
+              <GitBranch className="size-3 shrink-0" />
+              <span className="truncate">{env.branch || mainBranch}</span>
             </p>
           </div>
         </div>
         <StatusBadge status={env.state} />
       </div>
 
-      <div className="flex items-center justify-end gap-2">
+      <div className="flex items-center justify-end gap-1.5">
         {env.pending_payment && env.pending_invoice_id ? (
           <Button
             size="sm"
-            onClick={() =>
-              (window.location.href = `/my/instances/${env.id}/checkout`)
-            }
+            onClick={() => (window.location.href = `/my/instances/${env.id}/checkout`)}
           >
             Complete checkout
           </Button>
         ) : (
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => navigate(`/my/instances/${env.id}`)}
-          >
+          <Button size="sm" variant="secondary" onClick={onOpen}>
             <ExternalLink className="size-4" />
             Open
           </Button>
         )}
         {onDelete && (
-          <Button size="sm" variant="ghost" onClick={onDelete}>
+          <Button size="sm" variant="ghost" onClick={onDelete} title="Remove server">
             <Trash2 className="size-4 text-danger" />
           </Button>
         )}
       </div>
     </Card>
+  );
+}
+
+function MergeEnvDialog({
+  instanceId,
+  prompt,
+  onClose,
+  onMerged,
+}: {
+  instanceId: number;
+  prompt: { source: EnvChild; target: EnvChild } | null;
+  onClose: () => void;
+  onMerged: (message: string) => void;
+}) {
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (prompt) {
+      setLoading(false);
+      setError(null);
+    }
+  }, [prompt]);
+
+  const submit = async () => {
+    if (!prompt) return;
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await api.environmentMerge(
+        instanceId,
+        prompt.source.id,
+        prompt.target.id,
+      );
+      const msg =
+        res.status === "up_to_date"
+          ? `${prompt.target.name} is already up to date with ${prompt.source.branch}.`
+          : `Merged ${res.source_branch} into ${res.target_branch}.${res.redeployed ? " Redeploying…" : ""}`;
+      onMerged(msg);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Couldn't merge.");
+      setLoading(false);
+    }
+  };
+
+  const toProd = prompt?.target.is_production;
+
+  return (
+    <Dialog open={!!prompt} onClose={onClose} title="Merge branches">
+      {error && (
+        <AlertBanner className="mb-4" variant="danger" title="Couldn't merge" description={error} />
+      )}
+      {prompt && (
+        <>
+          <div className="flex items-center justify-center gap-3 rounded-lg border border-border bg-card/50 p-4">
+            <BranchPill name={prompt.source.name} branch={prompt.source.branch} />
+            <ArrowRight className="size-5 shrink-0 text-muted" />
+            <BranchPill name={prompt.target.name} branch={prompt.target.branch} highlight />
+          </div>
+          <p className="mt-4 text-sm text-muted">
+            This merges branch{" "}
+            <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">
+              {prompt.source.branch}
+            </code>{" "}
+            into{" "}
+            <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">
+              {prompt.target.branch}
+            </code>{" "}
+            on your Git host, then redeploys <strong>{prompt.target.name}</strong> with the
+            merged code.
+          </p>
+          {toProd && (
+            <AlertBanner
+              className="mt-4"
+              variant="warning"
+              title="This targets Production"
+              description="The merged code will be deployed to your live Production server."
+            />
+          )}
+        </>
+      )}
+      <div className="mt-6 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose} disabled={loading}>
+          Cancel
+        </Button>
+        <ActionButton loading={loading} loadingText="Merging…" onClick={submit}>
+          <GitMerge className="size-4" />
+          Merge &amp; redeploy
+        </ActionButton>
+      </div>
+    </Dialog>
+  );
+}
+
+function BranchPill({
+  name,
+  branch,
+  highlight,
+}: {
+  name: string;
+  branch: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "min-w-0 rounded-lg border px-3 py-2 text-center",
+        highlight ? "border-primary-glow/40 bg-primary-glow/5" : "border-border",
+      )}
+    >
+      <p className="truncate text-sm font-medium">{name}</p>
+      <p className="mt-0.5 flex items-center justify-center gap-1 truncate text-xs text-muted">
+        <GitBranch className="size-3" />
+        {branch}
+      </p>
+    </div>
   );
 }
 
@@ -369,7 +555,6 @@ function CreateEnvDialog({
     setBranch("");
     setError(null);
     setLoading(false);
-    // Staging may attach to an existing branch — offer a picker.
     if (type === "staging") {
       api
         .instanceBranches(instanceId)
@@ -397,9 +582,7 @@ function CreateEnvDialog({
       }
       onCreated(!!res.auto_provisioned);
     } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : "Couldn't create the environment.",
-      );
+      setError(e instanceof ApiError ? e.message : "Couldn't create the environment.");
       setLoading(false);
     }
   };
@@ -409,18 +592,11 @@ function CreateEnvDialog({
   return (
     <Dialog open={!!type} onClose={onClose} title={title}>
       {error && (
-        <AlertBanner
-          className="mb-4"
-          variant="danger"
-          title="Couldn't create"
-          description={error}
-        />
+        <AlertBanner className="mb-4" variant="danger" title="Couldn't create" description={error} />
       )}
       <div className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="env-name">
-            {isStaging ? "Server name" : "Server / branch name"}
-          </Label>
+          <Label htmlFor="env-name">{isStaging ? "Server name" : "Server / branch name"}</Label>
           <Input
             id="env-name"
             autoFocus
@@ -454,8 +630,7 @@ function CreateEnvDialog({
               ))}
             </select>
             <p className="text-xs text-muted">
-              Attach this staging server to an existing branch, or leave it to
-              create a fresh one.
+              Attach this staging server to an existing branch, or leave it to create a fresh one.
             </p>
           </div>
         )}
@@ -464,12 +639,7 @@ function CreateEnvDialog({
         <Button variant="secondary" onClick={onClose} disabled={loading}>
           Cancel
         </Button>
-        <ActionButton
-          loading={loading}
-          loadingText="Creating…"
-          disabled={!ok}
-          onClick={submit}
-        >
+        <ActionButton loading={loading} loadingText="Creating…" disabled={!ok} onClick={submit}>
           Create server
         </ActionButton>
       </div>
@@ -508,9 +678,7 @@ function DeleteEnvDialog({
       await api.environmentDelete(instanceId, env.id, deleteBranch);
       onDeleted();
     } catch (e) {
-      setError(
-        e instanceof ApiError ? e.message : "Couldn't remove the environment.",
-      );
+      setError(e instanceof ApiError ? e.message : "Couldn't remove the environment.");
       setLoading(false);
     }
   };
@@ -518,12 +686,7 @@ function DeleteEnvDialog({
   return (
     <Dialog open={!!env} onClose={onClose} title="Remove environment">
       {error && (
-        <AlertBanner
-          className="mb-4"
-          variant="danger"
-          title="Couldn't remove"
-          description={error}
-        />
+        <AlertBanner className="mb-4" variant="danger" title="Couldn't remove" description={error} />
       )}
       <div className="flex gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
@@ -531,12 +694,11 @@ function DeleteEnvDialog({
         </span>
         <div className="text-sm">
           <p className="font-medium text-foreground">
-            Remove the {env?.environment_label.toLowerCase()} server{" "}
-            <strong>{env?.name}</strong>?
+            Remove the {env?.environment_label.toLowerCase()} server <strong>{env?.name}</strong>?
           </p>
           <p className="mt-1 text-muted">
-            The server and its data are deleted. Any unused time on your current
-            cycle is credited back to your wallet. This can't be undone.
+            The server and its data are deleted. Any unused time on your current cycle is credited
+            back to your wallet. This can't be undone.
           </p>
         </div>
       </div>
@@ -559,12 +721,7 @@ function DeleteEnvDialog({
         <Button variant="secondary" onClick={onClose} disabled={loading}>
           Cancel
         </Button>
-        <ActionButton
-          variant="danger"
-          loading={loading}
-          loadingText="Removing…"
-          onClick={submit}
-        >
+        <ActionButton variant="danger" loading={loading} loadingText="Removing…" onClick={submit}>
           Remove server
         </ActionButton>
       </div>
