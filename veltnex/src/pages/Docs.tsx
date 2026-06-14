@@ -19,7 +19,7 @@ export default function Docs() {
   const hasResults = folders.some((f) => f.articles.length > 0);
 
   return (
-    <div className="mx-auto max-w-5xl animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-[1760px] animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
       <div className="text-center">
         <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary-glow">
           <BookOpen className="size-6" />

@@ -1414,10 +1414,15 @@ class SaasApi(http.Controller):
         }
 
     def _serialize_env_child(self, inst):
-        """Compact card for an environment server (production or child)."""
+        """Compact card for an environment server (production or child).
+
+        The Production environment is shown as "production" — the PROJECT keeps
+        its own name (project_name); the production *server* is just the
+        production environment, not named after the project."""
         return {
             'id': inst.id,
-            'name': inst.subdomain or inst.name,
+            'name': 'production' if inst.environment == 'production'
+                    else (inst.subdomain or inst.name),
             'domain': inst.name or '',
             'url': inst.url or '',
             'version': inst.odoo_version_id.name or '',
