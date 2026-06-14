@@ -1755,30 +1755,44 @@ class SaasInstance(models.Model):
     def _get_env_plan(self):
         """Find-or-create the hidden lowest-spec hosting plan used to SIZE
         Staging/Development containers (cpu/ram/workers/storage_limit). Children
-        never self-bill, so this plan's price is irrelevant (kept at 0/manual);
-        it exists only to give the container its resource limits. Sizing follows
-        the same per-worker Settings as every other plan."""
+        never self-bill (their recurring cost rides the Production renewal via
+        ``_env_server_price``), so this plan's price is cosmetic — but it must
+        still satisfy the platform's cost-floor constraint
+        (``saas.plan._check_price_floor``), so we stamp the lowest-spec hosting
+        monthly price (which is floor-aware) and link the hosting product so the
+        floor is evaluated against the hosting rate set."""
         Plan = self.env['saas.plan'].sudo()
         plan = Plan.search(
             [('is_custom', '=', True), ('name', '=', self.ENV_PLAN_NAME)],
             limit=1)
         if plan:
             return plan
-        cfg = self.env['saas.pricing.engine']._rate_config('hosting')
+        engine = self.env['saas.pricing.engine']
+        cfg = engine._rate_config('hosting')
         res = Plan._recommended_resources('hosting', cfg['min_workers'])
-        return Plan.create({
+        # Floor-aware monthly figure for the lowest spec. yearly_price stays 0
+        # so the (12×floor) yearly check is skipped — neither value is ever
+        # billed for an environment server.
+        floor_ok_price = engine.monthly_price(
+            'hosting', cfg['min_workers'], cfg['min_storage'])
+        vals = {
             'name': self.ENV_PLAN_NAME,
             'is_custom': True,
             'is_public_tier': False,
             'is_trial_plan': False,
             'manual_price': True,
-            'price': 0.0,
+            'price': floor_ok_price,
             'yearly_price': 0.0,
             'workers': cfg['min_workers'],
             'storage_limit': float(cfg['min_storage']),
             'cpu_limit': res.get('cpu_limit') or 1.0,
             'ram_limit': res.get('ram_limit') or '1g',
-        })
+        }
+        # Link the hosting product so the cost-floor constraint uses the
+        # hosting rate set (matching the price we stamped above).
+        if self.saas_product_id:
+            vals['saas_product_ids'] = [(6, 0, [self.saas_product_id.id])]
+        return Plan.create(vals)
 
     def _env_anchor(self):
         """The Production instance that owns the project this record is in."""
