@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { AlertBanner } from "@/components/AlertBanner";
+import { PageHeader } from "@/components/PageHeader";
 import { HelpHint } from "@/components/HelpHint";
 import { api, ApiError, type ApiInvoice, type WalletData } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -48,8 +49,10 @@ export default function Invoices() {
 
   return (
     <div className="animate-fade-in">
-      <h1 className="text-2xl font-bold tracking-tight">Billing<HelpHint anchor="invoice-status" className="ml-1.5" /></h1>
-      <p className="mt-1 text-sm text-muted">Invoices and outstanding balances.</p>
+      <PageHeader
+        title={<>Billing<HelpHint anchor="invoice-status" className="ml-1.5" /></>}
+        subtitle="Invoices and outstanding balances."
+      />
 
       {error && <AlertBanner className="mt-6" variant="danger" title="Couldn't load invoices" description={error} />}
 

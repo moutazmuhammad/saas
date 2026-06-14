@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { AlertBanner } from "@/components/AlertBanner";
+import { PageHeader } from "@/components/PageHeader";
 import { useInstances } from "@/context/InstancesContext";
 import { useSections } from "@/lib/useSections";
 import { formatBytes } from "@/lib/format";
@@ -37,16 +38,16 @@ export default function Instances() {
 
   return (
     <div className="animate-fade-in">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Projects</h1>
-          <p className="mt-1 text-sm text-muted">Manage and monitor all your Odoo projects.</p>
-        </div>
-        <Button onClick={() => navigate(createTo)}>
-          <Plus className="size-4" />
-          New project
-        </Button>
-      </div>
+      <PageHeader
+        title="Projects"
+        subtitle="Manage and monitor all your Odoo projects."
+        actions={
+          <Button onClick={() => navigate(createTo)}>
+            <Plus className="size-4" />
+            Create project
+          </Button>
+        }
+      />
 
       {error && <AlertBanner className="mt-6" variant="danger" title="Couldn't load instances" description={error} />}
 

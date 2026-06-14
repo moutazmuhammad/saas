@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/EmptyState";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { PageHeader } from "@/components/PageHeader";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiPaymentMethod } from "@/lib/api";
@@ -74,8 +75,7 @@ export default function Settings() {
 
   return (
     <div className="animate-fade-in">
-      <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-      <p className="mt-1 text-sm text-muted">Manage your account, billing, and preferences.</p>
+      <PageHeader title="Settings" subtitle="Manage your account, billing, and preferences." />
 
       <div className="mt-6 space-y-4">
         <Section icon={User} title="Account" description="Your profile details. Contact support to change them.">
