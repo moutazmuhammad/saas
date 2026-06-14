@@ -186,7 +186,8 @@ class SaasWebhookController(http.Controller):
                 try:
                     rec._do_webhook_pull_and_restart()
                     if build_id:
-                        new_env['saas.build'].browse(build_id)._mark('success')
+                        log_tail = (rec.instance_id.provisioning_log or '')[-8000:]
+                        new_env['saas.build'].browse(build_id)._mark('success', log_tail)
                     new_cr.commit()
                 except Exception as e:
                     new_cr.rollback()

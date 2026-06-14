@@ -4292,6 +4292,10 @@ class SaasInstance(models.Model):
         self.ensure_one()
         if not self.is_hosting:
             return
+        # Snapshot the tail of the deploy log so a build's detail view shows
+        # what actually happened, not just a status.
+        if not log and state != 'running':
+            log = (self.provisioning_log or '')[-8000:]
         try:
             self.env['saas.build'].sudo().create({
                 'instance_id': self.id,
@@ -4301,7 +4305,7 @@ class SaasInstance(models.Model):
                 'state': state,
                 'commit_message': commit_message or False,
                 'date_done': fields.Datetime.now() if state != 'running' else False,
-                'log': (log or '')[:5000] or False,
+                'log': (log or '')[:8000] or False,
             })
         except Exception:
             _logger.exception("Failed to record build for %s", self.subdomain)

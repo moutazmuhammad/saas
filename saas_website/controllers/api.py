@@ -1318,6 +1318,22 @@ class SaasApi(http.Controller):
             [('instance_id', '=', instance.id)], limit=min(int(limit or 20), 50))
         return ok([self._serialize_build(b) for b in builds])
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/builds/<int:build_id>',
+                type='json', auth='public')
+    def instance_build(self, instance_id, build_id, access_token=None):
+        """A single build with its full deploy log."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        b = request.env['saas.build'].sudo().browse(int(build_id))
+        if not b.exists() or b.instance_id.id != instance.id:
+            return err(_("Build not found."), 'not_found')
+        data = self._serialize_build(b)
+        data['log'] = b.log or ''
+        data['commit_message_full'] = b.commit_message or ''
+        return ok(data)
+
     def _serialize_build(self, b):
         return {
             'id': b.id,

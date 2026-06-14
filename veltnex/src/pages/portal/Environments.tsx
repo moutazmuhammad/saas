@@ -48,6 +48,7 @@ import {
   type ProjectEnvironments,
   type StatusData,
   type ApiBuild,
+  type ApiBuildDetail,
 } from "@/lib/api";
 
 const TRANSIENT = new Set([
@@ -506,6 +507,7 @@ function MainPanel({
   const [copied, setCopied] = React.useState(false);
 
   const [builds, setBuilds] = React.useState<ApiBuild[] | null>(null);
+  const [openBuildId, setOpenBuildId] = React.useState<number | null>(null);
 
   const refreshStatus = React.useCallback(async () => {
     try {
@@ -594,6 +596,7 @@ function MainPanel({
   ];
 
   return (
+    <>
     <Card className="overflow-hidden">
       {/* Header */}
       <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-start lg:justify-between">
@@ -799,7 +802,11 @@ function MainPanel({
                                   : "bg-info animate-pulse-soft",
                             )}
                           />
-                          <div className="rounded-lg border border-border p-4">
+                          <button
+                            type="button"
+                            onClick={() => setOpenBuildId(b.id)}
+                            className="block w-full rounded-lg border border-border p-4 text-left transition-colors hover:border-primary/40 hover:bg-card/60"
+                          >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="flex min-w-0 items-center gap-2.5">
                                 <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground/5 text-[11px] font-bold text-muted">
@@ -825,7 +832,7 @@ function MainPanel({
                               {b.commit_short && <span>commit {b.commit_short}</span>}
                               {b.author && <span>{b.author}</span>}
                             </div>
-                          </div>
+                          </button>
                         </div>
                       );
                     })}
@@ -854,6 +861,90 @@ function MainPanel({
         )}
       </div>
     </Card>
+    <BuildLogDialog
+      envId={env.id}
+      buildId={openBuildId}
+      onClose={() => setOpenBuildId(null)}
+    />
+    </>
+  );
+}
+
+function BuildLogDialog({
+  envId,
+  buildId,
+  onClose,
+}: {
+  envId: number;
+  buildId: number | null;
+  onClose: () => void;
+}) {
+  const [build, setBuild] = React.useState<ApiBuildDetail | null>(null);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!buildId) return;
+    setBuild(null);
+    setLoading(true);
+    api
+      .build(envId, buildId)
+      .then(setBuild)
+      .catch(() => setBuild(null))
+      .finally(() => setLoading(false));
+  }, [envId, buildId]);
+
+  const badge = build
+    ? build.state === "success"
+      ? "success"
+      : build.state === "failed"
+        ? "failed"
+        : "building"
+    : "building";
+
+  return (
+    <Dialog open={!!buildId} onClose={onClose} title="Build details">
+      {loading || !build ? (
+        <div className="flex justify-center py-10">
+          <Spinner label="Loading build…" />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="font-medium">{build.commit_message_full || build.source_label}</p>
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted">
+                <span className="inline-flex items-center gap-1">
+                  <GitBranch className="size-3" />
+                  {build.branch}
+                </span>
+                {build.commit_short && <span>commit {build.commit_short}</span>}
+                {build.author && <span>{build.author}</span>}
+              </p>
+            </div>
+            <StatusBadge status={badge} />
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted">
+            <span>Trigger: <span className="text-foreground">{build.source_label}</span></span>
+            {build.date_done && <span>Finished: <span className="text-foreground">{formatDateTime(build.date_done)}</span></span>}
+          </div>
+          <div>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted">Deploy log</p>
+            {build.log ? (
+              <pre className="max-h-[50vh] overflow-auto rounded-lg border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
+                {build.log.trimEnd()}
+              </pre>
+            ) : (
+              <p className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted">
+                No log captured for this build.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="mt-6 flex justify-end">
+        <Button variant="secondary" onClick={onClose}>Close</Button>
+      </div>
+    </Dialog>
   );
 }
 

@@ -335,6 +335,11 @@ export interface ApiBuild {
   date_done: string;
 }
 
+export interface ApiBuildDetail extends ApiBuild {
+  log: string;
+  commit_message_full: string;
+}
+
 export interface ProjectPriceResult extends PriceResult {
   env_server_price: number;
   staging_count: number;
@@ -644,6 +649,8 @@ export const api = {
     ),
   builds: (id: number) =>
     rpc<ApiBuild[]>(`/saas/api/v1/instances/${id}/builds`),
+  build: (id: number, buildId: number) =>
+    rpc<ApiBuildDetail>(`/saas/api/v1/instances/${id}/builds/${buildId}`),
   hostingCalculateProject: (p: {
     workers: number;
     storage: number;

@@ -44,6 +44,6 @@ class SaasBuild(models.Model):
         self.ensure_one()
         vals = {'state': state, 'date_done': fields.Datetime.now()}
         if log:
-            vals['log'] = (log or '')[:5000]
+            vals['log'] = (log or '')[:8000]
         self.write(vals)
         return self
