@@ -40,12 +40,14 @@ import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/format";
 import {
   api,
   ApiError,
   type EnvChild,
   type ProjectEnvironments,
   type StatusData,
+  type ApiBuild,
 } from "@/lib/api";
 
 const TRANSIENT = new Set([
@@ -503,6 +505,8 @@ function MainPanel({
   const [pending, setPending] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
+  const [builds, setBuilds] = React.useState<ApiBuild[] | null>(null);
+
   const refreshStatus = React.useCallback(async () => {
     try {
       setStatus(await api.instanceStatus(env.id));
@@ -510,19 +514,32 @@ function MainPanel({
       /* ignore */
     }
   }, [env.id]);
+  const refreshBuilds = React.useCallback(async () => {
+    try {
+      setBuilds(await api.builds(env.id));
+    } catch {
+      setBuilds([]);
+    }
+  }, [env.id]);
 
   React.useEffect(() => {
     setStatus(null);
+    setBuilds(null);
     refreshStatus();
-  }, [refreshStatus]);
+    refreshBuilds();
+  }, [refreshStatus, refreshBuilds]);
 
   const liveState = status?.state || env.state;
-  const transient = TRANSIENT.has(liveState);
+  const buildRunning = !!builds?.some((b) => b.state === "running");
+  const transient = TRANSIENT.has(liveState) || buildRunning;
   React.useEffect(() => {
     if (!transient) return;
-    const t = setInterval(refreshStatus, 4000);
+    const t = setInterval(() => {
+      refreshStatus();
+      refreshBuilds();
+    }, 4000);
     return () => clearInterval(t);
-  }, [transient, refreshStatus]);
+  }, [transient, refreshStatus, refreshBuilds]);
 
   const run = async (action: string, ok: string) => {
     setPending(action);
@@ -756,39 +773,80 @@ function MainPanel({
               </div>
             )}
 
-            {/* History timeline */}
+            {/* History — per-commit build timeline */}
             <div className="mt-6">
               <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">History</p>
-              {status === null ? (
+              {builds === null ? (
                 <div className="flex justify-center py-8">
                   <Spinner label="Loading…" />
                 </div>
-              ) : (
+              ) : builds.length > 0 ? (
                 <div className="relative pl-6">
-                  <span className="absolute left-[7px] top-2 bottom-2 w-px bg-border" />
-                  <div className="relative">
-                    <span className={cn("absolute -left-[22px] top-3 size-3.5 rounded-full ring-4 ring-card", dotClass(liveState))} />
-                    <div className="rounded-lg border border-border p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2.5">
-                          <span className="flex size-7 items-center justify-center rounded-md bg-foreground/5 text-[11px] font-bold text-muted">
-                            {env.environment.charAt(0).toUpperCase()}
-                          </span>
-                          <span className="text-sm font-medium">Latest deployment</span>
+                  <span className="absolute bottom-2 left-[7px] top-2 w-px bg-border" />
+                  <div className="space-y-3">
+                    {builds.map((b) => {
+                      const badge =
+                        b.state === "success" ? "success" : b.state === "failed" ? "failed" : "building";
+                      return (
+                        <div key={b.id} className="relative">
+                          <span
+                            className={cn(
+                              "absolute -left-[22px] top-4 size-3.5 rounded-full ring-4 ring-card",
+                              b.state === "success"
+                                ? "bg-success"
+                                : b.state === "failed"
+                                  ? "bg-danger"
+                                  : "bg-info animate-pulse-soft",
+                            )}
+                          />
+                          <div className="rounded-lg border border-border p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex min-w-0 items-center gap-2.5">
+                                <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground/5 text-[11px] font-bold text-muted">
+                                  {(b.author || env.environment).charAt(0).toUpperCase()}
+                                </span>
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-medium">
+                                    {b.commit_message || b.source_label}
+                                  </p>
+                                  <p className="text-xs text-muted">
+                                    {b.source_label}
+                                    {(b.date_done || b.date_start) && ` · ${formatDateTime(b.date_done || b.date_start)}`}
+                                  </p>
+                                </div>
+                              </div>
+                              <StatusBadge status={badge} />
+                            </div>
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs text-muted">
+                              <span className="inline-flex items-center gap-1">
+                                <GitBranch className="size-3" />
+                                {b.branch || env.branch}
+                              </span>
+                              {b.commit_short && <span>commit {b.commit_short}</span>}
+                              {b.author && <span>{b.author}</span>}
+                            </div>
+                          </div>
                         </div>
-                        <StatusBadge status={liveState} />
-                      </div>
-                      <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">
-                        <GitBranch className="size-3" />
-                        {env.branch}
-                      </div>
-                      {status.provisioning_log && (
-                        <pre className="mt-3 max-h-72 overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
-                          {status.provisioning_log.trimEnd()}
-                        </pre>
-                      )}
-                    </div>
+                      );
+                    })}
                   </div>
+                </div>
+              ) : (
+                // No build records yet — show the current deployment + log.
+                <div className="rounded-lg border border-border p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium">Current deployment</span>
+                    <StatusBadge status={liveState} />
+                  </div>
+                  <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">
+                    <GitBranch className="size-3" />
+                    {env.branch}
+                  </div>
+                  {status?.provisioning_log && (
+                    <pre className="mt-3 max-h-72 overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
+                      {status.provisioning_log.trimEnd()}
+                    </pre>
+                  )}
                 </div>
               )}
             </div>

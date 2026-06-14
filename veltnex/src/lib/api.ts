@@ -321,6 +321,20 @@ export interface ProjectEnvironments {
   environments: EnvChild[];
 }
 
+export interface ApiBuild {
+  id: number;
+  commit_sha: string;
+  commit_short: string;
+  commit_message: string;
+  author: string;
+  branch: string;
+  source: "push" | "initial" | "redeploy" | "merge";
+  source_label: string;
+  state: "running" | "success" | "failed";
+  date_start: string;
+  date_done: string;
+}
+
 export interface ProjectPriceResult extends PriceResult {
   env_server_price: number;
   staging_count: number;
@@ -628,6 +642,8 @@ export const api = {
     rpc<{ branches: string[]; main_branch: string }>(
       `/saas/api/v1/instances/${id}/branches`,
     ),
+  builds: (id: number) =>
+    rpc<ApiBuild[]>(`/saas/api/v1/instances/${id}/builds`),
   hostingCalculateProject: (p: {
     workers: number;
     storage: number;

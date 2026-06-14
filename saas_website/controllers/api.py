@@ -1306,6 +1306,33 @@ class SaasApi(http.Controller):
                        'error')
         return ok(result)
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/builds',
+                type='json', auth='public')
+    def instance_builds(self, instance_id, access_token=None, limit=20):
+        """Recent build/deploy events for this environment (History timeline)."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        builds = request.env['saas.build'].sudo().search(
+            [('instance_id', '=', instance.id)], limit=min(int(limit or 20), 50))
+        return ok([self._serialize_build(b) for b in builds])
+
+    def _serialize_build(self, b):
+        return {
+            'id': b.id,
+            'commit_sha': b.commit_sha or '',
+            'commit_short': b.commit_short or '',
+            'commit_message': (b.commit_message or '').split('\n')[0],
+            'author': b.author or '',
+            'branch': b.branch or '',
+            'source': b.source,
+            'source_label': dict(b._fields['source'].selection).get(b.source, b.source),
+            'state': b.state,
+            'date_start': fields.Datetime.to_string(b.date_start) if b.date_start else '',
+            'date_done': fields.Datetime.to_string(b.date_done) if b.date_done else '',
+        }
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/branches',
                 type='json', auth='public')
     def instance_branches(self, instance_id, access_token=None):

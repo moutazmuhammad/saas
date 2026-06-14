@@ -4285,6 +4285,27 @@ class SaasInstance(models.Model):
                 thread_name='saas_deploy_%s' % rec.subdomain,
             )
 
+    def _record_build(self, source, state='success', commit_message=False,
+                      log=False):
+        """Record a build/deploy event for the Odoo.sh-style History timeline.
+        Hosting only; never raises into the deploy flow."""
+        self.ensure_one()
+        if not self.is_hosting:
+            return
+        try:
+            self.env['saas.build'].sudo().create({
+                'instance_id': self.id,
+                'repo_id': self.repo_ids[:1].id or False,
+                'branch': self._env_branch(),
+                'source': source,
+                'state': state,
+                'commit_message': commit_message or False,
+                'date_done': fields.Datetime.now() if state != 'running' else False,
+                'log': (log or '')[:5000] or False,
+            })
+        except Exception:
+            _logger.exception("Failed to record build for %s", self.subdomain)
+
     def _do_deploy(self):
         """Internal deploy logic for a single record."""
         self.ensure_one()
@@ -4499,6 +4520,7 @@ class SaasInstance(models.Model):
         self.pending_provision_attempts = 0
         self._append_log("Deployment completed successfully. State: running.")
         self._safe_refresh_usage()
+        self._record_build('initial', 'success', commit_message='Deployment')
         self._send_notification('saas_core.mail_template_saas_deployed')
 
         # Mark partner trial as used only after the deployment actually
@@ -4704,6 +4726,7 @@ class SaasInstance(models.Model):
         self.state = target_state
         self.pending_operation = False
         self._safe_refresh_usage()
+        self._record_build('redeploy', 'success', commit_message='Manual re-deploy')
 
     def action_suspend(self):
         """Stop container and set state to suspended (async)."""

@@ -2,7 +2,7 @@ import json
 import logging
 import threading
 
-from odoo import http, SUPERUSER_ID, api
+from odoo import http, SUPERUSER_ID, api, fields
 from odoo.http import request
 
 _logger = logging.getLogger(__name__)
@@ -149,6 +149,11 @@ class SaasWebhookController(http.Controller):
         #    serialises concurrent pushes to the same repo on this worker.
         dbname = request.cr.dbname
         repo_id = repo.id
+        instance_id = instance.id
+        # Commit metadata for the build/History timeline (computed here while
+        # we still have the parsed payload).
+        commit = self._extract_commit(payload)
+        build_branch = ref.rsplit('/', 1)[-1] if ref else (repo.branch or '')
         _logger.info(
             "Webhook: triggering auto-deploy for %s on instance %s (ref=%s)",
             repo.name, instance.name, ref,
@@ -157,11 +162,31 @@ class SaasWebhookController(http.Controller):
         def _do_deploy():
             import odoo
             db_registry = odoo.modules.registry.Registry(dbname)
+            build_id = None
             with db_registry.cursor() as new_cr:
                 new_env = api.Environment(new_cr, SUPERUSER_ID, {})
                 rec = new_env['saas.instance.repo'].browse(repo_id)
+                # Open a build record (committed up-front so it's visible as
+                # "Building…" while the pull + restart runs).
+                try:
+                    build = new_env['saas.build'].create({
+                        'instance_id': instance_id,
+                        'repo_id': repo_id,
+                        'branch': build_branch,
+                        'commit_sha': commit['sha'],
+                        'commit_message': commit['message'],
+                        'author': commit['author'],
+                        'source': 'push',
+                        'state': 'running',
+                    })
+                    build_id = build.id
+                    new_cr.commit()
+                except Exception:
+                    _logger.exception("Webhook: couldn't open build record")
                 try:
                     rec._do_webhook_pull_and_restart()
+                    if build_id:
+                        new_env['saas.build'].browse(build_id)._mark('success')
                     new_cr.commit()
                 except Exception as e:
                     new_cr.rollback()
@@ -172,6 +197,9 @@ class SaasWebhookController(http.Controller):
                     try:
                         with db_registry.cursor() as err_cr:
                             err_env = api.Environment(err_cr, SUPERUSER_ID, {})
+                            if build_id:
+                                err_env['saas.build'].browse(build_id)._mark(
+                                    'failed', str(e))
                             err_rec = err_env['saas.instance.repo'].browse(repo_id)
                             err_rec._on_repo_background_error(e)
                             err_cr.commit()
@@ -211,6 +239,42 @@ class SaasWebhookController(http.Controller):
                 and isinstance(payload['push'].get('changes'), list):
             return True
         return False
+
+    @staticmethod
+    def _extract_commit(payload):
+        """Best-effort commit metadata across providers (GitHub/Gitea/GitLab/
+        Bitbucket). Returns {sha, message, author}, all possibly empty."""
+        sha = payload.get('after') or ''
+        head = payload.get('head_commit') or {}
+        msg = head.get('message') or ''
+        author = (head.get('author') or {}).get('name') or ''
+        if not sha:
+            sha = head.get('id') or ''
+        # GitLab carries pusher/user at top level.
+        author = author or payload.get('user_name') or (
+            payload.get('pusher') or {}).get('name') or ''
+        # Fallback to the last entry of the commits list.
+        commits = payload.get('commits')
+        if (not sha or not msg) and isinstance(commits, list) and commits:
+            last = commits[-1]
+            sha = sha or last.get('id') or ''
+            msg = msg or last.get('message') or ''
+            author = author or (last.get('author') or {}).get('name') or ''
+        # Bitbucket push shape.
+        if not sha:
+            try:
+                new = payload['push']['changes'][0]['new']
+                target = new.get('target', {})
+                sha = target.get('hash', '')
+                msg = msg or target.get('message', '')
+                author = author or (target.get('author', {}) or {}).get('raw', '')
+            except (KeyError, IndexError, TypeError):
+                pass
+        return {
+            'sha': (sha or '')[:40],
+            'message': (msg or '').strip()[:500],
+            'author': (author or '')[:120],
+        }
 
     @staticmethod
     def _extract_ref(payload):

@@ -14,6 +14,9 @@ const STATUS_STYLES: Record<
   cancelled: { label: "Cancelled", dot: "bg-muted", text: "text-muted", bg: "bg-muted/10 border-border" },
   cancelled_by_client: { label: "Cancelled", dot: "bg-muted", text: "text-muted", bg: "bg-muted/10 border-border" },
   failed: { label: "Failed", dot: "bg-danger", text: "text-danger", bg: "bg-danger/10 border-danger/30" },
+  // build
+  success: { label: "Success", dot: "bg-success", text: "text-success", bg: "bg-success/10 border-success/30" },
+  building: { label: "Building", dot: "bg-info", text: "text-info", bg: "bg-info/10 border-info/30", pulse: true },
   // db / backup
   active: { label: "Active", dot: "bg-success", text: "text-success", bg: "bg-success/10 border-success/30" },
   creating: { label: "Creating", dot: "bg-info", text: "text-info", bg: "bg-info/10 border-info/30", pulse: true },
