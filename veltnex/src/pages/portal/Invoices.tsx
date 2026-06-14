@@ -1,7 +1,6 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Receipt, ChevronRight, CircleDollarSign, CheckCircle2, Wallet } from "lucide-react";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { InfoCard } from "@/components/InfoCard";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -9,6 +8,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { AlertBanner } from "@/components/AlertBanner";
 import { PageHeader } from "@/components/PageHeader";
+import { DataTable, type Column } from "@/components/DataTable";
 import { HelpHint } from "@/components/HelpHint";
 import { api, ApiError, type ApiInvoice, type WalletData } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -26,6 +26,7 @@ const FILTERS = [
 ] as const;
 
 export default function Invoices() {
+  const navigate = useNavigate();
   const [invoices, setInvoices] = React.useState<ApiInvoice[] | null>(null);
   const [walletData, setWalletData] = React.useState<WalletData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -69,68 +70,54 @@ export default function Invoices() {
             <InfoCard label="Invoices" value={list.length} icon={Receipt} />
           </div>
 
-          <div className="mt-6 flex flex-wrap gap-2">
-            {FILTERS.map((f) => (
-              <button
-                key={f.value}
-                onClick={() => setFilter(f.value)}
-                className={cn(
-                  "rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
-                  filter === f.value ? "border-primary bg-primary/15 text-foreground" : "border-border text-muted hover:text-foreground"
-                )}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-
-          {filtered.length === 0 ? (
-            <EmptyState className="mt-8" icon={Receipt} title="No invoices here" description="There are no invoices matching this filter." />
-          ) : (
-            <Card className="mt-6 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
-                      <th className="px-5 py-3 font-medium">Invoice</th>
-                      <th className="hidden px-5 py-3 font-medium sm:table-cell">Instance</th>
-                      <th className="hidden px-5 py-3 font-medium md:table-cell">Issued</th>
-                      <th className="px-5 py-3 font-medium">Status</th>
-                      <th className="px-5 py-3 text-right font-medium">Amount</th>
-                      <th className="px-5 py-3" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {filtered.map((inv) => (
-                      <tr key={inv.id} className="group transition-colors hover:bg-card/60">
-                        <td className="px-5 py-4">
-                          <Link to={`/my/billing/${inv.id}`} className="font-medium hover:text-primary-glow">
-                            {inv.number}
-                          </Link>
-                        </td>
-                        <td className="hidden px-5 py-4 text-muted sm:table-cell">{inv.instance_name || "—"}</td>
-                        <td className="hidden px-5 py-4 text-muted md:table-cell">{inv.issued ? formatDate(inv.issued) : "—"}</td>
-                        <td className="px-5 py-4"><StatusBadge status={inv.status} /></td>
-                        <td className="px-5 py-4 text-right font-medium tabular-nums">{money(inv.total, inv.currency)}</td>
-                        <td className="px-5 py-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            {inv.payable && inv.portal_url && (
-                              <Button size="sm" onClick={() => (window.location.href = inv.portal_url)}>
-                                Pay
-                              </Button>
-                            )}
-                            <Link to={`/my/billing/${inv.id}`} className="inline-flex text-muted transition-colors hover:text-foreground" aria-label="View invoice">
-                              <ChevronRight className="size-4" />
-                            </Link>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          <DataTable<ApiInvoice>
+            className="mt-6"
+            rows={filtered}
+            getKey={(inv) => inv.id}
+            onRowClick={(inv) => navigate(`/my/billing/${inv.id}`)}
+            initialSortKey="issued"
+            initialSortDir="desc"
+            toolbar={
+              <div className="flex flex-wrap gap-1">
+                {FILTERS.map((f) => (
+                  <button
+                    key={f.value}
+                    onClick={() => setFilter(f.value)}
+                    className={cn(
+                      "rounded px-3 py-1.5 text-sm font-medium transition-colors",
+                      filter === f.value ? "bg-primary/15 text-primary" : "text-muted hover:text-foreground",
+                    )}
+                  >
+                    {f.label}
+                  </button>
+                ))}
               </div>
-            </Card>
-          )}
+            }
+            emptyState={
+              <EmptyState className="m-0 py-14" icon={Receipt} title="No invoices here" description="There are no invoices matching this filter." />
+            }
+            columns={[
+              { key: "number", header: "Invoice", sortValue: (i) => i.number, render: (i) => <span className="font-medium text-foreground">{i.number}</span> },
+              { key: "project", header: "Project", hideBelow: "sm", className: "text-muted", render: (i) => i.instance_name || "—" },
+              { key: "issued", header: "Issued", hideBelow: "md", className: "text-muted", sortValue: (i) => i.issued || "", render: (i) => (i.issued ? formatDate(i.issued) : "—") },
+              { key: "status", header: "Status", sortValue: (i) => i.status, render: (i) => <StatusBadge status={i.status} /> },
+              { key: "amount", header: "Amount", align: "right", sortValue: (i) => i.total, render: (i) => <span className="font-medium tabular-nums">{money(i.total, i.currency)}</span> },
+              {
+                key: "go",
+                header: "",
+                align: "right",
+                width: "120px",
+                render: (i) => (
+                  <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                    {i.payable && i.portal_url && (
+                      <Button size="sm" onClick={() => (window.location.href = i.portal_url)}>Pay</Button>
+                    )}
+                    <ChevronRight className="size-4 text-muted" />
+                  </div>
+                ),
+              },
+            ]}
+          />
         </>
       )}
     </div>
