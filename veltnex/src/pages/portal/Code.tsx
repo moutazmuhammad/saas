@@ -100,8 +100,12 @@ function RepoSection({
   onDeployed: () => void;
 }) {
   const toast = useToast();
+  const navigate = useNavigate();
   const repo = instance.repo || { url: "", branch: "main", has_token: false, state: "" };
   const connected = !!repo.url;
+  // Repo + token are configured ONCE per project (Production). On a child
+  // environment, the repo is inherited and read-only here.
+  const isChild = !!instance.parent_id && instance.environment !== "production";
   const [url, setUrl] = React.useState(repo.url || "");
   const [branch, setBranch] = React.useState(repo.branch || "main");
   const [token, setToken] = React.useState("");
@@ -137,6 +141,42 @@ function RepoSection({
       setConfirmOff(false);
     }
   };
+
+  // Child environment: the repo is inherited from the project (read-only).
+  if (isChild) {
+    return (
+      <Card className="mt-6 p-5">
+        <div className="flex items-center gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary-glow">
+            <GitBranch className="size-4" />
+          </span>
+          <div className="flex-1">
+            <h2 className="font-semibold">Git repository</h2>
+            <p className="text-xs text-muted">
+              Inherited from the project. The repository and token are managed
+              once on the Production environment.
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => navigate(`/my/instances/${instance.parent_id}/code`)}
+          >
+            Manage on project
+          </Button>
+        </div>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label>Repository</Label>
+            <p className="mt-1 truncate font-mono text-sm text-muted">{repo.url || "—"}</p>
+          </div>
+          <div>
+            <Label>Branch</Label>
+            <p className="mt-1 font-mono text-sm text-muted">{repo.branch || "main"}</p>
+          </div>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card className="mt-6 p-5">

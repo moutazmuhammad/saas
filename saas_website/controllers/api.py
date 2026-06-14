@@ -617,6 +617,13 @@ class SaasApi(http.Controller):
             instance = self._hosting(instance_id, access_token)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
+        # The repository + token are configured ONCE per PROJECT (on the
+        # Production environment); Staging/Development inherit it. Block edits
+        # on a child env and point the customer to the project.
+        if instance.environment != 'production' and instance.parent_id:
+            return err(
+                _("The repository is managed at the project level. Open the "
+                  "Production environment to change it."), 'project_scoped')
         repo_url = (repo_url or '').strip()
         repo_branch = (repo_branch or 'main').strip() or 'main'
         if repo_url and not (repo_url.startswith('https://')
@@ -643,8 +650,29 @@ class SaasApi(http.Controller):
                     vals['state'] = 'pending'
                     vals.setdefault('webhook_enabled', False)
                     inst.env['saas.instance.repo'].create(vals)
+                # Propagate the project repo (url + token) to every child
+                # environment — repo/token are per PROJECT; each child keeps its
+                # own branch and re-clones on its next deploy.
+                if inst.environment == 'production':
+                    child_vals = {'repo_url': repo_url}
+                    if git_token is not None:
+                        child_vals['github_token'] = (git_token or '').strip() or False
+                        child_vals['webhook_enabled'] = bool((git_token or '').strip())
+                    for child in inst.child_env_ids.filtered(
+                            lambda c: c.state not in ('cancelled', 'cancelled_by_client')):
+                        crepo = child.repo_ids[:1]
+                        if crepo:
+                            crepo.write({**child_vals, 'state': 'pending'})
+                        else:
+                            inst.env['saas.instance.repo'].create({
+                                **child_vals, 'instance_id': child.id,
+                                'branch': child._env_branch(), 'state': 'pending',
+                            })
             else:
                 existing.unlink()  # disconnect
+                # Disconnecting at the project level removes it everywhere.
+                if inst.environment == 'production':
+                    inst.child_env_ids.mapped('repo_ids').unlink()
             instance.action_redeploy()
         except UserError as e:
             return err(str(e), 'deploy_failed')
