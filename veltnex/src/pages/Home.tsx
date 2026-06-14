@@ -107,11 +107,11 @@ const SectionHeading = ({
     }
   >
     {pill}
-    <h2 className="mt-5 text-3xl font-bold tracking-tight sm:text-5xl">
+    <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
       {title}
     </h2>
     {subtitle && (
-      <p className="mt-5 text-lg text-muted sm:text-xl">{subtitle}</p>
+      <p className="mt-4 text-base text-muted sm:text-lg">{subtitle}</p>
     )}
   </div>
 );
@@ -180,29 +180,37 @@ export default function Home() {
           </p>
 
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            {sections.hosting && (
+            {trialReady ? (
+              <Button size="lg" onClick={() => navigate("/hosting/configure?is_trial=1")}>
+                Start your {trialDays}-day free trial
+                <ArrowRight />
+              </Button>
+            ) : sections.hosting ? (
               <Button size="lg" onClick={() => navigate("/hosting")}>
                 Host Your Project
                 <ArrowRight />
               </Button>
+            ) : sections.services ? (
+              <Button size="lg" onClick={() => navigate("/services")}>
+                Ready-Made Services
+                <ArrowRight />
+              </Button>
+            ) : null}
+            {trialReady && sections.hosting && (
+              <Button size="lg" variant="secondary" onClick={() => navigate("/hosting")}>
+                Explore hosting
+              </Button>
             )}
-            {sections.services && (
-              <Button
-                size="lg"
-                variant={sections.hosting ? "secondary" : "default"}
-                onClick={() => navigate("/services")}
-              >
+            {!trialReady && sections.hosting && sections.services && (
+              <Button size="lg" variant="secondary" onClick={() => navigate("/services")}>
                 Ready-Made Services
               </Button>
             )}
           </div>
 
-          <div className="mt-5 flex justify-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-success/30 bg-success/10 px-4 py-1.5 text-sm font-medium text-success">
-              <CheckCircle2 className="size-4" />
-              {trialDays}-day free trial · no credit card required
-            </span>
-          </div>
+          <p className="mt-4 text-sm text-muted">
+            No credit card required · Cancel anytime
+          </p>
         </div>
       </section>
 
@@ -215,7 +223,7 @@ export default function Home() {
       {/* ============================================================== */}
       {sections.services && sections.hosting && (
       <section className="border-y border-border bg-card/20">
-        <div className="mx-auto w-full px-4 py-24 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-20 sm:px-6 lg:px-8">
           <SectionHeading
             pill={<SectionPill icon={Sparkles}>Two ways to launch</SectionPill>}
             title={
@@ -415,7 +423,7 @@ export default function Home() {
       {/* ============================================================== */}
       <section className="relative overflow-hidden border-b border-border">
         <div className="pointer-events-none absolute left-1/2 top-1/2 size-[680px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 blur-[140px]" />
-        <div className="relative mx-auto w-full px-4 py-28 text-center sm:px-6 lg:px-8">
+        <div className="relative mx-auto w-full px-4 py-20 text-center sm:px-6 lg:px-8">
           <SectionHeading
             pill={<SectionPill icon={Layers}>Version freedom</SectionPill>}
             title={
@@ -455,7 +463,7 @@ export default function Home() {
       {/* BRING YOUR OWN CODE — split layout with terminal mock          */}
       {/* ============================================================== */}
       <section className="border-b border-border bg-card/30">
-        <div className="mx-auto w-full px-4 py-28 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-20 sm:px-6 lg:px-8">
           <div className="grid items-center gap-14 lg:grid-cols-2">
             <div>
               <SectionHeading
@@ -554,7 +562,7 @@ export default function Home() {
       {/* BENTO FEATURES — varied sizes, mini-visuals inside cards       */}
       {/* ============================================================== */}
       <section className="border-b border-border">
-        <div className="mx-auto w-full px-4 py-28 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-20 sm:px-6 lg:px-8">
           <SectionHeading
             pill={<SectionPill icon={Zap}>Production-ready by default</SectionPill>}
             title="Everything you need to run Odoo"
@@ -767,7 +775,7 @@ export default function Home() {
       {/* HOW IT WORKS — 4 steps with connector line                     */}
       {/* ============================================================== */}
       <section className="border-b border-border bg-card/20">
-        <div className="mx-auto w-full px-4 py-28 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-20 sm:px-6 lg:px-8">
           <SectionHeading
             pill={<SectionPill icon={Sparkles}>From signup to production</SectionPill>}
             title="How it works"
@@ -804,7 +812,7 @@ export default function Home() {
       {/* ============================================================== */}
       {sections.services && services.length > 0 && (
         <section className="border-b border-border">
-          <div className="mx-auto w-full px-4 py-24 sm:px-6 lg:px-8">
+          <div className="mx-auto w-full px-4 py-20 sm:px-6 lg:px-8">
             <div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-end">
               <div className="max-w-xl">
                 <SectionPill icon={Layers}>Ready-made services</SectionPill>
@@ -849,7 +857,7 @@ export default function Home() {
       {/* ============================================================== */}
       <section className="relative overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-grid-faint bg-[size:48px_48px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_70%)]" />
-        <div className="mx-auto w-full px-4 py-28 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-20 sm:px-6 lg:px-8">
           <Card
             glass
             className="relative overflow-hidden p-10 text-center sm:p-16"
