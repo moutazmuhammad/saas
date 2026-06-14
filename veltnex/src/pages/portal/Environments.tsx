@@ -21,6 +21,13 @@ import {
   ScrollText,
   Archive,
   ArrowRight,
+  Terminal,
+  GitFork,
+  Settings,
+  FolderGit2,
+  Layers,
+  FileCode2,
+  Clock,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -518,11 +525,34 @@ function MainPanel({
   const isStopped = liveState === "stopped";
   const pendingPay = env.pending_payment && env.pending_invoice_id;
 
-  const tabs = [
+  // Top toolbar strip (Odoo.sh: Clone / Shell / SQL / Logs / Fork / Merge /
+  // Submodule). We light up what the platform supports and disable the rest
+  // with an honest "needs backend agent" hint rather than faking them.
+  const [tool, setTool] = React.useState("clone");
+  const toolStrip: {
+    key: string;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    enabled: boolean;
+    action?: () => void;
+    soon?: string;
+  }[] = [
+    { key: "clone", label: "Clone", icon: Copy, enabled: true, action: () => setTool("clone") },
+    { key: "shell", label: "Shell", icon: Terminal, enabled: false, soon: "In-browser shell needs a backend agent" },
+    { key: "sql", label: "SQL", icon: FileCode2, enabled: false, soon: "Web SQL console needs a backend agent" },
+    { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => navigate(`/my/instances/${env.id}/logs`) },
+    { key: "fork", label: "Fork", icon: GitFork, enabled: false, soon: "Fork is coming soon" },
+    { key: "merge", label: "Merge", icon: GitMerge, enabled: true, action: onMergeInto },
+    { key: "submodule", label: "Submodule", icon: Layers, enabled: false, soon: "Submodules are coming soon" },
+  ];
+
+  const subtabs: { label: string; icon: React.ComponentType<{ className?: string }>; to?: string }[] = [
+    { label: "History", icon: Clock },
     { label: "Databases", icon: Database, to: `/my/instances/${env.id}/databases` },
     { label: "Code", icon: Code2, to: `/my/instances/${env.id}/code` },
     { label: "Logs", icon: ScrollText, to: `/my/instances/${env.id}/logs` },
     { label: "Backups", icon: Archive, to: `/my/instances/${env.id}/backups` },
+    { label: "Settings", icon: Settings, to: `/my/instances/${env.id}` },
   ];
 
   return (
@@ -553,50 +583,83 @@ function MainPanel({
           </p>
         </div>
 
-        {/* Clone box */}
-        {cloneCmd && (
-          <div className="lg:w-[26rem]">
-            <div className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2">
-              <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">{cloneCmd}</code>
-              <button
-                type="button"
-                title="Copy"
-                onClick={() => {
-                  navigator.clipboard?.writeText(cloneCmd);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                }}
-                className="shrink-0 text-muted transition-colors hover:text-foreground"
-              >
-                {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Tab / action bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-2.5">
-        <div className="flex flex-wrap gap-1">
-          {tabs.map((t) => (
+        {/* Toolbar strip */}
+        <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-card/60 p-1">
+          {toolStrip.map((t) => (
             <button
-              key={t.label}
-              onClick={() => navigate(t.to)}
-              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted transition-colors hover:bg-border/50 hover:text-foreground"
+              key={t.key}
+              type="button"
+              disabled={!t.enabled}
+              title={t.soon}
+              onClick={t.action}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                t.key === "clone" && tool === "clone"
+                  ? "bg-primary/15 text-foreground"
+                  : t.enabled
+                    ? "text-muted hover:bg-border/50 hover:text-foreground"
+                    : "cursor-not-allowed text-muted/40",
+              )}
             >
-              <t.icon className="size-4" />
+              <t.icon className="size-3.5" />
               {t.label}
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={onMergeInto} title="Merge another branch into this one">
-            <GitMerge className="size-4" />
-            Merge
-          </Button>
+      </div>
+
+      {/* Clone command bar (when Clone tool is active) */}
+      {tool === "clone" && cloneCmd && (
+        <div className="flex items-center gap-2 border-b border-border bg-background/40 px-5 py-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard?.writeText(cloneCmd);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
+          >
+            {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">{cloneCmd}</code>
+        </div>
+      )}
+
+      {/* Sub-tab bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <div className="flex flex-wrap">
+          {subtabs.map((t) => {
+            const active = t.label === "History";
+            return (
+              <button
+                key={t.label}
+                onClick={() => t.to && navigate(t.to)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors",
+                  active
+                    ? "bg-primary/10 font-medium text-foreground"
+                    : "text-muted hover:bg-border/50 hover:text-foreground",
+                )}
+              >
+                <t.icon className="size-4" />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2 pr-2">
+          {url && (
+            <Button size="sm" onClick={() => window.open(url, "_blank")}>
+              <ExternalLink className="size-4" />
+              Open app
+            </Button>
+          )}
           {onDelete && (
-            <Button size="sm" variant="ghost" onClick={onDelete} title="Delete environment">
-              <Trash2 className="size-4 text-danger" />
+            <Button size="sm" variant="danger" onClick={onDelete}>
+              <Trash2 className="size-4" />
+              Delete
             </Button>
           )}
         </div>
@@ -617,51 +680,49 @@ function MainPanel({
           />
         ) : (
           <>
-            {/* Quick actions */}
-            <div className="flex flex-wrap gap-2">
-              {url && (
-                <Button size="sm" onClick={() => window.open(url, "_blank")}>
-                  <ExternalLink className="size-4" />
-                  Open app
+            {/* Action row */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap gap-2">
+                {isRunning && (
+                  <ActionButton
+                    icon={RotateCw}
+                    loading={pending === "restart"}
+                    loadingText="Re-deploying…"
+                    disabled={!!pending}
+                    onClick={() => run("restart", "Re-deploying")}
+                  >
+                    Re-deploy
+                  </ActionButton>
+                )}
+                {isRunning && (
+                  <ActionButton
+                    variant="secondary"
+                    icon={Square}
+                    loading={pending === "stop"}
+                    loadingText="Stopping…"
+                    disabled={!!pending}
+                    onClick={() => run("stop", "Stopping")}
+                  >
+                    Stop
+                  </ActionButton>
+                )}
+                {isStopped && (
+                  <ActionButton
+                    icon={Play}
+                    loading={pending === "start"}
+                    loadingText="Starting…"
+                    disabled={!!pending}
+                    onClick={() => run("start", "Starting")}
+                  >
+                    Start
+                  </ActionButton>
+                )}
+              </div>
+              {project.repo_url && (
+                <Button variant="secondary" onClick={() => window.open(repoWeb(project.repo_url), "_blank")}>
+                  <FolderGit2 className="size-4" />
+                  Open repository
                 </Button>
-              )}
-              {isRunning && (
-                <ActionButton
-                  size="sm"
-                  variant="secondary"
-                  icon={RotateCw}
-                  loading={pending === "restart"}
-                  loadingText="Restarting…"
-                  disabled={!!pending}
-                  onClick={() => run("restart", "Restarting")}
-                >
-                  Restart
-                </ActionButton>
-              )}
-              {isRunning && (
-                <ActionButton
-                  size="sm"
-                  variant="secondary"
-                  icon={Square}
-                  loading={pending === "stop"}
-                  loadingText="Stopping…"
-                  disabled={!!pending}
-                  onClick={() => run("stop", "Stopping")}
-                >
-                  Stop
-                </ActionButton>
-              )}
-              {isStopped && (
-                <ActionButton
-                  size="sm"
-                  icon={Play}
-                  loading={pending === "start"}
-                  loadingText="Starting…"
-                  disabled={!!pending}
-                  onClick={() => run("start", "Starting")}
-                >
-                  Start
-                </ActionButton>
               )}
             </div>
 
@@ -674,21 +735,40 @@ function MainPanel({
               </div>
             )}
 
-            {/* Activity log */}
-            <div className="mt-5">
-              <p className="mb-2 text-sm font-semibold">Activity</p>
+            {/* History timeline */}
+            <div className="mt-6">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">History</p>
               {status === null ? (
                 <div className="flex justify-center py-8">
                   <Spinner label="Loading…" />
                 </div>
-              ) : status.provisioning_log ? (
-                <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
-                  {status.provisioning_log.trimEnd()}
-                </pre>
               ) : (
-                <p className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted">
-                  No activity recorded yet.
-                </p>
+                <div className="relative pl-6">
+                  <span className="absolute left-[7px] top-2 bottom-2 w-px bg-border" />
+                  <div className="relative">
+                    <span className={cn("absolute -left-[22px] top-3 size-3.5 rounded-full ring-4 ring-card", dotClass(liveState))} />
+                    <div className="rounded-lg border border-border p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <span className="flex size-7 items-center justify-center rounded-md bg-foreground/5 text-[11px] font-bold text-muted">
+                            {env.environment.charAt(0).toUpperCase()}
+                          </span>
+                          <span className="text-sm font-medium">Latest deployment</span>
+                        </div>
+                        <StatusBadge status={liveState} />
+                      </div>
+                      <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">
+                        <GitBranch className="size-3" />
+                        {env.branch}
+                      </div>
+                      {status.provisioning_log && (
+                        <pre className="mt-3 max-h-72 overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
+                          {status.provisioning_log.trimEnd()}
+                        </pre>
+                      )}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </>
@@ -696,6 +776,16 @@ function MainPanel({
       </div>
     </Card>
   );
+}
+
+function repoWeb(url: string) {
+  // Turn a clone URL into a browsable web URL (strip .git / git@ form).
+  let u = url.trim();
+  if (u.startsWith("git@")) {
+    const [, path] = u.split(":");
+    u = "https://" + u.slice(4).split(":")[0] + "/" + (path || "");
+  }
+  return u.replace(/\.git$/, "");
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
