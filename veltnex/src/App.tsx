@@ -16,7 +16,6 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
 
-import Dashboard from "./pages/portal/Dashboard";
 import Instances from "./pages/portal/Instances";
 import InstanceDetail from "./pages/portal/InstanceDetail";
 import Databases from "./pages/portal/Databases";
@@ -66,9 +65,9 @@ export default function App() {
           checkout live on Odoo QWeb routes we navigate to directly. */}
       <Route element={<ProtectedRoute />}>
         <Route path="/my" element={<PortalLayout />}>
-          <Route index element={<Dashboard />} />
-          {/* Odoo's standard portal home URL → our dashboard */}
-          <Route path="home" element={<Navigate to="/my" replace />} />
+          {/* Overview merged into Projects — the projects list is the home. */}
+          <Route index element={<Navigate to="/my/instances" replace />} />
+          <Route path="home" element={<Navigate to="/my/instances" replace />} />
           <Route path="instances" element={<Instances />} />
           <Route path="instances/:id" element={<InstanceDetail />} />
           <Route path="instances/:id/environments" element={<Environments />} />

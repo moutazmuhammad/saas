@@ -22,7 +22,7 @@ export default function Services() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-[1760px] animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
+    <div className="mx-auto w-full animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
       <div>
         <p className="text-sm font-medium text-primary-glow">Services</p>
         <h1 className="mt-2 max-w-2xl text-4xl font-bold tracking-tight">

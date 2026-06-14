@@ -214,7 +214,7 @@ export default function Hosting() {
     <div className="animate-fade-in">
       <section className="relative overflow-hidden border-b border-border">
         <div className="pointer-events-none absolute left-1/2 top-0 h-72 w-[700px] -translate-x-1/2 rounded-full bg-primary/15 blur-[120px]" />
-        <div className="relative mx-auto max-w-[1760px] px-4 py-16 text-center sm:px-6 lg:px-8">
+        <div className="relative mx-auto w-full px-4 py-16 text-center sm:px-6 lg:px-8">
           <p className="text-sm font-medium text-primary-glow">Hosting</p>
           <h1 className="mx-auto mt-2 max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl">
             Pay for exactly what you run
@@ -250,7 +250,7 @@ export default function Hosting() {
         </div>
       </section>
 
-      <section className="mx-auto max-w-[1760px] px-4 py-14 sm:px-6 lg:px-8">
+      <section className="mx-auto w-full px-4 py-14 sm:px-6 lg:px-8">
         {error && (
           <AlertBanner className="mb-6" variant="danger" title="Couldn't load hosting plans" description={error} />
         )}
@@ -434,7 +434,7 @@ export default function Hosting() {
       </section>
 
       <section className="border-y border-border bg-card/30">
-        <div className="mx-auto max-w-[1760px] px-4 py-16 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-16 sm:px-6 lg:px-8">
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
             {SPECS.map((s) => (
               <Card key={s.title} className="p-6">

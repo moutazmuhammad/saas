@@ -63,7 +63,7 @@ export default function ServiceDetail() {
     <div className="animate-fade-in">
       <section className="relative overflow-hidden border-b border-border">
         <div className="pointer-events-none absolute left-1/2 top-0 h-72 w-[700px] -translate-x-1/2 rounded-full bg-primary/15 blur-[120px]" />
-        <div className="relative mx-auto max-w-[1760px] px-4 py-16 sm:px-6 lg:px-8">
+        <div className="relative mx-auto w-full px-4 py-16 sm:px-6 lg:px-8">
           <Link
             to="/services"
             className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-foreground"
@@ -102,7 +102,7 @@ export default function ServiceDetail() {
       )}
 
       {service.features && service.features.length > 0 && (
-        <section className="mx-auto max-w-[1760px] px-4 pb-4 sm:px-6 lg:px-8">
+        <section className="mx-auto w-full px-4 pb-4 sm:px-6 lg:px-8">
           <h2 className="text-2xl font-bold tracking-tight">What's included</h2>
           <div className="mt-8 grid gap-5 md:grid-cols-3">
             {service.features.map((f, i) => (
@@ -116,7 +116,7 @@ export default function ServiceDetail() {
         </section>
       )}
 
-      <section className="mx-auto max-w-[1760px] px-4 py-16 sm:px-6 lg:px-8">
+      <section className="mx-auto w-full px-4 py-16 sm:px-6 lg:px-8">
         <h2 className="text-2xl font-bold tracking-tight">Choose a plan</h2>
         {realPlans.length === 0 ? (
           <p className="mt-4 text-muted">

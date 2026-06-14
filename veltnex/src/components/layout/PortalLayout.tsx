@@ -1,7 +1,6 @@
 import * as React from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  LayoutDashboard,
   Server,
   Receipt,
   Settings,
@@ -21,10 +20,9 @@ import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { to: "/my", label: "Overview", icon: LayoutDashboard, end: true },
-  { to: "/my/instances", label: "Projects", icon: Server, end: false },
-  { to: "/my/billing", label: "Billing", icon: Receipt, end: false },
-  { to: "/my/settings", label: "Settings", icon: Settings, end: false },
+  { to: "/my/instances", label: "Projects", icon: Server },
+  { to: "/my/billing", label: "Billing", icon: Receipt },
+  { to: "/my/settings", label: "Settings", icon: Settings },
 ];
 
 /** Small dropdown helper: button + panel that closes on outside-click / esc. */
@@ -105,71 +103,21 @@ export function PortalLayout() {
     navigate("/");
   };
 
-  const current =
-    [...NAV].reverse().find((n) => (n.end ? pathname === n.to : pathname.startsWith(n.to))) || NAV[0];
-
   const navItemClass = (active: boolean) =>
     cn(
-      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+      "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
       active ? "bg-primary/15 text-foreground" : "text-muted hover:bg-background/60 hover:text-foreground",
     );
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Top bar — global nav lives in the menu dropdown so the page's own
-          left column (e.g. a project's branch tree) is the primary sidebar. */}
-      <header className="sticky top-0 z-40 flex h-16 items-center gap-2 border-b border-border bg-background/80 px-3 backdrop-blur-xl sm:px-5">
+      {/* Top bar — a SINGLE menu holds all navigation + account actions, so the
+          page's own left column (e.g. a project's branch tree) is the primary
+          sidebar and there's no duplicated nav. */}
+      <header className="sticky top-0 z-40 flex h-16 items-center gap-2 border-b border-border bg-background/80 px-4 backdrop-blur-xl sm:px-6">
         <Logo />
 
-        {/* App menu dropdown */}
-        <Dropdown
-          trigger={(open) => (
-            <span
-              className={cn(
-                "ml-1 flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-card",
-                open && "bg-card",
-              )}
-            >
-              <current.icon className="size-4 text-muted" />
-              <span className="hidden sm:inline">{current.label}</span>
-              <ChevronDown className="size-3.5 text-muted" />
-            </span>
-          )}
-        >
-          {(close) => (
-            <>
-              {NAV.map((item) => {
-                const active = item.end ? pathname === item.to : pathname.startsWith(item.to);
-                return (
-                  <button
-                    key={item.to}
-                    onClick={() => {
-                      close();
-                      navigate(item.to);
-                    }}
-                    className={navItemClass(active) + " w-full text-left"}
-                  >
-                    <item.icon className="size-4" />
-                    {item.label}
-                  </button>
-                );
-              })}
-              <div className="my-1 border-t border-border" />
-              <button onClick={() => { close(); navigate("/docs"); }} className={navItemClass(false) + " w-full text-left"}>
-                <LifeBuoy className="size-4" />
-                Help &amp; support
-              </button>
-              {user?.is_internal && (
-                <a href="/odoo" className={navItemClass(false)}>
-                  <LayoutGrid className="size-4" />
-                  Backend
-                </a>
-              )}
-            </>
-          )}
-        </Dropdown>
-
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1.5">
           <button
             onClick={() => setPaletteOpen(true)}
             className="flex items-center gap-2 rounded-lg border border-border bg-background/40 px-2.5 py-1.5 text-sm text-muted transition-colors hover:text-foreground"
@@ -182,12 +130,21 @@ export function PortalLayout() {
           <NotificationsBell />
           <ThemeToggle />
 
-          {/* User dropdown */}
+          {/* The one and only menu: navigation + account. */}
           <Dropdown
             align="right"
-            trigger={() => (
-              <span className="flex size-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
-                {user?.initials}
+            width="w-60"
+            trigger={(open) => (
+              <span
+                className={cn(
+                  "flex items-center gap-1.5 rounded-full border border-border py-1 pl-1 pr-2 transition-colors hover:bg-card",
+                  open && "bg-card",
+                )}
+              >
+                <span className="flex size-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+                  {user?.initials}
+                </span>
+                <ChevronDown className="size-3.5 text-muted" />
               </span>
             )}
           >
@@ -198,10 +155,28 @@ export function PortalLayout() {
                   <p className="truncate text-xs text-muted">{user?.email}</p>
                 </div>
                 <div className="my-1 border-t border-border" />
-                <button onClick={() => { close(); navigate("/my/settings"); }} className={navItemClass(false) + " w-full text-left"}>
-                  <Settings className="size-4" />
-                  Settings
+                {NAV.map((item) => (
+                  <button
+                    key={item.to}
+                    onClick={() => { close(); navigate(item.to); }}
+                    className={navItemClass(pathname.startsWith(item.to))}
+                  >
+                    <item.icon className="size-4" />
+                    {item.label}
+                  </button>
+                ))}
+                <div className="my-1 border-t border-border" />
+                <button onClick={() => { close(); navigate("/docs"); }} className={navItemClass(false)}>
+                  <LifeBuoy className="size-4" />
+                  Help &amp; support
                 </button>
+                {user?.is_internal && (
+                  <a href="/odoo" className={navItemClass(false)}>
+                    <LayoutGrid className="size-4" />
+                    Backend
+                  </a>
+                )}
+                <div className="my-1 border-t border-border" />
                 <button
                   onClick={() => { close(); handleLogout(); }}
                   className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-danger transition-colors hover:bg-danger/10"
@@ -216,7 +191,7 @@ export function PortalLayout() {
       </header>
 
       <main className="overflow-y-auto">
-        <div className="mx-auto w-full max-w-[1760px] px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-6 sm:px-6 lg:px-8">
           <Outlet />
         </div>
       </main>

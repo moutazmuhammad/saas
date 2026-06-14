@@ -2,7 +2,6 @@ import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
-  LayoutDashboard,
   Server,
   Receipt,
   Settings,
@@ -52,7 +51,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   const commands = React.useMemo<Cmd[]>(() => {
     const nav: Cmd[] = [
-      { id: "overview", label: "Overview", icon: LayoutDashboard, group: "Go to", run: () => go("/my") },
       { id: "projects", label: "Projects", icon: Server, group: "Go to", run: () => go("/my/instances") },
       { id: "billing", label: "Billing", icon: Receipt, group: "Go to", run: () => go("/my/billing") },
       { id: "settings", label: "Settings", icon: Settings, group: "Go to", run: () => go("/my/settings") },

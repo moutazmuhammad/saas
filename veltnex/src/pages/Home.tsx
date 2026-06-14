@@ -215,7 +215,7 @@ export default function Home() {
       {/* ============================================================== */}
       {sections.services && sections.hosting && (
       <section className="border-y border-border bg-card/20">
-        <div className="mx-auto max-w-[1760px] px-4 py-24 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-24 sm:px-6 lg:px-8">
           <SectionHeading
             pill={<SectionPill icon={Sparkles}>Two ways to launch</SectionPill>}
             title={
@@ -316,7 +316,7 @@ export default function Home() {
       {/* ecosystem partners strip, all in one cohesive section.         */}
       {/* ============================================================== */}
       <section className="border-y border-border bg-card/20">
-        <div className="mx-auto max-w-[1760px] px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-20 sm:px-6 lg:px-8">
           <p className="text-center text-xs font-medium uppercase tracking-[0.22em] text-muted">
             Built for the Odoo ecosystem
           </p>
@@ -395,7 +395,7 @@ export default function Home() {
       {/* STATS — compact, gradient numerals                             */}
       {/* ============================================================== */}
       <section className="border-b border-border">
-        <div className="mx-auto grid max-w-[1760px] grid-cols-2 gap-px bg-border lg:grid-cols-4">
+        <div className="mx-auto grid w-full grid-cols-2 gap-px bg-border lg:grid-cols-4">
           {STATS.map((s) => (
             <div
               key={s.label}
@@ -415,7 +415,7 @@ export default function Home() {
       {/* ============================================================== */}
       <section className="relative overflow-hidden border-b border-border">
         <div className="pointer-events-none absolute left-1/2 top-1/2 size-[680px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/8 blur-[140px]" />
-        <div className="relative mx-auto max-w-[1760px] px-4 py-28 text-center sm:px-6 lg:px-8">
+        <div className="relative mx-auto w-full px-4 py-28 text-center sm:px-6 lg:px-8">
           <SectionHeading
             pill={<SectionPill icon={Layers}>Version freedom</SectionPill>}
             title={
@@ -455,7 +455,7 @@ export default function Home() {
       {/* BRING YOUR OWN CODE — split layout with terminal mock          */}
       {/* ============================================================== */}
       <section className="border-b border-border bg-card/30">
-        <div className="mx-auto max-w-[1760px] px-4 py-28 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-28 sm:px-6 lg:px-8">
           <div className="grid items-center gap-14 lg:grid-cols-2">
             <div>
               <SectionHeading
@@ -554,7 +554,7 @@ export default function Home() {
       {/* BENTO FEATURES — varied sizes, mini-visuals inside cards       */}
       {/* ============================================================== */}
       <section className="border-b border-border">
-        <div className="mx-auto max-w-[1760px] px-4 py-28 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-28 sm:px-6 lg:px-8">
           <SectionHeading
             pill={<SectionPill icon={Zap}>Production-ready by default</SectionPill>}
             title="Everything you need to run Odoo"
@@ -767,7 +767,7 @@ export default function Home() {
       {/* HOW IT WORKS — 4 steps with connector line                     */}
       {/* ============================================================== */}
       <section className="border-b border-border bg-card/20">
-        <div className="mx-auto max-w-[1760px] px-4 py-28 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-28 sm:px-6 lg:px-8">
           <SectionHeading
             pill={<SectionPill icon={Sparkles}>From signup to production</SectionPill>}
             title="How it works"
@@ -804,7 +804,7 @@ export default function Home() {
       {/* ============================================================== */}
       {sections.services && services.length > 0 && (
         <section className="border-b border-border">
-          <div className="mx-auto max-w-[1760px] px-4 py-24 sm:px-6 lg:px-8">
+          <div className="mx-auto w-full px-4 py-24 sm:px-6 lg:px-8">
             <div className="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-end">
               <div className="max-w-xl">
                 <SectionPill icon={Layers}>Ready-made services</SectionPill>
@@ -849,7 +849,7 @@ export default function Home() {
       {/* ============================================================== */}
       <section className="relative overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-grid-faint bg-[size:48px_48px] [mask-image:radial-gradient(ellipse_at_center,black,transparent_70%)]" />
-        <div className="mx-auto max-w-[1760px] px-4 py-28 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full px-4 py-28 sm:px-6 lg:px-8">
           <Card
             glass
             className="relative overflow-hidden p-10 text-center sm:p-16"
