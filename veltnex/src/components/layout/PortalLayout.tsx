@@ -10,6 +10,8 @@ import {
   LayoutGrid,
   ChevronRight,
   ChevronDown,
+  Menu,
+  HelpCircle,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -80,9 +82,12 @@ export function PortalLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [paletteOpen, setPaletteOpen] = React.useState(false);
+  const [navCollapsed, setNavCollapsed] = React.useState(false);
+  const [mobileNav, setMobileNav] = React.useState(false);
 
   React.useEffect(() => {
-    document.querySelector("main")?.scrollTo({ top: 0 });
+    window.scrollTo({ top: 0 });
+    setMobileNav(false);
   }, [pathname]);
 
   // Global ⌘K / Ctrl+K opens the command palette.
@@ -103,48 +108,116 @@ export function PortalLayout() {
     navigate("/");
   };
 
-  const navItemClass = (active: boolean) =>
-    cn(
-      "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors",
-      active ? "bg-primary/15 text-foreground" : "text-muted hover:bg-background/60 hover:text-foreground",
-    );
+  const NavList = ({ collapsed }: { collapsed: boolean }) => (
+    <nav className="flex flex-col gap-0.5 py-2 pr-2">
+      {NAV.map((item) => {
+        const active = pathname.startsWith(item.to);
+        return (
+          <button
+            key={item.to}
+            title={item.label}
+            onClick={() => { setMobileNav(false); navigate(item.to); }}
+            className={cn(
+              "flex items-center gap-4 rounded-r-full py-2.5 text-sm transition-colors",
+              collapsed ? "mx-2 justify-center rounded-lg px-0" : "pl-6 pr-4",
+              active
+                ? "bg-primary/10 font-medium text-primary"
+                : "text-foreground/80 hover:bg-foreground/[0.06]",
+            )}
+          >
+            <item.icon className="size-5 shrink-0" />
+            {!collapsed && <span>{item.label}</span>}
+          </button>
+        );
+      })}
+      <div className="mx-3 my-2 border-t border-border" />
+      <button
+        title="Help & support"
+        onClick={() => { setMobileNav(false); navigate("/docs"); }}
+        className={cn(
+          "flex items-center gap-4 rounded-r-full py-2.5 text-sm text-foreground/80 transition-colors hover:bg-foreground/[0.06]",
+          collapsed ? "mx-2 justify-center rounded-lg px-0" : "pl-6 pr-4",
+        )}
+      >
+        <LifeBuoy className="size-5 shrink-0" />
+        {!collapsed && <span>Help &amp; support</span>}
+      </button>
+      {user?.is_internal && (
+        <a
+          href="/odoo"
+          title="Backend"
+          className={cn(
+            "flex items-center gap-4 rounded-r-full py-2.5 text-sm text-foreground/80 transition-colors hover:bg-foreground/[0.06]",
+            collapsed ? "mx-2 justify-center rounded-lg px-0" : "pl-6 pr-4",
+          )}
+        >
+          <LayoutGrid className="size-5 shrink-0" />
+          {!collapsed && <span>Backend</span>}
+        </a>
+      )}
+    </nav>
+  );
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Top bar — a SINGLE menu holds all navigation + account actions, so the
-          page's own left column (e.g. a project's branch tree) is the primary
-          sidebar and there's no duplicated nav. */}
-      <header className="sticky top-0 z-40 flex h-16 items-center gap-2 border-b border-border bg-background/80 px-4 backdrop-blur-xl sm:px-6">
+      {/* Google Cloud-style top app bar: menu · product · project · search ·
+          help/notifications/account. */}
+      <header className="sticky top-0 z-40 flex h-16 items-center gap-1 border-b border-border bg-card px-2 sm:px-4">
+        <button
+          onClick={() => { setNavCollapsed((c) => !c); setMobileNav((o) => !o); }}
+          aria-label="Toggle navigation"
+          className="rounded-full p-2.5 text-muted transition-colors hover:bg-foreground/[0.06]"
+        >
+          <Menu className="size-5" />
+        </button>
         <Logo />
+        <button
+          onClick={() => navigate("/my/instances")}
+          className="ml-1 hidden items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-background sm:flex"
+        >
+          <Server className="size-4 text-muted" />
+          Projects
+          <ChevronDown className="size-3.5 text-muted" />
+        </button>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        {/* Center search (GCP hallmark) */}
+        <button
+          onClick={() => setPaletteOpen(true)}
+          className="mx-auto hidden h-11 w-full max-w-2xl items-center gap-3 rounded-lg bg-background px-4 text-sm text-muted transition-colors hover:bg-background/70 hover:ring-1 hover:ring-border md:flex"
+        >
+          <Search className="size-5" />
+          <span>Search resources, projects, and actions</span>
+          <kbd className="ml-auto rounded border border-border bg-card px-1.5 py-0.5 text-[10px]">⌘K</kbd>
+        </button>
+
+        <div className="ml-auto flex items-center gap-0.5">
           <button
             onClick={() => setPaletteOpen(true)}
-            className="flex items-center gap-2 rounded-lg border border-border bg-background/40 px-2.5 py-1.5 text-sm text-muted transition-colors hover:text-foreground"
             aria-label="Search"
+            className="rounded-full p-2.5 text-muted transition-colors hover:bg-foreground/[0.06] md:hidden"
           >
-            <Search className="size-4" />
-            <span className="hidden md:inline">Search…</span>
-            <kbd className="hidden rounded border border-border px-1.5 py-0.5 text-[10px] md:inline">⌘K</kbd>
+            <Search className="size-5" />
+          </button>
+          <button
+            onClick={() => navigate("/docs")}
+            aria-label="Help"
+            className="rounded-full p-2.5 text-muted transition-colors hover:bg-foreground/[0.06]"
+          >
+            <HelpCircle className="size-5" />
           </button>
           <NotificationsBell />
           <ThemeToggle />
-
-          {/* The one and only menu: navigation + account. */}
           <Dropdown
             align="right"
-            width="w-60"
+            width="w-64"
             trigger={(open) => (
               <span
                 className={cn(
-                  "flex items-center gap-1.5 rounded-full border border-border py-1 pl-1 pr-2 transition-colors hover:bg-card",
-                  open && "bg-card",
+                  "ml-0.5 flex size-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground ring-2 ring-transparent transition-all",
+                  open && "ring-primary/30",
                 )}
               >
-                <span className="flex size-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-                  {user?.initials}
-                </span>
-                <ChevronDown className="size-3.5 text-muted" />
+                {user?.initials}
               </span>
             )}
           >
@@ -155,28 +228,13 @@ export function PortalLayout() {
                   <p className="truncate text-xs text-muted">{user?.email}</p>
                 </div>
                 <div className="my-1 border-t border-border" />
-                {NAV.map((item) => (
-                  <button
-                    key={item.to}
-                    onClick={() => { close(); navigate(item.to); }}
-                    className={navItemClass(pathname.startsWith(item.to))}
-                  >
-                    <item.icon className="size-4" />
-                    {item.label}
-                  </button>
-                ))}
-                <div className="my-1 border-t border-border" />
-                <button onClick={() => { close(); navigate("/docs"); }} className={navItemClass(false)}>
-                  <LifeBuoy className="size-4" />
-                  Help &amp; support
+                <button
+                  onClick={() => { close(); navigate("/my/settings"); }}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground/90 transition-colors hover:bg-foreground/[0.06]"
+                >
+                  <Settings className="size-4" />
+                  Settings
                 </button>
-                {user?.is_internal && (
-                  <a href="/odoo" className={navItemClass(false)}>
-                    <LayoutGrid className="size-4" />
-                    Backend
-                  </a>
-                )}
-                <div className="my-1 border-t border-border" />
                 <button
                   onClick={() => { close(); handleLogout(); }}
                   className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-danger transition-colors hover:bg-danger/10"
@@ -190,11 +248,34 @@ export function PortalLayout() {
         </div>
       </header>
 
-      <main className="overflow-y-auto">
-        <div className="mx-auto w-full px-4 py-6 sm:px-6 lg:px-8">
-          <Outlet />
+      <div className="flex">
+        {/* Desktop left nav (collapsible to an icon rail) */}
+        <aside
+          className={cn(
+            "sticky top-16 hidden h-[calc(100vh-4rem)] shrink-0 overflow-y-auto border-r border-border bg-card transition-[width] lg:block",
+            navCollapsed ? "w-16" : "w-64",
+          )}
+        >
+          <NavList collapsed={navCollapsed} />
+        </aside>
+
+        <main className="min-w-0 flex-1">
+          <div className="mx-auto w-full px-4 py-6 sm:px-6 lg:px-8">
+            <Outlet />
+          </div>
+        </main>
+      </div>
+
+      {/* Mobile nav drawer */}
+      {mobileNav && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileNav(false)} />
+          <aside className="absolute inset-y-0 left-0 w-64 overflow-y-auto border-r border-border bg-card pt-2 shadow-2xl">
+            <div className="flex h-14 items-center px-4"><Logo /></div>
+            <NavList collapsed={false} />
+          </aside>
         </div>
-      </main>
+      )}
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
