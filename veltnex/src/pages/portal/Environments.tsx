@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Search,
   GitBranch,
@@ -73,11 +73,30 @@ export default function Environments() {
   const instanceId = Number(id);
   const navigate = useNavigate();
   const toast = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const envParam = Number(searchParams.get("env")) || null;
 
   const [data, setData] = React.useState<ProjectEnvironments | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [selectedId, setSelectedId] = React.useState<number | null>(null);
+  const [selectedId, setSelectedId] = React.useState<number | null>(envParam);
   const [filter, setFilter] = React.useState("");
+
+  // Select an environment AND reflect it in the URL (?env=) so the workspace
+  // is deep-linkable / shareable and the command palette can target it.
+  const selectEnv = React.useCallback(
+    (envId: number) => {
+      setSelectedId(envId);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("env", String(envId));
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const [createType, setCreateType] =
     React.useState<"staging" | "development" | null>(null);
@@ -93,7 +112,9 @@ export default function Environments() {
       setData(d);
       setSelectedId((cur) => {
         const all = [d.production, ...d.environments];
-        return cur && all.some((e) => e.id === cur) ? cur : d.production.id;
+        if (cur && all.some((e) => e.id === cur)) return cur;
+        if (envParam && all.some((e) => e.id === envParam)) return envParam;
+        return d.production.id;
       });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Could not load this project.");
@@ -183,7 +204,7 @@ export default function Environments() {
                   env={data.production}
                   filter={filter}
                   selected={selectedId === data.production.id}
-                  onSelect={() => setSelectedId(data.production.id)}
+                  onSelect={() => selectEnv(data.production.id)}
                   drag={dragHandlers(data.production)}
                 />
               </SidebarSection>
@@ -197,7 +218,7 @@ export default function Environments() {
                   envs={staging}
                   filter={filter}
                   selectedId={selectedId}
-                  onSelect={setSelectedId}
+                  onSelect={selectEnv}
                   dragHandlers={dragHandlers}
                 />
               </SidebarSection>
@@ -211,7 +232,7 @@ export default function Environments() {
                   envs={development}
                   filter={filter}
                   selectedId={selectedId}
-                  onSelect={setSelectedId}
+                  onSelect={selectEnv}
                   dragHandlers={dragHandlers}
                 />
               </SidebarSection>
@@ -267,7 +288,7 @@ export default function Environments() {
         onClose={() => setCreateType(null)}
         onCreated={(auto, childId) => {
           setCreateType(null);
-          if (childId) setSelectedId(childId);
+          if (childId) selectEnv(childId);
           if (auto) toast.success("Environment created", "Provisioning your new server now.");
           load();
         }}
@@ -278,7 +299,7 @@ export default function Environments() {
         onClose={() => setDeleteTarget(null)}
         onDeleted={() => {
           setDeleteTarget(null);
-          setSelectedId(data.production.id);
+          selectEnv(data.production.id);
           toast.success("Environment removed", "The server is being torn down.");
           load();
         }}

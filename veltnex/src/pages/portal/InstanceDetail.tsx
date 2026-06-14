@@ -221,7 +221,7 @@ export default function InstanceDetail() {
           instance.parent_id && instance.environment !== "production"
             ? [
                 { label: "Instances", to: "/my/instances" },
-                { label: "Environments", to: `/my/instances/${instance.parent_id}/environments` },
+                { label: "Environments", to: `/my/instances/${instance.parent_id}/environments?env=${instance.id}` },
                 { label: instance.name },
               ]
             : [{ label: "Instances", to: "/my/instances" }, { label: instance.name }]

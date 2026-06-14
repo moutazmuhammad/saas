@@ -15,6 +15,7 @@ import {
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { CommandPalette } from "@/components/CommandPalette";
+import { NotificationsBell } from "@/components/NotificationsBell";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
@@ -153,6 +154,7 @@ export function PortalLayout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col lg:pl-64">
+        {/* Mobile header */}
         <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur-xl lg:hidden">
           <button
             onClick={() => setMobileOpen(true)}
@@ -169,7 +171,20 @@ export function PortalLayout() {
           >
             <Search className="size-5" />
           </button>
+          <NotificationsBell />
           <ThemeToggle />
+        </header>
+        {/* Desktop top bar */}
+        <header className="sticky top-0 z-30 hidden h-14 items-center justify-end gap-1 border-b border-border bg-background/80 px-6 backdrop-blur-xl lg:flex">
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="flex items-center gap-2 rounded-lg border border-border bg-background/40 px-3 py-1.5 text-sm text-muted transition-colors hover:text-foreground"
+          >
+            <Search className="size-4" />
+            <span>Search…</span>
+            <kbd className="rounded border border-border px-1.5 py-0.5 text-[10px]">⌘K</kbd>
+          </button>
+          <NotificationsBell className="ml-1" />
         </header>
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-10">
