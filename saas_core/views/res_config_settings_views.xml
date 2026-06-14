@@ -147,6 +147,16 @@
                                 </tbody>
                             </table>
                         </setting>
+                        <setting id="saas_env_price_factor_setting"
+                                 string="Environments: per-server price factor"
+                                 help="Staging/Development servers (Odoo.sh-style) are priced at the lowest hosting spec times this factor. 1.0 = full price, 0.7 = 30% cheaper, 0 = free.">
+                            <div class="content-group">
+                                <div class="mt8">
+                                    <label for="saas_env_price_factor" string="Price factor" class="o_light_label" style="display:inline-block;min-width:120px;"/>
+                                    <field name="saas_env_price_factor" class="oe_inline" style="max-width:6rem;"/>
+                                </div>
+                            </div>
+                        </setting>
                         <setting id="saas_services_estimate_setting"
                                  string="Services: sizing recommendation"
                                  help="Display-only. The concurrent-users-per-worker range shown to help a customer pick a Services size (light → heavy usage).">
@@ -227,11 +237,6 @@
                                     <span class="text-muted ms-2">used space rounded up to whole GB · 1 GB minimum</span>
                                 </div>
                             </div>
-                        </setting>
-                        <setting id="saas_merge_snapshot_into_renewal_invoice_setting"
-                                 string="One invoice: merge snapshot into renewal"
-                                 help="ON: the monthly Daily Backups charge rides on the main renewal invoice whenever the backup month is due on the same date as the renewal — so the customer gets a single bill (Plan + Support + Snapshot + Overage). The snapshot stays monthly: monthly plans merge every month; yearly plans merge once a year and bill separately the other 11 months. OFF (default): a separate monthly backup invoice.">
-                            <field name="saas_merge_snapshot_into_renewal_invoice"/>
                         </setting>
                     </block>
 

@@ -569,6 +569,210 @@ class SaasInstanceRepo(models.Model):
                 hook_id, provider, e,
             )
 
+    # ------------------------------------------------------------------
+    # Branch automation (Odoo.sh-style environments). Every Staging /
+    # Development server is bound to a Git branch created from the
+    # project's main branch; on delete the customer may opt to remove it.
+    # ------------------------------------------------------------------
+    def _branch_provider_context(self):
+        """Resolve ``(provider, base, owner, repo, token)`` for branch ops, or
+        raise a clear UserError when we can't talk to the provider."""
+        self.ensure_one()
+        token = self.sudo().github_token
+        provider = self._detect_provider()
+        owner, repo = self._parse_owner_repo()
+        if not provider or not owner or not repo:
+            raise UserError(_(
+                "Couldn't determine the Git provider for %s. Branch automation "
+                "needs a GitHub/GitLab/Gitea/Bitbucket HTTPS URL.")
+                % (self.repo_url or ''))
+        if not token:
+            raise UserError(_(
+                "An access token is required to create or delete branches on "
+                "%s.") % (self.repo_url or ''))
+        return provider, self._get_provider_base_url(), owner, repo, token
+
+    def _gitea_api_base(self):
+        parsed = urlparse(self.repo_url)
+        return '%s://%s/api/v1' % (parsed.scheme or 'https', parsed.hostname)
+
+    def _create_branch_on_provider(self, branch, source_branch):
+        """Create ``branch`` from ``source_branch`` on the Git provider.
+        Idempotent: if the branch already exists, this is a no-op."""
+        self.ensure_one()
+        if not branch or branch == source_branch:
+            return False
+        provider, base, owner, repo, token = self._branch_provider_context()
+        try:
+            if provider == 'github':
+                ref = http_requests.get(
+                    '%s/repos/%s/%s/git/ref/heads/%s' % (
+                        base, owner, repo, source_branch),
+                    headers={'Authorization': 'token %s' % token,
+                             'Accept': 'application/vnd.github+json'},
+                    timeout=15)
+                ref.raise_for_status()
+                sha = ref.json().get('object', {}).get('sha')
+                resp = http_requests.post(
+                    '%s/repos/%s/%s/git/refs' % (base, owner, repo),
+                    headers={'Authorization': 'token %s' % token,
+                             'Accept': 'application/vnd.github+json'},
+                    json={'ref': 'refs/heads/%s' % branch, 'sha': sha},
+                    timeout=15)
+                if resp.status_code == 422:  # already exists
+                    return True
+                resp.raise_for_status()
+            elif provider == 'gitlab':
+                from urllib.parse import quote as url_quote
+                proj = url_quote('%s/%s' % (owner, repo), safe='')
+                resp = http_requests.post(
+                    '%s/projects/%s/repository/branches' % (base, proj),
+                    headers={'PRIVATE-TOKEN': token},
+                    params={'branch': branch, 'ref': source_branch},
+                    timeout=15)
+                if resp.status_code == 400:  # already exists
+                    return True
+                resp.raise_for_status()
+            elif provider == 'gitea':
+                resp = http_requests.post(
+                    '%s/repos/%s/%s/branches' % (
+                        self._gitea_api_base(), owner, repo),
+                    headers={'Authorization': 'token %s' % token},
+                    json={'new_branch_name': branch,
+                          'old_branch_name': source_branch},
+                    timeout=15)
+                if resp.status_code == 409:  # already exists
+                    return True
+                resp.raise_for_status()
+            elif provider == 'bitbucket':
+                resp = http_requests.post(
+                    '%s/repositories/%s/%s/refs/branches' % (base, owner, repo),
+                    headers={'Authorization': 'Bearer %s' % token},
+                    json={'name': branch, 'target': {'hash': source_branch}},
+                    timeout=15)
+                if resp.status_code in (409, 400):  # already exists
+                    return True
+                resp.raise_for_status()
+            else:
+                raise UserError(_(
+                    "Branch automation is not supported for this provider."))
+        except UserError:
+            raise
+        except http_requests.HTTPError as e:
+            raise UserError(_(
+                "Failed to create branch '%s' from '%s' on %s: %s")
+                % (branch, source_branch, provider, e))
+        _logger.info("Created branch %s from %s on %s/%s",
+                     branch, source_branch, owner, repo)
+        return True
+
+    def _delete_branch_on_provider(self, branch):
+        """Delete ``branch`` on the Git provider. Tolerates an already-gone
+        branch; refuses to delete the project's protected main branch."""
+        self.ensure_one()
+        instance = self.instance_id
+        main_branch = (instance.parent_id.main_branch if instance
+                       and instance.parent_id else None) or (
+            instance.main_branch if instance else None)
+        if not branch or (main_branch and branch == main_branch):
+            return False
+        provider, base, owner, repo, token = self._branch_provider_context()
+        try:
+            if provider == 'github':
+                resp = http_requests.delete(
+                    '%s/repos/%s/%s/git/refs/heads/%s' % (
+                        base, owner, repo, branch),
+                    headers={'Authorization': 'token %s' % token,
+                             'Accept': 'application/vnd.github+json'},
+                    timeout=15)
+            elif provider == 'gitlab':
+                from urllib.parse import quote as url_quote
+                proj = url_quote('%s/%s' % (owner, repo), safe='')
+                resp = http_requests.delete(
+                    '%s/projects/%s/repository/branches/%s' % (
+                        base, proj, url_quote(branch, safe='')),
+                    headers={'PRIVATE-TOKEN': token},
+                    timeout=15)
+            elif provider == 'gitea':
+                resp = http_requests.delete(
+                    '%s/repos/%s/%s/branches/%s' % (
+                        self._gitea_api_base(), owner, repo, branch),
+                    headers={'Authorization': 'token %s' % token},
+                    timeout=15)
+            elif provider == 'bitbucket':
+                resp = http_requests.delete(
+                    '%s/repositories/%s/%s/refs/branches/%s' % (
+                        base, owner, repo, branch),
+                    headers={'Authorization': 'Bearer %s' % token},
+                    timeout=15)
+            else:
+                return False
+            if resp.status_code not in (404, 410):  # already gone is fine
+                resp.raise_for_status()
+        except http_requests.HTTPError as e:
+            raise UserError(_(
+                "Failed to delete branch '%s' on %s: %s") % (branch, provider, e))
+        _logger.info("Deleted branch %s on %s/%s", branch, owner, repo)
+        return True
+
+    def _list_remote_branches(self):
+        """List branch names on the remote (for the Staging branch picker).
+        Best-effort: returns [] when provider/credentials don't allow it."""
+        self.ensure_one()
+        provider = self._detect_provider()
+        owner, repo = self._parse_owner_repo()
+        if not provider or not owner or not repo:
+            return []
+        token = self.sudo().github_token
+        base = self._get_provider_base_url()
+        names = []
+        if provider == 'github':
+            headers = {'Accept': 'application/vnd.github+json'}
+            if token:
+                headers['Authorization'] = 'token %s' % token
+            resp = http_requests.get(
+                '%s/repos/%s/%s/branches' % (base, owner, repo),
+                headers=headers, params={'per_page': 100}, timeout=15)
+            resp.raise_for_status()
+            names = [b.get('name') for b in resp.json()]
+        elif provider == 'gitlab':
+            from urllib.parse import quote as url_quote
+            proj = url_quote('%s/%s' % (owner, repo), safe='')
+            headers = {'PRIVATE-TOKEN': token} if token else {}
+            resp = http_requests.get(
+                '%s/projects/%s/repository/branches' % (base, proj),
+                headers=headers, params={'per_page': 100}, timeout=15)
+            resp.raise_for_status()
+            names = [b.get('name') for b in resp.json()]
+        elif provider == 'gitea':
+            headers = {'Authorization': 'token %s' % token} if token else {}
+            resp = http_requests.get(
+                '%s/repos/%s/%s/branches' % (
+                    self._gitea_api_base(), owner, repo),
+                headers=headers, timeout=15)
+            resp.raise_for_status()
+            names = [b.get('name') for b in resp.json()]
+        elif provider == 'bitbucket':
+            headers = {'Authorization': 'Bearer %s' % token} if token else {}
+            resp = http_requests.get(
+                '%s/repositories/%s/%s/refs/branches' % (base, owner, repo),
+                headers=headers, timeout=15)
+            resp.raise_for_status()
+            names = [b.get('name') for b in resp.json().get('values', [])]
+        return [n for n in names if n]
+
+    def _ensure_env_branch(self):
+        """For a child env repo, make sure its branch exists on the remote,
+        creating it from the project's main branch when missing. No-op for
+        Production (it always tracks an existing main branch)."""
+        self.ensure_one()
+        instance = self.instance_id
+        if not instance or instance.environment == 'production':
+            return
+        source = (instance.parent_id.main_branch
+                  if instance.parent_id else 'main') or 'main'
+        self._create_branch_on_provider(self.branch, source)
+
     def _register_webhook_on_provider(self):
         """Register the webhook on the Git provider via API.
 
@@ -1062,6 +1266,18 @@ class SaasInstanceRepo(models.Model):
             server = instance.docker_server_id
             repo_path = rec._get_remote_repo_path()
             clone_url = rec._get_clone_url()
+
+            # Env servers (staging/dev) may target a branch that doesn't exist
+            # yet — create it from the project's main branch before cloning
+            # (Odoo.sh style). Best-effort here (it is normally created at
+            # env-create time); a genuinely missing branch surfaces as a clear
+            # clone error below.
+            if rec.instance_id.environment != 'production':
+                try:
+                    rec._ensure_env_branch()
+                except Exception as e:
+                    _logger.warning(
+                        "Env branch ensure failed for %s: %s", rec.name, e)
 
             try:
                 with server._get_ssh_connection() as ssh:

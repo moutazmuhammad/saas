@@ -222,6 +222,12 @@ class SaasPortalSpa(SaasPortal):
     def portal_instance_logs(self, instance_id, access_token=None, **kw):
         return spa_shell()
 
+    @http.route('/my/instances/<int:instance_id>/environments',
+                type='http', auth='public', website=True)
+    def portal_instance_environments(self, instance_id, access_token=None,
+                                     **kw):
+        return spa_shell()
+
     # Billing list/detail live at /my/billing so Odoo keeps owning
     # /my/invoices/<id> (the canonical PDF + payment portal URL the
     # "pay invoice" button links to).

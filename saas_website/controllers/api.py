@@ -301,6 +301,36 @@ class SaasApi(http.Controller):
             config, workers, storage, billing, kind='hosting',
             region=region_rec.id or None))
 
+    @http.route('/saas/api/v1/hosting/calculate-project', type='json',
+                auth='public')
+    def hosting_calculate_project(self, workers=2, storage=5, billing='monthly',
+                                  region=None, staging_count=0, dev_count=0):
+        """Hosting quote PLUS the cost of the chosen Staging/Development
+        servers (each at the lowest-spec env price), for the purchase flow."""
+        site = SaasWebsite()
+        config = site._get_hosting_plan_config()
+        region_rec = self._resolve_region(region)
+        base = self._price(config, workers, storage, billing, kind='hosting',
+                           region=region_rec.id or None)
+        engine = request.env['saas.pricing.engine'].sudo()
+        env_price = engine.env_server_price(
+            billing=billing, region=region_rec.id or None)
+        try:
+            sc = max(0, int(staging_count or 0))
+            dc = max(0, int(dev_count or 0))
+        except (TypeError, ValueError):
+            sc = dc = 0
+        env_total = round(env_price * (sc + dc), 2)
+        data = dict(base)
+        data.update({
+            'env_server_price': env_price,
+            'staging_count': sc,
+            'dev_count': dc,
+            'env_total': env_total,
+            'project_total': round((base.get('total') or 0.0) + env_total, 2),
+        })
+        return ok(data)
+
     @http.route('/saas/api/v1/services/calculate', type='json', auth='public')
     def services_calculate(self, workers=2, storage=5, billing='monthly',
                            region=None):
@@ -1173,6 +1203,94 @@ class SaasApi(http.Controller):
         return ok({'released': True,
                    'blocks_owned': instance.extra_storage_blocks})
 
+    # ==================================================================
+    #  Odoo.sh-style environments (Production project + Staging/Dev)
+    # ==================================================================
+    @http.route('/saas/api/v1/instances/<int:instance_id>/environments',
+                type='json', auth='public')
+    def environments(self, instance_id, access_token=None):
+        """The project view: Production + its Staging/Development servers."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        prod = instance if instance.environment == 'production' else (
+            instance.parent_id or instance)
+        children = prod.child_env_ids.filtered(
+            lambda c: c.state not in ('cancelled', 'cancelled_by_client')
+        ).sorted('id')
+        return ok({
+            'production': self._serialize_env_child(prod),
+            'main_branch': prod.main_branch or 'main',
+            'env_server_price': prod._env_server_price(),
+            'billing_cycle': prod.billing_period or 'monthly',
+            'environments': [self._serialize_env_child(c) for c in children],
+        })
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/environments/create',
+                type='json', auth='public')
+    def environment_create(self, instance_id, type=None, name=None, branch=None):
+        """One-click create of a Staging/Development server. Returns either
+        ``auto_provisioned`` (wallet/card settled it) or a ``checkout_url``."""
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        instance = request.env['saas.instance'].sudo().browse(instance_id)
+        if not instance.exists() or instance.partner_id != partner:
+            return err(_("Project not found."), 'not_found')
+        prod = instance if instance.environment == 'production' \
+            else instance.parent_id
+        if not prod:
+            return err(_("Environments are managed from the Production "
+                         "server."), 'invalid')
+        try:
+            result = prod.action_create_environment(
+                type, name=name, branch=branch)
+        except (UserError, ValidationError) as e:
+            return err(str(e), 'error')
+        except Exception:
+            _logger.exception("Env create failed for %s", instance_id)
+            return err(_("Couldn't create the environment. Please try again."),
+                       'error')
+        return ok(result)
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/environments/'
+                '<int:child_id>/delete', type='json', auth='public')
+    def environment_delete(self, instance_id, child_id, delete_branch=False):
+        """Remove a Staging/Development server; optionally delete its branch."""
+        partner = self._partner()
+        if not partner:
+            return err(_("Please sign in."), 'auth_required')
+        child = request.env['saas.instance'].sudo().browse(child_id)
+        if not child.exists() or child.partner_id != partner \
+                or child.environment == 'production':
+            return err(_("Environment not found."), 'not_found')
+        try:
+            child.action_delete_environment(delete_branch=bool(delete_branch))
+        except (UserError, ValidationError) as e:
+            return err(str(e), 'error')
+        return ok({'deleted': True})
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/branches',
+                type='json', auth='public')
+    def instance_branches(self, instance_id, access_token=None):
+        """Remote branch list for the Staging branch picker."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        prod = instance if instance.environment == 'production' else (
+            instance.parent_id or instance)
+        repo = prod.repo_ids[:1]
+        main_branch = prod.main_branch or 'main'
+        if not repo:
+            return ok({'branches': [], 'main_branch': main_branch})
+        try:
+            branches = repo._list_remote_branches()
+        except Exception:
+            branches = []
+        return ok({'branches': branches, 'main_branch': main_branch})
+
     @http.route('/saas/api/v1/billing/payment-methods', type='json', auth='public')
     def payment_methods(self):
         partner = self._partner()
@@ -1256,6 +1374,28 @@ class SaasApi(http.Controller):
             'storage': round(instance.storage_usage_pct or 0.0),
         }
 
+    def _serialize_env_child(self, inst):
+        """Compact card for an environment server (production or child)."""
+        return {
+            'id': inst.id,
+            'name': inst.subdomain or inst.name,
+            'domain': inst.name or '',
+            'url': inst.url or '',
+            'environment': inst.environment,
+            'environment_label': dict(
+                inst._fields['environment'].selection
+            ).get(inst.environment, inst.environment),
+            'branch': inst._env_branch(),
+            'state': inst.state,
+            'state_label': dict(
+                inst._fields['state'].selection
+            ).get(inst.state, inst.state),
+            'access_token': inst.access_token,
+            'is_production': inst.environment == 'production',
+            'pending_payment': inst.state == 'pending_payment',
+            'pending_invoice_id': inst.env_pending_invoice_id.id or False,
+        }
+
     def _serialize_instance(self, instance, detail=False):
         plan = instance.plan_id
         data = {
@@ -1284,6 +1424,13 @@ class SaasApi(http.Controller):
             'is_trial': instance.is_trial,
             'usage': self._usage(instance),
             'access_token': instance.access_token,
+            # Odoo.sh-style environments.
+            'environment': instance.environment,
+            'environment_label': dict(
+                instance._fields['environment'].selection
+            ).get(instance.environment, instance.environment),
+            'branch': instance._env_branch(),
+            'parent_id': instance.parent_id.id or False,
         }
         if detail:
             invoices = instance._get_all_invoices().filtered(
@@ -1337,6 +1484,15 @@ class SaasApi(http.Controller):
                 'capacity': instance._capacity_summary(),
                 # Wallet: two-class balance (customer money vs bonus).
                 'wallet': self._serialize_wallet_inline(instance.partner_id),
+                # Odoo.sh environments: the project's main branch, the
+                # per-server price, and the child Staging/Dev servers.
+                'main_branch': instance.main_branch or 'main',
+                'env_server_price': instance._env_server_price(),
+                'environments': [
+                    self._serialize_env_child(c)
+                    for c in instance.child_env_ids.sorted('id')
+                    if c.state not in ('cancelled', 'cancelled_by_client')
+                ] if instance.environment == 'production' else [],
             })
             # Cancelled instances: surface the retained snapshot (if any) so
             # the customer knows their data is kept and can reactivate to

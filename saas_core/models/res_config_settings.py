@@ -144,6 +144,18 @@ class ResConfigSettings(models.TransientModel):
         config_parameter='saas_master.hosting_yearly_discount_pct',
         default=20,
     )
+    # Odoo.sh-style environments: Staging/Development servers are priced at
+    # the lowest hosting spec × this factor. NO config_parameter= here —
+    # 0.0 ("free non-prod servers") is a meaningful value and set_param(key,
+    # 0.0→False) would delete the row, springing the default back (falsy-value
+    # trap). Handled manually in get_values/set_values, like the settings below.
+    saas_env_price_factor = fields.Float(
+        string='Environment Price Factor',
+        default=1.0,
+        help='Multiplier on the per-server price of Staging/Development '
+             'environments (lowest hosting spec). 1.0 = full price; 0.7 = 30%% '
+             'cheaper than a same-size production server; 0 = free.',
+    )
     saas_snapshot_price_per_gb = fields.Float(
         string='Snapshot Price per GB (monthly)',
         config_parameter='saas_master.snapshot_price_per_gb',
@@ -241,26 +253,6 @@ class ResConfigSettings(models.TransientModel):
              'billed).',
     )
 
-    # ========== Pricing Policy (Booleans) ==========
-    # NOTE: like the website-section toggles above, these intentionally do
-    # NOT use ``config_parameter=`` — see the note there. We read/write the
-    # ir.config_parameter rows by hand in get_values / set_values, storing
-    # the literal strings 'True'/'False'.
-    saas_merge_snapshot_into_renewal_invoice = fields.Boolean(
-        string='Merge Snapshot into Renewal Invoice',
-        default=False,
-        help='When ON, the monthly Daily Backups charge is added as a line '
-             'on the main renewal invoice whenever the backup month falls '
-             'due on the same date as the renewal — so the customer gets a '
-             'single invoice (Plan + Support + Snapshot + Overage). The '
-             'snapshot stays MONTHLY (one month at a time, never prepaid): '
-             'on a monthly plan it merges every month; on a yearly plan it '
-             'merges once a year and bills separately the other 11 months. '
-             'When the backup is not due on the renewal date it is NOT shown '
-             'on the renewal (the customer is already billed for it that '
-             'month). OFF (default) = separate backup billing cycle '
-             '(current behaviour).',
-    )
     # ========== Support ==========
     saas_support_email = fields.Char(
         string='Support Email',
@@ -406,10 +398,6 @@ class ResConfigSettings(models.TransientModel):
             'saas_master.show_hosting_section',
             'True' if self.saas_show_hosting_section else 'False',
         )
-        ICP.set_param(
-            'saas_master.merge_snapshot_into_renewal_invoice',
-            'True' if self.saas_merge_snapshot_into_renewal_invoice else 'False',
-        )
         # Always write the string — '0' (unlimited) included. See the
         # field definition for why config_parameter= can't be used.
         ICP.set_param(
@@ -425,6 +413,12 @@ class ResConfigSettings(models.TransientModel):
         ICP.set_param(
             'saas_master.storage_grace_days',
             str(int(self.saas_storage_grace_days or 0)),
+        )
+        # Always write the string — '0.0' (free env servers) included. See the
+        # field definition for why config_parameter= can't be used.
+        ICP.set_param(
+            'saas_master.env_price_factor',
+            str(float(self.saas_env_price_factor or 0.0)),
         )
         # Re-derive every named tier's stored price from the (possibly
         # just-changed) per-worker / per-GB rates, so editing the rates
@@ -447,9 +441,6 @@ class ResConfigSettings(models.TransientModel):
         res['saas_show_hosting_section'] = ICP.get_param(
             'saas_master.show_hosting_section', 'True',
         ) != 'False'
-        res['saas_merge_snapshot_into_renewal_invoice'] = ICP.get_param(
-            'saas_master.merge_snapshot_into_renewal_invoice', 'False',
-        ) == 'True'
         try:
             res['saas_max_instances_per_user'] = int(
                 ICP.get_param('saas_master.max_instances_per_user', '5') or 0
@@ -468,6 +459,12 @@ class ResConfigSettings(models.TransientModel):
             )
         except (TypeError, ValueError):
             res['saas_storage_grace_days'] = 7
+        try:
+            res['saas_env_price_factor'] = float(
+                ICP.get_param('saas_master.env_price_factor', '1.0')
+            )
+        except (TypeError, ValueError):
+            res['saas_env_price_factor'] = 1.0
         return res
 
     def action_apply_bucket_cors(self):

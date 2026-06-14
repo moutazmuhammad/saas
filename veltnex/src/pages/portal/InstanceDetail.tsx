@@ -17,7 +17,7 @@ import {
   ArrowUpCircle,
   Clock,
 } from "lucide-react";
-import { GitBranch } from "lucide-react";
+import { GitBranch, Boxes } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -202,6 +202,11 @@ export default function InstanceDetail() {
   // managed) gets the full toolset: databases, code, logs, snapshots.
   const subnav = instance.is_hosting
     ? [
+        // Environments (Production project + Staging/Dev) — only the
+        // Production server manages the project's environments.
+        ...(instance.environment === "production"
+          ? [{ to: `/my/instances/${id}/environments`, label: "Environments", icon: Boxes }]
+          : []),
         { to: `/my/instances/${id}/databases`, label: "Databases", icon: Database },
         { to: `/my/instances/${id}/code`, label: "Code & packages", icon: GitBranch },
         { to: `/my/instances/${id}/logs`, label: "Logs", icon: ScrollText },

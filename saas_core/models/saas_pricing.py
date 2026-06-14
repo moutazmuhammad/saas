@@ -419,6 +419,33 @@ class SaasPricingEngine(models.AbstractModel):
         return round(billable_gb * per_gb, 2)
 
     @api.model
+    def env_price_factor(self):
+        """Multiplier applied to the per-server price of Staging/Development
+        environments (``saas_master.env_price_factor``, default 1.0). Lets the
+        platform make non-production servers cheaper (e.g. 0.7) without code.
+        Clamped to [0, 1e6]; 0 makes env servers free."""
+        icp = self.env['ir.config_parameter'].sudo()
+        raw = icp.get_param('saas_master.env_price_factor', '1.0')
+        try:
+            factor = float(raw)
+        except (TypeError, ValueError):
+            factor = 1.0
+        return max(0.0, min(factor, 1e6))
+
+    @api.model
+    def env_server_price(self, billing='monthly', region=None):
+        """Per-server price of a Staging/Development environment: the engine's
+        hosting price at the LOWEST spec (min workers/storage), region-scaled,
+        times ``env_price_factor``. Single source of truth so the configurator,
+        the one-click create flow, and the recurring renewal line all agree."""
+        cfg = self._rate_config('hosting')
+        quote = self.compute(
+            'hosting', cfg['min_workers'], cfg['min_storage'],
+            billing=billing, region=region,
+        )
+        return round(quote['total'] * self.env_price_factor(), 2)
+
+    @api.model
     def monthly_price(self, kind, workers, storage, region=None):
         """Convenience: just the monthly figure used when stamping a
         ``saas.plan.price`` at custom-plan creation (S2 will use this)."""

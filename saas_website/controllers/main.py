@@ -943,6 +943,10 @@ class SaasWebsite(http.Controller):
         # on yearly with NO discount.
         backup_unit_price = request.env['saas.pricing.engine'].daily_backup_price()
         backup_cost = backup_unit_price if daily_backup else 0.0
+        # Odoo.sh-style environments: per-server price for Staging/Development
+        # (lowest spec, region-scaled), billed on the same period as the plan.
+        env_server_price = request.env['saas.pricing.engine'].env_server_price(
+            billing=billing_period, region=(region.id if region else None))
         # The yearly discount applies ONLY to the infra (plan) portion.
         # Support and the backup add-on are flat monthly fees billed x12 at
         # full price. ``_q`` already encodes "support flat, infra discounted"
@@ -979,6 +983,7 @@ class SaasWebsite(http.Controller):
             'storage': storage,
             'backup_cost': backup_cost,
             'backup_unit_price': backup_unit_price,
+            'env_server_price': env_server_price,
             'plan_cost': plan_cost,
             'daily_backup': daily_backup,
             'support_plans': support_plans,
@@ -1075,6 +1080,16 @@ class SaasWebsite(http.Controller):
         git_token = (post.get('git_token') or '').strip()
         pip_packages = (post.get('pip_packages') or '').strip()
         is_trial = post.get('is_trial') == '1'
+        # Odoo.sh-style environments chosen at checkout: extra Staging /
+        # Development servers (each billed at the lowest-spec env price).
+        try:
+            staging_count = max(0, int(post.get('staging_count', 0) or 0))
+        except (TypeError, ValueError):
+            staging_count = 0
+        try:
+            dev_count = max(0, int(post.get('dev_count', 0) or 0))
+        except (TypeError, ValueError):
+            dev_count = 0
 
         if billing_period not in ('monthly', 'yearly'):
             billing_period = 'monthly'
@@ -1198,6 +1213,11 @@ class SaasWebsite(http.Controller):
             # drives co-located server allocation.
             if region:
                 vals['region_id'] = region.id
+            # Staging/Development servers chosen at checkout are spawned once
+            # the initial invoice is paid (trials get only Production).
+            if not is_trial and (staging_count or dev_count):
+                vals['pending_staging_count'] = staging_count
+                vals['pending_dev_count'] = dev_count
             # Support plan (P6): a paid add-on chosen at checkout. Trials
             # don't get paid support. Falls back to the default plan.
             if not is_trial:

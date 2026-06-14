@@ -288,6 +288,41 @@ export interface WalletData {
   transactions: WalletTransaction[];
 }
 
+/** Odoo.sh-style environment: Production or a Staging/Development server. */
+export type EnvironmentType = "production" | "staging" | "development";
+
+export interface EnvChild {
+  id: number;
+  name: string;
+  domain: string;
+  url: string;
+  environment: EnvironmentType;
+  environment_label: string;
+  branch: string;
+  state: InstanceState;
+  state_label: string;
+  access_token: string;
+  is_production: boolean;
+  pending_payment: boolean;
+  pending_invoice_id: number | false;
+}
+
+export interface ProjectEnvironments {
+  production: EnvChild;
+  main_branch: string;
+  env_server_price: number;
+  billing_cycle: "monthly" | "yearly";
+  environments: EnvChild[];
+}
+
+export interface ProjectPriceResult extends PriceResult {
+  env_server_price: number;
+  staging_count: number;
+  dev_count: number;
+  env_total: number;
+  project_total: number;
+}
+
 export interface ApiInstance {
   id: number;
   name: string;
@@ -305,6 +340,14 @@ export interface ApiInstance {
   is_trial: boolean;
   usage: ApiUsage;
   access_token: string;
+  // environments
+  environment: EnvironmentType;
+  environment_label: string;
+  branch: string;
+  parent_id: number | false;
+  main_branch?: string;
+  env_server_price?: number;
+  environments?: EnvChild[];
   // detail-only
   plan_name?: string;
   next_invoice_date?: string;
@@ -539,6 +582,47 @@ export const api = {
 
   invoices: () => rpc<ApiInvoice[]>("/saas/api/v1/invoices"),
   invoice: (id: number) => rpc<ApiInvoice>(`/saas/api/v1/invoices/${id}`),
+
+  // portal — Odoo.sh-style environments
+  environments: (id: number) =>
+    rpc<ProjectEnvironments>(`/saas/api/v1/instances/${id}/environments`),
+  environmentCreate: (
+    id: number,
+    type: "staging" | "development",
+    name?: string,
+    branch?: string,
+  ) =>
+    rpc<{
+      child_id: number;
+      auto_provisioned: boolean;
+      invoice_id?: number;
+      checkout_url?: string;
+    }>(`/saas/api/v1/instances/${id}/environments/create`, {
+      type,
+      name: name || undefined,
+      branch: branch || undefined,
+    }),
+  environmentDelete: (id: number, childId: number, deleteBranch: boolean) =>
+    rpc<{ deleted: boolean }>(
+      `/saas/api/v1/instances/${id}/environments/${childId}/delete`,
+      { delete_branch: deleteBranch },
+    ),
+  instanceBranches: (id: number) =>
+    rpc<{ branches: string[]; main_branch: string }>(
+      `/saas/api/v1/instances/${id}/branches`,
+    ),
+  hostingCalculateProject: (p: {
+    workers: number;
+    storage: number;
+    billing: string;
+    region?: number | null;
+    staging_count: number;
+    dev_count: number;
+  }) =>
+    rpc<ProjectPriceResult>("/saas/api/v1/hosting/calculate-project", {
+      ...p,
+      region: p.region ?? undefined,
+    }),
 };
 
 /**

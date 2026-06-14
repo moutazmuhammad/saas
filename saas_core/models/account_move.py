@@ -1,5 +1,4 @@
 import logging
-from dateutil.relativedelta import relativedelta
 
 from odoo import fields, models, _
 
@@ -89,13 +88,19 @@ class AccountMove(models.Model):
             instance._capture_payment_token_from_invoice(
                 instance.daily_backup_pending_invoice_id,
             )
-            # Flat monthly fee — the customer paid for one full month
-            # starting today, so the next invoice is anchored exactly
-            # one month after the activation date (not on the 1st of
-            # next month — that would short the customer's first
-            # period whenever they activate mid-month).
+            # The add-on follows the PLAN's billing period: the customer just
+            # paid a prorated catch-up to the plan's renewal date, so align
+            # the add-on's next-invoice date to that renewal — from now on the
+            # snapshot charge is merged into the plan renewal (one bill, same
+            # period). Fall back to a full period from today if the instance
+            # somehow has no active billing cycle.
             today = fields.Date.today()
-            next_invoice = today + relativedelta(months=1)
+            period = instance.billing_period or 'monthly'
+            if instance.next_invoice_date and instance.next_invoice_date > today:
+                next_invoice = instance.next_invoice_date
+            else:
+                next_invoice = today + instance.env[
+                    'saas.pricing.engine'].period_delta(period)
             instance.write({
                 'daily_backup_enabled': True,
                 'daily_backup_pending_invoice_id': False,
@@ -104,12 +109,12 @@ class AccountMove(models.Model):
             })
             instance._append_log(
                 "Daily backups enabled — add-on payment received. "
-                "Next monthly invoice: %s." % next_invoice
+                "Aligned to the plan renewal; next invoice: %s." % next_invoice
             )
             instance.message_post(body=_(
                 "Daily Backups add-on paid. The next 03:00 UTC backup "
-                "cron will create the first snapshot, and renewal "
-                "invoices will be issued monthly."
+                "cron will create the first snapshot, and the charge will "
+                "be included on your subscription renewal from now on."
             ))
 
         # --- Handle storage-block purchases (v47) ---
@@ -124,6 +129,20 @@ class AccountMove(models.Model):
             instance._capture_payment_token_from_invoice(
                 instance.storage_block_pending_invoice_id)
             instance._activate_pending_storage_blocks()
+
+        # --- Handle Staging/Development environment activation (Odoo.sh) ---
+        # The customer clicked "Create staging/dev server"; we created the
+        # child record + a prorated activation invoice. Now that it's paid,
+        # provision the server (it never gets its own billing cycle — the
+        # recurring cost rides the Production renewal).
+        env_children = self.env['saas.instance'].search([
+            ('env_pending_invoice_id', 'in', paid_invoices.ids),
+        ])
+        for child in env_children:
+            _logger.info(
+                "SaaS env server %s: activation invoice %s paid — deploying.",
+                child.subdomain, child.env_pending_invoice_id.name)
+            child._activate_pending_environment()
 
         # --- Resume paused snapshots when a renewal is paid ---
         # A monthly add-on invoice going unpaid pauses snapshots
@@ -203,6 +222,16 @@ class AccountMove(models.Model):
                 error_args=('failed',),
                 thread_name='saas_deploy_payment_%s' % instance.subdomain,
             )
+            # Odoo.sh-style: spawn the Staging/Development servers the customer
+            # chose at checkout (already billed on this initial invoice).
+            if instance.environment == 'production' and (
+                    instance.pending_staging_count or instance.pending_dev_count):
+                try:
+                    instance._spawn_pending_environments()
+                except Exception:
+                    _logger.exception(
+                        "Failed to spawn pending environments for %s",
+                        instance.subdomain)
 
         # --- Handle pending plan changes (trial upgrade or paid plan change) ---
         # Match by the explicit invoice link first (exact — survives

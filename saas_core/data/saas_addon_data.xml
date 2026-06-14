@@ -14,7 +14,7 @@
             <field name="applies_to">hosting</field>
             <field name="price_config_param">saas_master.snapshot_price_per_gb</field>
             <field name="sequence">10</field>
-            <field name="description">Daily deduplicated full-instance snapshots (restic), 7-day retention. Billed monthly by used storage (rounded up to the next whole GB, 1 GB minimum).</field>
+            <field name="description">Daily deduplicated full-instance snapshots (restic), 7-day retention. Billed on the same period as your subscription (merged into the plan renewal) by used storage (rounded up to the next whole GB, 1 GB minimum).</field>
         </record>
     </data>
 </odoo>

@@ -59,6 +59,9 @@ ORIGIN_PLAN_UPGRADE = 'SAAS:UPGRADE:%s'
 ORIGIN_DATA_RESTORATION = 'SAAS:RESTORATION:%s'
 ORIGIN_BACKUP_ADDON = 'SAAS:BACKUP-ADDON:%s'
 ORIGIN_STORAGE_BLOCK = 'SAAS:STORAGE-BLOCK:%s'
+# Adding a Staging/Development environment server: the prorated activation
+# invoice that gates provisioning of a child env (mirrors STORAGE-BLOCK).
+ORIGIN_ENVIRONMENT = 'SAAS:ENVIRONMENT:%s'
 # Origins considered "optional" for dunning purposes (won't trigger suspension).
 # Daily-backup add-on is opt-in — a missed payment for it shouldn't take down
 # the whole instance the customer still uses every day.
@@ -67,6 +70,9 @@ OPTIONAL_INVOICE_ORIGIN_PREFIXES = (
     # Buying storage blocks is opt-in — an unpaid block invoice must not
     # suspend the workspace (the customer simply doesn't get the extra room).
     'SAAS:STORAGE-BLOCK:',
+    # Adding an env server is opt-in — an unpaid env invoice must not suspend
+    # the project; the child simply stays unprovisioned until paid.
+    'SAAS:ENVIRONMENT:',
 )
 # Days past a daily-backup add-on invoice's due date before snapshots are
 # paused. Snapshots resume automatically once the invoice is paid.
@@ -397,7 +403,8 @@ class SaasInstance(models.Model):
              'an incremental, deduplicated snapshot of the entire instance '
              '(databases + filestore + addons + config + docker-compose '
              '+ pip requirements) using restic. Last 7 days are retained. '
-             'Billed monthly as an add-on at the rate configured in SaaS '
+             'Billed as an add-on on the SAME period as the subscription '
+             '(merged into the plan renewal) at the rate configured in SaaS '
              'settings.',
     )
     daily_backup_pending_invoice_id = fields.Many2one(
@@ -433,16 +440,17 @@ class SaasInstance(models.Model):
              'all daily snapshots unrecoverable — back up the saas '
              'master database appropriately.',
     )
-    # Backup billing runs on its own monthly cycle, independent of the
-    # main subscription's billing_period. This way a customer on a
-    # yearly plan still pays the backup add-on once a month.
+    # Backup billing follows the main subscription's billing_period and is
+    # aligned to the plan renewal date, so a monthly plan bills the add-on
+    # monthly and a yearly plan bills it yearly (12x up-front), merged into
+    # the plan renewal invoice.
     daily_backup_next_invoice_date = fields.Date(
         string='Daily Backup Next Invoice',
         copy=False,
-        help='When the next monthly daily-backup invoice is due. Set '
-             'on activation payment to one full month after the '
-             'activation date (no proration), then advanced by one '
-             'month each renewal.',
+        help='When the next daily-backup charge is due. The add-on follows '
+             'the subscription period and is aligned to the plan renewal '
+             'date, so this normally equals ``next_invoice_date`` and the '
+             'charge is merged into the plan renewal invoice.',
     )
     daily_backup_last_invoice_date = fields.Date(
         string='Daily Backup Last Invoice',
@@ -477,10 +485,11 @@ class SaasInstance(models.Model):
         string='Auto-renew Daily Backups',
         copy=False,
         default=True,
-        help='When enabled and a saved card is on file, the monthly '
-             'daily-backup add-on invoice is charged automatically on '
-             'renewal. When disabled the invoice is still issued, but '
-             'the customer pays it manually.',
+        help='Legacy toggle. The daily-backup charge now rides on the '
+             'subscription renewal invoice, so it is auto-charged together '
+             'with the plan whenever Auto-renew Subscription is on and a '
+             'card is on file; there is no separate backup invoice to '
+             'auto-charge.',
     )
     # ---------- Cancellation cleanup retry flags ----------
     # Set by ``_do_delete_instance`` when the corresponding cleanup
@@ -640,6 +649,48 @@ class SaasInstance(models.Model):
     ], string='Last Capacity Notice', copy=False,
         help='Highest capacity notice already sent, so each stage notifies '
              'once. Reset when usage falls back to healthy.')
+
+    # ===== Odoo.sh-style environments (hosting only) =====
+    # A hosting subscription is a "project": exactly one Production environment
+    # (the billing anchor that owns the subscription) plus any number of
+    # Staging / Development child servers. Children never self-bill — their
+    # cost is added as recurring lines on the Production renewal, and they are
+    # excluded from the renewal/dunning crons via ('parent_id', '=', False).
+    environment = fields.Selection([
+        ('production', 'Production'),
+        ('staging', 'Staging'),
+        ('development', 'Development'),
+    ], string='Environment', default='production', required=True, index=True,
+        copy=False,
+        help='Environment type (hosting). Production is the mandatory billing '
+             'anchor bound to the main branch; Staging/Development are pinned '
+             'to the lowest spec and billed per server.')
+    parent_id = fields.Many2one(
+        'saas.instance', string='Project (Production)', copy=False,
+        ondelete='cascade', index=True,
+        domain="[('environment', '=', 'production')]",
+        help='The Production environment this Staging/Development server '
+             'belongs to. Empty on Production itself.')
+    child_env_ids = fields.One2many(
+        'saas.instance', 'parent_id', string='Environments',
+        help='Staging/Development servers under this Production project.')
+    main_branch = fields.Char(
+        string='Main Branch', default='main', copy=False,
+        help='The customer\'s primary Git branch. Production always tracks it; '
+             'Development branches are created from it.')
+    pending_staging_count = fields.Integer(
+        string='Pending Staging Servers', copy=False, default=0,
+        help='Staging servers to spawn once the initial subscription invoice '
+             'is paid (mirrors pending_storage_blocks).')
+    pending_dev_count = fields.Integer(
+        string='Pending Development Servers', copy=False, default=0,
+        help='Development servers to spawn once the initial subscription '
+             'invoice is paid.')
+    env_pending_invoice_id = fields.Many2one(
+        'account.move', string='Environment Activation Invoice', copy=False,
+        ondelete='set null',
+        help='On a Staging/Development child: the prorated activation invoice '
+             'that gates its provisioning. Cleared once paid.')
 
     @api.depends('plan_id.storage_limit', 'extra_storage_blocks')
     def _compute_effective_storage_limit(self):
@@ -947,6 +998,36 @@ class SaasInstance(models.Model):
                       "digits, and hyphens (max 63 chars, must start/end with alphanumeric).")
                     % rec.subdomain
                 )
+
+    @api.constrains('environment', 'parent_id', 'region_id', 'partner_id')
+    def _check_environment_hierarchy(self):
+        """Production is the root (no parent); Staging/Dev must hang off a
+        Production project and co-locate with it (same region + partner)."""
+        for rec in self:
+            if rec.environment == 'production':
+                if rec.parent_id:
+                    raise ValidationError(_(
+                        "A Production environment cannot belong to another "
+                        "project. Remove its parent."))
+            else:
+                if not rec.parent_id:
+                    raise ValidationError(_(
+                        "A %s environment must belong to a Production project.")
+                        % rec.environment)
+                if rec.parent_id.environment != 'production':
+                    raise ValidationError(_(
+                        "The parent of a %s environment must be a Production "
+                        "environment.") % rec.environment)
+                if rec.region_id and rec.parent_id.region_id \
+                        and rec.region_id != rec.parent_id.region_id:
+                    raise ValidationError(_(
+                        "Staging/Development servers must run in the same "
+                        "region as their Production project."))
+                if rec.partner_id and rec.parent_id.partner_id \
+                        and rec.partner_id != rec.parent_id.partner_id:
+                    raise ValidationError(_(
+                        "A child environment must belong to the same customer "
+                        "as its Production project."))
 
     # ========== CRUD Overrides ==========
 
@@ -1300,16 +1381,6 @@ class SaasInstance(models.Model):
             })
         return product
 
-    def _merge_snapshot_billing(self):
-        """True when the daily-backup charge should be merged into the main
-        renewal invoice (M1 toggle). Default False = the separate monthly
-        backup cycle (current behaviour). When ON, the merge is still only
-        applied on a renewal where the snapshot month is actually due — see
-        ``_generate_renewal_invoice`` (M3)."""
-        return self.env['ir.config_parameter'].sudo().get_param(
-            'saas_master.merge_snapshot_into_renewal_invoice', 'False',
-        ) == 'True'
-
     def _get_daily_backup_price(self):
         """Monthly price of the daily-backup add-on for THIS instance.
 
@@ -1409,26 +1480,35 @@ class SaasInstance(models.Model):
                 "in SaaS settings."
             ))
 
-        # Daily-backup billing is ALWAYS monthly, independent of the
-        # main subscription's period. No proration on activation:
-        # the customer can't disable from the portal, so enabling is
-        # a monthly commitment — charge the full month and anchor the
-        # next-invoice date exactly one month after activation (NOT
-        # the 1st of next month: that would shorten the customer's
-        # first period whenever they activate mid-month).
+        # The add-on now follows the SUBSCRIPTION's billing period so it can
+        # ride on the plan's renewal invoice from here on. Enabling mid-cycle
+        # is a one-off, PRORATED catch-up charge for the time left until the
+        # plan renews (monthly plan → rest of this month; yearly plan → rest
+        # of this year), after which the account.move payment hook aligns the
+        # add-on's next-invoice date to the plan's renewal date and every
+        # future charge is merged into the renewal (one bill, same period).
         today = fields.Date.today()
-        next_invoice = today + relativedelta(months=1)
+        period = self.billing_period or 'monthly'
+        period_label = 'Yearly' if period == 'yearly' else 'Monthly'
+        months = self.env['saas.pricing.engine'].period_months(period)
+        full = months * monthly_price
+        charge = full
+        if self.next_invoice_date and self.last_invoice_date:
+            total_days = (self.next_invoice_date - self.last_invoice_date).days
+            left = (self.next_invoice_date - today).days
+            if total_days > 0 and 0 < left < total_days:
+                charge = round(full * left / total_days, 2)
 
         product = self._get_daily_backup_product()
         pricelist = self.partner_id.property_product_pricelist
         line_name = _(
-            'Daily Backups Add-on (monthly) — %s'
-        ) % (self.name or self.subdomain)
+            'Daily Backups Add-on (%s) — %s (prorated to your renewal date)'
+        ) % (period_label, self.name or self.subdomain)
         order_lines = [(0, 0, {
             'product_id': product.id,
             'name': line_name,
             'product_uom_qty': 1,
-            'price_unit': monthly_price,
+            'price_unit': charge,
         })]
 
         order_vals = {
@@ -1444,8 +1524,9 @@ class SaasInstance(models.Model):
         invoice.action_post()
         self.write({'daily_backup_pending_invoice_id': invoice.id})
         self._append_log(
-            "Daily-backup add-on activation invoice %s created — "
-            "full month %.2f." % (invoice.name, monthly_price)
+            "Daily-backup add-on activation invoice %s created — %s period, "
+            "prorated catch-up %.2f (full %.2f)." % (
+                invoice.name, period_label, charge, full)
         )
         return invoice
 
@@ -1490,12 +1571,16 @@ class SaasInstance(models.Model):
             'price_unit': support.monthly_price,
         })
 
-    def _snapshot_order_line(self):
-        """Sale-order line tuple for ONE month of the daily-backup add-on,
-        or None. The snapshot is ALWAYS billed monthly (qty 1) — never
-        prepaid — so this is period-independent. Used both by the
-        standalone monthly backup invoice and, when merging is on and the
-        snapshot month is due, by the renewal invoice. Price is
+    def _snapshot_order_line(self, period=None):
+        """Sale-order line tuple for the daily-backup add-on over ONE billing
+        period, or None. The add-on now follows the SUBSCRIPTION's period
+        (like the support plan): a monthly plan bills one month (qty 1); a
+        yearly plan bills the whole year up-front (qty 12) at the same per-
+        month rate — so it can be folded into the plan's renewal invoice and
+        the customer gets a single, period-aligned bill. The per-GB rate is
+        a flat monthly fee and is NEVER discounted on yearly billing.
+
+        ``period`` defaults to the instance's own billing period. Price is
         storage-aware + lock-aware via ``_get_daily_backup_price``.
 
         Snapshots apply to BOTH hosting and services subscribers (the only
@@ -1507,12 +1592,15 @@ class SaasInstance(models.Model):
         price = self._get_daily_backup_price()
         if price <= 0:
             return None
+        period = period or self.billing_period or 'monthly'
+        months = self.env['saas.pricing.engine'].period_months(period)
+        period_label = 'Yearly' if period == 'yearly' else 'Monthly'
         return (0, 0, {
             'product_id': self._get_daily_backup_product().id,
-            'name': _('Daily Backups Add-on (monthly) — %s') % (
-                self.name or self.subdomain,
+            'name': _('Daily Backups Add-on (%s) — %s') % (
+                period_label, self.name or self.subdomain,
             ),
-            'product_uom_qty': 1,
+            'product_uom_qty': months,
             'price_unit': price,
         })
 
@@ -1654,6 +1742,345 @@ class SaasInstance(models.Model):
                 "Free up space first, then you can release storage."))
         self.write({'extra_storage_blocks': self.extra_storage_blocks - qty})
         self._append_log("Released %d storage block(s)." % qty)
+        return True
+
+    # ==================================================================
+    #  Odoo.sh-style environments (hosting) — a Production project plus
+    #  per-server-billed Staging / Development children. Modeled on the
+    #  storage-block add-on flow (prorated activation invoice → on-payment
+    #  provisioning → recurring renewal line).
+    # ==================================================================
+    ENV_PLAN_NAME = 'Environment (lowest spec)'
+
+    def _get_env_plan(self):
+        """Find-or-create the hidden lowest-spec hosting plan used to SIZE
+        Staging/Development containers (cpu/ram/workers/storage_limit). Children
+        never self-bill, so this plan's price is irrelevant (kept at 0/manual);
+        it exists only to give the container its resource limits. Sizing follows
+        the same per-worker Settings as every other plan."""
+        Plan = self.env['saas.plan'].sudo()
+        plan = Plan.search(
+            [('is_custom', '=', True), ('name', '=', self.ENV_PLAN_NAME)],
+            limit=1)
+        if plan:
+            return plan
+        cfg = self.env['saas.pricing.engine']._rate_config('hosting')
+        res = Plan._recommended_resources('hosting', cfg['min_workers'])
+        return Plan.create({
+            'name': self.ENV_PLAN_NAME,
+            'is_custom': True,
+            'is_public_tier': False,
+            'is_trial_plan': False,
+            'manual_price': True,
+            'price': 0.0,
+            'yearly_price': 0.0,
+            'workers': cfg['min_workers'],
+            'storage_limit': float(cfg['min_storage']),
+            'cpu_limit': res.get('cpu_limit') or 1.0,
+            'ram_limit': res.get('ram_limit') or '1g',
+        })
+
+    def _env_anchor(self):
+        """The Production instance that owns the project this record is in."""
+        self.ensure_one()
+        return self if self.environment == 'production' else (
+            self.parent_id or self)
+
+    def _env_server_price(self, period=None):
+        """Per-server price of a Staging/Development server for THIS project
+        (lowest spec, region-scaled, × env_price_factor) for ``period``. Single
+        source of truth via the pricing engine — used by the configurator, the
+        one-click create flow, and the recurring renewal line."""
+        self.ensure_one()
+        anchor = self._env_anchor()
+        period = period or anchor.billing_period or 'monthly'
+        return self.env['saas.pricing.engine'].env_server_price(
+            billing=period,
+            region=anchor.region_id.id if anchor.region_id else None)
+
+    def _env_branch(self):
+        """The Git branch this environment is bound to: Production → main
+        branch; Development → its own name; Staging → its chosen/own branch."""
+        self.ensure_one()
+        if self.environment == 'production':
+            return self.main_branch or 'main'
+        repo = self.repo_ids[:1]
+        if repo and repo.branch:
+            return repo.branch
+        if self.environment == 'development':
+            return self.subdomain
+        return (self.parent_id.main_branch if self.parent_id else 'main')
+
+    def _environment_order_lines(self, period):
+        """Recurring SO lines for the project's active Staging/Development
+        servers — one line per server at the lowest-spec env price. The
+        recurring counterpart to ``_storage_block_order_line``. Only meaningful
+        on the Production anchor; children never self-bill."""
+        self.ensure_one()
+        if self.environment != 'production':
+            return []
+        price = self._env_server_price(period)
+        if price <= 0:
+            return []
+        labels = dict(self._fields['environment'].selection)
+        lines = []
+        for child in self.child_env_ids:
+            if child.state in ('cancelled', 'cancelled_by_client'):
+                continue
+            lines.append((0, 0, {
+                'product_id': self._get_billing_product().id,
+                'name': _('%s server — %s (%s) [branch: %s]') % (
+                    labels.get(child.environment, child.environment),
+                    child.name or child.subdomain,
+                    'Yearly' if period == 'yearly' else 'Monthly',
+                    child._env_branch() or '—'),
+                'product_uom_qty': 1,
+                'price_unit': price,
+            }))
+        return lines
+
+    def _initial_environment_order_lines(self, period, period_label):
+        """Initial-invoice lines for the env servers chosen at checkout
+        (counts in pending_staging_count/pending_dev_count). One line per
+        server at the lowest-spec env price for ``period``."""
+        self.ensure_one()
+        if self.environment != 'production':
+            return []
+        price = self._env_server_price(period)
+        if price <= 0:
+            return []
+        labels = dict(self._fields['environment'].selection)
+        lines = []
+        for env_type, count in (
+                ('staging', self.pending_staging_count or 0),
+                ('development', self.pending_dev_count or 0)):
+            for i in range(max(0, count)):
+                lines.append((0, 0, {
+                    'product_id': self._get_billing_product().id,
+                    'name': _('%s server #%d (%s) — %s') % (
+                        labels.get(env_type, env_type), i + 1, period_label,
+                        self.name or self.subdomain),
+                    'product_uom_qty': 1,
+                    'price_unit': price,
+                }))
+        return lines
+
+    def _unique_env_subdomain(self, base):
+        """A valid, unique subdomain for a child env, derived from the project
+        subdomain + ``base`` (e.g. acme-feature-x)."""
+        self.ensure_one()
+        slug = re.sub(r'[^a-z0-9-]+', '-',
+                      ('%s-%s' % (self.subdomain, base)).lower()).strip('-')
+        slug = slug[:55] or 'env'
+        Inst = self.env['saas.instance'].sudo()
+        candidate, n = slug, 1
+        while Inst.search_count([('subdomain', '=', candidate),
+                                 ('domain_id', '=', self.domain_id.id)]):
+            n += 1
+            candidate = '%s-%d' % (slug[:50], n)
+        return candidate
+
+    def _create_env_child(self, env_type, name=None, branch=None):
+        """Create a Staging/Development child record (+ its repo pinned to the
+        right branch, and the branch itself on the provider). Does NOT bill or
+        deploy — callers handle proration/payment then call
+        ``_activate_pending_environment``."""
+        self.ensure_one()
+        if self.environment != 'production':
+            raise UserError(_(
+                "Environments are created from the Production server."))
+        if not self.is_hosting:
+            raise UserError(_(
+                "Environments are only available for hosting subscriptions."))
+        if env_type not in ('staging', 'development'):
+            raise UserError(_("Unknown environment type '%s'.") % env_type)
+        name = (name or '').strip()
+        if env_type == 'development':
+            if not name:
+                raise UserError(_(
+                    "Please provide a name for the development server."))
+            branch = name  # a dev server's branch is always its own name
+        else:  # staging
+            name = name or 'staging'
+            branch = (branch or '').strip() or name
+        child = self.env['saas.instance'].sudo().create({
+            'subdomain': self._unique_env_subdomain(name),
+            'domain_id': self.domain_id.id,
+            'partner_id': self.partner_id.id,
+            'saas_product_id': self.saas_product_id.id,
+            'plan_id': self._get_env_plan().id,
+            'odoo_version_id': self.odoo_version_id.id,
+            'region_id': self.region_id.id if self.region_id else False,
+            'billing_period': self.billing_period or 'monthly',
+            'environment': env_type,
+            'parent_id': self.id,
+            'state': 'draft',
+        })
+        # Copy the project's repo onto the child, pinned to its branch, and
+        # create the linked branch from the project's main branch (Odoo.sh).
+        prod_repo = self.repo_ids[:1]
+        if prod_repo:
+            child_repo = self.env['saas.instance.repo'].sudo().create({
+                'instance_id': child.id,
+                'repo_url': prod_repo.repo_url,
+                'branch': branch,
+                'github_token': prod_repo.sudo().github_token or False,
+                'webhook_enabled': prod_repo.webhook_enabled,
+            })
+            try:
+                child_repo._create_branch_on_provider(
+                    branch, self.main_branch or 'main')
+            except UserError:
+                # The branch is mandatory for development; for staging an
+                # existing/chosen branch is fine, so a creation hiccup there is
+                # non-fatal (the clone targets the chosen branch directly).
+                if env_type == 'development':
+                    child.unlink()
+                    raise
+        return child
+
+    def _activate_pending_environment(self):
+        """Provision a paid Staging/Development child: clear the activation
+        invoice and deploy. Children never get their own billing cycle (the
+        recurring cost rides the Production renewal)."""
+        self.ensure_one()
+        if self.environment == 'production':
+            return
+        self.env_pending_invoice_id = False
+        if self.state in ('draft', 'pending_payment', 'paid'):
+            self.state = 'paid'
+        self._append_log("Environment payment received — deploying.")
+        self.message_post(body=_(
+            "Environment server payment received. Deploying automatically."))
+        run_in_background(
+            self, '_do_deploy_after_payment',
+            error_method='_on_background_error', error_args=('failed',),
+            thread_name='saas_env_deploy_%s' % self.subdomain)
+
+    def _spawn_pending_environments(self):
+        """After the initial invoice is paid, create + deploy the Staging/
+        Development servers the customer chose at checkout (already billed on
+        the initial invoice). Idempotent: clears the pending counters."""
+        self.ensure_one()
+        if self.environment != 'production':
+            return
+        staging = max(0, self.pending_staging_count or 0)
+        dev = max(0, self.pending_dev_count or 0)
+        if not (staging or dev):
+            return
+        self.write({'pending_staging_count': 0, 'pending_dev_count': 0})
+        for i in range(staging):
+            try:
+                self._create_env_child(
+                    'staging', name='staging-%d' % (i + 1)
+                )._activate_pending_environment()
+            except Exception:
+                _logger.exception(
+                    "Failed to spawn staging env for %s", self.subdomain)
+        for i in range(dev):
+            try:
+                self._create_env_child(
+                    'development', name='dev-%d' % (i + 1)
+                )._activate_pending_environment()
+            except Exception:
+                _logger.exception(
+                    "Failed to spawn dev env for %s", self.subdomain)
+
+    def action_create_environment(self, env_type, name=None, branch=None):
+        """One-click add of a Staging/Development server mid-cycle. Issues a
+        prorated activation invoice for the remainder of the project cycle; if
+        the wallet covers it or a saved card charges successfully, the server
+        provisions immediately, otherwise the caller routes to checkout.
+        Modeled on ``action_purchase_storage_block``."""
+        self.ensure_one()
+        if self.environment != 'production':
+            raise UserError(_(
+                "Add environments from the Production server of the project."))
+        if self.is_trial:
+            raise UserError(_(
+                "Upgrade to a paid plan before adding environments."))
+        child = self._create_env_child(env_type, name=name, branch=branch)
+        period = self.billing_period or 'monthly'
+        full = self._env_server_price(period)
+        charge = full
+        if self.next_invoice_date and self.last_invoice_date:
+            total_days = (self.next_invoice_date - self.last_invoice_date).days
+            left = (self.next_invoice_date - fields.Date.today()).days
+            if total_days > 0 and 0 < left < total_days:
+                charge = round(full * left / total_days, 2)
+        labels = dict(self._fields['environment'].selection)
+        pricelist = self.partner_id.property_product_pricelist
+        order_lines = [(0, 0, {
+            'product_id': self._get_billing_product().id,
+            'name': _('Add %s server — %s [branch: %s] (prorated)') % (
+                labels.get(env_type, env_type), child.name or child.subdomain,
+                child._env_branch() or '—'),
+            'product_uom_qty': 1,
+            'price_unit': charge,
+        })]
+        wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
+        if wallet_line:
+            order_lines.append(wallet_line)
+        order_vals = {
+            'partner_id': self.partner_id.id,
+            'origin': ORIGIN_ENVIRONMENT % (child.name or child.subdomain),
+            'order_line': order_lines,
+        }
+        if pricelist:
+            order_vals['pricelist_id'] = pricelist.id
+        order = self.env['sale.order'].sudo().create(order_vals)
+        order.action_confirm()
+        invoice = order._create_invoices()
+        invoice.action_post()
+        self._wallet_settle_consumption(invoice, wallet_amount)
+        child.write({
+            'sale_order_id': order.id,
+            'env_pending_invoice_id': invoice.id,
+            'state': 'pending_payment',
+        })
+        self._append_log(
+            "Environment '%s' requested — activation invoice %s (%.2f)."
+            % (child.subdomain, invoice.name, charge))
+        # One-click: wallet covered the charge → provision now.
+        if invoice.amount_total <= 0:
+            child._activate_pending_environment()
+            return {'child_id': child.id, 'auto_provisioned': True}
+        # Else try the saved card; the account.move paid hook provisions when
+        # the charge settles (now or asynchronously).
+        if self._auto_renew_method() and self._try_auto_charge_invoice(
+                invoice, kind='subscription'):
+            return {'child_id': child.id, 'auto_provisioned': True}
+        return {
+            'child_id': child.id,
+            'auto_provisioned': False,
+            'invoice_id': invoice.id,
+            'checkout_url': '/my/instances/%s/checkout' % child.id,
+        }
+
+    def action_delete_environment(self, delete_branch=False):
+        """Remove a Staging/Development server: credit the unused portion of
+        the project cycle to the wallet, optionally delete the linked Git
+        branch, then tear down the infrastructure. Production can't be removed
+        this way (cancel the subscription instead)."""
+        self.ensure_one()
+        if self.environment == 'production':
+            raise UserError(_(
+                "The Production environment can't be removed individually — "
+                "cancel the subscription instead."))
+        branch = self._env_branch()
+        repo = self.repo_ids[:1]
+        anchor = self.parent_id
+        if anchor and self.state not in ('cancelled', 'cancelled_by_client'):
+            remaining, _d, _t = anchor._proration_credit(
+                self._env_server_price())
+            if remaining > 0:
+                anchor._grant_wallet_credit(
+                    remaining, origin='environment_removal',
+                    reason=_('Unused time for removed %s server %s') % (
+                        self.environment, self.name or self.subdomain))
+        if delete_branch and repo and branch:
+            repo._delete_branch_on_provider(branch)
+        self.action_cancel()
         return True
 
     # ==================================================================
@@ -1804,6 +2231,12 @@ class SaasInstance(models.Model):
             snapshot_line = self._snapshot_order_line()
             if snapshot_line:
                 order_lines.append(snapshot_line)
+
+        # Odoo.sh-style environments: Staging/Development servers chosen at
+        # checkout (counts in pending_staging_count/pending_dev_count). Billed
+        # one full period upfront here; the servers are spawned on payment and
+        # then ride the renewal (see _environment_order_lines).
+        order_lines += self._initial_environment_order_lines(period, period_label)
 
         # Wallet (A4): consume any available account credit on this invoice.
         wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
@@ -4089,6 +4522,18 @@ class SaasInstance(models.Model):
         self.pending_operation = False
         self._append_log("Instance restarted successfully.")
         self._safe_refresh_usage()
+        # Resume suspended Staging/Development servers when the project (which
+        # may have been suspended for non-payment) comes back online.
+        if self.environment == 'production':
+            suspended_children = self.child_env_ids.filtered(
+                lambda c: c.state == 'suspended')
+            if suspended_children:
+                try:
+                    suspended_children.action_restart()
+                except Exception:
+                    _logger.exception(
+                        "Failed to resume child environments for %s",
+                        self.subdomain)
 
     def action_redeploy(self):
         """Redeploy: clone pending repos, pull cloned repos, update config/mounts,
@@ -4197,6 +4642,13 @@ class SaasInstance(models.Model):
 
     def action_suspend(self):
         """Stop container and set state to suspended (async)."""
+        # Cascade: suspending a Production project also suspends its running
+        # Staging/Development servers (they share the project's billing fate).
+        cascade = self.filtered(
+            lambda r: r.environment == 'production'
+        ).child_env_ids.filtered(lambda c: c.state == 'running')
+        if cascade:
+            cascade.action_suspend()
         for rec in self:
             if rec.state != 'running':
                 raise UserError(
@@ -4249,6 +4701,14 @@ class SaasInstance(models.Model):
         databases, PG role, nginx vhost) is deleted. See
         ``_do_delete_instance`` for the step-by-step.
         """
+        # Cascade: cancelling a Production project tears down all of its
+        # Staging/Development servers too (no orphaned containers).
+        cascade = self.filtered(
+            lambda r: r.environment == 'production'
+        ).child_env_ids.filtered(
+            lambda c: c.state not in ('cancelled', 'cancelled_by_client'))
+        if cascade:
+            cascade.action_cancel()
         for rec in self:
             if rec.docker_server_id:
                 # Infrastructure may exist (fully or partially) — clean up
@@ -7159,19 +7619,20 @@ class SaasInstance(models.Model):
         self.renewal_reminder_7d_sent = False
         self.renewal_reminder_1d_sent = False
 
-        # Anchor the daily-backup add-on's monthly billing cycle the first
-        # time the instance is activated with backups already enabled (e.g.
-        # the customer ticked "daily backups" at checkout). The add-on is
-        # ALWAYS billed monthly, independent of the plan period; the first
-        # month is charged on the activation invoice (action_confirm_and_bill)
-        # and the next charge falls one month later. Only set it once, and
-        # only when a price is actually configured — otherwise the renewal
-        # cron would log "price not configured" every day.
+        # Anchor the daily-backup add-on's billing cycle the first time the
+        # instance is activated with backups already enabled (e.g. the
+        # customer ticked "daily backups" at checkout). The add-on now follows
+        # the PLAN's period: the activation invoice already charged the whole
+        # period (1 month / 12 months — see ``action_confirm_and_bill`` →
+        # ``_snapshot_order_line``), so the next backup charge falls on the
+        # plan's renewal date and is merged into that renewal. Only set it
+        # once, and only when a price is actually configured — otherwise the
+        # renewal cron would log "price not configured" every day.
         if (self.daily_backup_enabled
                 and not self.daily_backup_next_invoice_date
                 and self._get_daily_backup_price() > 0):
             self.daily_backup_last_invoice_date = today
-            self.daily_backup_next_invoice_date = today + relativedelta(months=1)
+            self.daily_backup_next_invoice_date = self.next_invoice_date
 
     # ============================================================
     # Saved card + auto-renewal
@@ -7320,6 +7781,9 @@ class SaasInstance(models.Model):
                 ('state', '=', 'running'),
                 ('is_trial', '=', False),
                 ('plan_id', '!=', False),
+                # Children (staging/dev) never self-bill — the project's
+                # Production anchor carries the whole subscription.
+                ('parent_id', '=', False),
                 ('next_invoice_date', '=', target),
                 (flag, '=', False),
             ])
@@ -7345,6 +7809,7 @@ class SaasInstance(models.Model):
         instances = self.search([
             ('state', 'in', ('running', 'stopped')),
             ('is_trial', '=', False),
+            ('parent_id', '=', False),
             ('auto_renew_subscription', '=', True),
         ])
         for instance in instances:
@@ -7399,6 +7864,7 @@ class SaasInstance(models.Model):
             ('state', '=', 'running'),
             ('is_trial', '=', False),
             ('plan_id', '!=', False),
+            ('parent_id', '=', False),
             ('next_invoice_date', '<=', today),
         ])
         for instance in instances:
@@ -7570,15 +8036,16 @@ class SaasInstance(models.Model):
             ))
 
     def _cron_renew_daily_backup_addons(self):
-        """Maintain the daily-backup add-on: pause/resume snapshots on
-        the payment state, and issue monthly renewal invoices.
+        """Maintain the daily-backup add-on: pause/resume snapshots based on
+        whether the add-on is paid up.
 
-        Independent of the main subscription cycle so a customer on a
-        yearly plan still pays for the backup add-on once a month at the
-        monthly rate. Skips trials and instances whose backup flag was
-        turned off.
+        The add-on no longer has a billing cycle of its own: it follows the
+        SUBSCRIPTION's period and its charge is merged into the plan's renewal
+        invoice (see ``_generate_renewal_invoice``), so there is no standalone
+        backup invoice to issue here. This cron only enforces the pause/resume
+        of snapshots when a merged renewal carrying the backup line goes
+        overdue. Skips trials and instances whose backup flag is off.
         """
-        today = fields.Date.today()
         instances = self.search([
             ('state', '=', 'running'),
             ('is_trial', '=', False),
@@ -7586,18 +8053,7 @@ class SaasInstance(models.Model):
         ])
         for instance in instances:
             try:
-                # 1) Pause/resume based on whether the add-on is paid up.
                 instance._sync_daily_backup_suspension()
-                # 2) Issue the next monthly invoice if due — but never
-                #    stack a second invoice while one is still unpaid
-                #    (the customer just owes the one; snapshots stay
-                #    paused until it's settled).
-                due = (
-                    instance.daily_backup_next_invoice_date
-                    and instance.daily_backup_next_invoice_date <= today
-                )
-                if due and not instance._daily_backup_unpaid_invoices():
-                    instance._generate_daily_backup_renewal_invoice()
                 self.env.cr.commit()
             except Exception:
                 self.env.cr.rollback()
@@ -7605,71 +8061,6 @@ class SaasInstance(models.Model):
                     "Daily-backup add-on maintenance failed for %s",
                     instance.subdomain,
                 )
-
-    def _generate_daily_backup_renewal_invoice(self):
-        """Issue a single monthly invoice for the daily-backup add-on.
-
-        Advances ``daily_backup_next_invoice_date`` by one month BEFORE
-        posting the invoice so a failure later in the post step doesn't
-        leave the cron re-issuing the same charge tomorrow.
-        """
-        self.ensure_one()
-        # The daily-backup add-on is sold to BOTH hosting and managed-services
-        # instances (see ``action_purchase_daily_backup``), so the monthly
-        # renewal must bill either kind — otherwise a services customer pays
-        # once at activation and is never billed again while snapshots keep
-        # consuming bucket storage.
-        if not self.daily_backup_enabled:
-            return
-        # One reusable definition of the snapshot line (M2). Returns None
-        # when backups are off or the price isn't configured.
-        snapshot_line = self._snapshot_order_line()
-        if not snapshot_line:
-            _logger.warning(
-                "Skipping daily-backup renewal for %s: per-GB rate is "
-                "not configured (saas_master.snapshot_price_per_gb).",
-                self.subdomain,
-            )
-            return
-        monthly_price = snapshot_line[2]['price_unit']
-
-        today = fields.Date.today()
-        pricelist = self.partner_id.property_product_pricelist
-        order_vals = {
-            'partner_id': self.partner_id.id,
-            'origin': ORIGIN_BACKUP_ADDON % (self.name or self.subdomain),
-            'order_line': [snapshot_line],
-        }
-        if pricelist:
-            order_vals['pricelist_id'] = pricelist.id
-        order = self.env['sale.order'].sudo().create(order_vals)
-        order.action_confirm()
-        invoice = order._create_invoices()
-
-        # Advance the cycle BEFORE posting (see ``_generate_renewal_invoice``
-        # for the same pattern + reasoning).
-        self.write({
-            'daily_backup_last_invoice_date': today,
-            'daily_backup_next_invoice_date': (
-                self.daily_backup_next_invoice_date + relativedelta(months=1)
-                if self.daily_backup_next_invoice_date
-                else today + relativedelta(months=1)
-            ),
-        })
-        invoice.action_post()
-        self._append_log(
-            "Daily-backup monthly renewal invoice %s issued (%.2f). "
-            "Next invoice: %s." % (
-                invoice.name, monthly_price,
-                self.daily_backup_next_invoice_date,
-            )
-        )
-        # Auto-charge the saved card if both the per-instance toggle
-        # and the card are present. On failure the invoice remains
-        # unpaid and the dunning cron + customer email take over.
-        if self.auto_renew_daily_backup and self._auto_renew_method():
-            self._try_auto_charge_invoice(invoice, kind='snapshot')
-        return invoice
 
     def _generate_renewal_invoice(self):
         """Create a new sale order + invoice for the next billing period.
@@ -7752,29 +8143,26 @@ class SaasInstance(models.Model):
         if support_line:
             order_lines.append(support_line)
 
-        # Daily-backup add-on (M3): the snapshot stays MONTHLY and is
-        # normally billed on its own cycle (_cron_renew_daily_backup_addons).
-        # When the merge toggle is ON *and* the snapshot's monthly charge is
-        # due on/before this renewal date, fold ONE month of it into this
-        # invoice so the customer gets a single bill. If it's not due (e.g.
-        # 11 of 12 months on a yearly plan, or a mismatched monthly date),
-        # nothing is added here and the standalone cron bills it — so it's
-        # never shown twice. ``merge_snapshot_month`` is advanced together
-        # with next_invoice_date below (pre-post, atomic).
-        merge_snapshot_month = (
-            self._merge_snapshot_billing()
-            and self.daily_backup_enabled
+        # Daily-backup add-on: the snapshot follows the PLAN's billing period
+        # and is aligned to the plan's renewal date at activation, so it is
+        # folded into THIS renewal for the SAME period (monthly plan → 1 month,
+        # yearly plan → 12 months) whenever its due date has reached the
+        # renewal. One bill, one cadence — no separate monthly backup invoice.
+        # ``merge_snapshot`` is advanced together with next_invoice_date below
+        # (pre-post, atomic) so the two cycles stay locked in step.
+        merge_snapshot = (
+            self.daily_backup_enabled
             and self.daily_backup_next_invoice_date
             and self.daily_backup_next_invoice_date <= self.next_invoice_date
         )
-        if merge_snapshot_month:
-            snapshot_line = self._snapshot_order_line()
+        if merge_snapshot:
+            snapshot_line = self._snapshot_order_line(period)
             if snapshot_line:
                 order_lines.append(snapshot_line)
             else:
                 # price 0 / backups off between the check and here — don't
                 # advance the backup date for a line we didn't add.
-                merge_snapshot_month = False
+                merge_snapshot = False
 
         # v47: storage is billed ONLY for blocks the customer deliberately
         # PURCHASED (extra_storage_blocks) — never an automatic usage-based
@@ -7783,6 +8171,11 @@ class SaasInstance(models.Model):
         block_line = self._storage_block_order_line(period)
         if block_line:
             order_lines.append(block_line)
+
+        # Odoo.sh-style environments: one recurring line per active Staging/
+        # Development server in the project (lowest-spec env price). Children
+        # never self-bill — their cost rides this Production renewal.
+        order_lines += self._environment_order_lines(period)
 
         # Wallet (A4): consume available account credit on this renewal.
         wallet_line, wallet_amount = self._wallet_credit_line(order_lines)
@@ -7818,15 +8211,14 @@ class SaasInstance(models.Model):
             'renewal_reminder_7d_sent': False,
             'renewal_reminder_1d_sent': False,
         }
-        # M3: if this invoice merged the snapshot month, advance the
-        # backup's own monthly date by ONE month (it's always monthly) so
-        # the standalone backup cron sees it as not-due and never re-bills
-        # the same month. Done in the same pre-post write as next_invoice_date
-        # for atomicity + idempotency.
-        if merge_snapshot_month:
+        # If this invoice merged the snapshot, advance the backup's date by the
+        # SAME interval as the plan so the two cycles stay aligned (next backup
+        # charge rides the next renewal). Done in the same pre-post write as
+        # next_invoice_date for atomicity + idempotency.
+        if merge_snapshot:
             renewal_vals['daily_backup_last_invoice_date'] = fields.Date.today()
             renewal_vals['daily_backup_next_invoice_date'] = (
-                self.daily_backup_next_invoice_date + relativedelta(months=1)
+                self.next_invoice_date + interval
             )
         self.write(renewal_vals)
         invoice.action_post()
@@ -7888,6 +8280,7 @@ class SaasInstance(models.Model):
         instances = self.search([
             ('state', 'in', ('running', 'stopped')),
             ('is_trial', '=', False),
+            ('parent_id', '=', False),
             ('sale_order_id', '!=', False),
         ])
         for instance in instances:

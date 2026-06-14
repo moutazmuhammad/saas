@@ -1,18 +1,18 @@
 from datetime import date
-from dateutil.relativedelta import relativedelta
 
 from odoo.tests.common import TransactionCase, tagged
 
 
 @tagged('post_install', '-at_install')
 class TestSnapshotBilling(TransactionCase):
-    """Merge-snapshot-into-renewal billing (M1-M4).
+    """Snapshot add-on billing follows the SUBSCRIPTION period.
 
-    The snapshot add-on is ALWAYS monthly. When the merge toggle is ON it
-    rides on the renewal invoice ONLY for the month whose backup date is
-    due on/before that renewal; otherwise it stays on its own monthly
-    cycle. The single ``daily_backup_next_invoice_date`` is the source of
-    truth, so a month can never be billed twice.
+    The daily-backup add-on no longer has a monthly cycle of its own: it is
+    aligned to the plan's renewal date at activation and its charge is merged
+    into the plan's renewal invoice for the SAME period — a monthly plan bills
+    one month (qty 1), a yearly plan bills the whole year up-front (qty 12).
+    The single ``daily_backup_next_invoice_date`` is kept locked in step with
+    ``next_invoice_date`` so a period can never be billed twice.
     """
 
     def setUp(self):
@@ -37,7 +37,6 @@ class TestSnapshotBilling(TransactionCase):
         self.partner = self.env['res.partner'].sudo().search([], limit=1)
         self.domain = self.env['saas.based.domain'].sudo().search([], limit=1) \
             or self.env['saas.based.domain'].sudo().create({'name': 'snap.example.com'})
-        self.bp = self.env['product.product'].sudo()  # resolved lazily below
 
     def _backup_product(self):
         return self.env['product.product'].sudo().search(
@@ -50,6 +49,9 @@ class TestSnapshotBilling(TransactionCase):
             'partner_id': self.partner.id, 'saas_product_id': self.product.id,
             'plan_id': self.plan.id, 'billing_period': billing,
             'state': 'running', 'next_invoice_date': due,
+            'last_invoice_date': (due.replace(year=due.year - 1)
+                                  if billing == 'yearly'
+                                  else date(2025, 12, 1)),
         })
         inst.write({
             'daily_backup_enabled': True,
@@ -65,64 +67,52 @@ class TestSnapshotBilling(TransactionCase):
             order='id desc', limit=1)
         return [l for l in so.order_line if bp and l.product_id == bp]
 
-    def test_merge_off_never_adds_snapshot(self):
-        """Flag OFF: a renewal never carries a snapshot line (current
-        behaviour), even when the backup month is due."""
-        self.icp.set_param('saas_master.merge_snapshot_into_renewal_invoice', 'False')
-        inst = self._mk('snapoff', 'monthly', date(2026, 1, 1))
-        before = inst.daily_backup_next_invoice_date
-        inst._generate_renewal_invoice()
-        self.assertFalse(self._renewal_snapshot_lines(inst))
-        self.assertEqual(inst.daily_backup_next_invoice_date, before)
-
-    def test_merge_when_due(self):
-        """Flag ON + backup due on the renewal date: one snapshot line
-        (qty 1) is merged and the backup date advances by one month."""
-        self.icp.set_param('saas_master.merge_snapshot_into_renewal_invoice', 'True')
-        inst = self._mk('snapdue', 'monthly', date(2026, 1, 1))
+    def test_monthly_merges_one_month(self):
+        """Monthly plan, backup aligned to the renewal: one snapshot line
+        (qty 1) is merged and the backup date advances one month, staying
+        aligned with the new next_invoice_date."""
+        inst = self._mk('snapmo', 'monthly', date(2026, 1, 1))
         inst._generate_renewal_invoice()
         lines = self._renewal_snapshot_lines(inst)
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0].product_uom_qty, 1)
         self.assertEqual(inst.daily_backup_next_invoice_date, date(2026, 2, 1))
+        self.assertEqual(inst.next_invoice_date, date(2026, 2, 1))
 
-    def test_no_merge_when_not_due(self):
-        """Flag ON but the backup is due NEXT month: no snapshot line on
-        this renewal, backup date untouched (standalone cron bills it)."""
-        self.icp.set_param('saas_master.merge_snapshot_into_renewal_invoice', 'True')
+    def test_no_merge_when_due_after_renewal(self):
+        """Backup due AFTER the plan renews (not yet aligned ahead): no
+        snapshot line on this renewal, backup date untouched."""
         snap_next = date(2026, 2, 1)
         inst = self._mk('snapnd', 'monthly', snap_next, due=date(2026, 1, 1))
         inst._generate_renewal_invoice()
         self.assertFalse(self._renewal_snapshot_lines(inst))
         self.assertEqual(inst.daily_backup_next_invoice_date, snap_next)
 
-    def test_yearly_merges_one_month(self):
-        """Flag ON, yearly plan, backup due on the annual renewal: exactly
-        ONE month merged (never 12x), backup date +1 month."""
-        self.icp.set_param('saas_master.merge_snapshot_into_renewal_invoice', 'True')
+    def test_yearly_merges_full_year(self):
+        """Yearly plan, backup aligned to the annual renewal: the whole year
+        is merged (qty 12, never one month), and the backup date advances a
+        full year, staying aligned."""
         inst = self._mk('snapyr', 'yearly', date(2026, 1, 1))
         inst._generate_renewal_invoice()
         lines = self._renewal_snapshot_lines(inst)
         self.assertEqual(len(lines), 1)
-        self.assertEqual(lines[0].product_uom_qty, 1)  # one month, not 12
-        self.assertEqual(inst.daily_backup_next_invoice_date, date(2026, 2, 1))
+        self.assertEqual(lines[0].product_uom_qty, 12)  # full year, not 1
+        self.assertEqual(inst.daily_backup_next_invoice_date, date(2027, 1, 1))
+        self.assertEqual(inst.next_invoice_date, date(2027, 1, 1))
 
     def test_disabled_backup_omits_line(self):
-        """Backups off: no snapshot line regardless of the flag."""
-        self.icp.set_param('saas_master.merge_snapshot_into_renewal_invoice', 'True')
+        """Backups off: no snapshot line on the renewal."""
         inst = self._mk('snapxoff', 'monthly', date(2026, 1, 1))
         inst.daily_backup_enabled = False
         inst._generate_renewal_invoice()
         self.assertFalse(self._renewal_snapshot_lines(inst))
 
     def test_merged_renewal_counts_as_unpaid_backup(self):
-        """M4: an unpaid renewal carrying a snapshot line is recognised by
+        """An unpaid renewal carrying a snapshot line is recognised by
         _daily_backup_unpaid_invoices (so it can pause snapshots)."""
-        self.icp.set_param('saas_master.merge_snapshot_into_renewal_invoice', 'True')
         inst = self._mk('snapunp', 'monthly', date(2026, 1, 1))
         inst._generate_renewal_invoice()
         unpaid = inst._daily_backup_unpaid_invoices()
-        # the merged renewal is unpaid and carries the backup line:
         self.assertTrue(unpaid)
         bp = self._backup_product()
         self.assertTrue(any(

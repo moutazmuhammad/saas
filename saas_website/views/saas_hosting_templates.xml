@@ -158,6 +158,42 @@
                                         </div>
                                     </t>
 
+                                    <!-- Odoo.sh-style environments (paid only — hidden for
+                                         trials). Each Staging/Development server is the
+                                         lowest spec and added to the subscription. -->
+                                    <t t-if="form_values.get('is_trial') != '1' and env_server_price &gt; 0">
+                                        <div class="mb-3 p-3"
+                                             style="background:rgba(99,102,241,0.05);
+                                                    border:1px solid rgba(99,102,241,0.25);
+                                                    border-radius:10px;">
+                                            <div class="fw-semibold mb-1">
+                                                <i class="fas fa-layer-group me-1"></i>Extra environments
+                                            </div>
+                                            <div class="small mb-2" style="color:var(--co-text-muted,#71717A);">
+                                                Production is always included. Add Staging and Development
+                                                servers (lowest spec) at
+                                                <span t-esc="env_server_price"/> each — provision more any
+                                                time from your dashboard.
+                                            </div>
+                                            <div class="row g-2">
+                                                <div class="col-6">
+                                                    <label class="form-label small mb-1" for="staging-count">Staging servers</label>
+                                                    <input type="number" name="staging_count" id="staging-count"
+                                                           class="form-control" min="0" step="1"
+                                                           t-att-data-price="env_server_price"
+                                                           t-att-value="form_values.get('staging_count', '0')"/>
+                                                </div>
+                                                <div class="col-6">
+                                                    <label class="form-label small mb-1" for="dev-count">Development servers</label>
+                                                    <input type="number" name="dev_count" id="dev-count"
+                                                           class="form-control" min="0" step="1"
+                                                           t-att-data-price="env_server_price"
+                                                           t-att-value="form_values.get('dev_count', '0')"/>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </t>
+
                                     <!-- Custom modules (Git repo) and Python packages are
                                          configured AFTER purchase, from the instance's own
                                          page — not part of buying. -->
@@ -288,20 +324,32 @@
                                                 var domainSel = document.getElementById('domain-select');
                                                 var billing = totalEl.dataset.billing;
                                                 var backupPrice = cb ? (parseFloat(cb.dataset.price) || 0) : 0;
+                                                // Odoo.sh-style environments: staging/dev counts × the
+                                                // per-server price (already in the page's billing period,
+                                                // so it is added to the total as-is, never x12).
+                                                var stagingEl = form.elements['staging_count'];
+                                                var devEl = form.elements['dev_count'];
+                                                var envPrice = stagingEl ? (parseFloat(stagingEl.dataset.price) || 0) : 0;
+                                                function envCount() {
+                                                    return (parseInt(stagingEl &amp;&amp; stagingEl.value, 10) || 0)
+                                                         + (parseInt(devEl &amp;&amp; devEl.value, 10) || 0);
+                                                }
 
                                                 function fmt(n) { return '$' + (n||0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}); }
 
                                                 // Re-render the TOTAL from the no-backup base plus
-                                                // the backup toggle (flat fee, x12 on yearly).
+                                                // the backup toggle (flat fee, x12 on yearly) plus the
+                                                // chosen Staging/Development servers.
                                                 function render() {
                                                     var baseMonthly = parseFloat(totalEl.dataset.baseMonthly) || 0;
                                                     var baseYearly = parseFloat(totalEl.dataset.baseYearly) || 0;
                                                     var on = cb &amp;&amp; cb.checked;
                                                     if (backupRow) backupRow.style.display = on ? '' : 'none';
                                                     var addon = on ? backupPrice : 0;
+                                                    var envCost = envCount() * envPrice;
                                                     totalEl.textContent = billing === 'yearly'
-                                                        ? fmt(baseYearly + addon * 12)
-                                                        : fmt(baseMonthly + addon);
+                                                        ? fmt(baseYearly + addon * 12 + envCost)
+                                                        : fmt(baseMonthly + addon + envCost);
                                                 }
 
                                                 function applyQuote(q) {
@@ -362,6 +410,8 @@
                                                 }
 
                                                 if (cb) cb.addEventListener('change', render);
+                                                if (stagingEl) stagingEl.addEventListener('input', render);
+                                                if (devEl) devEl.addEventListener('input', render);
                                                 if (regionSel) regionSel.addEventListener('change', fetchQuote);
                                                 if (supportSel) supportSel.addEventListener('change', fetchQuote);
                                                 render();
