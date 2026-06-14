@@ -4,7 +4,7 @@ import { Play, Pause, Trash2, ArrowDownToLine } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertBanner } from "@/components/AlertBanner";
-import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
+import { PortalBreadcrumb, envCrumbs } from "@/components/layout/PortalLayout";
 import { api, logStreamUrl, type ApiInstance } from "@/lib/api";
 import { cn, makeId } from "@/lib/utils";
 
@@ -101,13 +101,7 @@ export default function Logs() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb
-        items={[
-          { label: "Instances", to: "/my/instances" },
-          { label: instance?.name || "Instance", to: `/my/instances/${id}` },
-          { label: "Logs" },
-        ]}
-      />
+      <PortalBreadcrumb items={envCrumbs(instance, "Logs", id)} />
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>

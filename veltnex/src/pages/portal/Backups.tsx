@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { InfoCard } from "@/components/InfoCard";
 import { HelpHint } from "@/components/HelpHint";
 import { Spinner } from "@/components/Spinner";
-import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
+import { PortalBreadcrumb, envCrumbs } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiBackup, type ApiInstance } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/format";
@@ -89,13 +89,7 @@ export default function Backups() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb
-        items={[
-          { label: "Instances", to: "/my/instances" },
-          { label: "Instance", to: `/my/instances/${id}` },
-          { label: "Snapshots" },
-        ]}
-      />
+      <PortalBreadcrumb items={envCrumbs(instance, "Snapshots", id)} />
 
       <div>
         <h1 className="text-2xl font-bold tracking-tight">

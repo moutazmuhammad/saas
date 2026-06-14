@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { Dialog } from "@/components/ui/dialog";
 import { HelpHint } from "@/components/HelpHint";
-import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
+import { PortalBreadcrumb, envCrumbs } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiInstance } from "@/lib/api";
 
@@ -62,13 +62,7 @@ export default function Code() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb
-        items={[
-          { label: "Instances", to: "/my/instances" },
-          { label: "Instance", to: `/my/instances/${id}` },
-          { label: "Code & packages" },
-        ]}
-      />
+      <PortalBreadcrumb items={envCrumbs(instance, "Code & packages", id)} />
 
       <div>
         <h1 className="text-2xl font-bold tracking-tight">

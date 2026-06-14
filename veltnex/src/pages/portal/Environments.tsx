@@ -149,7 +149,7 @@ export default function Environments() {
   if (error) {
     return (
       <div className="animate-fade-in">
-        <PortalBreadcrumb items={[{ label: "Instances", to: "/my/instances" }, { label: "Project" }]} />
+        <PortalBreadcrumb items={[{ label: "Projects", to: "/my/instances" }, { label: "Project" }]} />
         <AlertBanner className="mt-6" variant="danger" title="Project" description={error} />
       </div>
     );

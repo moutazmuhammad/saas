@@ -25,7 +25,7 @@ import { AlertBanner } from "@/components/AlertBanner";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
-import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
+import { PortalBreadcrumb, envCrumbs } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { HelpHint } from "@/components/HelpHint";
 import { api, ApiError, uploadToBucket, type DbListData, type ApiBackup, type ApiInstance } from "@/lib/api";
@@ -188,13 +188,7 @@ export default function Databases() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb
-        items={[
-          { label: "Instances", to: "/my/instances" },
-          { label: "Instance", to: `/my/instances/${id}` },
-          { label: "Databases" },
-        ]}
-      />
+      <PortalBreadcrumb items={envCrumbs(instance, "Databases", id)} />
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>

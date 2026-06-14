@@ -198,6 +198,36 @@ export function PortalLayout() {
   );
 }
 
+/** Build environment-aware breadcrumb items for a project sub-page
+ *  (Databases / Code / Logs / Backups). Keeps vocabulary consistent
+ *  ("Projects → <project> → …") and routes children back through their
+ *  project's Environments workspace. ``leaf`` is the current page name. */
+export function envCrumbs(
+  inst:
+    | { id: number; name: string; environment: string; parent_id: number | false; is_hosting: boolean }
+    | null,
+  leaf: string,
+  fallbackId: string | number,
+): { label: string; to?: string }[] {
+  const root = { label: "Projects", to: "/my/instances" };
+  if (!inst) {
+    return [root, { label: "Environment", to: `/my/instances/${fallbackId}` }, { label: leaf }];
+  }
+  if (inst.parent_id && inst.environment !== "production") {
+    return [
+      root,
+      { label: "Environments", to: `/my/instances/${inst.parent_id}/environments?env=${inst.id}` },
+      { label: inst.name, to: `/my/instances/${inst.id}` },
+      { label: leaf },
+    ];
+  }
+  return [
+    root,
+    { label: inst.name, to: inst.is_hosting ? `/my/instances/${inst.id}/environments` : `/my/instances/${inst.id}` },
+    { label: leaf },
+  ];
+}
+
 /** Small breadcrumb used at the top of portal sub-pages. */
 export function PortalBreadcrumb({
   items,
