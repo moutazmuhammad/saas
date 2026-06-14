@@ -312,6 +312,8 @@ export interface ProjectEnvironments {
   main_branch: string;
   env_server_price: number;
   billing_cycle: "monthly" | "yearly";
+  /** Env servers require a Git repo connected to Production. */
+  has_repo: boolean;
   environments: EnvChild[];
 }
 

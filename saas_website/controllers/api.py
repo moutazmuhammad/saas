@@ -493,6 +493,9 @@ class SaasApi(http.Controller):
         instances = Instance.search([
             ('partner_id', '=', partner.id),
             ('state', 'in', _ACTIVE_STATES),
+            # Top-level only: Staging/Development servers live inside their
+            # project and are reached from its Environments board.
+            ('parent_id', '=', False),
         ], order='create_date desc')
         invoices = self._partner_invoices(partner)
         open_invoices = [i for i in invoices if i.payment_state not in ('paid', 'in_payment')
@@ -520,6 +523,8 @@ class SaasApi(http.Controller):
         domain = [
             ('partner_id', '=', partner.id),
             ('state', 'in', _ACTIVE_STATES),
+            # Top-level only — children are listed on their project's board.
+            ('parent_id', '=', False),
         ]
         if itype == 'services':
             domain.append(('is_hosting', '=', False))
@@ -1224,6 +1229,8 @@ class SaasApi(http.Controller):
             'main_branch': prod.main_branch or 'main',
             'env_server_price': prod._env_server_price(),
             'billing_cycle': prod.billing_period or 'monthly',
+            # Gate: env servers require a repo connected to Production.
+            'has_repo': bool(prod.repo_ids),
             'environments': [self._serialize_env_child(c) for c in children],
         })
 

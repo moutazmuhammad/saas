@@ -9,6 +9,7 @@ import {
   Rocket,
   FlaskConical,
   Server,
+  Link2,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,6 @@ import { Dialog } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ActionButton";
 import { AlertBanner } from "@/components/AlertBanner";
 import { StatusBadge } from "@/components/StatusBadge";
-import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
@@ -39,6 +39,7 @@ const TRANSIENT = new Set([
 export default function Environments() {
   const { id = "" } = useParams();
   const instanceId = Number(id);
+  const navigate = useNavigate();
   const toast = useToast();
   const [data, setData] = React.useState<ProjectEnvironments | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -69,13 +70,18 @@ export default function Environments() {
   }, [hasTransient, load]);
 
   const cycle = data?.billing_cycle === "yearly" ? "yr" : "mo";
+  const prodId = data?.production.id ?? instanceId;
+  const staging = data?.environments.filter((e) => e.environment === "staging") ?? [];
+  const development =
+    data?.environments.filter((e) => e.environment === "development") ?? [];
+  const canCreate = !!data?.has_repo;
 
   return (
     <div className="animate-fade-in">
       <PortalBreadcrumb
         items={[
           { label: "Instances", to: "/my/instances" },
-          { label: "Instance", to: `/my/instances/${id}` },
+          { label: data?.production.name || "Project", to: `/my/instances/${prodId}` },
           { label: "Environments" },
         ]}
       />
@@ -85,21 +91,10 @@ export default function Environments() {
           <h1 className="text-2xl font-bold tracking-tight">Environments</h1>
           <p className="mt-1 text-sm text-muted">
             One Production server plus any number of Staging and Development
-            servers — each on its own Git branch, like Odoo.sh.
+            servers — each on its own Git branch, like Odoo.sh. Open a server to
+            manage it.
           </p>
         </div>
-        {data && (
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setCreateType("staging")}>
-              <Plus className="size-4" />
-              New staging
-            </Button>
-            <Button onClick={() => setCreateType("development")}>
-              <Plus className="size-4" />
-              New development
-            </Button>
-          </div>
-        )}
       </div>
 
       {error && (
@@ -117,46 +112,94 @@ export default function Environments() {
         </div>
       ) : data ? (
         <>
+          {/* Repo gate: env servers need a repo on Production first. */}
+          {!canCreate && (
+            <Card className="mt-6 flex flex-col gap-3 border-info/40 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
+                  <Link2 className="size-5" />
+                </span>
+                <div>
+                  <p className="font-medium">Connect a Git repository first</p>
+                  <p className="text-xs text-muted">
+                    Staging and Development servers run on branches of your repo.
+                    Link a repository to your Production server to unlock them.
+                  </p>
+                </div>
+              </div>
+              <Button
+                className="shrink-0"
+                onClick={() => navigate(`/my/instances/${prodId}/code`)}
+              >
+                <GitBranch className="size-4" />
+                Connect repository
+              </Button>
+            </Card>
+          )}
+
           <p className="mt-6 text-xs text-muted">
-            Each additional Staging or Development server costs{" "}
+            Each additional Staging or Development server (lowest spec) costs{" "}
             <strong className="text-foreground">
               {data.env_server_price}/{cycle}
             </strong>{" "}
-            and is added to your subscription.
+            and is added to your subscription. Main branch:{" "}
+            <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-foreground">
+              {data.main_branch}
+            </code>
           </p>
 
-          {/* Production */}
-          <h2 className="mt-6 text-sm font-semibold text-muted">Production</h2>
-          <div className="mt-2">
-            <EnvironmentCard
-              env={data.production}
-              mainBranch={data.main_branch}
-            />
-          </div>
+          {/* Odoo.sh-style three-stage board */}
+          <div className="mt-4 grid gap-5 lg:grid-cols-3">
+            <StageColumn
+              title="Production"
+              icon={Server}
+              hint="Always one, on your main branch."
+            >
+              <EnvironmentCard env={data.production} mainBranch={data.main_branch} />
+            </StageColumn>
 
-          {/* Staging / Development */}
-          <h2 className="mt-8 text-sm font-semibold text-muted">
-            Staging &amp; Development
-          </h2>
-          {data.environments.length === 0 ? (
-            <EmptyState
-              className="mt-2"
-              icon={Boxes}
-              title="No extra environments yet"
-              description="Spin up a Staging or Development server in one click. We provision it automatically and wire it to its Git branch."
-            />
-          ) : (
-            <div className="mt-2 grid gap-4 sm:grid-cols-2">
-              {data.environments.map((env) => (
-                <EnvironmentCard
-                  key={env.id}
-                  env={env}
-                  mainBranch={data.main_branch}
-                  onDelete={() => setDeleteTarget(env)}
-                />
-              ))}
-            </div>
-          )}
+            <StageColumn
+              title="Staging"
+              icon={FlaskConical}
+              hint="Pre-production copies on a chosen branch."
+              onAdd={canCreate ? () => setCreateType("staging") : undefined}
+              addDisabledReason={canCreate ? undefined : "Connect a repository first"}
+            >
+              {staging.length === 0 ? (
+                <EmptyStage label="No staging servers yet." />
+              ) : (
+                staging.map((env) => (
+                  <EnvironmentCard
+                    key={env.id}
+                    env={env}
+                    mainBranch={data.main_branch}
+                    onDelete={() => setDeleteTarget(env)}
+                  />
+                ))
+              )}
+            </StageColumn>
+
+            <StageColumn
+              title="Development"
+              icon={Rocket}
+              hint="Throwaway servers, each on its own new branch."
+              onAdd={canCreate ? () => setCreateType("development") : undefined}
+              addDisabledReason={canCreate ? undefined : "Connect a repository first"}
+            >
+              {development.length === 0 ? (
+                <EmptyStage label="No development servers yet." />
+              ) : (
+                development.map((env) => (
+                  <EnvironmentCard
+                    key={env.id}
+                    env={env}
+                    mainBranch={data.main_branch}
+                    onDelete={() => setDeleteTarget(env)}
+                  />
+                ))
+              )}
+            </StageColumn>
+          </div>
         </>
       ) : null}
 
@@ -189,6 +232,55 @@ export default function Environments() {
   );
 }
 
+function StageColumn({
+  title,
+  icon: Icon,
+  hint,
+  onAdd,
+  addDisabledReason,
+  children,
+}: {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+  hint: string;
+  onAdd?: () => void;
+  addDisabledReason?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Icon className="size-4 text-muted" />
+          <h2 className="text-sm font-semibold">{title}</h2>
+        </div>
+        {(onAdd || addDisabledReason) && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={onAdd}
+            disabled={!onAdd}
+            title={addDisabledReason}
+          >
+            <Plus className="size-4" />
+            Add
+          </Button>
+        )}
+      </div>
+      <p className="mt-0.5 text-xs text-muted">{hint}</p>
+      <div className="mt-3 flex flex-col gap-3">{children}</div>
+    </div>
+  );
+}
+
+function EmptyStage({ label }: { label: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border p-5 text-center text-xs text-muted">
+      {label}
+    </div>
+  );
+}
+
 function EnvironmentCard({
   env,
   mainBranch,
@@ -205,20 +297,15 @@ function EnvironmentCard({
       ? FlaskConical
       : Rocket;
   return (
-    <Card className="flex flex-col gap-3 p-5">
+    <Card className="flex flex-col gap-3 p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-muted">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-muted">
             <Icon className="size-4" />
           </span>
           <div>
-            <div className="flex items-center gap-2">
-              <p className="font-medium">{env.name}</p>
-              <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted">
-                {env.environment_label}
-              </span>
-            </div>
-            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted">
+            <p className="font-medium leading-tight">{env.name}</p>
+            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted">
               <GitBranch className="size-3" />
               {env.branch || mainBranch}
             </p>
@@ -317,9 +404,7 @@ function CreateEnvDialog({
     }
   };
 
-  const title = isStaging
-    ? "New staging server"
-    : "New development server";
+  const title = isStaging ? "New staging server" : "New development server";
 
   return (
     <Dialog open={!!type} onClose={onClose} title={title}>

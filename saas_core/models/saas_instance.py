@@ -1892,6 +1892,12 @@ class SaasInstance(models.Model):
         if not self.is_hosting:
             raise UserError(_(
                 "Environments are only available for hosting subscriptions."))
+        # Odoo.sh parity: a project must have a Git repository connected to its
+        # Production server before any Staging/Development branch can exist.
+        if not self.repo_ids:
+            raise UserError(_(
+                "Connect a Git repository to your Production server before "
+                "creating Staging or Development environments."))
         if env_type not in ('staging', 'development'):
             raise UserError(_("Unknown environment type '%s'.") % env_type)
         name = (name or '').strip()

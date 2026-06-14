@@ -216,13 +216,31 @@ export default function InstanceDetail() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb items={[{ label: "Instances", to: "/my/instances" }, { label: instance.name }]} />
+      <PortalBreadcrumb
+        items={
+          instance.parent_id && instance.environment !== "production"
+            ? [
+                { label: "Instances", to: "/my/instances" },
+                { label: "Environments", to: `/my/instances/${instance.parent_id}/environments` },
+                { label: instance.name },
+              ]
+            : [{ label: "Instances", to: "/my/instances" }, { label: instance.name }]
+        }
+      />
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight">{instance.name}</h1>
             <StatusBadge status={instance.state} label={instance.state_label} />
+            {instance.is_hosting && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted">
+                {instance.environment_label}
+                <span className="text-border">·</span>
+                <GitBranch className="size-3" />
+                {instance.branch}
+              </span>
+            )}
           </div>
           {instance.url ? (
             <a

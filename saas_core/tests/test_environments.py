@@ -165,6 +165,30 @@ class TestEnvironments(TransactionCase):
         for l in env_lines:
             self.assertAlmostEqual(l.price_unit, price, 2)
 
+    # --------------------------------------------------------------- repo gate
+    def test_env_create_requires_repo(self):
+        prod = self._mk_prod('pgate')
+        with self.assertRaises(Exception):
+            prod.action_create_environment('development', name='feature-x')
+
+    def test_env_create_allowed_with_repo(self):
+        prod = self._mk_prod('pgate2', due=date.today() + timedelta(days=20),
+                             last=date.today() - timedelta(days=10))
+        # A non-provider URL: branch creation is skipped/no-op (no network),
+        # but the repo presence is what the gate checks.
+        self.env['saas.instance.repo'].sudo().create({
+            'instance_id': prod.id, 'repo_url': 'https://example.com/o/r.git',
+            'branch': 'main',
+        })
+        res = prod.action_create_environment('staging', name='stg1')
+        self.assertTrue(res.get('child_id'))
+        child = self.env['saas.instance'].sudo().browse(res['child_id'])
+        self.assertEqual(child.environment, 'staging')
+        self.assertEqual(child.parent_id, prod)
+        # No saved card / wallet → routed to checkout, not auto-provisioned.
+        self.assertFalse(res.get('auto_provisioned'))
+        self.assertEqual(child.state, 'pending_payment')
+
     # --------------------------------------------------------------- deletion
     def test_delete_environment_credits_wallet(self):
         today = date.today()

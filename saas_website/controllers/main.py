@@ -1173,6 +1173,12 @@ class SaasWebsite(http.Controller):
                 # Private repos need a token; public might work without one
                 pass  # Allow it — clone will fail with clear error if repo is private
 
+        # Odoo.sh parity: Staging/Development servers live on Git branches, so a
+        # repository must be connected to Production when any are requested.
+        if (staging_count or dev_count) and not repo_url:
+            return request.redirect(err_redirect % (
+                'Connect+a+Git+repository+to+add+Staging+or+Development+servers'))
+
         # Hosting trial: one per client, and not after a paid hosting instance
         if is_trial:
             partner_sudo = partner.sudo()
