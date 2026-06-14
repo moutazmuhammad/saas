@@ -82,7 +82,8 @@ export function PortalLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [paletteOpen, setPaletteOpen] = React.useState(false);
-  const [navCollapsed, setNavCollapsed] = React.useState(false);
+  // Left nav is collapsed (icon rail) by default — opens via the hamburger.
+  const [navCollapsed, setNavCollapsed] = React.useState(true);
   const [mobileNav, setMobileNav] = React.useState(false);
 
   React.useEffect(() => {
