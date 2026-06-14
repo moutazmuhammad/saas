@@ -9,7 +9,6 @@ import {
   LifeBuoy,
   LayoutGrid,
   ChevronRight,
-  ChevronDown,
   Menu,
   HelpCircle,
 } from "lucide-react";
@@ -17,6 +16,7 @@ import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { CommandPalette } from "@/components/CommandPalette";
 import { NotificationsBell } from "@/components/NotificationsBell";
+import { ProjectSwitcher } from "@/components/ProjectSwitcher";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
@@ -171,14 +171,7 @@ export function PortalLayout() {
           <Menu className="size-5" />
         </button>
         <Logo />
-        <button
-          onClick={() => navigate("/my/instances")}
-          className="ml-1 hidden items-center gap-2 rounded-md border border-border px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-background sm:flex"
-        >
-          <Server className="size-4 text-muted" />
-          Projects
-          <ChevronDown className="size-3.5 text-muted" />
-        </button>
+        <ProjectSwitcher className="ml-1 hidden sm:block" />
 
         {/* Center search (GCP hallmark) */}
         <button
