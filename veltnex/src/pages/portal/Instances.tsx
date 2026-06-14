@@ -141,8 +141,13 @@ function Section({
 
 function InstanceCard({ instance: i }: { instance: ApiInstance }) {
   const live = i.state === "running";
+  // Hosting instances are PROJECTS — open the Odoo.sh-style workspace.
+  // Managed services have no environments, so they open their detail page.
+  const to = i.is_hosting
+    ? `/my/instances/${i.id}/environments`
+    : `/my/instances/${i.id}`;
   return (
-    <Link to={`/my/instances/${i.id}`}>
+    <Link to={to}>
       <Card className="group p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">

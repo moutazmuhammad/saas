@@ -106,7 +106,7 @@ export default function Dashboard() {
                   {data.instances.slice(0, 5).map((i) => (
                     <li key={i.id}>
                       <Link
-                        to={`/my/instances/${i.id}`}
+                        to={i.is_hosting ? `/my/instances/${i.id}/environments` : `/my/instances/${i.id}`}
                         className="flex items-center justify-between gap-4 p-5 transition-colors hover:bg-card/60"
                       >
                         <div className="min-w-0">

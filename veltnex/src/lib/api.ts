@@ -296,6 +296,7 @@ export interface EnvChild {
   name: string;
   domain: string;
   url: string;
+  version: string;
   environment: EnvironmentType;
   environment_label: string;
   branch: string;
@@ -308,12 +309,15 @@ export interface EnvChild {
 }
 
 export interface ProjectEnvironments {
+  project_id: number;
+  project_name: string;
   production: EnvChild;
   main_branch: string;
   env_server_price: number;
   billing_cycle: "monthly" | "yearly";
   /** Env servers require a Git repo connected to Production. */
   has_repo: boolean;
+  repo_url: string;
   environments: EnvChild[];
 }
 
@@ -407,6 +411,7 @@ export interface StatusData {
   usage?: ApiUsage;
   backup_running: boolean;
   db_ops_running: boolean;
+  provisioning_log?: string;
 }
 
 export interface DbOperationStatus {

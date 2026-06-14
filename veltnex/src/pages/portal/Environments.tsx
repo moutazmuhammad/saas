@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  Search,
   GitBranch,
   GitMerge,
   Plus,
@@ -10,7 +11,15 @@ import {
   FlaskConical,
   Server,
   Link2,
-  GripVertical,
+  Copy,
+  Check,
+  RotateCw,
+  Play,
+  Square,
+  Database,
+  Code2,
+  ScrollText,
+  Archive,
   ArrowRight,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -29,6 +38,7 @@ import {
   ApiError,
   type EnvChild,
   type ProjectEnvironments,
+  type StatusData,
 } from "@/lib/api";
 
 const TRANSIENT = new Set([
@@ -38,33 +48,48 @@ const TRANSIENT = new Set([
   "provisioning",
 ]);
 
-const STAGE_META = {
-  production: { icon: Server, accent: "text-success", ring: "ring-success/40" },
-  staging: { icon: FlaskConical, accent: "text-info", ring: "ring-info/40" },
-  development: { icon: Rocket, accent: "text-primary-glow", ring: "ring-primary-glow/40" },
+const STAGE_ICON = {
+  production: Server,
+  staging: FlaskConical,
+  development: Rocket,
 } as const;
+
+function dotClass(state: string) {
+  if (state === "running") return "bg-success";
+  if (state === "failed") return "bg-danger";
+  if (TRANSIENT.has(state)) return "bg-info animate-pulse-soft";
+  return "bg-muted";
+}
 
 export default function Environments() {
   const { id = "" } = useParams();
   const instanceId = Number(id);
   const navigate = useNavigate();
   const toast = useToast();
+
   const [data, setData] = React.useState<ProjectEnvironments | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [selectedId, setSelectedId] = React.useState<number | null>(null);
+  const [filter, setFilter] = React.useState("");
+
   const [createType, setCreateType] =
     React.useState<"staging" | "development" | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<EnvChild | null>(null);
   const [mergePrompt, setMergePrompt] =
     React.useState<{ source: EnvChild; target: EnvChild } | null>(null);
-  // Drag-and-drop merge state.
   const [draggingId, setDraggingId] = React.useState<number | null>(null);
   const [dragOverId, setDragOverId] = React.useState<number | null>(null);
 
   const load = React.useCallback(async () => {
     try {
-      setData(await api.environments(instanceId));
+      const d = await api.environments(instanceId);
+      setData(d);
+      setSelectedId((cur) => {
+        const all = [d.production, ...d.environments];
+        return cur && all.some((e) => e.id === cur) ? cur : d.production.id;
+      });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Could not load environments.");
+      setError(e instanceof ApiError ? e.message : "Could not load this project.");
     }
   }, [instanceId]);
 
@@ -79,195 +104,183 @@ export default function Environments() {
     return () => clearInterval(t);
   }, [hasTransient, load]);
 
-  const cycle = data?.billing_cycle === "yearly" ? "yr" : "mo";
-  const prodId = data?.production.id ?? instanceId;
-  const allEnvs: EnvChild[] = data
-    ? [data.production, ...data.environments]
-    : [];
-  const staging = data?.environments.filter((e) => e.environment === "staging") ?? [];
-  const development =
-    data?.environments.filter((e) => e.environment === "development") ?? [];
+  const allEnvs = React.useMemo<EnvChild[]>(
+    () => (data ? [data.production, ...data.environments] : []),
+    [data],
+  );
+  const selected = allEnvs.find((e) => e.id === selectedId) || data?.production || null;
   const canCreate = !!data?.has_repo;
 
-  const onDrop = (target: EnvChild) => {
+  const doMerge = (target: EnvChild) => {
     const source = allEnvs.find((e) => e.id === draggingId) || null;
     setDraggingId(null);
     setDragOverId(null);
     if (source && source.id !== target.id) setMergePrompt({ source, target });
   };
 
-  const cardProps = (env: EnvChild) => ({
-    env,
-    mainBranch: data?.main_branch || "main",
-    draggable: canCreate,
-    isDragging: draggingId === env.id,
-    isDropTarget: dragOverId === env.id && draggingId !== null && draggingId !== env.id,
-    onDragStart: () => setDraggingId(env.id),
-    onDragEnd: () => {
-      setDraggingId(null);
-      setDragOverId(null);
-    },
-    onDragOver: (e: React.DragEvent) => {
-      if (draggingId !== null && draggingId !== env.id) {
-        e.preventDefault();
-        setDragOverId(env.id);
-      }
-    },
-    onDragLeave: () =>
-      setDragOverId((prev) => (prev === env.id ? null : prev)),
-    onDrop: (e: React.DragEvent) => {
-      e.preventDefault();
-      onDrop(env);
-    },
-    onOpen: () => navigate(`/my/instances/${env.id}`),
-    onDelete: env.is_production ? undefined : () => setDeleteTarget(env),
-  });
+  if (error) {
+    return (
+      <div className="animate-fade-in">
+        <PortalBreadcrumb items={[{ label: "Instances", to: "/my/instances" }, { label: "Project" }]} />
+        <AlertBanner className="mt-6" variant="danger" title="Project" description={error} />
+      </div>
+    );
+  }
+  if (!data || !selected) {
+    return (
+      <div className="mt-20 flex justify-center">
+        <Spinner size="lg" label="Loading project…" />
+      </div>
+    );
+  }
+
+  const staging = data.environments.filter((e) => e.environment === "staging");
+  const development = data.environments.filter((e) => e.environment === "development");
 
   return (
     <div className="animate-fade-in">
       <PortalBreadcrumb
         items={[
-          { label: "Instances", to: "/my/instances" },
-          { label: data?.production.name || "Project", to: `/my/instances/${prodId}` },
-          { label: "Environments" },
+          { label: "Projects", to: "/my/instances" },
+          { label: data.project_name },
         ]}
       />
 
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Environments</h1>
-        <p className="mt-1 text-sm text-muted">
-          Your project's servers, organised by stage — just like Odoo.sh. Open a
-          server to manage it, or <strong className="text-foreground">drag one
-          server onto another to merge its branch</strong> and redeploy.
-        </p>
-      </div>
+      <div className="mt-2 flex flex-col gap-5 lg:flex-row">
+        {/* ───────── Left sidebar: branches ───────── */}
+        <aside className="lg:w-64 lg:shrink-0">
+          <div className="rounded-xl border border-border bg-card/40">
+            <div className="border-b border-border p-3">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted" />
+                <Input
+                  className="h-9 pl-8"
+                  placeholder="Filter branches…"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                />
+              </div>
+            </div>
 
-      {error && (
-        <AlertBanner className="mt-6" variant="danger" title="Environments" description={error} />
-      )}
+            <div className="p-2">
+              <div className="px-2 py-1.5">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Project</p>
+                <p className="mt-0.5 truncate text-sm font-semibold">{data.project_name}</p>
+                {data.repo_url && (
+                  <p className="truncate text-xs text-muted">{repoShort(data.repo_url)}</p>
+                )}
+              </div>
 
-      {!data && !error ? (
-        <div className="mt-20 flex justify-center">
-          <Spinner size="lg" label="Loading environments…" />
-        </div>
-      ) : data ? (
-        <>
+              <SidebarSection title="Production">
+                <BranchItem
+                  env={data.production}
+                  filter={filter}
+                  selected={selectedId === data.production.id}
+                  onSelect={() => setSelectedId(data.production.id)}
+                  drag={dragHandlers(data.production)}
+                />
+              </SidebarSection>
+
+              <SidebarSection
+                title="Staging"
+                onAdd={canCreate ? () => setCreateType("staging") : undefined}
+                addTitle={canCreate ? undefined : "Connect a repository first"}
+              >
+                <BranchList
+                  envs={staging}
+                  filter={filter}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  dragHandlers={dragHandlers}
+                />
+              </SidebarSection>
+
+              <SidebarSection
+                title="Development"
+                onAdd={canCreate ? () => setCreateType("development") : undefined}
+                addTitle={canCreate ? undefined : "Connect a repository first"}
+              >
+                <BranchList
+                  envs={development}
+                  filter={filter}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  dragHandlers={dragHandlers}
+                />
+              </SidebarSection>
+            </div>
+          </div>
+        </aside>
+
+        {/* ───────── Main panel: selected environment ───────── */}
+        <div className="min-w-0 flex-1">
           {!canCreate && (
-            <Card className="mt-6 flex flex-col gap-3 border-info/40 bg-info/5 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <Card className="mb-4 flex flex-col gap-3 border-info/40 bg-info/5 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
-                  <Link2 className="size-5" />
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
+                  <Link2 className="size-4" />
                 </span>
                 <div>
-                  <p className="font-medium">Connect a Git repository to get started</p>
-                  <p className="text-xs text-muted">
-                    Staging and Development servers run on branches of your repo.
-                    Link a repository to Production to unlock them.
-                  </p>
+                  <p className="text-sm font-medium">Connect a Git repository to add environments</p>
+                  <p className="text-xs text-muted">Staging and Development servers run on branches of your repo.</p>
                 </div>
               </div>
-              <Button className="shrink-0" onClick={() => navigate(`/my/instances/${prodId}/code`)}>
+              <Button className="shrink-0" onClick={() => navigate(`/my/instances/${data.production.id}/code`)}>
                 <GitBranch className="size-4" />
-                Connect repository
+                Connect
               </Button>
             </Card>
           )}
 
-          {/* Project facts */}
-          <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-muted">
-            <span className="inline-flex items-center gap-1.5">
-              <GitBranch className="size-3.5" />
-              Main branch:{" "}
-              <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-foreground">
-                {data.main_branch}
-              </code>
-            </span>
-            <span>
-              Each extra Staging / Development server (lowest spec):{" "}
-              <strong className="text-foreground">
-                {data.env_server_price}/{cycle}
-              </strong>
-            </span>
-          </div>
-
-          {/* Odoo.sh-style three-stage board */}
-          <div className="mt-5 grid gap-4 lg:grid-cols-3">
-            <StageColumn
-              stage="production"
-              title="Production"
-              hint="Always one server, on your main branch."
-              count={1}
-            >
-              <EnvironmentCard {...cardProps(data.production)} />
-            </StageColumn>
-
-            <StageColumn
-              stage="staging"
-              title="Staging"
-              hint="Pre-production copies on a chosen branch."
-              count={staging.length}
-              onAdd={canCreate ? () => setCreateType("staging") : undefined}
-              addDisabledReason={canCreate ? undefined : "Connect a repository first"}
-            >
-              {staging.length === 0 ? (
-                <EmptyStage label="No staging servers yet." />
-              ) : (
-                staging.map((env) => <EnvironmentCard key={env.id} {...cardProps(env)} />)
-              )}
-            </StageColumn>
-
-            <StageColumn
-              stage="development"
-              title="Development"
-              hint="Throwaway servers, each on its own branch."
-              count={development.length}
-              onAdd={canCreate ? () => setCreateType("development") : undefined}
-              addDisabledReason={canCreate ? undefined : "Connect a repository first"}
-            >
-              {development.length === 0 ? (
-                <EmptyStage label="No development servers yet." />
-              ) : (
-                development.map((env) => <EnvironmentCard key={env.id} {...cardProps(env)} />)
-              )}
-            </StageColumn>
-          </div>
+          <MainPanel
+            key={selected.id}
+            env={selected}
+            project={data}
+            onDelete={selected.is_production ? undefined : () => setDeleteTarget(selected)}
+            onMergeInto={() => {
+              // Open merge dialog choosing this env as the target.
+              const others = allEnvs.filter((e) => e.id !== selected.id);
+              if (others.length) setMergePrompt({ source: others[0], target: selected });
+            }}
+            onChanged={load}
+          />
 
           {canCreate && allEnvs.length > 1 && (
-            <p className="mt-4 flex items-center gap-1.5 text-xs text-muted">
+            <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
               <GitMerge className="size-3.5" />
-              Tip: drag a server card onto another to merge its branch into that
-              server and redeploy it.
+              Tip: drag a branch onto another in the sidebar to merge it and redeploy.
             </p>
           )}
-        </>
-      ) : null}
+        </div>
+      </div>
 
       <CreateEnvDialog
         instanceId={instanceId}
         type={createType}
         onClose={() => setCreateType(null)}
-        onCreated={(auto) => {
+        onCreated={(auto, childId) => {
           setCreateType(null);
-          if (auto)
-            toast.success("Environment created", "We're provisioning your new server now.");
+          if (childId) setSelectedId(childId);
+          if (auto) toast.success("Environment created", "Provisioning your new server now.");
           load();
         }}
       />
-
       <DeleteEnvDialog
         instanceId={instanceId}
         env={deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onDeleted={() => {
           setDeleteTarget(null);
+          setSelectedId(data.production.id);
           toast.success("Environment removed", "The server is being torn down.");
           load();
         }}
       />
-
       <MergeEnvDialog
         instanceId={instanceId}
         prompt={mergePrompt}
+        environments={allEnvs}
+        onPick={(p) => setMergePrompt(p)}
         onClose={() => setMergePrompt(null)}
         onMerged={(msg) => {
           setMergePrompt(null);
@@ -277,151 +290,437 @@ export default function Environments() {
       />
     </div>
   );
+
+  function dragHandlers(env: EnvChild) {
+    return {
+      draggable: canCreate,
+      isDragging: draggingId === env.id,
+      isDropTarget: dragOverId === env.id && draggingId !== null && draggingId !== env.id,
+      onDragStart: () => setDraggingId(env.id),
+      onDragEnd: () => {
+        setDraggingId(null);
+        setDragOverId(null);
+      },
+      onDragOver: (e: React.DragEvent) => {
+        if (draggingId !== null && draggingId !== env.id) {
+          e.preventDefault();
+          setDragOverId(env.id);
+        }
+      },
+      onDragLeave: () => setDragOverId((p) => (p === env.id ? null : p)),
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        doMerge(env);
+      },
+    };
+  }
 }
 
-function StageColumn({
-  stage,
+function repoShort(url: string) {
+  return url.replace(/^https?:\/\//, "").replace(/\.git$/, "");
+}
+
+/* ───────────────────────── Sidebar ───────────────────────── */
+
+function SidebarSection({
   title,
-  hint,
-  count,
   onAdd,
-  addDisabledReason,
+  addTitle,
   children,
 }: {
-  stage: keyof typeof STAGE_META;
   title: string;
-  hint: string;
-  count: number;
   onAdd?: () => void;
-  addDisabledReason?: string;
+  addTitle?: string;
   children: React.ReactNode;
 }) {
-  const { icon: Icon, accent } = STAGE_META[stage];
   return (
-    <div className="flex flex-col rounded-xl border border-border bg-card/40 p-3">
-      <div className="flex items-center justify-between gap-2 px-1">
-        <div className="flex items-center gap-2">
-          <Icon className={cn("size-4", accent)} />
-          <h2 className="text-sm font-semibold">{title}</h2>
-          <span className="rounded-full bg-border/60 px-1.5 py-0.5 text-[11px] font-medium text-muted">
-            {count}
-          </span>
-        </div>
-        {(onAdd || addDisabledReason) && (
-          <Button size="sm" variant="ghost" onClick={onAdd} disabled={!onAdd} title={addDisabledReason}>
-            <Plus className="size-4" />
-            Add
-          </Button>
+    <div className="mt-2">
+      <div className="flex items-center justify-between px-2 py-1">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">{title}</p>
+        {(onAdd || addTitle) && (
+          <button
+            type="button"
+            onClick={onAdd}
+            disabled={!onAdd}
+            title={addTitle}
+            className="flex size-5 items-center justify-center rounded text-muted transition-colors hover:bg-border/60 hover:text-foreground disabled:opacity-40"
+          >
+            <Plus className="size-3.5" />
+          </button>
         )}
       </div>
-      <p className="mt-0.5 px-1 text-xs text-muted">{hint}</p>
-      <div className="mt-3 flex flex-1 flex-col gap-2.5">{children}</div>
+      <div className="flex flex-col gap-0.5">{children}</div>
     </div>
   );
 }
 
-function EmptyStage({ label }: { label: string }) {
+function BranchList({
+  envs,
+  filter,
+  selectedId,
+  onSelect,
+  dragHandlers,
+}: {
+  envs: EnvChild[];
+  filter: string;
+  selectedId: number | null;
+  onSelect: (id: number) => void;
+  dragHandlers: (env: EnvChild) => ReturnType<typeof noopHandlers>;
+}) {
+  const shown = envs.filter(
+    (e) =>
+      !filter ||
+      e.name.toLowerCase().includes(filter.toLowerCase()) ||
+      e.branch.toLowerCase().includes(filter.toLowerCase()),
+  );
+  if (shown.length === 0) {
+    return <p className="px-2 py-1.5 text-xs text-muted/70">No branches</p>;
+  }
   return (
-    <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted">
-      {label}
-    </div>
+    <>
+      {shown.map((env) => (
+        <BranchItem
+          key={env.id}
+          env={env}
+          filter={filter}
+          selected={selectedId === env.id}
+          onSelect={() => onSelect(env.id)}
+          drag={dragHandlers(env)}
+        />
+      ))}
+    </>
   );
 }
 
-function EnvironmentCard({
+function noopHandlers() {
+  return {
+    draggable: false,
+    isDragging: false,
+    isDropTarget: false,
+    onDragStart: () => {},
+    onDragEnd: () => {},
+    onDragOver: (_e: React.DragEvent) => {},
+    onDragLeave: () => {},
+    onDrop: (_e: React.DragEvent) => {},
+  };
+}
+
+function BranchItem({
   env,
-  mainBranch,
-  draggable,
-  isDragging,
-  isDropTarget,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-  onOpen,
-  onDelete,
+  filter,
+  selected,
+  onSelect,
+  drag,
 }: {
   env: EnvChild;
-  mainBranch: string;
-  draggable: boolean;
-  isDragging: boolean;
-  isDropTarget: boolean;
-  onDragStart: () => void;
-  onDragEnd: () => void;
-  onDragOver: (e: React.DragEvent) => void;
-  onDragLeave: () => void;
-  onDrop: (e: React.DragEvent) => void;
-  onOpen: () => void;
-  onDelete?: () => void;
+  filter: string;
+  selected: boolean;
+  onSelect: () => void;
+  drag: ReturnType<typeof noopHandlers>;
 }) {
-  const { icon: Icon, ring } = STAGE_META[env.environment];
+  const matches =
+    !filter ||
+    env.name.toLowerCase().includes(filter.toLowerCase()) ||
+    env.branch.toLowerCase().includes(filter.toLowerCase());
+  if (!matches) return null;
   return (
-    <Card
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
+    <button
+      type="button"
+      onClick={onSelect}
+      draggable={drag.draggable}
+      onDragStart={drag.onDragStart}
+      onDragEnd={drag.onDragEnd}
+      onDragOver={drag.onDragOver}
+      onDragLeave={drag.onDragLeave}
+      onDrop={drag.onDrop}
       className={cn(
-        "group flex flex-col gap-2.5 p-3.5 transition-all",
-        draggable && "cursor-grab active:cursor-grabbing",
-        isDragging && "opacity-40",
-        isDropTarget && cn("ring-2", ring),
+        "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+        selected ? "bg-primary/10 text-foreground" : "text-muted hover:bg-border/40 hover:text-foreground",
+        drag.draggable && "cursor-grab active:cursor-grabbing",
+        drag.isDragging && "opacity-40",
+        drag.isDropTarget && "ring-2 ring-primary/40",
       )}
+      title={env.branch}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-start gap-2.5">
-          {draggable && (
-            <GripVertical className="mt-0.5 size-4 shrink-0 text-muted/50 transition-colors group-hover:text-muted" />
-          )}
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-muted">
-            <Icon className="size-4" />
-          </span>
-          <div className="min-w-0">
-            <p className="truncate font-medium leading-tight">{env.name}</p>
-            <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-muted">
-              <GitBranch className="size-3 shrink-0" />
-              <span className="truncate">{env.branch || mainBranch}</span>
-            </p>
+      <span className="flex min-w-0 items-center gap-2">
+        <GitBranch className="size-3.5 shrink-0 text-muted" />
+        <span className="truncate">{env.name}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-2">
+        {env.version && <span className="text-[11px] text-muted/80">{env.version}</span>}
+        <span className={cn("size-2 rounded-full", dotClass(env.state))} />
+      </span>
+    </button>
+  );
+}
+
+/* ───────────────────────── Main panel ───────────────────────── */
+
+function MainPanel({
+  env,
+  project,
+  onDelete,
+  onMergeInto,
+  onChanged,
+}: {
+  env: EnvChild;
+  project: ProjectEnvironments;
+  onDelete?: () => void;
+  onMergeInto: () => void;
+  onChanged: () => void;
+}) {
+  const navigate = useNavigate();
+  const toast = useToast();
+  const [status, setStatus] = React.useState<StatusData | null>(null);
+  const [pending, setPending] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  const refreshStatus = React.useCallback(async () => {
+    try {
+      setStatus(await api.instanceStatus(env.id));
+    } catch {
+      /* ignore */
+    }
+  }, [env.id]);
+
+  React.useEffect(() => {
+    setStatus(null);
+    refreshStatus();
+  }, [refreshStatus]);
+
+  const liveState = status?.state || env.state;
+  const transient = TRANSIENT.has(liveState);
+  React.useEffect(() => {
+    if (!transient) return;
+    const t = setInterval(refreshStatus, 4000);
+    return () => clearInterval(t);
+  }, [transient, refreshStatus]);
+
+  const run = async (action: string, ok: string) => {
+    setPending(action);
+    try {
+      await api.instanceAction(env.id, action);
+      toast.success(ok);
+      await refreshStatus();
+      onChanged();
+    } catch (e) {
+      toast.error("Action failed", e instanceof ApiError ? e.message : "Please try again.");
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const cloneCmd = project.repo_url
+    ? `git clone --branch ${env.branch} ${project.repo_url}`
+    : "";
+  const url = status?.url || env.url;
+  const isRunning = liveState === "running";
+  const isStopped = liveState === "stopped";
+  const pendingPay = env.pending_payment && env.pending_invoice_id;
+
+  const tabs = [
+    { label: "Databases", icon: Database, to: `/my/instances/${env.id}/databases` },
+    { label: "Code", icon: Code2, to: `/my/instances/${env.id}/code` },
+    { label: "Logs", icon: ScrollText, to: `/my/instances/${env.id}/logs` },
+    { label: "Backups", icon: Archive, to: `/my/instances/${env.id}/backups` },
+  ];
+
+  return (
+    <Card className="overflow-hidden">
+      {/* Header */}
+      <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-xl font-bold tracking-tight">{env.name}</h1>
+            <StatusBadge status={liveState} />
+            <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted">
+              {env.environment_label}
+            </span>
+            {env.version && <span className="text-xs text-muted">Odoo {env.version}</span>}
           </div>
+          <p className="mt-1.5 flex items-center gap-1.5 font-mono text-xs text-muted">
+            <GitBranch className="size-3" />
+            {env.branch}
+            {url && (
+              <>
+                <span className="text-border">·</span>
+                <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-primary-glow">
+                  {env.domain}
+                  <ExternalLink className="size-3" />
+                </a>
+              </>
+            )}
+          </p>
         </div>
-        <StatusBadge status={env.state} />
+
+        {/* Clone box */}
+        {cloneCmd && (
+          <div className="lg:w-[26rem]">
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">{cloneCmd}</code>
+              <button
+                type="button"
+                title="Copy"
+                onClick={() => {
+                  navigator.clipboard?.writeText(cloneCmd);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                }}
+                className="shrink-0 text-muted transition-colors hover:text-foreground"
+              >
+                {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center justify-end gap-1.5">
-        {env.pending_payment && env.pending_invoice_id ? (
-          <Button
-            size="sm"
-            onClick={() => (window.location.href = `/my/instances/${env.id}/checkout`)}
-          >
-            Complete checkout
+      {/* Tab / action bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-2.5">
+        <div className="flex flex-wrap gap-1">
+          {tabs.map((t) => (
+            <button
+              key={t.label}
+              onClick={() => navigate(t.to)}
+              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-muted transition-colors hover:bg-border/50 hover:text-foreground"
+            >
+              <t.icon className="size-4" />
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="ghost" onClick={onMergeInto} title="Merge another branch into this one">
+            <GitMerge className="size-4" />
+            Merge
           </Button>
+          {onDelete && (
+            <Button size="sm" variant="ghost" onClick={onDelete} title="Delete environment">
+              <Trash2 className="size-4 text-danger" />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="p-5">
+        {pendingPay ? (
+          <AlertBanner
+            variant="warning"
+            title="Payment pending"
+            description="Finish checkout to provision this server."
+            action={
+              <Button size="sm" onClick={() => (window.location.href = `/my/instances/${env.id}/checkout`)}>
+                Complete checkout
+              </Button>
+            }
+          />
         ) : (
-          <Button size="sm" variant="secondary" onClick={onOpen}>
-            <ExternalLink className="size-4" />
-            Open
-          </Button>
-        )}
-        {onDelete && (
-          <Button size="sm" variant="ghost" onClick={onDelete} title="Remove server">
-            <Trash2 className="size-4 text-danger" />
-          </Button>
+          <>
+            {/* Quick actions */}
+            <div className="flex flex-wrap gap-2">
+              {url && (
+                <Button size="sm" onClick={() => window.open(url, "_blank")}>
+                  <ExternalLink className="size-4" />
+                  Open app
+                </Button>
+              )}
+              {isRunning && (
+                <ActionButton
+                  size="sm"
+                  variant="secondary"
+                  icon={RotateCw}
+                  loading={pending === "restart"}
+                  loadingText="Restarting…"
+                  disabled={!!pending}
+                  onClick={() => run("restart", "Restarting")}
+                >
+                  Restart
+                </ActionButton>
+              )}
+              {isRunning && (
+                <ActionButton
+                  size="sm"
+                  variant="secondary"
+                  icon={Square}
+                  loading={pending === "stop"}
+                  loadingText="Stopping…"
+                  disabled={!!pending}
+                  onClick={() => run("stop", "Stopping")}
+                >
+                  Stop
+                </ActionButton>
+              )}
+              {isStopped && (
+                <ActionButton
+                  size="sm"
+                  icon={Play}
+                  loading={pending === "start"}
+                  loadingText="Starting…"
+                  disabled={!!pending}
+                  onClick={() => run("start", "Starting")}
+                >
+                  Start
+                </ActionButton>
+              )}
+            </div>
+
+            {/* Metrics */}
+            {status?.usage && isRunning && (
+              <div className="mt-4 grid grid-cols-3 gap-3">
+                <Metric label="CPU" value={`${status.usage.cpu}%`} />
+                <Metric label="RAM" value={`${status.usage.ram}%`} />
+                <Metric label="Disk" value={`${status.usage.storage}%`} />
+              </div>
+            )}
+
+            {/* Activity log */}
+            <div className="mt-5">
+              <p className="mb-2 text-sm font-semibold">Activity</p>
+              {status === null ? (
+                <div className="flex justify-center py-8">
+                  <Spinner label="Loading…" />
+                </div>
+              ) : status.provisioning_log ? (
+                <pre className="max-h-80 overflow-auto rounded-lg border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
+                  {status.provisioning_log.trimEnd()}
+                </pre>
+              ) : (
+                <p className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted">
+                  No activity recorded yet.
+                </p>
+              )}
+            </div>
+          </>
         )}
       </div>
     </Card>
   );
 }
 
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-border bg-card/40 p-3 text-center">
+      <p className="text-lg font-semibold">{value}</p>
+      <p className="text-xs text-muted">{label}</p>
+    </div>
+  );
+}
+
+/* ───────────────────────── Dialogs ───────────────────────── */
+
 function MergeEnvDialog({
   instanceId,
   prompt,
+  environments,
+  onPick,
   onClose,
   onMerged,
 }: {
   instanceId: number;
   prompt: { source: EnvChild; target: EnvChild } | null;
+  environments: EnvChild[];
+  onPick: (p: { source: EnvChild; target: EnvChild }) => void;
   onClose: () => void;
   onMerged: (message: string) => void;
 }) {
@@ -440,11 +739,7 @@ function MergeEnvDialog({
     setError(null);
     setLoading(true);
     try {
-      const res = await api.environmentMerge(
-        instanceId,
-        prompt.source.id,
-        prompt.target.id,
-      );
+      const res = await api.environmentMerge(instanceId, prompt.source.id, prompt.target.id);
       const msg =
         res.status === "up_to_date"
           ? `${prompt.target.name} is already up to date with ${prompt.source.branch}.`
@@ -456,13 +751,12 @@ function MergeEnvDialog({
     }
   };
 
+  const sources = prompt ? environments.filter((e) => e.id !== prompt.target.id) : [];
   const toProd = prompt?.target.is_production;
 
   return (
     <Dialog open={!!prompt} onClose={onClose} title="Merge branches">
-      {error && (
-        <AlertBanner className="mb-4" variant="danger" title="Couldn't merge" description={error} />
-      )}
+      {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't merge" description={error} />}
       {prompt && (
         <>
           <div className="flex items-center justify-center gap-3 rounded-lg border border-border bg-card/50 p-4">
@@ -470,24 +764,39 @@ function MergeEnvDialog({
             <ArrowRight className="size-5 shrink-0 text-muted" />
             <BranchPill name={prompt.target.name} branch={prompt.target.branch} highlight />
           </div>
-          <p className="mt-4 text-sm text-muted">
-            This merges branch{" "}
-            <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">
-              {prompt.source.branch}
-            </code>{" "}
+
+          <div className="mt-4 space-y-2">
+            <Label htmlFor="merge-source">Merge from</Label>
+            <select
+              id="merge-source"
+              className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm"
+              value={prompt.source.id}
+              onChange={(e) => {
+                const src = sources.find((s) => s.id === Number(e.target.value));
+                if (src) onPick({ source: src, target: prompt.target });
+              }}
+            >
+              {sources.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.branch})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <p className="mt-3 text-sm text-muted">
+            Merges{" "}
+            <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">{prompt.source.branch}</code>{" "}
             into{" "}
-            <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">
-              {prompt.target.branch}
-            </code>{" "}
-            on your Git host, then redeploys <strong>{prompt.target.name}</strong> with the
-            merged code.
+            <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">{prompt.target.branch}</code>{" "}
+            and redeploys <strong>{prompt.target.name}</strong>.
           </p>
           {toProd && (
             <AlertBanner
               className="mt-4"
               variant="warning"
               title="This targets Production"
-              description="The merged code will be deployed to your live Production server."
+              description="The merged code deploys to your live Production server."
             />
           )}
         </>
@@ -505,15 +814,7 @@ function MergeEnvDialog({
   );
 }
 
-function BranchPill({
-  name,
-  branch,
-  highlight,
-}: {
-  name: string;
-  branch: string;
-  highlight?: boolean;
-}) {
+function BranchPill({ name, branch, highlight }: { name: string; branch: string; highlight?: boolean }) {
   return (
     <div
       className={cn(
@@ -539,7 +840,7 @@ function CreateEnvDialog({
   instanceId: number;
   type: "staging" | "development" | null;
   onClose: () => void;
-  onCreated: (autoProvisioned: boolean) => void;
+  onCreated: (autoProvisioned: boolean, childId?: number) => void;
 }) {
   const [name, setName] = React.useState("");
   const [branch, setBranch] = React.useState("");
@@ -556,10 +857,7 @@ function CreateEnvDialog({
     setError(null);
     setLoading(false);
     if (type === "staging") {
-      api
-        .instanceBranches(instanceId)
-        .then((b) => setBranches(b.branches))
-        .catch(() => setBranches([]));
+      api.instanceBranches(instanceId).then((b) => setBranches(b.branches)).catch(() => setBranches([]));
     }
   }, [type, instanceId]);
 
@@ -580,20 +878,16 @@ function CreateEnvDialog({
         window.location.href = res.checkout_url;
         return;
       }
-      onCreated(!!res.auto_provisioned);
+      onCreated(!!res.auto_provisioned, res.child_id);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Couldn't create the environment.");
       setLoading(false);
     }
   };
 
-  const title = isStaging ? "New staging server" : "New development server";
-
   return (
-    <Dialog open={!!type} onClose={onClose} title={title}>
-      {error && (
-        <AlertBanner className="mb-4" variant="danger" title="Couldn't create" description={error} />
-      )}
+    <Dialog open={!!type} onClose={onClose} title={isStaging ? "New staging server" : "New development server"}>
+      {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't create" description={error} />}
       <div className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="env-name">{isStaging ? "Server name" : "Server / branch name"}</Label>
@@ -612,7 +906,6 @@ function CreateEnvDialog({
               : "A Git branch with this name is created (from the main branch) and linked to the server."}
           </p>
         </div>
-
         {isStaging && (
           <div className="space-y-2">
             <Label htmlFor="env-branch">Git branch (optional)</Label>
@@ -629,9 +922,6 @@ function CreateEnvDialog({
                 </option>
               ))}
             </select>
-            <p className="text-xs text-muted">
-              Attach this staging server to an existing branch, or leave it to create a fresh one.
-            </p>
           </div>
         )}
       </div>
@@ -685,9 +975,7 @@ function DeleteEnvDialog({
 
   return (
     <Dialog open={!!env} onClose={onClose} title="Remove environment">
-      {error && (
-        <AlertBanner className="mb-4" variant="danger" title="Couldn't remove" description={error} />
-      )}
+      {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't remove" description={error} />}
       <div className="flex gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
           <Trash2 className="size-5" />
@@ -697,24 +985,17 @@ function DeleteEnvDialog({
             Remove the {env?.environment_label.toLowerCase()} server <strong>{env?.name}</strong>?
           </p>
           <p className="mt-1 text-muted">
-            The server and its data are deleted. Any unused time on your current cycle is credited
-            back to your wallet. This can't be undone.
+            The server and its data are deleted. Any unused time on your current cycle is credited back to your
+            wallet. This can't be undone.
           </p>
         </div>
       </div>
       <label className="mt-5 flex items-start gap-2.5 rounded-lg border border-border p-3 text-sm">
-        <input
-          type="checkbox"
-          className="mt-0.5"
-          checked={deleteBranch}
-          onChange={(e) => setDeleteBranch(e.target.checked)}
-        />
+        <input type="checkbox" className="mt-0.5" checked={deleteBranch} onChange={(e) => setDeleteBranch(e.target.checked)} />
         <span>
           Also delete the Git branch{" "}
-          <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">
-            {env?.branch}
-          </code>{" "}
-          on the remote. Leave unchecked to keep your branch.
+          <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">{env?.branch}</code> on the
+          remote. Leave unchecked to keep your branch.
         </span>
       </label>
       <div className="mt-6 flex justify-end gap-2">

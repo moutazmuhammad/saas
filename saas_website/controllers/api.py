@@ -1224,13 +1224,17 @@ class SaasApi(http.Controller):
         children = prod.child_env_ids.filtered(
             lambda c: c.state not in ('cancelled', 'cancelled_by_client')
         ).sorted('id')
+        repo = prod.repo_ids[:1]
         return ok({
+            'project_id': prod.id,
+            'project_name': prod.subdomain or prod.name,
             'production': self._serialize_env_child(prod),
             'main_branch': prod.main_branch or 'main',
             'env_server_price': prod._env_server_price(),
             'billing_cycle': prod.billing_period or 'monthly',
             # Gate: env servers require a repo connected to Production.
-            'has_repo': bool(prod.repo_ids),
+            'has_repo': bool(repo),
+            'repo_url': repo.repo_url or '' if repo else '',
             'environments': [self._serialize_env_child(c) for c in children],
         })
 
@@ -1412,6 +1416,7 @@ class SaasApi(http.Controller):
             'name': inst.subdomain or inst.name,
             'domain': inst.name or '',
             'url': inst.url or '',
+            'version': inst.odoo_version_id.name or '',
             'environment': inst.environment,
             'environment_label': dict(
                 inst._fields['environment'].selection
