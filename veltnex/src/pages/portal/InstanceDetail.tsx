@@ -247,7 +247,7 @@ export default function InstanceDetail() {
               href={instance.url}
               target="_blank"
               rel="noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1.5 font-mono text-sm text-muted transition-colors hover:text-primary-glow"
+              className="mt-1.5 inline-flex items-center gap-1.5 font-mono text-sm text-muted transition-colors hover:text-primary"
             >
               <Globe className="size-3.5" />
               {instance.domain}
@@ -444,7 +444,7 @@ export default function InstanceDetail() {
         {subnav.map((s) => (
           <Link key={s.to} to={s.to}>
             <Card className="group flex items-center gap-4 p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                 <s.icon className="size-5" />
               </span>
               <div>
@@ -497,7 +497,7 @@ function UsageCard({
   helpAnchor?: string;
 }) {
   const tone = value >= 85 ? "bg-danger" : value >= 65 ? "bg-warning" : "bg-primary-glow";
-  const lineTone = value >= 85 ? "text-danger" : value >= 65 ? "text-warning" : "text-primary-glow";
+  const lineTone = value >= 85 ? "text-danger" : value >= 65 ? "text-warning" : "text-primary";
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between">

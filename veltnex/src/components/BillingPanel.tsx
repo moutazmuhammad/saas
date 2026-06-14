@@ -94,7 +94,7 @@ export function BillingPanel({
       {cap && cap.state !== "ok" && (
         <Card className={`p-5 ${TONE_STYLES[cap.tone] || "border-border"}`}>
           <div className="flex items-start gap-3">
-            <HardDrive className="mt-0.5 size-5 text-primary-glow" />
+            <HardDrive className="mt-0.5 size-5 text-primary" />
             <div className="flex-1">
               <p className="text-sm font-semibold">{cap.title}</p>
               <p className="mt-1 text-sm text-muted">{cap.message}</p>
@@ -127,7 +127,7 @@ export function BillingPanel({
         {/* Auto-renew + payment method */}
         <Card className="flex flex-col gap-3 p-5">
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <RefreshCw className="size-4 text-primary-glow" /> Auto-renew
+            <RefreshCw className="size-4 text-primary" /> Auto-renew
           </div>
           <p className="text-xs text-muted">
             {instance.auto_renew_subscription
@@ -155,7 +155,7 @@ export function BillingPanel({
         {/* Wallet — two classes */}
         <Card className="flex flex-col gap-2 p-5 lg:col-span-2">
           <div className="flex items-center gap-2 text-sm font-semibold">
-            <Wallet className="size-4 text-primary-glow" /> Wallet
+            <Wallet className="size-4 text-primary" /> Wallet
           </div>
           {wallet ? (
             <div className="grid gap-3 sm:grid-cols-2">

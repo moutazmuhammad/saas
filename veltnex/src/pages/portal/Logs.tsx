@@ -120,7 +120,7 @@ export default function Logs() {
               variant="secondary"
               size="sm"
               onClick={() => setAutoScroll((a) => !a)}
-              className={cn(autoScroll && "border-primary/40 text-primary-glow")}
+              className={cn(autoScroll && "border-primary/40 text-primary")}
             >
               <ArrowDownToLine className="size-4" />
               Auto-scroll

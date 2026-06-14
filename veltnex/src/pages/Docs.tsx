@@ -21,7 +21,7 @@ export default function Docs() {
   return (
     <div className="mx-auto w-full animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
       <div className="text-center">
-        <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary-glow">
+        <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary">
           <BookOpen className="size-6" />
         </span>
         <h1 className="mt-5 text-4xl font-bold tracking-tight">Documentation</h1>
@@ -59,7 +59,7 @@ export default function Docs() {
                     <Link to={`/docs/${a.id}`} className="group flex w-full items-center justify-between gap-3 py-3 text-left">
                       <span className="flex items-center gap-3">
                         <FileText className="size-4 text-muted" />
-                        <span className="text-sm transition-colors group-hover:text-primary-glow">
+                        <span className="text-sm transition-colors group-hover:text-primary">
                           {a.title}
                         </span>
                       </span>

@@ -595,7 +595,7 @@ function MainPanel({
             {url && (
               <>
                 <span className="text-border">·</span>
-                <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-primary-glow">
+                <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:text-primary">
                   {env.domain}
                   <ExternalLink className="size-3" />
                 </a>

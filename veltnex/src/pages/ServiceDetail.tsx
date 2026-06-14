@@ -72,12 +72,12 @@ export default function ServiceDetail() {
             All services
           </Link>
           <div className="mt-8 max-w-2xl">
-            <span className="flex size-14 items-center justify-center rounded-2xl bg-primary/15 text-primary-glow">
+            <span className="flex size-14 items-center justify-center rounded-2xl bg-primary/15 text-primary">
               <ServiceIcon icon={service.icon} className="size-7" />
             </span>
             <h1 className="mt-6 text-4xl font-bold tracking-tight">{service.name}</h1>
             {service.tagline && (
-              <p className="mt-3 text-lg text-primary-glow">{service.tagline}</p>
+              <p className="mt-3 text-lg text-primary">{service.tagline}</p>
             )}
             {canTrial && (
               <div className="mt-6">
@@ -95,7 +95,7 @@ export default function ServiceDetail() {
       {service.description && (
         <section className="mx-auto max-w-3xl px-4 py-12 sm:px-6 lg:px-8">
           <div
-            className="prose prose-invert max-w-none text-muted [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_a]:text-primary-glow"
+            className="prose prose-invert max-w-none text-muted [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_a]:text-primary"
             dangerouslySetInnerHTML={{ __html: service.description }}
           />
         </section>
@@ -130,7 +130,7 @@ export default function ServiceDetail() {
                 <h3 className="text-lg font-semibold">{p.name}</h3>
                 <ul className="mt-4 space-y-2 text-sm text-muted">
                   <li className="flex items-center gap-2">
-                    <Server className="size-4 text-primary-glow" />
+                    <Server className="size-4 text-primary" />
                     {p.workers} workers · {p.storage_gb} GB storage
                   </li>
                 </ul>

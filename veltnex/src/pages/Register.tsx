@@ -189,7 +189,7 @@ export default function Register() {
 
               <p className="mt-6 text-center text-sm text-muted">
                 Already have an account?{" "}
-                <Link to="/login" className="font-medium text-primary-glow hover:underline">
+                <Link to="/login" className="font-medium text-primary hover:underline">
                   Sign in
                 </Link>
               </p>
@@ -320,7 +320,7 @@ function OtpStep({
         Back
       </button>
       <div className="mt-4 flex items-center gap-3">
-        <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+        <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
           <ShieldCheck className="size-5" />
         </span>
         <div>
@@ -386,7 +386,7 @@ function OtpStep({
               setSeconds(RESEND_SECONDS);
               onResend();
             }}
-            className="font-medium text-primary-glow hover:underline"
+            className="font-medium text-primary hover:underline"
           >
             Resend code
           </button>

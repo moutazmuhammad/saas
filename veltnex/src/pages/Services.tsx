@@ -24,7 +24,7 @@ export default function Services() {
   return (
     <div className="mx-auto w-full animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
       <div>
-        <p className="text-sm font-medium text-primary-glow">Services</p>
+        <p className="text-sm font-medium text-primary">Services</p>
         <h1 className="mt-2 max-w-2xl text-4xl font-bold tracking-tight">
           Build your stack on VELTNEX
         </h1>
@@ -55,7 +55,7 @@ export default function Services() {
           {services.map((s) => (
             <Link key={s.id} to={`/services/${s.id}`}>
               <Card className="group flex h-full flex-col p-6 transition-all hover:-translate-y-0.5 hover:border-primary/40">
-                <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+                <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                   <ServiceIcon icon={s.icon} className="size-5" />
                 </span>
                 <h3 className="mt-5 text-lg font-semibold">{s.name}</h3>
@@ -70,7 +70,7 @@ export default function Services() {
                     ))}
                   </ul>
                 )}
-                <span className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-primary-glow">
+                <span className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-primary">
                   View plans <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
                 </span>
               </Card>

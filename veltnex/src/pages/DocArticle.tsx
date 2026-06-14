@@ -73,7 +73,7 @@ export default function DocArticle() {
           icon={FileText}
           title="Article not found"
           description="That documentation page doesn't exist."
-          action={<Link to="/docs" className="text-primary-glow hover:underline">Back to documentation</Link>}
+          action={<Link to="/docs" className="text-primary hover:underline">Back to documentation</Link>}
         />
       </div>
     );
@@ -92,7 +92,7 @@ export default function DocArticle() {
       </Link>
 
       <div className="mt-6">
-        <p className="text-sm font-medium text-primary-glow">{folder.title}</p>
+        <p className="text-sm font-medium text-primary">{folder.title}</p>
         <h1 className="mt-1 text-3xl font-bold tracking-tight">{article.title}</h1>
         <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
           <Clock className="size-3" />
@@ -121,7 +121,7 @@ export default function DocArticle() {
           <p className="text-xs uppercase tracking-wide text-muted">Next</p>
           <Link
             to={`/docs/${next.id}`}
-            className="mt-1 flex items-center justify-between gap-3 font-medium transition-colors hover:text-primary-glow"
+            className="mt-1 flex items-center justify-between gap-3 font-medium transition-colors hover:text-primary"
           >
             {next.title}
             <ArrowRight className="size-4" />

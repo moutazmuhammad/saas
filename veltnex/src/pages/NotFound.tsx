@@ -8,7 +8,7 @@ export default function NotFound() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4 text-center">
       <Logo />
-      <span className="mt-10 flex size-16 items-center justify-center rounded-2xl bg-card border border-border text-primary-glow">
+      <span className="mt-10 flex size-16 items-center justify-center rounded-2xl bg-card border border-border text-primary">
         <Compass className="size-8" />
       </span>
       <h1 className="mt-6 text-5xl font-bold tracking-tight">404</h1>

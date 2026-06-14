@@ -301,7 +301,7 @@ export default function Hosting() {
       <section className="relative overflow-hidden border-b border-border">
         <div className="pointer-events-none absolute left-1/2 top-0 h-72 w-[700px] -translate-x-1/2 rounded-full bg-primary/15 blur-[120px]" />
         <div className="relative mx-auto w-full px-4 py-16 text-center sm:px-6 lg:px-8">
-          <p className="text-sm font-medium text-primary-glow">Hosting</p>
+          <p className="text-sm font-medium text-primary">Hosting</p>
           <h1 className="mx-auto mt-2 max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl">
             Pay for exactly what you run
           </h1>
@@ -407,7 +407,7 @@ export default function Hosting() {
                 {showRegionPicker && (
                   <div className="mt-5 space-y-2">
                     <label className="flex items-center gap-1.5 text-sm font-medium">
-                      <Globe className="size-4 text-primary-glow" /> Region
+                      <Globe className="size-4 text-primary" /> Region
                     </label>
                     <select
                       value={regionId ?? ""}
@@ -475,9 +475,9 @@ export default function Hosting() {
                               <span className="text-base font-normal text-muted">{per}</span>
                             </p>
                             <ul className="mt-5 space-y-2 text-sm text-muted">
-                              <li className="flex items-center gap-2"><Cpu className="size-4 text-primary-glow" /> {t.workers} dedicated workers</li>
-                              <li className="flex items-center gap-2"><Users className="size-4 text-primary-glow" /> Recommended for {recommendedUsers(t.workers, usersPerWorkerMin, usersPerWorkerMax)} users</li>
-                              <li className="flex items-center gap-2"><HardDrive className="size-4 text-primary-glow" /> {formatBytes(t.storage)} storage</li>
+                              <li className="flex items-center gap-2"><Cpu className="size-4 text-primary" /> {t.workers} dedicated workers</li>
+                              <li className="flex items-center gap-2"><Users className="size-4 text-primary" /> Recommended for {recommendedUsers(t.workers, usersPerWorkerMin, usersPerWorkerMax)} users</li>
+                              <li className="flex items-center gap-2"><HardDrive className="size-4 text-primary" /> {formatBytes(t.storage)} storage</li>
                             </ul>
                             <Button className="mt-6 w-full" size="lg" variant={t.recommended ? "default" : "secondary"} onClick={() => selectTier(t.workers, t.storage)}>
                               Choose {t.name} <ArrowRight />
@@ -511,7 +511,7 @@ export default function Hosting() {
                     />
                     {tiers && tiers.length > 0 && (
                       <p className="text-center text-sm text-muted">
-                        <button onClick={() => setCustomize(false)} className="font-medium text-primary-glow underline-offset-2 hover:underline">
+                        <button onClick={() => setCustomize(false)} className="font-medium text-primary underline-offset-2 hover:underline">
                           ← Back to standard plans
                         </button>
                       </p>
@@ -519,7 +519,7 @@ export default function Hosting() {
                   </div>
                 )}
                 <p className="text-center text-sm text-muted">
-                  <button onClick={() => setStep(1)} className="font-medium text-primary-glow underline-offset-2 hover:underline">← Back</button>
+                  <button onClick={() => setStep(1)} className="font-medium text-primary underline-offset-2 hover:underline">← Back</button>
                 </p>
               </div>
             )}
@@ -566,7 +566,7 @@ export default function Hosting() {
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
             {SPECS.map((s) => (
               <Card key={s.title} className="p-6">
-                <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+                <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                   <s.icon className="size-5" />
                 </span>
                 <h3 className="mt-4 text-base font-semibold">{s.title}</h3>

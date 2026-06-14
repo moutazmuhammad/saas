@@ -105,7 +105,7 @@ export default function Login() {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="password">Password</Label>
-                <a href="/web/reset_password" className="text-xs text-primary-glow hover:underline">
+                <a href="/web/reset_password" className="text-xs text-primary hover:underline">
                   Forgot?
                 </a>
               </div>
@@ -135,7 +135,7 @@ export default function Login() {
 
           <p className="mt-6 text-center text-sm text-muted">
             New to VELTNEX?{" "}
-            <Link to={registerTo} className="font-medium text-primary-glow hover:underline">
+            <Link to={registerTo} className="font-medium text-primary hover:underline">
               Create an account
             </Link>
           </p>

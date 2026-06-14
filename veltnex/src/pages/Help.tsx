@@ -53,7 +53,7 @@ export default function Help() {
   return (
     <div className="mx-auto w-full animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
       <div className="text-center">
-        <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary-glow">
+        <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary">
           <LifeBuoy className="size-6" />
         </span>
         <h1 className="mt-5 text-4xl font-bold tracking-tight">Help &amp; definitions</h1>
@@ -90,7 +90,7 @@ export default function Help() {
                 {g.topics.map((t) => (
                   <Card key={t.anchor} id={t.anchor} className="scroll-mt-24 p-6">
                     <h3 className="text-lg font-semibold">{t.title}</h3>
-                    <p className="mt-1 text-sm font-medium text-primary-glow">{t.tip}</p>
+                    <p className="mt-1 text-sm font-medium text-primary">{t.tip}</p>
                     <div className="mt-3 space-y-2 text-sm text-muted">
                       {t.body.map((p, i) => (
                         <p key={i}>{p}</p>

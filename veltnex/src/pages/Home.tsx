@@ -82,7 +82,7 @@ const SectionPill = ({
   icon: React.ComponentType<{ className?: string }>;
   children: React.ReactNode;
 }) => (
-  <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary-glow">
+  <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
     <Icon className="size-3.5" />
     {children}
   </span>
@@ -232,7 +232,7 @@ export default function Home() {
             <Card className="group relative overflow-hidden p-8">
               <div className="pointer-events-none absolute -right-20 -top-20 size-72 rounded-full bg-primary/15 blur-3xl transition-opacity group-hover:opacity-80" />
               <div className="relative flex h-full flex-col">
-                <span className="flex size-12 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+                <span className="flex size-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
                   <Server className="size-6" />
                 </span>
                 <h3 className="mt-6 text-2xl font-semibold">
@@ -329,7 +329,7 @@ export default function Home() {
               <div className="rounded-xl border border-border bg-background/95 p-5 text-left sm:p-7">
                 <div className="flex items-center justify-between border-b border-border pb-4">
                   <div className="flex items-center gap-2.5">
-                    <Globe className="size-4 text-primary-glow" />
+                    <Globe className="size-4 text-primary" />
                     <span className="font-mono text-sm">
                       my-company.veltnex.com
                     </span>
@@ -377,7 +377,7 @@ export default function Home() {
                       className="flex items-center justify-between rounded-lg border border-border bg-card/60 px-3 py-2.5 text-xs"
                     >
                       <span className="flex items-center gap-2 text-muted">
-                        <r.icon className="size-3.5 text-primary-glow" />
+                        <r.icon className="size-3.5 text-primary" />
                         {r.label}
                       </span>
                       <span className="font-mono text-foreground">{r.value}</span>
@@ -432,7 +432,7 @@ export default function Home() {
                 key={v}
                 className="group inline-flex items-center gap-2 rounded-2xl border border-border bg-card px-6 py-3 text-lg font-bold transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-glow"
               >
-                <span className="text-xs font-medium uppercase tracking-wider text-muted transition-colors group-hover:text-primary-glow">
+                <span className="text-xs font-medium uppercase tracking-wider text-muted transition-colors group-hover:text-primary">
                   Odoo
                 </span>
                 {v}
@@ -443,7 +443,7 @@ export default function Home() {
             Need an older release or a custom patch level?{" "}
             <Link
               to="/docs"
-              className="font-medium text-primary-glow hover:underline"
+              className="font-medium text-primary hover:underline"
             >
               Custom images welcome →
             </Link>
@@ -522,7 +522,7 @@ export default function Home() {
                   </div>
                   <div className="px-5 py-4 font-mono text-[13px] leading-relaxed">
                     <div className="flex items-center gap-2 border-b border-border/60 pb-3">
-                      <GitBranch className="size-3.5 text-primary-glow" />
+                      <GitBranch className="size-3.5 text-primary" />
                       <span className="truncate text-xs sm:text-sm">
                         github.com/your-org/odoo-addons
                       </span>
@@ -534,11 +534,11 @@ export default function Home() {
                     <pre className="mt-4 overflow-x-auto whitespace-pre text-xs">
 {`$ git push origin main
 
-`}<span className="text-primary-glow">→</span>{` webhook received   `}<span className="text-muted">·</span>{` your-org/odoo-addons
-`}<span className="text-primary-glow">→</span>{` pulling commit     `}<span className="text-muted">·</span>{` `}<span className="text-info">a1b2c3d</span>{`
-`}<span className="text-primary-glow">→</span>{` instance           `}<span className="text-muted">·</span>{` my-company
-`}<span className="text-primary-glow">→</span>{` pip install -r requirements.txt
-`}<span className="text-primary-glow">→</span>{` restarting workers ... `}<span className="text-success">done</span>{`
+`}<span className="text-primary">→</span>{` webhook received   `}<span className="text-muted">·</span>{` your-org/odoo-addons
+`}<span className="text-primary">→</span>{` pulling commit     `}<span className="text-muted">·</span>{` `}<span className="text-info">a1b2c3d</span>{`
+`}<span className="text-primary">→</span>{` instance           `}<span className="text-muted">·</span>{` my-company
+`}<span className="text-primary">→</span>{` pip install -r requirements.txt
+`}<span className="text-primary">→</span>{` restarting workers ... `}<span className="text-success">done</span>{`
 
 `}<span className="text-success">✓ deployed in 12s</span>
                     </pre>
@@ -566,7 +566,7 @@ export default function Home() {
             <Card className="group relative overflow-hidden p-7 sm:col-span-2 lg:col-span-4 lg:row-span-2">
               <div className="pointer-events-none absolute -right-20 -top-20 size-72 rounded-full bg-primary/15 blur-3xl transition-opacity group-hover:opacity-80" />
               <div className="relative flex h-full flex-col">
-                <span className="flex size-12 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+                <span className="flex size-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
                   <Activity className="size-6" />
                 </span>
                 <h3 className="mt-6 text-2xl font-semibold">
@@ -603,7 +603,7 @@ export default function Home() {
                 </div>
                 <div className="mt-4 rounded-lg border border-border bg-background/80 p-3 font-mono text-[11px] leading-relaxed text-muted">
                   <span className="text-success">[INFO]</span> worker pool ready
-                  · 4 workers · <span className="text-primary-glow">heartbeat ok</span>
+                  · 4 workers · <span className="text-primary">heartbeat ok</span>
                   <br />
                   <span className="text-success">[INFO]</span> request{" "}
                   <span className="text-info">GET</span> /web/login 200{" "}
@@ -614,7 +614,7 @@ export default function Home() {
 
             {/* Provision in seconds — with progress bar mock */}
             <Card className="group p-6 sm:col-span-1 lg:col-span-2">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                 <Zap className="size-5" />
               </span>
               <h3 className="mt-5 text-lg font-semibold">Provision in seconds</h3>
@@ -635,7 +635,7 @@ export default function Home() {
 
             {/* Stable by design */}
             <Card className="group p-6 sm:col-span-1 lg:col-span-2">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                 <ShieldCheck className="size-5" />
               </span>
               <h3 className="mt-5 text-lg font-semibold">Stable by design</h3>
@@ -659,7 +659,7 @@ export default function Home() {
             <Card className="group p-6 sm:col-span-2 lg:col-span-3">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+                  <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                     <RefreshCw className="size-5" />
                   </span>
                   <h3 className="mt-5 text-lg font-semibold">
@@ -682,7 +682,7 @@ export default function Home() {
                     className="flex items-center justify-between rounded-md border border-border bg-background/60 px-3 py-2"
                   >
                     <span className="flex items-center gap-2 truncate">
-                      <RefreshCw className="size-3 text-primary-glow" />
+                      <RefreshCw className="size-3 text-primary" />
                       <span className="truncate text-muted">{b.name}</span>
                     </span>
                     <span className="flex items-center gap-3 text-[11px]">
@@ -692,7 +692,7 @@ export default function Home() {
                         className={
                           b.tag === "auto"
                             ? "rounded border border-success/30 bg-success/10 px-1.5 py-0.5 text-success"
-                            : "rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-primary-glow"
+                            : "rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-primary"
                         }
                       >
                         {b.tag}
@@ -705,7 +705,7 @@ export default function Home() {
 
             {/* Custom Python packages — with code snippet */}
             <Card className="group p-6 sm:col-span-2 lg:col-span-3">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                 <Package className="size-5" />
               </span>
               <h3 className="mt-5 text-lg font-semibold">
@@ -717,7 +717,7 @@ export default function Home() {
               </p>
               <div className="mt-5 rounded-lg border border-border bg-background/80 p-3 font-mono text-xs leading-relaxed">
                 <div className="text-muted">
-                  <span className="text-primary-glow">$</span> pip install{" "}
+                  <span className="text-primary">$</span> pip install{" "}
                   <span className="text-foreground">pandas openpyxl phonenumbers</span>
                 </div>
                 <div className="mt-1 text-success">✓ installed · pip 24.0</div>
@@ -726,7 +726,7 @@ export default function Home() {
 
             {/* Effortless databases */}
             <Card className="group p-6 sm:col-span-2 lg:col-span-2">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                 <Database className="size-5" />
               </span>
               <h3 className="mt-5 text-lg font-semibold">Effortless databases</h3>
@@ -738,7 +738,7 @@ export default function Home() {
 
             {/* Scale on demand */}
             <Card className="group p-6 sm:col-span-1 lg:col-span-2">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                 <Gauge className="size-5" />
               </span>
               <h3 className="mt-5 text-lg font-semibold">Scale on demand</h3>
@@ -750,7 +750,7 @@ export default function Home() {
 
             {/* Security & SSL */}
             <Card className="group p-6 sm:col-span-1 lg:col-span-2">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                 <Lock className="size-5" />
               </span>
               <h3 className="mt-5 text-lg font-semibold">Security & SSL</h3>
@@ -783,7 +783,7 @@ export default function Home() {
                   className="h-full p-6 transition-all hover:-translate-y-0.5 hover:border-primary/40"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow">
+                    <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
                       <s.icon className="size-5" />
                     </span>
                     <span className="font-mono text-xs font-bold tracking-widest text-muted">
@@ -828,12 +828,12 @@ export default function Home() {
               {services.slice(0, 3).map((s) => (
                 <Link key={s.id} to={`/services/${s.id}`}>
                   <Card className="group h-full p-6 transition-all hover:-translate-y-0.5 hover:border-primary/40">
-                    <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary-glow transition-colors group-hover:bg-primary/25">
+                    <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary transition-colors group-hover:bg-primary/25">
                       <ServiceIcon icon={s.icon} className="size-5" />
                     </span>
                     <h3 className="mt-5 text-lg font-semibold">{s.name}</h3>
                     <p className="mt-2 text-sm text-muted">{s.tagline}</p>
-                    <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary-glow opacity-0 transition-opacity group-hover:opacity-100">
+                    <span className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
                       Learn more <ArrowRight className="size-3.5" />
                     </span>
                   </Card>

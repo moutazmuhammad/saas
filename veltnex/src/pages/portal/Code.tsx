@@ -147,7 +147,7 @@ function RepoSection({
     return (
       <Card className="mt-6 p-5">
         <div className="flex items-center gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary-glow">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <GitBranch className="size-4" />
           </span>
           <div className="flex-1">
@@ -181,7 +181,7 @@ function RepoSection({
   return (
     <Card className="mt-6 p-5">
       <div className="flex items-center gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary-glow">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-primary">
           <GitBranch className="size-4" />
         </span>
         <div className="flex-1">

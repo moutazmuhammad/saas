@@ -28,7 +28,7 @@ export function InfoCard({
       <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-medium text-muted">{label}</p>
         {Icon && (
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary-glow">
+          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
             <Icon className="size-4" />
           </span>
         )}

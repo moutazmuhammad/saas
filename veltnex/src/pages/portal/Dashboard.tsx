@@ -142,7 +142,7 @@ export default function Dashboard() {
             <Card className="p-5">
               <div className="flex items-center justify-between">
                 <p className="text-sm font-medium text-muted">Fleet health</p>
-                <Link to="/my/instances" className="text-xs text-primary-glow hover:underline">
+                <Link to="/my/instances" className="text-xs text-primary hover:underline">
                   View projects
                 </Link>
               </div>
@@ -200,7 +200,7 @@ export default function Dashboard() {
           {/* Projects */}
           <div className="mt-8 flex items-center justify-between">
             <h2 className="font-semibold">Your projects</h2>
-            <Link to="/my/instances" className="inline-flex items-center gap-1 text-sm text-primary-glow hover:underline">
+            <Link to="/my/instances" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
               View all <ArrowRight className="size-3.5" />
             </Link>
           </div>

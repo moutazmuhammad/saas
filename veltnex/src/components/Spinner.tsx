@@ -16,7 +16,7 @@ export function Spinner({ size = "md", className, label }: SpinnerProps) {
       aria-label={label ?? "Loading"}
       className={cn("inline-flex items-center gap-2 text-muted", className)}
     >
-      <Loader2 className={cn("animate-spin text-primary-glow", sizeMap[size])} />
+      <Loader2 className={cn("animate-spin text-primary", sizeMap[size])} />
       {label && <span className="text-sm">{label}</span>}
     </span>
   );

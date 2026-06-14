@@ -531,7 +531,7 @@ function DatabaseBackupsDialog({
           <div className="min-w-0">
             <a
               href={ready.download_url}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary-glow underline-offset-2 hover:underline"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-2 hover:underline"
             >
               <Download className="size-4" />
               Download last backup

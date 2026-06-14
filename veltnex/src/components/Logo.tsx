@@ -24,7 +24,7 @@ export function Logo({
       </span>
       {withWordmark && (
         <span className="text-base font-bold tracking-tight">
-          VELT<span className="text-primary-glow">NEX</span>
+          VELT<span className="text-primary">NEX</span>
         </span>
       )}
     </Link>
