@@ -22,7 +22,6 @@ import {
   Archive,
   ArrowRight,
   Terminal,
-  GitFork,
   Settings,
   FolderGit2,
   Layers,
@@ -612,7 +611,6 @@ function MainPanel({
     { key: "shell", label: "Shell", icon: Terminal, enabled: true, action: () => setTool("shell") },
     { key: "sql", label: "SQL", icon: FileCode2, enabled: true, action: () => setTool("sql") },
     { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => setTab("logs") },
-    { key: "fork", label: "Fork", icon: GitFork, enabled: false, soon: "Fork is coming soon" },
     { key: "merge", label: "Merge", icon: GitMerge, enabled: true, action: onMergeInto },
     { key: "submodule", label: "Submodule", icon: Layers, enabled: false, soon: "Submodules are coming soon" },
   ];
