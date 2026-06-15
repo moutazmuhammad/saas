@@ -257,14 +257,6 @@ export default function Hosting() {
     return best;
   }, [tiers, currency]);
 
-  // Once the customer edits the subdomain by hand, stop auto-syncing it
-  // from the project name.
-  const subdomainTouched = React.useRef(false);
-  const onProjectName = (v: string) => {
-    setProjectName(v);
-    if (!subdomainTouched.current) setSubdomain(toSubdomain(v));
-  };
-
   // Pick a Production tier's specs and move on to naming the project.
   const selectTier = (workers: number, storage: number) => {
     setConfig((c) => (c ? { ...c, workers, storageGb: storage } : c));
@@ -570,7 +562,7 @@ export default function Hosting() {
                       id="project-name"
                       autoFocus
                       value={projectName}
-                      onChange={(e) => onProjectName(e.target.value)}
+                      onChange={(e) => setProjectName(e.target.value)}
                       placeholder="My company ERP"
                       className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
                     />
@@ -580,7 +572,7 @@ export default function Hosting() {
                     <input
                       id="subdomain"
                       value={subdomain}
-                      onChange={(e) => { subdomainTouched.current = true; setSubdomain(toSubdomain(e.target.value)); }}
+                      onChange={(e) => setSubdomain(toSubdomain(e.target.value))}
                       placeholder="my-company-erp"
                       className="h-10 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
                     />
