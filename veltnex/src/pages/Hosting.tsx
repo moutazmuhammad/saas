@@ -111,9 +111,13 @@ export default function Hosting() {
   // any published tier — shown as "Starting from $X/mo".
   const [floorPrice, setFloorPrice] = React.useState<number | null>(null);
   const configInit = React.useRef(false);
-  // Purchase wizard: 1 = name the project, 2 = choose specs, 3 = staging/dev.
+  // Purchase wizard (Production-first):
+  //   1 = choose Production specs, 2 = name the project,
+  //   3 = subdomain + region + Staging/Dev counts.
   const [step, setStep] = React.useState(1);
   const [projectName, setProjectName] = React.useState("");
+  // Subdomain is its own editable field (defaults from the project name).
+  const [subdomain, setSubdomain] = React.useState("");
   const [stagingCount, setStagingCount] = React.useState(0);
   const [devCount, setDevCount] = React.useState(0);
   const [projectQuote, setProjectQuote] = React.useState<ProjectPriceResult | null>(null);
@@ -234,21 +238,27 @@ export default function Hosting() {
     return best;
   }, [tiers, currency]);
 
-  const subdomain = toSubdomain(projectName);
-
-  // Pick a tier's specs and move on to the environments step.
-  const selectTier = (workers: number, storage: number) => {
-    setConfig((c) => (c ? { ...c, workers, storageGb: storage } : c));
+  // Move from the project-name step to the details step, seeding the
+  // subdomain from the name the first time (the customer can still edit it).
+  const goToDetails = () => {
+    setSubdomain((s) => s || toSubdomain(projectName));
     setStep(3);
   };
 
-  // Final hand-off: name + specs + env counts → the Odoo configure/checkout
-  // page (which collects version/domain/support/backup + payment). The
-  // configure form prefills subdomain and the staging/dev counts.
+  // Pick a Production tier's specs and move on to naming the project.
+  const selectTier = (workers: number, storage: number) => {
+    setConfig((c) => (c ? { ...c, workers, storageGb: storage } : c));
+    setStep(2);
+  };
+
+  // Final hand-off: specs + name + subdomain + region + env counts → the
+  // Odoo configure/checkout page (which collects version/domain/support/
+  // backup add-ons + the OPTIONAL Git repo + payment).
   const goCheckout = () => {
     if (!config || !subdomain) return;
     const qs = new URLSearchParams({
       subdomain,
+      project_name: projectName || subdomain,
       workers: String(config.workers),
       storage: String(config.storageGb),
       billing: config.cycle,
@@ -348,9 +358,9 @@ export default function Hosting() {
             {/* Step indicator */}
             <ol className="mb-10 flex items-center justify-center gap-1 sm:gap-3">
               {[
-                { n: 1, label: "Name your project" },
-                { n: 2, label: "Choose specs" },
-                { n: 3, label: "Environments" },
+                { n: 1, label: "Production specs" },
+                { n: 2, label: "Name your project" },
+                { n: 3, label: "Subdomain & environments" },
               ].map((s, i, arr) => (
                 <li key={s.n} className="flex items-center gap-2">
                   <button
@@ -379,55 +389,21 @@ export default function Hosting() {
               ))}
             </ol>
 
-            {/* ── Step 1: name the project ── */}
+            {/* ── Step 1: choose Production specs ── */}
             {step === 1 && (
-              <Card className="mx-auto max-w-2xl p-6">
-                <h2 className="text-lg font-semibold">Name your project</h2>
-                <p className="mt-1 text-sm text-muted">
-                  This identifies your project and becomes your default subdomain.
-                </p>
-                <div className="mt-5 space-y-2">
-                  <label htmlFor="project-name" className="text-sm font-medium">Project name</label>
-                  <input
-                    id="project-name"
-                    autoFocus
-                    value={projectName}
-                    onChange={(e) => setProjectName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && subdomain && setStep(2)}
-                    placeholder="My company ERP"
-                    className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                  />
-                  {subdomain && (
-                    <p className="text-xs text-muted">
-                      Subdomain: <span className="font-mono text-foreground">{subdomain}</span>
-                    </p>
-                  )}
+              <div className="space-y-8">
+                <div className="mx-auto max-w-2xl text-center">
+                  <h2 className="text-lg font-semibold">Choose your Production specs</h2>
+                  <p className="mt-1 text-sm text-muted">
+                    These are your{" "}
+                    <span className="font-medium text-foreground">Production</span>{" "}
+                    server's resources. Staging &amp; Development servers are added
+                    later at the lowest spec.
+                  </p>
                 </div>
 
-                {showRegionPicker && (
-                  <div className="mt-5 space-y-2">
-                    <label className="flex items-center gap-1.5 text-sm font-medium">
-                      <Globe className="size-4 text-primary" /> Region
-                    </label>
-                    <select
-                      value={regionId ?? ""}
-                      onChange={(e) => setRegionId(Number(e.target.value))}
-                      className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                    >
-                      {sortedRegions.map((r) => {
-                        const tag = (r.default || r.recommended)
-                          ? " — Recommended"
-                          : (r.budget || (cheapestRegion && r.id === cheapestRegion.id))
-                            ? " — Budget"
-                            : r.multiplier !== 1 ? ` (×${r.multiplier.toFixed(2)})` : "";
-                        return <option key={r.id} value={r.id}>{r.name}{tag}</option>;
-                      })}
-                    </select>
-                  </div>
-                )}
-
-                <div className="mt-5 space-y-2">
-                  <span className="text-sm font-medium">Billing</span>
+                {/* Billing toggle */}
+                <div className="mx-auto max-w-xs">
                   <div className="inline-flex w-full rounded-xl border border-border bg-card p-1">
                     {(["monthly", "yearly"] as const).map((c) => (
                       <button
@@ -447,15 +423,6 @@ export default function Hosting() {
                   </div>
                 </div>
 
-                <Button className="mt-6 w-full" size="lg" disabled={!subdomain} onClick={() => setStep(2)}>
-                  Continue <ArrowRight />
-                </Button>
-              </Card>
-            )}
-
-            {/* ── Step 2: choose specs ── */}
-            {step === 2 && (
-              <div className="space-y-8">
                 {tiers && tiers.length > 0 && !customize ? (
                   <>
                     <div className="grid gap-6 md:grid-cols-3">
@@ -504,7 +471,7 @@ export default function Hosting() {
                       usersPerWorkerMin={usersPerWorkerMin}
                       usersPerWorkerMax={usersPerWorkerMax}
                       footer={
-                        <Button className="w-full" size="lg" onClick={() => setStep(3)}>
+                        <Button className="w-full" size="lg" onClick={() => setStep(2)}>
                           Continue <ArrowRight />
                         </Button>
                       }
@@ -518,24 +485,93 @@ export default function Hosting() {
                     )}
                   </div>
                 )}
-                <p className="text-center text-sm text-muted">
-                  <button onClick={() => setStep(1)} className="font-medium text-primary underline-offset-2 hover:underline">← Back</button>
-                </p>
               </div>
             )}
 
-            {/* ── Step 3: staging & development ── */}
+            {/* ── Step 2: name the project ── */}
+            {step === 2 && (
+              <Card className="mx-auto max-w-2xl p-6">
+                <h2 className="text-lg font-semibold">Name your project</h2>
+                <p className="mt-1 text-sm text-muted">
+                  A friendly name for your project. You'll pick the subdomain next.
+                </p>
+                <div className="mt-5 space-y-2">
+                  <label htmlFor="project-name" className="text-sm font-medium">Project name</label>
+                  <input
+                    id="project-name"
+                    autoFocus
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && projectName.trim() && goToDetails()}
+                    placeholder="My company ERP"
+                    className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                  />
+                </div>
+                <div className="mt-6 flex items-center gap-3">
+                  <Button variant="secondary" onClick={() => setStep(1)}>← Back</Button>
+                  <Button className="flex-1" size="lg" disabled={!projectName.trim()} onClick={goToDetails}>
+                    Continue <ArrowRight />
+                  </Button>
+                </div>
+              </Card>
+            )}
+
+            {/* ── Step 3: subdomain, region & environments ── */}
             {step === 3 && (
               <Card className="mx-auto max-w-2xl p-6">
-                <h2 className="text-lg font-semibold">Staging &amp; Development servers</h2>
+                <h2 className="text-lg font-semibold">Subdomain, region &amp; environments</h2>
                 <p className="mt-1 text-sm text-muted">
-                  Production is always included. Add extra Staging and Development
-                  servers (lowest spec) — you can add more any time later.
+                  Choose your address and region, and how many Staging/Development
+                  servers to buy — you can create up to that many free, any time.
                 </p>
 
+                <div className="mt-5 space-y-2">
+                  <label htmlFor="subdomain" className="text-sm font-medium">Subdomain</label>
+                  <input
+                    id="subdomain"
+                    value={subdomain}
+                    onChange={(e) => setSubdomain(toSubdomain(e.target.value))}
+                    placeholder="my-company-erp"
+                    className="h-11 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
+                  />
+                  {subdomain && (
+                    <p className="text-xs text-muted">
+                      Your instance starts at{" "}
+                      <span className="font-mono text-foreground">{subdomain}</span>
+                    </p>
+                  )}
+                </div>
+
+                {showRegionPicker && (
+                  <div className="mt-5 space-y-2">
+                    <label className="flex items-center gap-1.5 text-sm font-medium">
+                      <Globe className="size-4 text-primary" /> Region
+                    </label>
+                    <select
+                      value={regionId ?? ""}
+                      onChange={(e) => setRegionId(Number(e.target.value))}
+                      className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                    >
+                      {sortedRegions.map((r) => {
+                        const tag = (r.default || r.recommended)
+                          ? " — Recommended"
+                          : (r.budget || (cheapestRegion && r.id === cheapestRegion.id))
+                            ? " — Budget"
+                            : r.multiplier !== 1 ? ` (×${r.multiplier.toFixed(2)})` : "";
+                        return <option key={r.id} value={r.id}>{r.name}{tag}</option>;
+                      })}
+                    </select>
+                  </div>
+                )}
+
                 <div className="mt-5 space-y-3">
+                  <span className="text-sm font-medium">Staging &amp; Development servers</span>
                   <Stepper label="Staging servers" value={stagingCount} onChange={setStagingCount} />
                   <Stepper label="Development servers" value={devCount} onChange={setDevCount} />
+                  <p className="text-xs text-muted">
+                    Add-ons (backup, support) and an optional Git repo are configured
+                    on the next step.
+                  </p>
                 </div>
 
                 <div className="mt-6 space-y-1.5 rounded-lg border border-border bg-card/50 p-4 text-sm">

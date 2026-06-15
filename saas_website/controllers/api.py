@@ -1280,7 +1280,7 @@ class SaasApi(http.Controller):
         repo = prod.repo_ids[:1]
         return ok({
             'project_id': prod.id,
-            'project_name': prod.subdomain or prod.name,
+            'project_name': prod.project_name or prod.subdomain or prod.name,
             'production': self._serialize_env_child(prod),
             'main_branch': prod.main_branch or 'main',
             'env_server_price': prod._env_server_price(),
