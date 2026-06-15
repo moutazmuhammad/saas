@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { AlertBanner } from "@/components/AlertBanner";
 import { PlanBuilder, type PlanConfig } from "@/components/PlanBuilder";
+import { FieldHint } from "@/components/FieldHint";
 import {
   api,
   ApiError,
@@ -47,14 +48,19 @@ function Stepper({
   label,
   value,
   onChange,
+  hint,
 }: {
   label: string;
   value: number;
   onChange: (n: number) => void;
+  hint?: string;
 }) {
   return (
     <div className="flex items-center justify-between rounded-lg border border-border p-3">
-      <span className="text-sm font-medium">{label}</span>
+      <span className="flex items-center gap-1.5 text-sm font-medium">
+        {label}
+        {hint && <FieldHint text={hint} />}
+      </span>
       <div className="flex items-center gap-3">
         <button
           type="button"
@@ -451,7 +457,10 @@ export default function Hosting() {
             {step === 1 && (
               <div className="space-y-8">
                 <div className="mx-auto max-w-2xl text-center">
-                  <h2 className="text-lg font-semibold">Choose your Production specs</h2>
+                  <h2 className="inline-flex items-center justify-center gap-1.5 text-lg font-semibold">
+                    Choose your Production specs
+                    <FieldHint text="Workers = CPU processes handling requests (more = more concurrent users). Storage = disk for your databases and files." />
+                  </h2>
                   <p className="mt-1 text-sm text-muted">
                     These are your{" "}
                     <span className="font-medium text-foreground">Production</span>{" "}
@@ -462,6 +471,10 @@ export default function Hosting() {
 
                 {/* Billing toggle */}
                 <div className="mx-auto max-w-xs">
+                  <div className="mb-1.5 flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
+                    Billing cycle
+                    <FieldHint text="Pay monthly, or yearly to save. The yearly discount applies to infrastructure; support and backups are billed monthly ×12." />
+                  </div>
                   <div className="inline-flex w-full rounded-xl border border-border bg-card p-1">
                     {(["monthly", "yearly"] as const).map((c) => (
                       <button
@@ -557,7 +570,10 @@ export default function Hosting() {
 
                 <div className="mt-5 grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1">
-                    <label htmlFor="project-name" className="text-sm font-medium">Project name</label>
+                    <label htmlFor="project-name" className="flex items-center gap-1.5 text-sm font-medium">
+                      Project name
+                      <FieldHint text="A friendly name for your project, shown in your dashboard. It does not affect your web address." />
+                    </label>
                     <input
                       id="project-name"
                       autoFocus
@@ -568,7 +584,10 @@ export default function Hosting() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-sm font-medium">Odoo version</label>
+                    <label className="flex items-center gap-1.5 text-sm font-medium">
+                      Odoo version
+                      <FieldHint text="The Odoo release your instance runs (e.g. 17.0). Pick the version your apps and custom modules target." />
+                    </label>
                     <select
                       value={versionId ?? ""}
                       onChange={(e) => setVersionId(Number(e.target.value))}
@@ -580,7 +599,10 @@ export default function Hosting() {
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label htmlFor="subdomain" className="text-sm font-medium">Subdomain</label>
+                    <label htmlFor="subdomain" className="flex items-center gap-1.5 text-sm font-medium">
+                      Subdomain
+                      <FieldHint text="The address of your instance: subdomain.basedomain. Use lowercase letters, numbers and hyphens." />
+                    </label>
                     <input
                       id="subdomain"
                       value={subdomain}
@@ -591,7 +613,10 @@ export default function Hosting() {
                   </div>
                   {(meta?.domains?.length ?? 0) > 1 && (
                     <div className="space-y-1">
-                      <label className="text-sm font-medium">Base domain</label>
+                      <label className="flex items-center gap-1.5 text-sm font-medium">
+                        Base domain
+                        <FieldHint text="The domain your instance lives under. Your full address becomes subdomain.basedomain." />
+                      </label>
                       <select
                         value={domainId ?? ""}
                         onChange={(e) => setDomainId(Number(e.target.value))}
@@ -615,13 +640,16 @@ export default function Hosting() {
 
                 {/* Git config + Python packages */}
                 <div className="mt-5">
-                  <button
-                    type="button"
-                    onClick={() => setShowGit((v) => !v)}
-                    className="text-sm font-medium text-primary underline-offset-2 hover:underline"
-                  >
-                    {showGit ? "− Hide repository & packages" : "+ Connect a Git repository / Python packages (optional)"}
-                  </button>
+                  <span className="inline-flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowGit((v) => !v)}
+                      className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+                    >
+                      {showGit ? "− Hide repository & packages" : "+ Connect a Git repository / Python packages (optional)"}
+                    </button>
+                    <FieldHint text="Optional: your custom Odoo addons repository and Python packages. Needed only to create Staging/Development environments — you can add it later." />
+                  </span>
                   {showGit && (
                     <div className="mt-3 space-y-3 rounded-lg border border-border p-3">
                       <input
@@ -683,6 +711,7 @@ export default function Hosting() {
                       <div className="space-y-1">
                         <label className="flex items-center gap-1.5 text-sm font-medium">
                           <Globe className="size-3.5 text-primary" /> Region
+                          <FieldHint text="The data-center location your server runs in. Pick the one closest to your users; price can vary by region." />
                         </label>
                         <select
                           value={regionId ?? ""}
@@ -702,7 +731,10 @@ export default function Hosting() {
                     )}
                     {(meta?.support_plans?.length ?? 0) > 1 && (
                       <div className="space-y-1">
-                        <label className="text-sm font-medium">Support plan</label>
+                        <label className="flex items-center gap-1.5 text-sm font-medium">
+                          Support plan
+                          <FieldHint text="Your level of help: Free is best-effort; paid tiers add priority response and channels. Billed as a flat monthly fee." />
+                        </label>
                         <select
                           value={supportCode}
                           onChange={(e) => setSupportCode(e.target.value)}
@@ -720,8 +752,10 @@ export default function Hosting() {
 
                   {/* Staging / Dev counts side by side */}
                   <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <Stepper label="Staging" value={stagingCount} onChange={setStagingCount} />
-                    <Stepper label="Development" value={devCount} onChange={setDevCount} />
+                    <Stepper label="Staging" value={stagingCount} onChange={setStagingCount}
+                      hint="A copy of your app to test changes safely before they reach Production. Runs on its own Git branch." />
+                    <Stepper label="Development" value={devCount} onChange={setDevCount}
+                      hint="A lightweight environment for building and testing new features, on its own Git branch." />
                   </div>
                   <p className="mt-1.5 text-xs text-muted">
                     Create up to the number you buy for free, any time.
@@ -738,6 +772,7 @@ export default function Hosting() {
                       />
                       <span className="text-sm">
                         <span className="font-medium">Daily off-site backups</span>
+                        <FieldHint className="ml-1" text="Automatic daily backups of your databases, stored off-site. Priced by the amount of storage actually used." />
                         <span className="ml-1 text-muted">— from {money(meta?.daily_backup_price ?? 0, currency)}/mo</span>
                       </span>
                     </label>
