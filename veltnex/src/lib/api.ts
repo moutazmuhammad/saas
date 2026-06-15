@@ -543,6 +543,11 @@ export const api = {
   sqlQuery: (id: number, db: string, query: string, limit = 1000) =>
     rpc<SqlResult>(`/saas/api/v1/instances/${id}/sql`, { db, query, limit }),
 
+  /** Place a hosting order from the SPA (no Review page). Returns where to
+   *  send the buyer next (payment checkout, or the instance for a trial). */
+  hostingOrder: (fields: Record<string, string>) =>
+    rpc<{ redirect_url: string }>(`/saas/api/v1/hosting/order`, fields),
+
   // Odoo.sh-style in-browser shell (terminal) into the instance container.
   // Output streams over SSE at terminalOutputUrl(); input/resize/close are RPC.
   terminalCreate: (id: number, cols: number, rows: number) =>

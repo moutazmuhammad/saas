@@ -342,6 +342,35 @@ class SaasApi(http.Controller):
         })
         return ok(data)
 
+    @http.route('/saas/api/v1/hosting/order', type='json', auth='public')
+    def hosting_order(self, **fields):
+        """Place a hosting order straight from the SPA — no QWeb "Review"
+        page. Reuses the canonical ``/hosting/order`` logic (validation,
+        instance creation, billing) and returns where to send the buyer
+        (the payment checkout, or the instance view for a trial)."""
+        if not self._partner():
+            return err(_("Please sign in to continue."), 'auth_required')
+        try:
+            resp = SaasWebsite().hosting_order(**fields)
+        except Exception:
+            _logger.exception("SPA hosting order failed")
+            return err(_("We couldn't place your order. Please try again."),
+                       'order_failed')
+        loc = ''
+        try:
+            loc = resp.headers.get('Location', '') or ''
+        except Exception:
+            loc = ''
+        # Validation failures redirect back with ``&error=<msg>`` — surface
+        # the message inline instead of bouncing to the (removed) page.
+        if 'error=' in loc:
+            import urllib.parse as _u
+            q = _u.parse_qs(_u.urlparse(loc).query)
+            msg = (q.get('error') or [''])[0]
+            return err((msg or '').replace('+', ' ')
+                       or _("Please review your order."), 'invalid')
+        return ok({'redirect_url': loc or '/my/instances'})
+
     @http.route('/saas/api/v1/services/calculate', type='json', auth='public')
     def services_calculate(self, workers=2, storage=5, billing='monthly',
                            region=None):

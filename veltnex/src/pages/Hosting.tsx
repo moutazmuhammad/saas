@@ -133,6 +133,8 @@ export default function Hosting() {
   const [repoBranch, setRepoBranch] = React.useState("main");
   const [gitToken, setGitToken] = React.useState("");
   const [pipPackages, setPipPackages] = React.useState("");
+  const [ordering, setOrdering] = React.useState(false);
+  const [orderError, setOrderError] = React.useState<string | null>(null);
 
   // Load limits/defaults + available regions once.
   React.useEffect(() => {
@@ -269,32 +271,56 @@ export default function Hosting() {
     setStep(2);
   };
 
-  // Final hand-off: specs + name + subdomain + region + env counts → the
-  // Odoo configure/checkout page (which collects version/domain/support/
-  // backup add-ons + the OPTIONAL Git repo + payment).
-  const goCheckout = () => {
-    if (!config || !subdomain) return;
-    const qs = new URLSearchParams({
+  // All the order fields collected across the wizard.
+  const orderFields = (): Record<string, string> => {
+    const f: Record<string, string> = {
       subdomain,
       project_name: projectName || subdomain,
-      workers: String(config.workers),
-      storage: String(config.storageGb),
-      billing: config.cycle,
+      workers: String(config?.workers ?? 0),
+      storage: String(config?.storageGb ?? 0),
+      billing: config?.cycle ?? "monthly",
+      billing_period: config?.cycle ?? "monthly",
       staging_count: String(stagingCount),
       dev_count: String(devCount),
       daily_backup: dailyBackup ? "1" : "0",
-    });
-    if (regionId != null) qs.set("region_id", String(regionId));
-    if (domainId != null) qs.set("domain_id", String(domainId));
-    if (versionId != null) qs.set("odoo_version_id", String(versionId));
-    if (supportCode) qs.set("support_code", supportCode);
+    };
+    if (regionId != null) f.region_id = String(regionId);
+    if (domainId != null) f.domain_id = String(domainId);
+    if (versionId != null) f.odoo_version_id = String(versionId);
+    if (supportCode) f.support_code = supportCode;
     if (repoUrl.trim()) {
-      qs.set("repo_url", repoUrl.trim());
-      qs.set("repo_branch", repoBranch.trim() || "main");
-      if (gitToken.trim()) qs.set("git_token", gitToken.trim());
+      f.repo_url = repoUrl.trim();
+      f.repo_branch = repoBranch.trim() || "main";
+      if (gitToken.trim()) f.git_token = gitToken.trim();
     }
-    if (pipPackages.trim()) qs.set("pip_packages", pipPackages.trim());
-    window.location.href = `/hosting/configure?${qs.toString()}`;
+    if (pipPackages.trim()) f.pip_packages = pipPackages.trim();
+    return f;
+  };
+
+  // Straight to payment — no Review page. Anonymous buyers sign up first
+  // (carrying the order), then the order is placed from the register flow.
+  const placeOrder = async () => {
+    if (!config || !subdomain || ordering) return;
+    const fields = orderFields();
+    if (!isAuthenticated) {
+      const qs = new URLSearchParams({ hosting: "1", ...fields });
+      window.location.href = `/register?${qs.toString()}`;
+      return;
+    }
+    setOrdering(true);
+    setOrderError(null);
+    try {
+      const { redirect_url } = await api.hostingOrder(fields);
+      window.location.href = redirect_url;
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "auth_required") {
+        const qs = new URLSearchParams({ hosting: "1", ...fields });
+        window.location.href = `/register?${qs.toString()}`;
+        return;
+      }
+      setOrderError(e instanceof ApiError ? e.message : "Couldn't place your order.");
+      setOrdering(false);
+    }
   };
 
   // Project total (plan + chosen staging/dev servers) for the env step.
@@ -745,8 +771,11 @@ export default function Hosting() {
                       <span>{money(grandTotal, currency)}{perLabel}</span>
                     </div>
                   </div>
-                  <Button className="mt-4 w-full" size="lg" disabled={!subdomain} onClick={goCheckout}>
-                    Review &amp; checkout <ArrowRight />
+                  {orderError && (
+                    <p className="mt-3 text-xs text-danger">{orderError}</p>
+                  )}
+                  <Button className="mt-4 w-full" size="lg" disabled={!subdomain || ordering} onClick={placeOrder}>
+                    {ordering ? "Placing order…" : "Continue to payment"} <ArrowRight />
                   </Button>
                   <Button variant="secondary" className="mt-2 w-full" onClick={() => setStep(2)}>← Back</Button>
                 </Card>

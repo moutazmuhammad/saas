@@ -74,14 +74,29 @@ export default function Register() {
     return "/";
   }, [searchParams]);
 
-  // The configure pages are Odoo QWeb (the purchase funnel stays
-  // server-rendered), so they need a real navigation; SPA routes use
-  // the client router.
-  const goAfterRegister = React.useCallback(() => {
+  // After sign-up: for the hosting funnel, place the order immediately
+  // (no Review page) and go straight to payment, carrying every order
+  // field through the URL. Other funnels use their configure page.
+  const goAfterRegister = React.useCallback(async () => {
+    const p = searchParams;
+    if (p.get("hosting") === "1") {
+      const fields: Record<string, string> = {};
+      p.forEach((v, k) => {
+        if (k !== "hosting" && v) fields[k] = v;
+      });
+      try {
+        const { redirect_url } = await api.hostingOrder(fields);
+        window.location.assign(redirect_url);
+        return;
+      } catch {
+        navigate("/my/instances", { replace: true });
+        return;
+      }
+    }
     const dest = postRegisterUrl();
     if (dest.includes("/configure")) window.location.assign(dest);
     else navigate(dest, { replace: true });
-  }, [postRegisterUrl, navigate]);
+  }, [searchParams, postRegisterUrl, navigate]);
 
   const [step, setStep] = React.useState<1 | 2>(1);
   const [form, setForm] = React.useState<Form>(EMPTY);
