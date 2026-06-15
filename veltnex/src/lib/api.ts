@@ -540,6 +540,20 @@ export const api = {
   databases: (id: number) => rpc<DbListData>(`/saas/api/v1/instances/${id}/databases`),
   sqlQuery: (id: number, db: string, query: string, limit = 1000) =>
     rpc<SqlResult>(`/saas/api/v1/instances/${id}/sql`, { db, query, limit }),
+
+  // Odoo.sh-style in-browser shell (terminal) into the instance container.
+  // Output streams over SSE at terminalOutputUrl(); input/resize/close are RPC.
+  terminalCreate: (id: number, cols: number, rows: number) =>
+    rpc<{ session_id: string; initial_output: string }>(
+      `/saas/terminal/instance/create`,
+      { instance_id: id, cols, rows },
+    ),
+  terminalInput: (sid: string, data: string) =>
+    rpc(`/saas/terminal/instance/input`, { session_id: sid, data }),
+  terminalResize: (sid: string, cols: number, rows: number) =>
+    rpc(`/saas/terminal/instance/resize`, { session_id: sid, cols, rows }),
+  terminalClose: (sid: string) =>
+    rpc(`/saas/terminal/instance/close`, { session_id: sid }),
   dbCreate: (id: number, name: string, login: string, password: string) =>
     rpc<{ db_name: string }>(`/saas/api/v1/instances/${id}/databases/create`, {
       name,
@@ -688,5 +702,10 @@ export function uploadToBucket(
 /** SSE URL for an instance's live container logs (served by saas_core). */
 export function logStreamUrl(instanceId: number, tail = 100) {
   return `/saas/instance/${instanceId}/logs/stream?tail=${tail}`;
+}
+
+/** SSE endpoint that streams a shell session's output (base64 chunks). */
+export function terminalOutputUrl(sessionId: string) {
+  return `/saas/terminal/instance/output/${sessionId}`;
 }
 

@@ -52,6 +52,7 @@ import Logs from "@/pages/portal/Logs";
 import Backups from "@/pages/portal/Backups";
 import Code from "@/pages/portal/Code";
 import SqlConsole from "@/pages/portal/SqlConsole";
+import ShellConsole from "@/pages/portal/ShellConsole";
 
 const TRANSIENT = new Set([
   "pending_payment",
@@ -608,7 +609,7 @@ function MainPanel({
     soon?: string;
   }[] = [
     { key: "clone", label: "Clone", icon: Copy, enabled: true, action: () => setTool("clone") },
-    { key: "shell", label: "Shell", icon: Terminal, enabled: false, soon: "In-browser shell needs a backend agent" },
+    { key: "shell", label: "Shell", icon: Terminal, enabled: true, action: () => setTool("shell") },
     { key: "sql", label: "SQL", icon: FileCode2, enabled: true, action: () => setTool("sql") },
     { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => setTab("logs") },
     { key: "fork", label: "Fork", icon: GitFork, enabled: false, soon: "Fork is coming soon" },
@@ -699,7 +700,7 @@ function MainPanel({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
         <div className="flex flex-wrap">
           {subtabs.map((t) => {
-            const active = tab === t.key && tool !== "sql";
+            const active = tab === t.key && tool !== "sql" && tool !== "shell";
             return (
               <button
                 key={t.key}
@@ -742,6 +743,10 @@ function MainPanel({
       {tool === "sql" ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
           <SqlConsole key={env.id} instanceId={env.id} />
+        </div>
+      ) : tool === "shell" ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
+          <ShellConsole key={env.id} instanceId={env.id} />
         </div>
       ) : tab === "databases" ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
