@@ -568,16 +568,6 @@ export default function Hosting() {
                     />
                   </div>
                   <div className="space-y-1">
-                    <label htmlFor="subdomain" className="text-sm font-medium">Subdomain</label>
-                    <input
-                      id="subdomain"
-                      value={subdomain}
-                      onChange={(e) => setSubdomain(toSubdomain(e.target.value))}
-                      placeholder="my-company-erp"
-                      className="h-10 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
-                    />
-                  </div>
-                  <div className="space-y-1">
                     <label className="text-sm font-medium">Odoo version</label>
                     <select
                       value={versionId ?? ""}
@@ -588,6 +578,16 @@ export default function Hosting() {
                         <option key={v.id} value={v.id}>{v.name}</option>
                       ))}
                     </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="subdomain" className="text-sm font-medium">Subdomain</label>
+                    <input
+                      id="subdomain"
+                      value={subdomain}
+                      onChange={(e) => setSubdomain(toSubdomain(e.target.value))}
+                      placeholder="my-company-erp"
+                      className="h-10 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
+                    />
                   </div>
                   {(meta?.domains?.length ?? 0) > 1 && (
                     <div className="space-y-1">
