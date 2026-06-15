@@ -24,7 +24,6 @@ import {
   Terminal,
   Settings,
   FolderGit2,
-  Layers,
   FileCode2,
   Clock,
 } from "lucide-react";
@@ -612,7 +611,6 @@ function MainPanel({
     { key: "sql", label: "SQL", icon: FileCode2, enabled: true, action: () => setTool("sql") },
     { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => setTab("logs") },
     { key: "merge", label: "Merge", icon: GitMerge, enabled: true, action: onMergeInto },
-    { key: "submodule", label: "Submodule", icon: Layers, enabled: false, soon: "Submodules are coming soon" },
   ];
 
   const subtabs: { key: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [

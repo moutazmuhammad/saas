@@ -4135,6 +4135,40 @@ class SaasInstance(models.Model):
                 % stdout.strip()
             )
 
+    def _update_repo_submodules(self, ssh, repo_dir):
+        """Init/update a repo's git submodules (Odoo.sh-style).
+
+        A customer repo may pull in addons via ``.gitmodules``; fetch
+        them so the submodule code lands in the addons path — exactly
+        like Odoo.sh, with no UI step. No-op when the repo has no
+        submodules.
+
+        **Non-fatal by design:** a submodule that can't be fetched (e.g.
+        a private absolute URL without credentials) logs a warning but
+        never aborts the deploy — the customer's instance still comes up.
+        Submodules with relative URLs inherit the parent's token auth.
+        """
+        self.ensure_one()
+        # Skip silently if there are no submodules.
+        code, _out, _err = ssh.execute(
+            'test -f %s' % shlex.quote('%s/.gitmodules' % repo_dir),
+        )
+        if code != 0:
+            return
+        self._append_log("Initializing git submodules...")
+        cmd = (
+            'cd %s && git submodule sync --recursive 2>&1 && '
+            'git submodule update --init --recursive 2>&1'
+        ) % shlex.quote(repo_dir)
+        code, stdout, stderr = ssh.execute(cmd, timeout=600)
+        if code != 0:
+            self._append_log(
+                "Submodule init reported an issue (continuing without "
+                "it):\n%s" % ((stdout or '') + (stderr or ''))[-400:]
+            )
+        else:
+            self._append_log("Submodules initialized.")
+
     def _clone_product_repos(self, ssh):
         """Clone the product's GitHub repositories into the instance directory."""
         self.ensure_one()
@@ -4174,6 +4208,9 @@ class SaasInstance(models.Model):
                     _("Failed to clone product repo '%s':\n%s\n%s")
                     % (repo.repo_url, stdout[-500:], stderr[-500:])
                 )
+            # Pull in any git submodules before fixing ownership so the
+            # submodule files are chowned to the container user too.
+            self._update_repo_submodules(ssh, repo_dir)
             ssh.execute(
                 'sudo chown -R %s:%s %s && sudo chmod -R 777 %s'
                 % (container_uid, container_uid,
@@ -4219,6 +4256,18 @@ class SaasInstance(models.Model):
                     _("Git pull failed for product repo '%s':\n%s\n%s")
                     % (repo.name, stdout[-500:], stderr[-500:])
                 )
+            # Keep submodules in sync with the pulled commit, then fix
+            # ownership so the container can read any newly fetched files.
+            self._update_repo_submodules(ssh, repo_dir)
+            try:
+                container_uid = self._get_container_uid(ssh)
+                ssh.execute(
+                    'sudo chown -R %s:%s %s && sudo chmod -R 777 %s'
+                    % (container_uid, container_uid,
+                       shlex.quote(repo_dir), shlex.quote(repo_dir))
+                )
+            except Exception:
+                pass
             self._append_log(
                 "Pulled %s: %s" % (repo.name, stdout.strip()[:200])
             )
