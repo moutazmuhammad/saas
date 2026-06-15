@@ -17,9 +17,11 @@ import { api, ApiError, type ApiInstance } from "@/lib/api";
 const parsePkgs = (s?: string) =>
   (s || "").split("\n").map((l) => l.trim()).filter(Boolean);
 
-export default function Code() {
-  const { id = "" } = useParams();
+export default function Code({ embedId }: { embedId?: number } = {}) {
+  const routeParams = useParams();
+  const id = embedId != null ? String(embedId) : (routeParams.id ?? "");
   const instanceId = Number(id);
+  const embedded = embedId != null;
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
@@ -62,18 +64,20 @@ export default function Code() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb items={envCrumbs(instance, "Code & packages", id)} />
+      {!embedded && <PortalBreadcrumb items={envCrumbs(instance, "Code & packages", id)} />}
 
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">
-          Code &amp; packages
-          <HelpHint anchor="repo" className="ml-1.5" />
-        </h1>
-        <p className="mt-1 text-sm text-muted">
-          Connect your Git modules and manage Python packages. Applying a change pulls your
-          code and restarts the instance (brief downtime).
-        </p>
-      </div>
+      {!embedded && (
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            Code &amp; packages
+            <HelpHint anchor="repo" className="ml-1.5" />
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            Connect your Git modules and manage Python packages. Applying a change pulls your
+            code and restarts the instance (brief downtime).
+          </p>
+        </div>
+      )}
 
       {!canDeploy && (
         <AlertBanner

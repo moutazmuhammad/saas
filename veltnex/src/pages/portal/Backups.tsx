@@ -17,9 +17,11 @@ import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiBackup, type ApiInstance } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/format";
 
-export default function Backups() {
-  const { id = "" } = useParams();
+export default function Backups({ embedId }: { embedId?: number } = {}) {
+  const routeParams = useParams();
+  const id = embedId != null ? String(embedId) : (routeParams.id ?? "");
   const instanceId = Number(id);
+  const embedded = embedId != null;
   const navigate = useNavigate();
   const toast = useToast();
   const [backups, setBackups] = React.useState<ApiBackup[] | null>(null);
@@ -89,7 +91,7 @@ export default function Backups() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb items={envCrumbs(instance, "Snapshots", id)} />
+      {!embedded && <PortalBreadcrumb items={envCrumbs(instance, "Snapshots", id)} />}
 
       <div>
         <h1 className="text-2xl font-bold tracking-tight">

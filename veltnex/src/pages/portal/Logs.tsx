@@ -23,9 +23,11 @@ function levelClass(text: string): string {
   return "text-foreground";
 }
 
-export default function Logs() {
-  const { id = "" } = useParams();
+export default function Logs({ embedId }: { embedId?: number } = {}) {
+  const routeParams = useParams();
+  const id = embedId != null ? String(embedId) : (routeParams.id ?? "");
   const instanceId = Number(id);
+  const embedded = embedId != null;
   const navigate = useNavigate();
 
   const [instance, setInstance] = React.useState<ApiInstance | null>(null);
@@ -100,7 +102,7 @@ export default function Logs() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb items={envCrumbs(instance, "Logs", id)} />
+      {!embedded && <PortalBreadcrumb items={envCrumbs(instance, "Logs", id)} />}
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>

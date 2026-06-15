@@ -47,6 +47,10 @@ import {
   type ProjectEnvironments,
   type StatusData,
 } from "@/lib/api";
+import Databases from "@/pages/portal/Databases";
+import Logs from "@/pages/portal/Logs";
+import Backups from "@/pages/portal/Backups";
+import Code from "@/pages/portal/Code";
 
 const TRANSIENT = new Set([
   "pending_payment",
@@ -80,12 +84,15 @@ export default function Environments() {
   const [error, setError] = React.useState<string | null>(null);
   const [selectedId, setSelectedId] = React.useState<number | null>(envParam);
   const [filter, setFilter] = React.useState("");
+  // Main panel mode: an environment, or the project-wide settings (Code).
+  const [view, setView] = React.useState<"env" | "settings">("env");
 
   // Select an environment AND reflect it in the URL (?env=) so the workspace
   // is deep-linkable / shareable and the command palette can target it.
   const selectEnv = React.useCallback(
     (envId: number) => {
       setSelectedId(envId);
+      setView("env");
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -236,6 +243,23 @@ export default function Environments() {
                   dragHandlers={dragHandlers}
                 />
               </SidebarSection>
+
+              {/* Project-wide settings (Code/repo + packages) — not per env. */}
+              <div className="mt-3 border-t border-border pt-2">
+                <button
+                  type="button"
+                  onClick={() => setView("settings")}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                    view === "settings"
+                      ? "bg-primary/10 font-medium text-primary"
+                      : "text-foreground/80 hover:bg-foreground/[0.06]",
+                  )}
+                >
+                  <Settings className="size-4 shrink-0" />
+                  Project settings
+                </button>
+              </div>
             </div>
           </div>
         </aside>
@@ -253,27 +277,31 @@ export default function Environments() {
                   <p className="text-xs text-muted">Staging and Development servers run on branches of your repo.</p>
                 </div>
               </div>
-              <Button className="shrink-0" onClick={() => navigate(`/my/instances/${data.production.id}/code`)}>
+              <Button className="shrink-0" onClick={() => setView("settings")}>
                 <GitBranch className="size-4" />
                 Connect
               </Button>
             </Card>
           )}
 
-          <MainPanel
-            key={selected.id}
-            env={selected}
-            project={data}
-            onDelete={selected.is_production ? undefined : () => setDeleteTarget(selected)}
-            onMergeInto={() => {
-              // Open merge dialog choosing this env as the target.
-              const others = allEnvs.filter((e) => e.id !== selected.id);
-              if (others.length) setMergePrompt({ source: others[0], target: selected });
-            }}
-            onChanged={load}
-          />
+          {view === "settings" ? (
+            <ProjectSettingsPanel project={data} />
+          ) : (
+            <MainPanel
+              key={selected.id}
+              env={selected}
+              project={data}
+              onDelete={selected.is_production ? undefined : () => setDeleteTarget(selected)}
+              onMergeInto={() => {
+                // Open merge dialog choosing this env as the target.
+                const others = allEnvs.filter((e) => e.id !== selected.id);
+                if (others.length) setMergePrompt({ source: others[0], target: selected });
+              }}
+              onChanged={load}
+            />
+          )}
 
-          {canCreate && allEnvs.length > 1 && (
+          {view === "env" && canCreate && allEnvs.length > 1 && (
             <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
               <GitMerge className="size-3.5" />
               Tip: drag a branch onto another in the sidebar to merge it and redeploy.
@@ -482,6 +510,25 @@ function BranchItem({
   );
 }
 
+/* ────────────────── Project settings (Code = project-wide) ────────────────── */
+
+function ProjectSettingsPanel({ project }: { project: ProjectEnvironments }) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="border-b border-border p-5">
+        <h1 className="text-xl font-bold tracking-tight">Project settings</h1>
+        <p className="mt-1 text-sm text-muted">
+          The Git repository, access token, and Python packages apply to the
+          whole project — Staging and Development environments inherit them.
+        </p>
+      </div>
+      <div className="px-5 pb-5">
+        <Code embedId={project.production.id} />
+      </div>
+    </Card>
+  );
+}
+
 /* ───────────────────────── Main panel ───────────────────────── */
 
 function MainPanel({
@@ -502,6 +549,7 @@ function MainPanel({
   const [status, setStatus] = React.useState<StatusData | null>(null);
   const [pending, setPending] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
+  const [tab, setTab] = React.useState("overview");
 
   const refreshStatus = React.useCallback(async () => {
     try {
@@ -561,19 +609,17 @@ function MainPanel({
     { key: "clone", label: "Clone", icon: Copy, enabled: true, action: () => setTool("clone") },
     { key: "shell", label: "Shell", icon: Terminal, enabled: false, soon: "In-browser shell needs a backend agent" },
     { key: "sql", label: "SQL", icon: FileCode2, enabled: false, soon: "Web SQL console needs a backend agent" },
-    { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => navigate(`/my/instances/${env.id}/logs`) },
+    { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => setTab("logs") },
     { key: "fork", label: "Fork", icon: GitFork, enabled: false, soon: "Fork is coming soon" },
     { key: "merge", label: "Merge", icon: GitMerge, enabled: true, action: onMergeInto },
     { key: "submodule", label: "Submodule", icon: Layers, enabled: false, soon: "Submodules are coming soon" },
   ];
 
-  const subtabs: { label: string; icon: React.ComponentType<{ className?: string }>; to?: string }[] = [
-    { label: "Overview", icon: Clock },
-    { label: "Databases", icon: Database, to: `/my/instances/${env.id}/databases` },
-    { label: "Code", icon: Code2, to: `/my/instances/${env.id}/code` },
-    { label: "Logs", icon: ScrollText, to: `/my/instances/${env.id}/logs` },
-    { label: "Backups", icon: Archive, to: `/my/instances/${env.id}/backups` },
-    { label: "Settings", icon: Settings, to: `/my/instances/${env.id}` },
+  const subtabs: { key: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { key: "overview", label: "Overview", icon: Clock },
+    { key: "databases", label: "Databases", icon: Database },
+    { key: "logs", label: "Logs", icon: ScrollText },
+    { key: "backups", label: "Backups", icon: Archive },
   ];
 
   return (
@@ -652,11 +698,11 @@ function MainPanel({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
         <div className="flex flex-wrap">
           {subtabs.map((t) => {
-            const active = t.label === "Overview";
+            const active = tab === t.key;
             return (
               <button
-                key={t.label}
-                onClick={() => t.to && navigate(t.to)}
+                key={t.key}
+                onClick={() => setTab(t.key)}
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors",
                   active
@@ -687,6 +733,19 @@ function MainPanel({
       </div>
 
       {/* Body */}
+      {tab === "databases" ? (
+        <div className="p-5">
+          <Databases key={env.id} embedId={env.id} />
+        </div>
+      ) : tab === "logs" ? (
+        <div className="p-5">
+          <Logs key={env.id} embedId={env.id} />
+        </div>
+      ) : tab === "backups" ? (
+        <div className="p-5">
+          <Backups key={env.id} embedId={env.id} />
+        </div>
+      ) : (
       <div className="p-5">
         {pendingPay ? (
           <AlertBanner
@@ -778,6 +837,7 @@ function MainPanel({
           </>
         )}
       </div>
+      )}
     </Card>
   );
 }

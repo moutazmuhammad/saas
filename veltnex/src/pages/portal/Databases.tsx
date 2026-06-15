@@ -32,9 +32,11 @@ import { api, ApiError, uploadToBucket, type DbListData, type ApiBackup, type Ap
 import { formatDateTime, formatSizeMb } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-export default function Databases() {
-  const { id = "" } = useParams();
+export default function Databases({ embedId }: { embedId?: number } = {}) {
+  const routeParams = useParams();
+  const id = embedId != null ? String(embedId) : (routeParams.id ?? "");
   const instanceId = Number(id);
+  const embedded = embedId != null;
   const navigate = useNavigate();
   const toast = useToast();
 
@@ -188,7 +190,7 @@ export default function Databases() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb items={envCrumbs(instance, "Databases", id)} />
+      {!embedded && <PortalBreadcrumb items={envCrumbs(instance, "Databases", id)} />}
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
