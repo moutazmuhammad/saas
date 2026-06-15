@@ -157,6 +157,8 @@ export interface Meta {
   countries: { id: number; name: string; code: string }[];
   domains: { id: number; name: string }[];
   hosting_versions: { id: number; name: string }[];
+  support_plans: { code: string; name: string; monthly_price: number; is_default: boolean }[];
+  daily_backup_price: number;
 }
 
 export interface ApiService {

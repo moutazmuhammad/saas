@@ -10,6 +10,113 @@
          Hosting Configure Form  —  /hosting/configure
          ============================================================ -->
 
+    <!-- Review + pay page: all inputs are collected in the SPA's Step 3,
+         so this page is a read-only summary that posts to /hosting/order. -->
+    <template id="hosting_review_form" name="Review Hosting Order">
+        <t t-call="saas_website.cloudodoo_layout">
+            <section class="py-6" style="padding-top:120px;">
+                <div class="container">
+                    <nav aria-label="breadcrumb">
+                        <ol class="breadcrumb">
+                            <li class="breadcrumb-item"><a href="/hosting">Hosting</a></li>
+                            <li class="breadcrumb-item active">Review &amp; pay</li>
+                        </ol>
+                    </nav>
+                    <h1 class="mb-2">Review your order</h1>
+                    <p class="text-muted mb-4">Confirm the details below, then continue to payment.</p>
+                    <t t-if="error">
+                        <div class="alert-banner alert-danger mb-4"><i class="fas fa-exclamation-circle"></i><div t-esc="error"/></div>
+                    </t>
+                    <form action="/hosting/order" method="post">
+                        <input type="hidden" name="csrf_token" t-att-value="request.csrf_token()"/>
+                        <input type="hidden" name="workers" t-att-value="workers"/>
+                        <input type="hidden" name="storage" t-att-value="storage"/>
+                        <input type="hidden" name="billing_period" t-att-value="billing_period"/>
+                        <input type="hidden" name="project_name" t-att-value="form_values.get('project_name', '')"/>
+                        <input type="hidden" name="subdomain" t-att-value="form_values.get('subdomain', '')"/>
+                        <input type="hidden" name="domain_id" t-att-value="sel_domain.id"/>
+                        <input type="hidden" name="odoo_version_id" t-att-value="sel_version.id"/>
+                        <input type="hidden" name="region_id" t-att-value="selected_region_id"/>
+                        <input type="hidden" name="support_code" t-att-value="selected_support_code"/>
+                        <input type="hidden" name="daily_backup" t-att-value="'1' if daily_backup else '0'"/>
+                        <input type="hidden" name="staging_count" t-att-value="staging_count"/>
+                        <input type="hidden" name="dev_count" t-att-value="dev_count"/>
+                        <input type="hidden" name="repo_url" t-att-value="form_values.get('repo_url', '')"/>
+                        <input type="hidden" name="repo_branch" t-att-value="form_values.get('repo_branch', 'main')"/>
+                        <input type="hidden" name="git_token" t-att-value="form_values.get('git_token', '')"/>
+                        <input type="hidden" name="pip_packages" t-att-value="form_values.get('pip_packages', '')"/>
+                        <t t-if="is_trial"><input type="hidden" name="is_trial" value="1"/></t>
+
+                        <div class="row g-4">
+                            <div class="col-lg-7">
+                                <div class="card p-4 mb-3">
+                                    <h5 class="mb-3">Project</h5>
+                                    <dl class="row mb-0">
+                                        <dt class="col-5 text-muted">Project name</dt><dd class="col-7" t-esc="form_values.get('project_name') or form_values.get('subdomain')"/>
+                                        <dt class="col-5 text-muted">Address</dt><dd class="col-7"><span t-esc="form_values.get('subdomain')"/>.<span t-esc="sel_domain.name"/></dd>
+                                        <t t-if="show_region_picker and selected_region">
+                                            <dt class="col-5 text-muted">Region</dt><dd class="col-7" t-esc="selected_region.name"/>
+                                        </t>
+                                        <dt class="col-5 text-muted">Odoo version</dt><dd class="col-7" t-esc="sel_version.name"/>
+                                    </dl>
+                                </div>
+                                <div class="card p-4 mb-3">
+                                    <h5 class="mb-3">Production specs</h5>
+                                    <dl class="row mb-0">
+                                        <dt class="col-5 text-muted">Workers</dt><dd class="col-7"><t t-esc="workers"/></dd>
+                                        <dt class="col-5 text-muted">Storage</dt><dd class="col-7"><t t-esc="storage"/> GB</dd>
+                                        <dt class="col-5 text-muted">Support</dt><dd class="col-7" t-esc="sel_support.name if sel_support else 'Standard'"/>
+                                        <dt class="col-5 text-muted">Daily backups</dt><dd class="col-7"><t t-esc="'Enabled' if daily_backup else 'Off'"/></dd>
+                                    </dl>
+                                </div>
+                                <t t-if="not is_trial and env_count">
+                                <div class="card p-4 mb-3">
+                                    <h5 class="mb-3">Environments (paid slots)</h5>
+                                    <dl class="row mb-0">
+                                        <dt class="col-5 text-muted">Staging servers</dt><dd class="col-7" t-esc="staging_count"/>
+                                        <dt class="col-5 text-muted">Development servers</dt><dd class="col-7" t-esc="dev_count"/>
+                                    </dl>
+                                    <p class="text-muted small mb-0 mt-2">Create up to this many for free, any time.</p>
+                                </div>
+                                </t>
+                                <t t-if="form_values.get('repo_url')">
+                                <div class="card p-4 mb-3">
+                                    <h5 class="mb-3">Git repository</h5>
+                                    <dl class="row mb-0">
+                                        <dt class="col-5 text-muted">Repository</dt><dd class="col-7 text-break" t-esc="form_values.get('repo_url')"/>
+                                        <dt class="col-5 text-muted">Branch</dt><dd class="col-7" t-esc="form_values.get('repo_branch', 'main')"/>
+                                    </dl>
+                                </div>
+                                </t>
+                            </div>
+                            <div class="col-lg-5">
+                                <div class="card p-4">
+                                    <h5 class="mb-3">Order summary</h5>
+                                    <t t-if="is_trial">
+                                        <p class="mb-0">Free trial — no charge today.</p>
+                                    </t>
+                                    <t t-else="">
+                                        <div class="d-flex justify-content-between mb-1"><span class="text-muted">Production plan</span><span><t t-esc="'${:,.2f}'.format(plan_cost)"/>/mo</span></div>
+                                        <t t-if="support_cost &gt; 0"><div class="d-flex justify-content-between mb-1"><span class="text-muted">Support</span><span><t t-esc="'${:,.2f}'.format(support_cost)"/>/mo</span></div></t>
+                                        <t t-if="daily_backup and backup_cost &gt; 0"><div class="d-flex justify-content-between mb-1"><span class="text-muted">Daily backups</span><span><t t-esc="'${:,.2f}'.format(backup_cost)"/>/mo</span></div></t>
+                                        <t t-if="env_count"><div class="d-flex justify-content-between mb-1"><span class="text-muted"><t t-esc="env_count"/> × env server</span><span><t t-esc="'${:,.2f}'.format(env_total)"/>/<t t-esc="'yr' if period == 'yearly' else 'mo'"/></span></div></t>
+                                        <hr/>
+                                        <div class="d-flex justify-content-between fw-bold fs-5"><span>Total</span><span><t t-esc="'${:,.2f}'.format(period_total)"/>/<t t-esc="'yr' if period == 'yearly' else 'mo'"/></span></div>
+                                    </t>
+                                    <button type="submit" class="btn btn-primary btn-lg w-100 mt-3">
+                                        <t t-if="is_trial">Start free trial</t>
+                                        <t t-else="">Confirm &amp; pay</t>
+                                    </button>
+                                    <a href="/hosting" class="btn btn-link w-100 mt-1">← Back to edit</a>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </section>
+        </t>
+    </template>
+
     <template id="hosting_configure_form" name="Configure Hosting Instance">
         <t t-call="saas_website.cloudodoo_layout">
             <section class="py-6" style="padding-top:120px;">

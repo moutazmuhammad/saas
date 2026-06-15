@@ -972,7 +972,39 @@ class SaasWebsite(http.Controller):
         if show_region_picker and region:
             domains = domains.filtered(lambda d: self._region_domain_ok(d, region))
 
-        return request.render('saas_website.hosting_configure_form', {
+        # ── Review page: all inputs were already collected in the SPA's
+        # Step 3, so /hosting/configure is now a read-only summary + pay.
+        # Resolve the chosen options for display + roll the env servers
+        # into the period total.
+        is_trial = kw.get('is_trial') == '1'
+        sel_domain = (domains.filtered(
+            lambda d: d.id == int(kw.get('domain_id') or 0))[:1]
+            or domains[:1])
+        sel_version = (versions.filtered(
+            lambda v: v.id == int(odoo_version_id or 0))[:1]
+            or versions[:1])
+        try:
+            staging_count = max(0, int(kw.get('staging_count', 0) or 0))
+            dev_count = max(0, int(kw.get('dev_count', 0) or 0))
+        except (TypeError, ValueError):
+            staging_count = dev_count = 0
+        env_count = 0 if is_trial else (staging_count + dev_count)
+        env_total = env_server_price * env_count
+        period = 'yearly' if billing_period == 'yearly' else 'monthly'
+        period_total = (
+            (yearly_total if period == 'yearly' else monthly_total)
+            + env_total)
+        return request.render('saas_website.hosting_review_form', {
+            'sel_domain': sel_domain,
+            'sel_version': sel_version,
+            'sel_support': sel_support,
+            'staging_count': staging_count,
+            'dev_count': dev_count,
+            'env_count': env_count,
+            'env_total': env_total,
+            'period': period,
+            'period_total': period_total,
+            'is_trial': is_trial,
             'domains': domains,
             'versions': versions,
             'regions': regions,
@@ -982,14 +1014,12 @@ class SaasWebsite(http.Controller):
             'workers': workers,
             'storage': storage,
             'backup_cost': backup_cost,
-            'backup_unit_price': backup_unit_price,
             'env_server_price': env_server_price,
             'plan_cost': plan_cost,
             'daily_backup': daily_backup,
             'support_plans': support_plans,
             'selected_support_code': support_code or '',
             'support_cost': support_cost,
-            'show_support_picker': show_support_picker,
             'monthly_total': monthly_total,
             'yearly_total': yearly_total,
             'yearly_savings': yearly_savings,
@@ -997,6 +1027,7 @@ class SaasWebsite(http.Controller):
             'billing_period': billing_period,
             'config': config,
             'odoo_version_id': int(odoo_version_id or 0),
+            'selected_region': region,
             'form_values': kw,
         })
 

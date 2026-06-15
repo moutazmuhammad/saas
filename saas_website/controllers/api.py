@@ -256,6 +256,10 @@ class SaasApi(http.Controller):
         # their trial; for anonymous visitors it reports availability.
         svc_trial, trial_days = site._get_trial_info()
         host_trial, _hd = site._get_trial_info(hosting=True)
+        support_plans = request.env['saas.support.plan'].sudo().search(
+            [('active', '=', True)], order='sequence, monthly_price, id')
+        backup_unit_price = request.env[
+            'saas.pricing.engine'].daily_backup_price()
         return ok({
             'hosting_config': self._public_plan_config(site._get_hosting_plan_config()),
             'custom_config': self._public_plan_config(site._get_custom_plan_config()),
@@ -274,6 +278,13 @@ class SaasApi(http.Controller):
             'hosting_versions': [
                 {'id': v.id, 'name': v.name} for v in versions
             ],
+            'support_plans': [
+                {'code': s.code, 'name': s.name,
+                 'monthly_price': s.monthly_price or 0.0,
+                 'is_default': s.is_default}
+                for s in support_plans
+            ],
+            'daily_backup_price': backup_unit_price,
         })
 
     @http.route('/saas/api/v1/services', type='json', auth='public')

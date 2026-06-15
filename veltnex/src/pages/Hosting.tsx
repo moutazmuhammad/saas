@@ -121,6 +121,16 @@ export default function Hosting() {
   const [stagingCount, setStagingCount] = React.useState(0);
   const [devCount, setDevCount] = React.useState(0);
   const [projectQuote, setProjectQuote] = React.useState<ProjectPriceResult | null>(null);
+  // Step 3 now collects EVERYTHING (the configure page is review + pay only).
+  const [domainId, setDomainId] = React.useState<number | null>(null);
+  const [versionId, setVersionId] = React.useState<number | null>(null);
+  const [supportCode, setSupportCode] = React.useState("");
+  const [dailyBackup, setDailyBackup] = React.useState(false);
+  const [showGit, setShowGit] = React.useState(false);
+  const [repoUrl, setRepoUrl] = React.useState("");
+  const [repoBranch, setRepoBranch] = React.useState("main");
+  const [gitToken, setGitToken] = React.useState("");
+  const [pipPackages, setPipPackages] = React.useState("");
 
   // Load limits/defaults + available regions once.
   React.useEffect(() => {
@@ -128,6 +138,11 @@ export default function Hosting() {
       .then(([m, regs]) => {
         setMeta(m);
         setRegions(regs);
+        // Defaults for the now-in-Step-3 fields.
+        if (m.domains?.length) setDomainId(m.domains[0].id);
+        if (m.hosting_versions?.length) setVersionId(m.hosting_versions[0].id);
+        const defSup = m.support_plans?.find((s) => s.is_default) || m.support_plans?.[0];
+        if (defSup) setSupportCode(defSup.code);
         // Pre-select the RECOMMENDED region (the API marks it `default`).
         // Fall back to the cheapest by multiplier, then the first region.
         const recommended = regs.find((r) => r.default || r.recommended);
@@ -264,8 +279,18 @@ export default function Hosting() {
       billing: config.cycle,
       staging_count: String(stagingCount),
       dev_count: String(devCount),
+      daily_backup: dailyBackup ? "1" : "0",
     });
     if (regionId != null) qs.set("region_id", String(regionId));
+    if (domainId != null) qs.set("domain_id", String(domainId));
+    if (versionId != null) qs.set("odoo_version_id", String(versionId));
+    if (supportCode) qs.set("support_code", supportCode);
+    if (repoUrl.trim()) {
+      qs.set("repo_url", repoUrl.trim());
+      qs.set("repo_branch", repoBranch.trim() || "main");
+      if (gitToken.trim()) qs.set("git_token", gitToken.trim());
+    }
+    if (pipPackages.trim()) qs.set("pip_packages", pipPackages.trim());
     window.location.href = `/hosting/configure?${qs.toString()}`;
   };
 
@@ -569,9 +594,119 @@ export default function Hosting() {
                   <Stepper label="Staging servers" value={stagingCount} onChange={setStagingCount} />
                   <Stepper label="Development servers" value={devCount} onChange={setDevCount} />
                   <p className="text-xs text-muted">
-                    Add-ons (backup, support) and an optional Git repo are configured
-                    on the next step.
+                    Create up to the number you buy for free, any time.
                   </p>
+                </div>
+
+                {/* Version + base domain */}
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Odoo version</label>
+                    <select
+                      value={versionId ?? ""}
+                      onChange={(e) => setVersionId(Number(e.target.value))}
+                      className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                    >
+                      {(meta?.hosting_versions || []).map((v) => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {(meta?.domains?.length ?? 0) > 1 && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Base domain</label>
+                      <select
+                        value={domainId ?? ""}
+                        onChange={(e) => setDomainId(Number(e.target.value))}
+                        className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                      >
+                        {(meta?.domains || []).map((d) => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* Support plan */}
+                {(meta?.support_plans?.length ?? 0) > 1 && (
+                  <div className="mt-5 space-y-2">
+                    <label className="text-sm font-medium">Support plan</label>
+                    <select
+                      value={supportCode}
+                      onChange={(e) => setSupportCode(e.target.value)}
+                      className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                    >
+                      {(meta?.support_plans || []).map((s) => (
+                        <option key={s.code} value={s.code}>
+                          {s.name}{s.monthly_price > 0 ? ` (+${money(s.monthly_price, currency)}/mo)` : " — included"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Daily backup add-on */}
+                {(meta?.daily_backup_price ?? 0) > 0 && (
+                  <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
+                    <input
+                      type="checkbox"
+                      checked={dailyBackup}
+                      onChange={(e) => setDailyBackup(e.target.checked)}
+                      className="mt-0.5 size-4"
+                    />
+                    <span className="text-sm">
+                      <span className="font-medium">Daily off-site backups</span>
+                      <span className="ml-1 text-muted">
+                        — from {money(meta?.daily_backup_price ?? 0, currency)}/mo (scales with storage used)
+                      </span>
+                    </span>
+                  </label>
+                )}
+
+                {/* Optional Git repository + Python packages */}
+                <div className="mt-5">
+                  <button
+                    type="button"
+                    onClick={() => setShowGit((v) => !v)}
+                    className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    {showGit ? "− Hide repository & packages" : "+ Connect a Git repository / Python packages (optional)"}
+                  </button>
+                  {showGit && (
+                    <div className="mt-3 space-y-3 rounded-lg border border-border p-3">
+                      <input
+                        value={repoUrl}
+                        onChange={(e) => setRepoUrl(e.target.value)}
+                        placeholder="https://github.com/you/your-addons.git"
+                        className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                      />
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <input
+                          value={repoBranch}
+                          onChange={(e) => setRepoBranch(e.target.value)}
+                          placeholder="main"
+                          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        />
+                        <input
+                          value={gitToken}
+                          onChange={(e) => setGitToken(e.target.value)}
+                          placeholder="Access token (private repos)"
+                          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        />
+                      </div>
+                      <textarea
+                        value={pipPackages}
+                        onChange={(e) => setPipPackages(e.target.value)}
+                        placeholder="Python packages, one per line (optional)"
+                        rows={2}
+                        className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs outline-none ring-primary/40 focus:ring-1"
+                      />
+                      <p className="text-xs text-muted">
+                        A repo is only needed to create Staging/Development environments — you can add it later.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-6 space-y-1.5 rounded-lg border border-border bg-card/50 p-4 text-sm">
@@ -588,7 +723,7 @@ export default function Hosting() {
                 <div className="mt-6 flex items-center gap-3">
                   <Button variant="secondary" onClick={() => setStep(2)}>← Back</Button>
                   <Button className="flex-1" size="lg" onClick={goCheckout}>
-                    Continue to checkout <ArrowRight />
+                    Review &amp; checkout <ArrowRight />
                   </Button>
                 </div>
               </Card>
