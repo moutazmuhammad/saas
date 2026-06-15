@@ -3,11 +3,9 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   Menu,
   X,
-  LayoutDashboard,
-  User,
   Server,
+  Settings,
   LogOut,
-  ChevronDown,
   LayoutGrid,
   type LucideIcon,
 } from "lucide-react";
@@ -30,9 +28,8 @@ type MenuItem = { label: string; icon: LucideIcon; to: string; external: boolean
 // experience is the same across every page. "Profile" is an Odoo portal
 // page, so it uses a full navigation; the rest are SPA routes.
 const MENU: MenuItem[] = [
-  { label: "Dashboard", icon: LayoutDashboard, to: "/my", external: false },
-  { label: "Profile", icon: User, to: "/my/account", external: true },
-  { label: "My Instances", icon: Server, to: "/my/instances", external: false },
+  { label: "Projects", icon: Server, to: "/my/instances", external: false },
+  { label: "Settings", icon: Settings, to: "/my/settings", external: false },
 ];
 
 // Internal (backend) users also get a link into the Odoo backend, mirroring
@@ -47,7 +44,6 @@ const BACKEND_ITEM: MenuItem = {
 
 export function PublicNav() {
   const [open, setOpen] = React.useState(false);
-  const [scrolled, setScrolled] = React.useState(false);
   const { isAuthenticated, user, logout } = useAuth();
   const sections = useSections();
   const LINKS = ALL_LINKS.filter((l) => !l.section || sections[l.section]);
@@ -62,12 +58,6 @@ export function PublicNav() {
   // Backend users get the extra "Backend" link; portal users don't.
   const menuItems = user?.is_internal ? [...MENU, BACKEND_ITEM] : MENU;
 
-  React.useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
-    window.addEventListener("scroll", onScroll);
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
   const go = (item: MenuItem) => {
     if (item.external) window.location.href = item.to;
     else navigate(item.to);
@@ -79,14 +69,8 @@ export function PublicNav() {
   };
 
   return (
-    <header
-      className={cn(
-        "sticky top-0 z-40 w-full transition-colors",
-        scrolled
-          ? "border-b border-border bg-background/80 backdrop-blur-xl"
-          : "border-b border-transparent"
-      )}
-    >
+    <header className="sticky top-0 z-40 w-full border-b border-border bg-card">
+
       <div className="mx-auto flex h-16 w-full items-center justify-between px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-8">
           <Logo />
@@ -114,6 +98,7 @@ export function PublicNav() {
             <UserMenu
               initials={user?.initials || "U"}
               name={user?.name || "Account"}
+              email={user?.email || ""}
               items={menuItems}
               onGo={go}
               onLogout={handleLogout}
@@ -211,15 +196,19 @@ export function PublicNav() {
   );
 }
 
+// Account dropdown — same shape as the dashboard header's avatar menu:
+// avatar-only trigger, panel with user info, items, and Sign out.
 function UserMenu({
   initials,
   name,
+  email,
   items,
   onGo,
   onLogout,
 }: {
   initials: string;
   name: string;
+  email: string;
   items: MenuItem[];
   onGo: (item: MenuItem) => void;
   onLogout: () => void;
@@ -230,19 +219,24 @@ function UserMenu({
     <div className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 rounded-lg border border-border bg-card px-2 py-1.5 text-sm transition-colors hover:bg-border/40"
+        aria-label="Account"
+        className={cn(
+          "ml-0.5 flex size-9 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground ring-2 ring-transparent transition-all",
+          open && "ring-primary/30",
+        )}
       >
-        <span className="flex size-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-          {initials}
-        </span>
-        <span className="max-w-[120px] truncate font-medium">{name}</span>
-        <ChevronDown className={cn("size-4 text-muted transition-transform", open && "rotate-180")} />
+        {initials}
       </button>
 
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-2 w-52 overflow-hidden rounded-xl border border-border bg-card shadow-card animate-scale-in">
+          <div className="absolute right-0 z-20 mt-2 w-64 overflow-hidden rounded-xl border border-border bg-card p-1.5 shadow-2xl animate-fade-in">
+            <div className="px-3 py-2">
+              <p className="truncate text-sm font-medium">{name}</p>
+              {email && <p className="truncate text-xs text-muted">{email}</p>}
+            </div>
+            <div className="my-1 border-t border-border" />
             {items.map((item) => (
               <button
                 key={item.label}
@@ -250,19 +244,19 @@ function UserMenu({
                   setOpen(false);
                   onGo(item);
                 }}
-                className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-foreground transition-colors hover:bg-border/50"
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-foreground/90 transition-colors hover:bg-foreground/[0.06]"
               >
-                <item.icon className="size-4 text-muted" />
+                <item.icon className="size-4" />
                 {item.label}
               </button>
             ))}
-            <div className="border-t border-border" />
+            <div className="my-1 border-t border-border" />
             <button
               onClick={() => {
                 setOpen(false);
                 onLogout();
               }}
-              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-danger transition-colors hover:bg-danger/10"
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm font-medium text-danger transition-colors hover:bg-danger/10"
             >
               <LogOut className="size-4" />
               Sign out
