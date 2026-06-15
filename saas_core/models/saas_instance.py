@@ -693,6 +693,29 @@ class SaasInstance(models.Model):
         ondelete='set null',
         help='On a Staging/Development child: the prorated activation invoice '
              'that gates its provisioning. Cleared once paid.')
+    # --- Purchased environment entitlement (slots) ---------------------
+    # On the Production anchor: how many Staging/Development servers the
+    # customer has PAID for. Children up to this count are free to create
+    # (the slot is already billed, upfront + on renewal); pressing "+"
+    # beyond it charges a prorated amount and adds a slot.
+    staging_slots = fields.Integer(
+        string='Staging Slots', copy=False, default=0,
+        help='Purchased Staging capacity on the Production project. Create up '
+             'to this many Staging servers for free; more requires payment.')
+    dev_slots = fields.Integer(
+        string='Development Slots', copy=False, default=0,
+        help='Purchased Development capacity on the Production project. Create '
+             'up to this many Development servers for free; more requires '
+             'payment.')
+    env_is_extra_slot = fields.Boolean(
+        string='Extra (paid) environment', copy=False, default=False,
+        help='On a Staging/Development child bought beyond the purchased '
+             'slots: once its activation invoice settles it adds a recurring '
+             'slot to the project. Cleared on activation.')
+    project_name = fields.Char(
+        string='Project Name', copy=False,
+        help='Customer-facing project name chosen at checkout. Falls back to '
+             'the subdomain when empty.')
 
     @api.depends('plan_id.storage_limit', 'extra_storage_blocks')
     def _compute_effective_storage_limit(self):
@@ -1828,9 +1851,11 @@ class SaasInstance(models.Model):
         return (self.parent_id.main_branch if self.parent_id else 'main')
 
     def _environment_order_lines(self, period):
-        """Recurring SO lines for the project's active Staging/Development
-        servers — one line per server at the lowest-spec env price. The
-        recurring counterpart to ``_storage_block_order_line``. Only meaningful
+        """Recurring SO lines for the project's purchased Staging/Development
+        SLOTS — one line per slot at the lowest-spec env price. Billing
+        follows the entitlement (what the customer paid for), not how many
+        children they've actually spun up: creating within the slots is
+        free, so renewal must bill slots, not live servers. Only meaningful
         on the Production anchor; children never self-bill."""
         self.ensure_one()
         if self.environment != 'production':
@@ -1839,20 +1864,18 @@ class SaasInstance(models.Model):
         if price <= 0:
             return []
         labels = dict(self._fields['environment'].selection)
+        period_label = 'Yearly' if period == 'yearly' else 'Monthly'
         lines = []
-        for child in self.child_env_ids:
-            if child.state in ('cancelled', 'cancelled_by_client'):
-                continue
-            lines.append((0, 0, {
-                'product_id': self._get_billing_product().id,
-                'name': _('%s server — %s (%s) [branch: %s]') % (
-                    labels.get(child.environment, child.environment),
-                    child.name or child.subdomain,
-                    'Yearly' if period == 'yearly' else 'Monthly',
-                    child._env_branch() or '—'),
-                'product_uom_qty': 1,
-                'price_unit': price,
-            }))
+        for env_type, count in (('staging', self.staging_slots or 0),
+                                ('development', self.dev_slots or 0)):
+            for i in range(max(0, count)):
+                lines.append((0, 0, {
+                    'product_id': self._get_billing_product().id,
+                    'name': _('%s slot #%d (%s)') % (
+                        labels.get(env_type, env_type), i + 1, period_label),
+                    'product_uom_qty': 1,
+                    'price_unit': price,
+                }))
         return lines
 
     def _initial_environment_order_lines(self, period, period_label):
@@ -1968,6 +1991,15 @@ class SaasInstance(models.Model):
         self.ensure_one()
         if self.environment == 'production':
             return
+        # A paid "extra" environment (bought beyond the purchased slots) adds
+        # one recurring slot to the project once its activation invoice
+        # settles — so renewal bills it and the free-create check counts it.
+        if self.env_is_extra_slot and self.parent_id:
+            parent = self.parent_id.sudo()
+            field = ('staging_slots' if self.environment == 'staging'
+                     else 'dev_slots')
+            parent.write({field: (parent[field] or 0) + 1})
+            self.env_is_extra_slot = False
         self.env_pending_invoice_id = False
         if self.state in ('draft', 'pending_payment', 'paid'):
             self.state = 'paid'
@@ -1979,10 +2011,26 @@ class SaasInstance(models.Model):
             error_method='_on_background_error', error_args=('failed',),
             thread_name='saas_env_deploy_%s' % self.subdomain)
 
+    def _env_slots_for(self, env_type):
+        """Purchased slot count for an env type on this Production anchor."""
+        self.ensure_one()
+        return (self.staging_slots if env_type == 'staging'
+                else self.dev_slots) or 0
+
+    def _env_used_for(self, env_type):
+        """Live (non-cancelled) children of ``env_type`` under this anchor."""
+        self.ensure_one()
+        return len(self.child_env_ids.filtered(
+            lambda c: c.environment == env_type
+            and c.state not in ('cancelled', 'cancelled_by_client')))
+
     def _spawn_pending_environments(self):
-        """After the initial invoice is paid, create + deploy the Staging/
-        Development servers the customer chose at checkout (already billed on
-        the initial invoice). Idempotent: clears the pending counters."""
+        """After the initial invoice is paid, GRANT the purchased Staging/
+        Development slots (entitlement). We no longer auto-create the child
+        servers at checkout — the customer creates them on demand later,
+        free up to the purchased slot count (the prod server is what gets
+        provisioned after payment). Idempotent: clears the pending
+        counters."""
         self.ensure_one()
         if self.environment != 'production':
             return
@@ -1990,23 +2038,15 @@ class SaasInstance(models.Model):
         dev = max(0, self.pending_dev_count or 0)
         if not (staging or dev):
             return
-        self.write({'pending_staging_count': 0, 'pending_dev_count': 0})
-        for i in range(staging):
-            try:
-                self._create_env_child(
-                    'staging', name='staging-%d' % (i + 1)
-                )._activate_pending_environment()
-            except Exception:
-                _logger.exception(
-                    "Failed to spawn staging env for %s", self.subdomain)
-        for i in range(dev):
-            try:
-                self._create_env_child(
-                    'development', name='dev-%d' % (i + 1)
-                )._activate_pending_environment()
-            except Exception:
-                _logger.exception(
-                    "Failed to spawn dev env for %s", self.subdomain)
+        self.write({
+            'staging_slots': (self.staging_slots or 0) + staging,
+            'dev_slots': (self.dev_slots or 0) + dev,
+            'pending_staging_count': 0,
+            'pending_dev_count': 0,
+        })
+        self._append_log(
+            "Environment slots granted: %d staging, %d development "
+            "(create them anytime from the workspace)." % (staging, dev))
 
     def action_create_environment(self, env_type, name=None, branch=None):
         """One-click add of a Staging/Development server mid-cycle. Issues a
@@ -2021,7 +2061,31 @@ class SaasInstance(models.Model):
         if self.is_trial:
             raise UserError(_(
                 "Upgrade to a paid plan before adding environments."))
+        if env_type not in ('staging', 'development'):
+            raise UserError(_("Unknown environment type."))
+
+        # Within the purchased slots → free to create (the slot is already
+        # paid, upfront + on renewal). Only when the customer presses "+"
+        # beyond what they bought do we charge for an extra slot.
+        used = self._env_used_for(env_type)
+        slots = self._env_slots_for(env_type)
+        if used < slots:
+            child = self._create_env_child(env_type, name=name, branch=branch)
+            child._activate_pending_environment()
+            self._append_log(
+                "Environment '%s' created within purchased %s slots "
+                "(%d/%d used)." % (
+                    child.subdomain, env_type, used + 1, slots))
+            return {
+                'child_id': child.id,
+                'auto_provisioned': True,
+                'free': True,
+            }
+
+        # Beyond the entitlement → buy an extra slot (prorated). On payment
+        # the slot is added to the project (``env_is_extra_slot`` marker).
         child = self._create_env_child(env_type, name=name, branch=branch)
+        child.env_is_extra_slot = True
         period = self.billing_period or 'monthly'
         full = self._env_server_price(period)
         charge = full
