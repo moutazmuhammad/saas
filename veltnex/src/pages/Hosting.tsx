@@ -14,6 +14,7 @@ import {
   type ApiRegion,
 } from "@/lib/api";
 import { formatBytes, recommendedUsers } from "@/lib/format";
+import { useAuth } from "@/context/AuthContext";
 import { cn } from "@/lib/utils";
 
 function money(amount: number, currency = "USD") {
@@ -95,6 +96,7 @@ const SPECS = [
 ];
 
 export default function Hosting() {
+  const { isAuthenticated } = useAuth();
   const [meta, setMeta] = React.useState<Meta | null>(null);
   const [tiers, setTiers] = React.useState<ApiTier[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -253,11 +255,12 @@ export default function Hosting() {
     return best;
   }, [tiers, currency]);
 
-  // Move from the project-name step to the details step, seeding the
-  // subdomain from the name the first time (the customer can still edit it).
-  const goToDetails = () => {
-    setSubdomain((s) => s || toSubdomain(projectName));
-    setStep(3);
+  // Once the customer edits the subdomain by hand, stop auto-syncing it
+  // from the project name.
+  const subdomainTouched = React.useRef(false);
+  const onProjectName = (v: string) => {
+    setProjectName(v);
+    if (!subdomainTouched.current) setSubdomain(toSubdomain(v));
   };
 
   // Pick a Production tier's specs and move on to naming the project.
@@ -396,8 +399,8 @@ export default function Hosting() {
             <ol className="mb-10 flex items-center justify-center gap-1 sm:gap-3">
               {[
                 { n: 1, label: "Production specs" },
-                { n: 2, label: "Name your project" },
-                { n: 3, label: "Subdomain & environments" },
+                { n: 2, label: "Project & code" },
+                { n: 3, label: "Region & environments" },
               ].map((s, i, arr) => (
                 <li key={s.n} className="flex items-center gap-2">
                   <button
@@ -525,28 +528,121 @@ export default function Hosting() {
               </div>
             )}
 
-            {/* ── Step 2: name the project ── */}
+            {/* ── Step 2: project identity + code ── */}
             {step === 2 && (
               <Card className="mx-auto max-w-2xl p-6">
-                <h2 className="text-lg font-semibold">Name your project</h2>
+                <h2 className="text-lg font-semibold">Project &amp; code</h2>
                 <p className="mt-1 text-sm text-muted">
-                  A friendly name for your project. You'll pick the subdomain next.
+                  Name your project, choose its address and Odoo version, and
+                  optionally connect your repository.
                 </p>
-                <div className="mt-5 space-y-2">
-                  <label htmlFor="project-name" className="text-sm font-medium">Project name</label>
-                  <input
-                    id="project-name"
-                    autoFocus
-                    value={projectName}
-                    onChange={(e) => setProjectName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && projectName.trim() && goToDetails()}
-                    placeholder="My company ERP"
-                    className="h-11 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                  />
+
+                <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <label htmlFor="project-name" className="text-sm font-medium">Project name</label>
+                    <input
+                      id="project-name"
+                      autoFocus
+                      value={projectName}
+                      onChange={(e) => onProjectName(e.target.value)}
+                      placeholder="My company ERP"
+                      className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label htmlFor="subdomain" className="text-sm font-medium">Subdomain</label>
+                    <input
+                      id="subdomain"
+                      value={subdomain}
+                      onChange={(e) => { subdomainTouched.current = true; setSubdomain(toSubdomain(e.target.value)); }}
+                      placeholder="my-company-erp"
+                      className="h-10 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">Odoo version</label>
+                    <select
+                      value={versionId ?? ""}
+                      onChange={(e) => setVersionId(Number(e.target.value))}
+                      className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                    >
+                      {(meta?.hosting_versions || []).map((v) => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {(meta?.domains?.length ?? 0) > 1 && (
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Base domain</label>
+                      <select
+                        value={domainId ?? ""}
+                        onChange={(e) => setDomainId(Number(e.target.value))}
+                        className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                      >
+                        {(meta?.domains || []).map((d) => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
+                {subdomain && (
+                  <p className="mt-2 text-xs text-muted">
+                    Your instance:{" "}
+                    <span className="font-mono text-foreground">
+                      {subdomain}.{meta?.domains?.find((d) => d.id === domainId)?.name ?? ""}
+                    </span>
+                  </p>
+                )}
+
+                {/* Git config + Python packages */}
+                <div className="mt-5">
+                  <button
+                    type="button"
+                    onClick={() => setShowGit((v) => !v)}
+                    className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+                  >
+                    {showGit ? "− Hide repository & packages" : "+ Connect a Git repository / Python packages (optional)"}
+                  </button>
+                  {showGit && (
+                    <div className="mt-3 space-y-3 rounded-lg border border-border p-3">
+                      <input
+                        value={repoUrl}
+                        onChange={(e) => setRepoUrl(e.target.value)}
+                        placeholder="https://github.com/you/your-addons.git"
+                        className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                      />
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <input
+                          value={repoBranch}
+                          onChange={(e) => setRepoBranch(e.target.value)}
+                          placeholder="main"
+                          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        />
+                        <input
+                          value={gitToken}
+                          onChange={(e) => setGitToken(e.target.value)}
+                          placeholder="Access token (private repos)"
+                          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        />
+                      </div>
+                      <textarea
+                        value={pipPackages}
+                        onChange={(e) => setPipPackages(e.target.value)}
+                        placeholder="Python packages, one per line (optional)"
+                        rows={2}
+                        className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs outline-none ring-primary/40 focus:ring-1"
+                      />
+                      <p className="text-xs text-muted">
+                        A repo is only needed to create Staging/Development environments — you can add it later.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="mt-6 flex items-center gap-3">
                   <Button variant="secondary" onClick={() => setStep(1)}>← Back</Button>
-                  <Button className="flex-1" size="lg" disabled={!projectName.trim()} onClick={goToDetails}>
+                  <Button className="flex-1" size="lg" disabled={!projectName.trim() || !subdomain} onClick={() => setStep(3)}>
                     Continue <ArrowRight />
                   </Button>
                 </div>
@@ -556,25 +652,14 @@ export default function Hosting() {
             {/* ── Step 3: everything on one screen (inputs + live price) ── */}
             {step === 3 && (
               <div className="grid items-start gap-6 lg:grid-cols-[1fr_20rem]">
-                {/* Left: all the choices, compact */}
+                {/* Left: region, support, backup & environments */}
                 <Card className="p-5">
-                  <h2 className="text-lg font-semibold">Configure your project</h2>
+                  <h2 className="text-lg font-semibold">Region, support &amp; environments</h2>
                   <p className="mt-1 text-xs text-muted">
-                    Pick your address, region, version, support and environments.
+                    Choose where it runs, your support level, and how many extra
+                    environments to buy.
                   </p>
 
-                  <div className="mt-4 space-y-1">
-                    <label htmlFor="subdomain" className="text-sm font-medium">Subdomain</label>
-                    <input
-                      id="subdomain"
-                      value={subdomain}
-                      onChange={(e) => setSubdomain(toSubdomain(e.target.value))}
-                      placeholder="my-company-erp"
-                      className="h-10 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
-                    />
-                  </div>
-
-                  {/* Region / Version / Domain / Support — flow two per row */}
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     {showRegionPicker && (
                       <div className="space-y-1">
@@ -594,32 +679,6 @@ export default function Hosting() {
                                 : r.multiplier !== 1 ? ` (×${r.multiplier.toFixed(2)})` : "";
                             return <option key={r.id} value={r.id}>{r.name}{tag}</option>;
                           })}
-                        </select>
-                      </div>
-                    )}
-                    <div className="space-y-1">
-                      <label className="text-sm font-medium">Odoo version</label>
-                      <select
-                        value={versionId ?? ""}
-                        onChange={(e) => setVersionId(Number(e.target.value))}
-                        className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                      >
-                        {(meta?.hosting_versions || []).map((v) => (
-                          <option key={v.id} value={v.id}>{v.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    {(meta?.domains?.length ?? 0) > 1 && (
-                      <div className="space-y-1">
-                        <label className="text-sm font-medium">Base domain</label>
-                        <select
-                          value={domainId ?? ""}
-                          onChange={(e) => setDomainId(Number(e.target.value))}
-                          className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                        >
-                          {(meta?.domains || []).map((d) => (
-                            <option key={d.id} value={d.id}>{d.name}</option>
-                          ))}
                         </select>
                       </div>
                     )}
@@ -665,48 +724,6 @@ export default function Hosting() {
                       </span>
                     </label>
                   )}
-
-                  {/* Optional Git + packages */}
-                  <div className="mt-4">
-                    <button
-                      type="button"
-                      onClick={() => setShowGit((v) => !v)}
-                      className="text-sm font-medium text-primary underline-offset-2 hover:underline"
-                    >
-                      {showGit ? "− Hide repository & packages" : "+ Connect a Git repository / Python packages (optional)"}
-                    </button>
-                    {showGit && (
-                      <div className="mt-3 space-y-3 rounded-lg border border-border p-3">
-                        <input
-                          value={repoUrl}
-                          onChange={(e) => setRepoUrl(e.target.value)}
-                          placeholder="https://github.com/you/your-addons.git"
-                          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                        />
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <input
-                            value={repoBranch}
-                            onChange={(e) => setRepoBranch(e.target.value)}
-                            placeholder="main"
-                            className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                          />
-                          <input
-                            value={gitToken}
-                            onChange={(e) => setGitToken(e.target.value)}
-                            placeholder="Access token (private repos)"
-                            className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                          />
-                        </div>
-                        <textarea
-                          value={pipPackages}
-                          onChange={(e) => setPipPackages(e.target.value)}
-                          placeholder="Python packages, one per line (optional)"
-                          rows={2}
-                          className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs outline-none ring-primary/40 focus:ring-1"
-                        />
-                      </div>
-                    )}
-                  </div>
                 </Card>
 
                 {/* Right: sticky live price breakdown */}
