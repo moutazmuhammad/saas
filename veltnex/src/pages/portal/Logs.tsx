@@ -101,10 +101,10 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
   }, [lines, autoScroll]);
 
   return (
-    <div className="animate-fade-in">
+    <div className={cn("animate-fade-in", embedded && "flex h-full min-h-0 flex-col")}>
       {!embedded && <PortalBreadcrumb items={envCrumbs(instance, "Logs", id)} />}
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex shrink-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Logs</h1>
           <p className="mt-1 text-sm text-muted">
@@ -148,17 +148,17 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
           }
         />
       ) : (
-      <>
+      <div className={cn(embedded && "flex min-h-0 flex-1 flex-col")}>
       {connError && (
-        <AlertBanner className="mt-6" variant="warning" title="Log stream interrupted" description={connError} onDismiss={() => setConnError(null)} />
+        <AlertBanner className="mt-6 shrink-0" variant="warning" title="Log stream interrupted" description={connError} onDismiss={() => setConnError(null)} />
       )}
 
-      <div className="mt-6">
-        <div className="rounded-lg border border-border p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className={cn("mt-6", embedded && "flex min-h-0 flex-1 flex-col")}>
+        <div className={cn("rounded-lg border border-border p-4", embedded && "flex min-h-0 flex-1 flex-col")}>
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
             <StatusBadge status={instance?.state || "running"} />
           </div>
-          <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">
+          <div className="mt-2 flex shrink-0 items-center gap-1.5 font-mono text-xs text-muted">
             <span className={cn("size-1.5 rounded-full", paused ? "bg-muted" : "bg-success animate-pulse-soft")} />
             {paused ? "Paused" : "Streaming"} · {lines.length} lines · odoo.log
           </div>
@@ -170,7 +170,10 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
               const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
               if (!atBottom && autoScroll) setAutoScroll(false);
             }}
-            className="mt-3 max-h-[calc(100vh-20rem)] min-h-[420px] overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed"
+            className={cn(
+              "mt-3 overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed",
+              embedded ? "min-h-0 flex-1" : "max-h-[calc(100vh-20rem)] min-h-[420px]",
+            )}
           >
             {lines.length === 0 ? (
               <p className="text-muted">
@@ -186,7 +189,7 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
           </div>
         </div>
       </div>
-      </>
+      </div>
       )}
     </div>
   );

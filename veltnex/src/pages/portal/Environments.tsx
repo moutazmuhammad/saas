@@ -623,7 +623,7 @@ function MainPanel({
   ];
 
   return (
-    <Card className="flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden lg:sticky lg:top-20">
+    <Card className="flex max-h-[calc(100vh-9.5rem)] flex-col overflow-hidden lg:sticky lg:top-20">
       {/* Header */}
       <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
@@ -734,21 +734,21 @@ function MainPanel({
 
       {/* Body — flex-fills the card so the panel stays within the viewport
           (only this area scrolls) and doesn't resize when switching tabs */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {tab === "databases" ? (
-        <div className="p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <Databases key={env.id} embedId={env.id} />
         </div>
       ) : tab === "logs" ? (
-        <div className="p-5">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
           <Logs key={env.id} embedId={env.id} />
         </div>
       ) : tab === "backups" ? (
-        <div className="p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <Backups key={env.id} embedId={env.id} />
         </div>
       ) : (
-      <div className="p-5">
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
         {pendingPay ? (
           <AlertBanner
             variant="warning"
