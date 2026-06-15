@@ -19,6 +19,13 @@ _logger = logging.getLogger(__name__)
 
 class SaasPortal(CustomerPortal):
 
+    # The native Odoo portal account page is off-brand vs. the SPA. Send
+    # customers to our themed Settings page instead (same /my/account route,
+    # inherited via empty @http.route()).
+    @http.route()
+    def account(self, redirect=None, **post):
+        return request.redirect('/my/settings')
+
     # Only show paid orders to customers in the portal.
     # Unpaid/cancelled orders are internal artifacts from plan changes.
     def _prepare_orders_domain(self, partner):

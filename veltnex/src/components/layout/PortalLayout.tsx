@@ -1,7 +1,6 @@
 import * as React from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-  Server,
   Receipt,
   Settings,
   LogOut,
@@ -21,8 +20,9 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 
+// Projects are reached via the top-bar project switcher (GCP-style), so the
+// left menu carries the account sections only — no duplicate Projects entry.
 const NAV = [
-  { to: "/my/instances", label: "Projects", icon: Server },
   { to: "/my/billing", label: "Billing", icon: Receipt },
   { to: "/my/settings", label: "Settings", icon: Settings },
 ];

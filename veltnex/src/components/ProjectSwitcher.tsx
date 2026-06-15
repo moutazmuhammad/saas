@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Server, ChevronDown, Search, GitBranch, FolderOpen } from "lucide-react";
+import { Server, ChevronDown, ChevronRight, Search, GitBranch, FolderOpen } from "lucide-react";
 import { api, type ApiInstance, type ProjectEnvironments } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -149,6 +149,16 @@ export function ProjectSwitcher({ className }: { className?: string }) {
                 </button>
               ))
             )}
+          </div>
+
+          <div className="border-t border-border p-2">
+            <button
+              onClick={() => go("/my/instances")}
+              className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm font-medium text-primary transition-colors hover:bg-foreground/[0.06]"
+            >
+              View all projects
+              <ChevronRight className="size-4" />
+            </button>
           </div>
         </div>
       )}

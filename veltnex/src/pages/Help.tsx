@@ -51,7 +51,7 @@ export default function Help() {
   }, [query]);
 
   return (
-    <div className="mx-auto w-full animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
+    <div className="mx-auto max-w-7xl animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
       <div className="text-center">
         <span className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary">
           <LifeBuoy className="size-6" />
