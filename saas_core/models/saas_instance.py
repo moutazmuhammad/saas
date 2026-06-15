@@ -10486,6 +10486,35 @@ class SaasInstance(models.Model):
 
             return self._hosting_build_template_db(template)
 
+    def _hosting_core_addons_path(self, ssh):
+        """Core (non-customer) addons path for the base-only template build.
+
+        Reads the instance's ``odoo.conf`` and strips the customer's
+        ``/mnt/extra-addons`` entries, leaving only the image's core Odoo
+        addons (where ``base`` lives). This makes the one-time template
+        build immune to a broken or version-mismatched customer module,
+        which would otherwise abort ``odoo -i base`` and strand every DB
+        create in "creating". Falls back to the standard image core paths
+        if the conf can't be read.
+        """
+        self.ensure_one()
+        default = '/opt/odoo/odoo/addons,/opt/odoo/addons'
+        conf = '%s/config/odoo.conf' % self._get_instance_path()
+        try:
+            code, out, _err = ssh.execute(
+                "grep -iE '^[[:space:]]*addons_path' %s" % shlex.quote(conf),
+                timeout=30,
+            )
+        except Exception:
+            return default
+        if code != 0 or not out:
+            return default
+        line = out.strip().splitlines()[0]
+        __, __, val = line.partition('=')
+        parts = [p.strip() for p in val.split(',') if p.strip()]
+        core = [p for p in parts if not p.startswith('/mnt/extra-addons')]
+        return ','.join(core) if core else default
+
     def _hosting_build_template_db(self, template):
         """Build ``template`` from scratch: createdb → init → verify.
 
@@ -10534,10 +10563,20 @@ class SaasInstance(models.Model):
                 % shlex.quote(instance_path),
                 timeout=180,
             )
+            # The template only needs ``base``, so build it with a
+            # CORE-ONLY addons path (customer ``/mnt/extra-addons`` modules
+            # stripped). ``odoo -i base`` scans every manifest in the path,
+            # so a single broken / version-mismatched customer module (e.g.
+            # an Odoo-18 ``version`` string in an Odoo-17 image) would
+            # otherwise abort the init and leave every DB create stuck in
+            # "creating". Customer modules still install into the real DB
+            # later via the normal flow — the template clone is base-only.
+            core_addons = self._hosting_core_addons_path(ssh)
             init_cmd = (
                 'cd %s && docker compose run --rm -T odoo '
                 'odoo -d %s '
                 '-i base '
+                '--addons-path=%s '
                 '--without-demo=all '
                 '--stop-after-init '
                 '--no-http '
@@ -10546,6 +10585,7 @@ class SaasInstance(models.Model):
             ) % (
                 shlex.quote(instance_path),
                 shlex.quote(template),
+                shlex.quote(core_addons),
             )
             try:
                 init_exit, stdout, stderr = ssh.execute(
