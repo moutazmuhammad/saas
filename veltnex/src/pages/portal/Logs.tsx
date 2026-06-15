@@ -154,10 +154,8 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
       )}
 
       <div className="mt-6">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Logs</p>
         <div className="rounded-lg border border-border p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-medium">Live container stream</span>
             <StatusBadge status={instance?.state || "running"} />
           </div>
           <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">

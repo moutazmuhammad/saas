@@ -623,7 +623,7 @@ function MainPanel({
   ];
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden lg:sticky lg:top-20">
       {/* Header */}
       <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
@@ -732,8 +732,9 @@ function MainPanel({
         </div>
       </div>
 
-      {/* Body — fixed height so the panel doesn't resize when switching tabs */}
-      <div className="h-[calc(100vh-19rem)] min-h-[520px] overflow-y-auto">
+      {/* Body — flex-fills the card so the panel stays within the viewport
+          (only this area scrolls) and doesn't resize when switching tabs */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
       {tab === "databases" ? (
         <div className="p-5">
           <Databases key={env.id} embedId={env.id} />
