@@ -471,6 +471,21 @@
                 #footer, #wrapwrap > footer, .o_footer, .o_footer_copyright{display:none !important;}
                 body, #wrapwrap, main{background:rgb(var(--vx-bg)) !important;color:rgb(var(--vx-fg));}
                 body{font-family:'Roboto',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
+                /* Retheme Odoo/Bootstrap content to the VELTNEX palette so the
+                   order summary + payment form match the rest of the site. */
+                .card, .o_payment_form, .list-group-item{background:rgb(var(--vx-card)) !important;border-color:rgb(var(--vx-border)) !important;color:rgb(var(--vx-fg)) !important;}
+                .bg-light, .bg-white, .bg-body, .bg-100, .bg-200{background:rgb(var(--vx-card)) !important;}
+                .text-muted, .text-secondary, small.text-muted{color:rgb(var(--vx-muted)) !important;}
+                .border, .border-top, .border-bottom, .border-start, .border-end, hr{border-color:rgb(var(--vx-border)) !important;}
+                h1,h2,h3,h4,h5,h6,.h1,.h2,.h3,.h4,.h5,.fw-bold,strong{color:rgb(var(--vx-fg));}
+                a{color:rgb(var(--vx-primary));}
+                .btn-primary{background:rgb(var(--vx-primary)) !important;border-color:rgb(var(--vx-primary)) !important;color:#fff !important;}
+                .btn-primary:hover{filter:brightness(.94);}
+                .btn-secondary, .btn-light, .btn-outline-secondary{background:rgb(var(--vx-card)) !important;border-color:rgb(var(--vx-border)) !important;color:rgb(var(--vx-fg)) !important;}
+                .form-control, .form-select, input, select, textarea{background:rgb(var(--vx-card)) !important;border-color:rgb(var(--vx-border)) !important;color:rgb(var(--vx-fg)) !important;}
+                .text-primary{color:rgb(var(--vx-primary)) !important;}
+                .badge.bg-success, .text-success{color:rgb(var(--vx-fg));}
+                .container, .container-fluid{padding-top:1.5rem;}
                 .vx-header{position:sticky;top:0;z-index:40;display:flex;align-items:center;justify-content:space-between;height:56px;padding:0 1rem;background:rgb(var(--vx-card));border-bottom:1px solid rgb(var(--vx-border));}
                 .vx-logo{display:inline-flex;align-items:center;gap:.6rem;text-decoration:none;color:rgb(var(--vx-fg));font-weight:700;font-size:1rem;}
                 .vx-mark{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:.5rem;background:rgb(var(--vx-primary));box-shadow:0 0 20px rgb(var(--vx-primary) / .35);}
