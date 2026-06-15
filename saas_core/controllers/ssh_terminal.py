@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import select
+import shlex
 import threading
 import time
 import uuid
@@ -481,7 +482,15 @@ class SshTerminalController(http.Controller):
                 "event: closed\ndata: session already closed\n\n",
                 content_type='text/event-stream',
             )
+        return self._terminal_sse_response(session_id)
 
+    def _terminal_sse_response(self, session_id):
+        """Build the live SSE Response for an already-authorized session.
+
+        Shared by the manager terminal (``stream_output``) and the
+        customer instance shell (``instance_output``) — only the ACL
+        differs; the PG ``LISTEN`` relay is identical.
+        """
         dbname = request.env.cr.dbname
         sid = session_id
 
@@ -617,3 +626,210 @@ class SshTerminalController(http.Controller):
         if sess.uid != request.env.uid:
             raise Forbidden("Access denied to this terminal session")
         return sess
+
+    # ==================================================================
+    #  Customer instance shell (Odoo.sh-style) — opens a shell *inside*
+    #  the customer's own container via ``docker exec``. Authorized by
+    #  instance ownership (record rules / access token) + session
+    #  ownership, NOT the manager group. The host shell is never
+    #  exposed — we exec straight into the container.
+    # ==================================================================
+    def _get_owned_session(self, session_id):
+        """Routing record for a session the *current user* owns.
+
+        Unlike :meth:`_get_session` this does not require the manager
+        group — any authenticated customer may drive a session they
+        themselves opened (enforced by the ``uid`` match).
+        """
+        sess = request.env['saas.terminal.session'].sudo().search(
+            [('sid', '=', session_id)], limit=1,
+        )
+        if not sess:
+            raise NotFound("Terminal session not found or expired.")
+        if sess.uid != request.env.uid:
+            raise Forbidden("Access denied to this terminal session")
+        return sess
+
+    def _authorize_instance_shell(self, instance_id, access_token=None):
+        """Return the instance (sudo) if the caller may shell into it.
+
+        Mirrors the SPA's ``_instance`` access semantics (owner via
+        record rules, or holder of the access token), then enforces the
+        shell-specific preconditions: hosting-only and running.
+        """
+        Instance = request.env['saas.instance']
+        inst = Instance.browse(int(instance_id))
+        if not inst.exists():
+            raise NotFound("Instance not found.")
+        if not (access_token and inst.sudo().access_token == access_token):
+            inst.check_access_rights('read')
+            inst.check_access_rule('read')
+        inst = inst.sudo()
+        if not inst.is_hosting:
+            raise Forbidden("Shell is only available for hosting instances.")
+        if inst.state != 'running':
+            raise Forbidden("The instance must be running to open a shell.")
+        if not inst.docker_server_id:
+            raise Forbidden("This instance isn't fully set up yet.")
+        return inst
+
+    @http.route(
+        '/saas/terminal/instance/create',
+        type='json',
+        auth='user',
+        methods=['POST'],
+    )
+    def create_instance_session(self, instance_id, access_token=None,
+                                cols=120, rows=32, **kwargs):
+        inst = self._authorize_instance_shell(instance_id, access_token)
+
+        _cleanup_stale_sessions(request.env)
+        with _local_sessions_lock:
+            if len(_local_sessions) >= MAX_CONCURRENT_SESSIONS:
+                raise Forbidden(
+                    "Maximum concurrent terminal sessions reached."
+                )
+
+        container = inst._get_container_name()
+        ssh_conn = inst.docker_server_id._get_ssh_connection()
+        ssh_conn._connect()
+        try:
+            transport = ssh_conn._client.get_transport()
+            transport.set_keepalive(SSH_KEEPALIVE_INTERVAL)
+            channel = transport.open_session()
+            try:
+                cols_i = max(20, min(int(cols or 120), 500))
+                rows_i = max(5, min(int(rows or 32), 200))
+            except (TypeError, ValueError):
+                cols_i, rows_i = 120, 32
+            channel.get_pty(
+                term='xterm-256color', width=cols_i, height=rows_i,
+            )
+            # Exec straight into the customer's container — the docker
+            # host shell is never exposed. ``-it`` works because we
+            # allocated a PTY above; the image's default user (``odoo``)
+            # is honoured by ``docker exec``.
+            docker_cmd = (
+                'docker exec -it %s /bin/bash -l' % shlex.quote(container)
+            )
+            channel.exec_command(docker_cmd)
+            channel.settimeout(0)
+        except Exception as e:
+            _logger.error(
+                "Failed to open instance shell to %s: %s", container, e,
+            )
+            ssh_conn._disconnect()
+            raise
+
+        sid = str(uuid.uuid4())
+        banner = self._read_banner(channel)
+
+        request.env['saas.terminal.session'].sudo().create({
+            'sid': sid,
+            'uid': request.env.uid,
+            'server_model': 'saas.instance',
+            'server_id': inst.id,
+            'server_name': container,
+            'owner_pid': os.getpid(),
+            'last_activity': fields.Datetime.now(),
+        })
+
+        pump = _SessionPump(
+            sid=sid,
+            dbname=request.env.cr.dbname,
+            channel=channel,
+            ssh_conn=ssh_conn,
+            server_name=container,
+        )
+        with _local_sessions_lock:
+            _local_sessions[sid] = pump
+        pump.start()
+
+        _logger.info(
+            "Instance shell %s opened for instance %s by uid %s (pid %s)",
+            sid, inst.id, request.env.uid, os.getpid(),
+        )
+        return {
+            'session_id': sid,
+            'initial_output': base64.b64encode(banner).decode('ascii'),
+        }
+
+    @http.route(
+        '/saas/terminal/instance/input',
+        type='json',
+        auth='user',
+        methods=['POST'],
+    )
+    def instance_input(self, session_id, data, **kwargs):
+        _validate_sid(session_id)
+        sess = self._get_owned_session(session_id)
+        if sess.closed:
+            return {'status': 'closed'}
+        encoded = base64.b64encode(
+            data.encode('utf-8') if isinstance(data, str) else bytes(data),
+        ).decode('ascii')
+        request.env.cr.execute(
+            "SELECT pg_notify(%s, %s)", (_in_ch(session_id), encoded),
+        )
+        sess.last_activity = fields.Datetime.now()
+        return {'status': 'ok'}
+
+    @http.route(
+        '/saas/terminal/instance/resize',
+        type='json',
+        auth='user',
+        methods=['POST'],
+    )
+    def instance_resize(self, session_id, cols, rows, **kwargs):
+        _validate_sid(session_id)
+        sess = self._get_owned_session(session_id)
+        if sess.closed:
+            return {'status': 'closed'}
+        with _local_sessions_lock:
+            pump = _local_sessions.get(session_id)
+        if pump is not None:
+            try:
+                if not pump.channel.closed:
+                    pump.channel.resize_pty(
+                        width=int(cols), height=int(rows),
+                    )
+                    sess.last_activity = fields.Datetime.now()
+            except Exception:
+                pass
+        return {'status': 'ok'}
+
+    @http.route(
+        '/saas/terminal/instance/close',
+        type='json',
+        auth='user',
+        methods=['POST'],
+    )
+    def instance_close(self, session_id, **kwargs):
+        _validate_sid(session_id)
+        sess = self._get_owned_session(session_id)
+        request.env.cr.execute(
+            "SELECT pg_notify(%s, %s)",
+            (_close_ch(session_id), 'user requested'),
+        )
+        sess.closed = True
+        _logger.info(
+            "Instance shell %s closed by uid %s", session_id, request.env.uid,
+        )
+        return {'status': 'closed'}
+
+    @http.route(
+        '/saas/terminal/instance/output/<string:session_id>',
+        type='http',
+        auth='user',
+        methods=['GET'],
+        csrf=False,
+    )
+    def instance_output(self, session_id, **kwargs):
+        _validate_sid(session_id)
+        sess = self._get_owned_session(session_id)
+        if sess.closed:
+            return Response(
+                "event: closed\ndata: session already closed\n\n",
+                content_type='text/event-stream',
+            )
+        return self._terminal_sse_response(session_id)
