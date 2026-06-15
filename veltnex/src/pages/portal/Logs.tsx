@@ -1,9 +1,9 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Play, Pause, Trash2, ArrowDownToLine } from "lucide-react";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AlertBanner } from "@/components/AlertBanner";
+import { StatusBadge } from "@/components/StatusBadge";
 import { PortalBreadcrumb, envCrumbs } from "@/components/layout/PortalLayout";
 import { api, logStreamUrl, type ApiInstance } from "@/lib/api";
 import { cn, makeId } from "@/lib/utils";
@@ -153,44 +153,41 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
         <AlertBanner className="mt-6" variant="warning" title="Log stream interrupted" description={connError} onDismiss={() => setConnError(null)} />
       )}
 
-      <Card className="mt-6 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-border bg-card px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <span className="flex gap-1.5">
-              <span className="size-2.5 rounded-full bg-danger/70" />
-              <span className="size-2.5 rounded-full bg-warning/70" />
-              <span className="size-2.5 rounded-full bg-success/70" />
-            </span>
-            <span className="ml-2 font-mono text-xs text-muted">{instance?.name || "instance"} — odoo.log</span>
+      <div className="mt-6">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Logs</p>
+        <div className="rounded-lg border border-border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-medium">Live container stream</span>
+            <StatusBadge status={instance?.state || "running"} />
           </div>
-          <span className="flex items-center gap-1.5 text-xs text-muted">
+          <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">
             <span className={cn("size-1.5 rounded-full", paused ? "bg-muted" : "bg-success animate-pulse-soft")} />
-            {paused ? "Paused" : "Streaming"} · {lines.length} lines
-          </span>
-        </div>
+            {paused ? "Paused" : "Streaming"} · {lines.length} lines · odoo.log
+          </div>
 
-        <div
-          ref={viewport}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-            if (!atBottom && autoScroll) setAutoScroll(false);
-          }}
-          className="h-[calc(100vh-17rem)] min-h-[420px] overflow-y-auto bg-background p-4 font-mono text-xs leading-relaxed"
-        >
-          {lines.length === 0 ? (
-            <p className="text-muted">
-              {paused ? "Stream paused." : "Waiting for log output… (logs stream only while the instance is running)"}
-            </p>
-          ) : (
-            lines.map((l) => (
-              <div key={l.id} className={cn("whitespace-pre-wrap break-all py-0.5", levelClass(l.text))}>
-                {l.text}
-              </div>
-            ))
-          )}
+          <div
+            ref={viewport}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+              if (!atBottom && autoScroll) setAutoScroll(false);
+            }}
+            className="mt-3 max-h-[calc(100vh-20rem)] min-h-[420px] overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed"
+          >
+            {lines.length === 0 ? (
+              <p className="text-muted">
+                {paused ? "Stream paused." : "Waiting for log output… (logs stream only while the instance is running)"}
+              </p>
+            ) : (
+              lines.map((l) => (
+                <div key={l.id} className={cn("whitespace-pre-wrap break-all py-0.5", levelClass(l.text))}>
+                  {l.text}
+                </div>
+              ))
+            )}
+          </div>
         </div>
-      </Card>
+      </div>
       </>
       )}
     </div>
