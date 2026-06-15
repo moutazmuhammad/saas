@@ -331,6 +331,18 @@ export default function Hosting() {
       }
     : { workers: { min: 1, max: 8 }, storage: { min: 5, max: 200 } };
 
+  // Add-on costs for the Step-3 total. Support + daily backup are FLAT
+  // monthly fees billed ×12 on yearly (no discount) — the yearly discount
+  // applies to infra only — so the project quote (plan + env servers)
+  // doesn't include them. Add them here so the shown total is correct.
+  const perLabel = config?.cycle === "yearly" ? "/yr" : "/mo";
+  const cycleMult = config?.cycle === "yearly" ? 12 : 1;
+  const selSupport = meta?.support_plans?.find((s) => s.code === supportCode);
+  const supportLine = (selSupport?.monthly_price ?? 0) * cycleMult;
+  const backupLine = (dailyBackup ? meta?.daily_backup_price ?? 0 : 0) * cycleMult;
+  const baseTotal = projectQuote?.project_total ?? price?.total ?? 0;
+  const grandTotal = baseTotal + supportLine + backupLine;
+
   return (
     <div className="animate-fade-in">
       <section className="relative overflow-hidden border-b border-border">
@@ -710,13 +722,19 @@ export default function Hosting() {
                 </div>
 
                 <div className="mt-6 space-y-1.5 rounded-lg border border-border bg-card/50 p-4 text-sm">
-                  <div className="flex justify-between"><span className="text-muted">Production plan</span><span className="font-medium">{money(price?.total ?? 0, currency)}{config.cycle === "yearly" ? "/yr" : "/mo"}</span></div>
+                  <div className="flex justify-between"><span className="text-muted">Production plan</span><span className="font-medium">{money(price?.total ?? 0, currency)}{perLabel}</span></div>
                   {projectQuote && (stagingCount + devCount) > 0 && (
-                    <div className="flex justify-between"><span className="text-muted">{stagingCount + devCount} × env server</span><span className="font-medium">{money(projectQuote.env_total, currency)}{config.cycle === "yearly" ? "/yr" : "/mo"}</span></div>
+                    <div className="flex justify-between"><span className="text-muted">{stagingCount + devCount} × env server</span><span className="font-medium">{money(projectQuote.env_total, currency)}{perLabel}</span></div>
+                  )}
+                  {supportLine > 0 && (
+                    <div className="flex justify-between"><span className="text-muted">Support — {selSupport?.name}</span><span className="font-medium">{money(supportLine, currency)}{perLabel}</span></div>
+                  )}
+                  {backupLine > 0 && (
+                    <div className="flex justify-between"><span className="text-muted">Daily backups</span><span className="font-medium">{money(backupLine, currency)}{perLabel}</span></div>
                   )}
                   <div className="flex justify-between border-t border-border pt-1.5 text-base font-semibold">
                     <span>Total</span>
-                    <span>{money(projectQuote?.project_total ?? price?.total ?? 0, currency)}{config.cycle === "yearly" ? "/yr" : "/mo"}</span>
+                    <span>{money(grandTotal, currency)}{perLabel}</span>
                   </div>
                 </div>
 
