@@ -451,16 +451,32 @@
     <template id="cloudodoo_layout" name="CloudOdoo Layout">
         <t t-call="website.layout">
             <t t-set="no_livechat" t-value="True"/>
-            <!-- Defensive theme + navbar handlers — runs even if the
-                 `cloudodoo_theme_init` extension of web.frontend_layout
-                 is somehow stripped (cached compiled view, override
-                 conflict, etc.). Same logic, idempotent. -->
+            <!-- Hide Odoo's website header/footer; we render the VELTNEX
+                 SPA chrome below so payment / portal pages match the rest
+                 of the site (logo, header, footer, colours). -->
+            <t t-set="no_header" t-value="True"/>
+            <t t-set="no_footer" t-value="True"/>
+
+            <!-- VELTNEX design tokens (mirrors veltnex/src/index.css) +
+                 SPA-matching header/footer styling. -->
+            <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+            <style>
+                :root{--vx-bg:248 249 250;--vx-card:255 255 255;--vx-border:218 220 224;--vx-fg:32 33 36;--vx-muted:95 99 104;--vx-primary:26 115 232;}
+                html.dark,[data-theme="dark"]{--vx-bg:32 33 36;--vx-card:41 42 45;--vx-border:60 64 67;--vx-fg:232 234 237;--vx-muted:154 160 166;--vx-primary:138 180 248;}
+                body{background:rgb(var(--vx-bg));color:rgb(var(--vx-fg));font-family:'Roboto',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;}
+                .vx-header{position:sticky;top:0;z-index:40;display:flex;align-items:center;justify-content:space-between;height:56px;padding:0 1rem;background:rgb(var(--vx-card));border-bottom:1px solid rgb(var(--vx-border));}
+                .vx-logo{display:inline-flex;align-items:center;gap:.6rem;text-decoration:none;color:rgb(var(--vx-fg));font-weight:700;font-size:1rem;}
+                .vx-mark{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:.5rem;background:rgb(var(--vx-primary));box-shadow:0 0 20px rgb(var(--vx-primary) / .35);}
+                .vx-nex{color:rgb(var(--vx-primary));}
+                .vx-link{color:rgb(var(--vx-muted));text-decoration:none;font-size:.875rem;}
+                .vx-link:hover{color:rgb(var(--vx-fg));}
+                .vx-footer{border-top:1px solid rgb(var(--vx-border));background:rgb(var(--vx-bg));color:rgb(var(--vx-muted));font-size:.75rem;}
+                .vx-footer-in{max-width:80rem;margin:0 auto;display:flex;align-items:center;flex-wrap:wrap;gap:.5rem 1.25rem;padding:1.25rem 1rem;}
+                .vx-footer a{color:rgb(var(--vx-muted));text-decoration:none;}
+                .vx-footer a:hover{color:rgb(var(--vx-fg));}
+            </style>
             <script>
                 (function(){
-                    // No initial apply — the server already set
-                    // `data-theme` from the cookie. We only need a
-                    // cross-tab `storage` listener so a toggle in a
-                    // sibling tab repaints this one without a reload.
                     function apply(t){
                         document.documentElement.setAttribute('data-theme', t);
                         document.documentElement.classList.toggle('dark', t === 'dark');
@@ -475,9 +491,37 @@
                     } catch(e) {}
                 })();
             </script>
+
+            <header class="vx-header">
+                <a href="/" class="vx-logo">
+                    <span class="vx-mark">
+                        <svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true">
+                            <path d="M8 9 L16 23 L24 9" fill="none" stroke="#FAFAFA" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
+                    <span>VELT<span class="vx-nex">NEX</span></span>
+                </a>
+                <a href="/my/instances" class="vx-link">Dashboard</a>
+            </header>
+
             <div id="wrap" class="oe_structure">
                 <t t-out="0"/>
             </div>
+
+            <footer class="vx-footer">
+                <div class="vx-footer-in">
+                    <span class="vx-mark" style="width:24px;height:24px;border-radius:.4rem;">
+                        <svg viewBox="0 0 32 32" width="15" height="15" aria-hidden="true">
+                            <path d="M8 9 L16 23 L24 9" fill="none" stroke="#FAFAFA" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
+                    <span>© VELTNEX, Inc.</span>
+                    <a href="/hosting">Hosting</a>
+                    <a href="/docs">Docs</a>
+                    <a href="/help">Help</a>
+                    <a href="/my/instances">Dashboard</a>
+                </div>
+            </footer>
         </t>
     </template>
 
