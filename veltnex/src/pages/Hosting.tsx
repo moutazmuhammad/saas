@@ -553,198 +553,187 @@ export default function Hosting() {
               </Card>
             )}
 
-            {/* ── Step 3: subdomain, region & environments ── */}
+            {/* ── Step 3: everything on one screen (inputs + live price) ── */}
             {step === 3 && (
-              <Card className="mx-auto max-w-2xl p-6">
-                <h2 className="text-lg font-semibold">Subdomain, region &amp; environments</h2>
-                <p className="mt-1 text-sm text-muted">
-                  Choose your address and region, and how many Staging/Development
-                  servers to buy — you can create up to that many free, any time.
-                </p>
-
-                <div className="mt-5 space-y-2">
-                  <label htmlFor="subdomain" className="text-sm font-medium">Subdomain</label>
-                  <input
-                    id="subdomain"
-                    value={subdomain}
-                    onChange={(e) => setSubdomain(toSubdomain(e.target.value))}
-                    placeholder="my-company-erp"
-                    className="h-11 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
-                  />
-                  {subdomain && (
-                    <p className="text-xs text-muted">
-                      Your instance starts at{" "}
-                      <span className="font-mono text-foreground">{subdomain}</span>
-                    </p>
-                  )}
-                </div>
-
-                {showRegionPicker && (
-                  <div className="mt-5 space-y-2">
-                    <label className="flex items-center gap-1.5 text-sm font-medium">
-                      <Globe className="size-4 text-primary" /> Region
-                    </label>
-                    <select
-                      value={regionId ?? ""}
-                      onChange={(e) => setRegionId(Number(e.target.value))}
-                      className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                    >
-                      {sortedRegions.map((r) => {
-                        const tag = (r.default || r.recommended)
-                          ? " — Recommended"
-                          : (r.budget || (cheapestRegion && r.id === cheapestRegion.id))
-                            ? " — Budget"
-                            : r.multiplier !== 1 ? ` (×${r.multiplier.toFixed(2)})` : "";
-                        return <option key={r.id} value={r.id}>{r.name}{tag}</option>;
-                      })}
-                    </select>
-                  </div>
-                )}
-
-                <div className="mt-5 space-y-3">
-                  <span className="text-sm font-medium">Staging &amp; Development servers</span>
-                  <Stepper label="Staging servers" value={stagingCount} onChange={setStagingCount} />
-                  <Stepper label="Development servers" value={devCount} onChange={setDevCount} />
-                  <p className="text-xs text-muted">
-                    Create up to the number you buy for free, any time.
+              <div className="grid items-start gap-6 lg:grid-cols-[1fr_20rem]">
+                {/* Left: all the choices, compact */}
+                <Card className="p-5">
+                  <h2 className="text-lg font-semibold">Configure your project</h2>
+                  <p className="mt-1 text-xs text-muted">
+                    Pick your address, region, version, support and environments.
                   </p>
-                </div>
 
-                {/* Version + base domain */}
-                <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Odoo version</label>
-                    <select
-                      value={versionId ?? ""}
-                      onChange={(e) => setVersionId(Number(e.target.value))}
-                      className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                    >
-                      {(meta?.hosting_versions || []).map((v) => (
-                        <option key={v.id} value={v.id}>{v.name}</option>
-                      ))}
-                    </select>
+                  <div className="mt-4 space-y-1">
+                    <label htmlFor="subdomain" className="text-sm font-medium">Subdomain</label>
+                    <input
+                      id="subdomain"
+                      value={subdomain}
+                      onChange={(e) => setSubdomain(toSubdomain(e.target.value))}
+                      placeholder="my-company-erp"
+                      className="h-10 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
+                    />
                   </div>
-                  {(meta?.domains?.length ?? 0) > 1 && (
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Base domain</label>
+
+                  {/* Region / Version / Domain / Support — flow two per row */}
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    {showRegionPicker && (
+                      <div className="space-y-1">
+                        <label className="flex items-center gap-1.5 text-sm font-medium">
+                          <Globe className="size-3.5 text-primary" /> Region
+                        </label>
+                        <select
+                          value={regionId ?? ""}
+                          onChange={(e) => setRegionId(Number(e.target.value))}
+                          className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        >
+                          {sortedRegions.map((r) => {
+                            const tag = (r.default || r.recommended)
+                              ? " — Recommended"
+                              : (r.budget || (cheapestRegion && r.id === cheapestRegion.id))
+                                ? " — Budget"
+                                : r.multiplier !== 1 ? ` (×${r.multiplier.toFixed(2)})` : "";
+                            return <option key={r.id} value={r.id}>{r.name}{tag}</option>;
+                          })}
+                        </select>
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium">Odoo version</label>
                       <select
-                        value={domainId ?? ""}
-                        onChange={(e) => setDomainId(Number(e.target.value))}
-                        className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        value={versionId ?? ""}
+                        onChange={(e) => setVersionId(Number(e.target.value))}
+                        className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
                       >
-                        {(meta?.domains || []).map((d) => (
-                          <option key={d.id} value={d.id}>{d.name}</option>
+                        {(meta?.hosting_versions || []).map((v) => (
+                          <option key={v.id} value={v.id}>{v.name}</option>
                         ))}
                       </select>
                     </div>
-                  )}
-                </div>
-
-                {/* Support plan */}
-                {(meta?.support_plans?.length ?? 0) > 1 && (
-                  <div className="mt-5 space-y-2">
-                    <label className="text-sm font-medium">Support plan</label>
-                    <select
-                      value={supportCode}
-                      onChange={(e) => setSupportCode(e.target.value)}
-                      className="h-11 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
-                    >
-                      {(meta?.support_plans || []).map((s) => (
-                        <option key={s.code} value={s.code}>
-                          {s.name}{s.monthly_price > 0 ? ` (+${money(s.monthly_price, currency)}/mo)` : " — included"}
-                        </option>
-                      ))}
-                    </select>
+                    {(meta?.domains?.length ?? 0) > 1 && (
+                      <div className="space-y-1">
+                        <label className="text-sm font-medium">Base domain</label>
+                        <select
+                          value={domainId ?? ""}
+                          onChange={(e) => setDomainId(Number(e.target.value))}
+                          className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        >
+                          {(meta?.domains || []).map((d) => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    {(meta?.support_plans?.length ?? 0) > 1 && (
+                      <div className="space-y-1">
+                        <label className="text-sm font-medium">Support plan</label>
+                        <select
+                          value={supportCode}
+                          onChange={(e) => setSupportCode(e.target.value)}
+                          className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        >
+                          {(meta?.support_plans || []).map((s) => (
+                            <option key={s.code} value={s.code}>
+                              {s.name}{s.monthly_price > 0 ? ` (+${money(s.monthly_price, currency)}/mo)` : " — included"}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                   </div>
-                )}
 
-                {/* Daily backup add-on */}
-                {(meta?.daily_backup_price ?? 0) > 0 && (
-                  <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3">
-                    <input
-                      type="checkbox"
-                      checked={dailyBackup}
-                      onChange={(e) => setDailyBackup(e.target.checked)}
-                      className="mt-0.5 size-4"
-                    />
-                    <span className="text-sm">
-                      <span className="font-medium">Daily off-site backups</span>
-                      <span className="ml-1 text-muted">
-                        — from {money(meta?.daily_backup_price ?? 0, currency)}/mo (scales with storage used)
-                      </span>
-                    </span>
-                  </label>
-                )}
+                  {/* Staging / Dev counts side by side */}
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <Stepper label="Staging" value={stagingCount} onChange={setStagingCount} />
+                    <Stepper label="Development" value={devCount} onChange={setDevCount} />
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted">
+                    Create up to the number you buy for free, any time.
+                  </p>
 
-                {/* Optional Git repository + Python packages */}
-                <div className="mt-5">
-                  <button
-                    type="button"
-                    onClick={() => setShowGit((v) => !v)}
-                    className="text-sm font-medium text-primary underline-offset-2 hover:underline"
-                  >
-                    {showGit ? "− Hide repository & packages" : "+ Connect a Git repository / Python packages (optional)"}
-                  </button>
-                  {showGit && (
-                    <div className="mt-3 space-y-3 rounded-lg border border-border p-3">
+                  {/* Daily backup */}
+                  {(meta?.daily_backup_price ?? 0) > 0 && (
+                    <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-lg border border-border p-2.5">
                       <input
-                        value={repoUrl}
-                        onChange={(e) => setRepoUrl(e.target.value)}
-                        placeholder="https://github.com/you/your-addons.git"
-                        className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        type="checkbox"
+                        checked={dailyBackup}
+                        onChange={(e) => setDailyBackup(e.target.checked)}
+                        className="size-4"
                       />
-                      <div className="grid gap-3 sm:grid-cols-2">
+                      <span className="text-sm">
+                        <span className="font-medium">Daily off-site backups</span>
+                        <span className="ml-1 text-muted">— from {money(meta?.daily_backup_price ?? 0, currency)}/mo</span>
+                      </span>
+                    </label>
+                  )}
+
+                  {/* Optional Git + packages */}
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowGit((v) => !v)}
+                      className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+                    >
+                      {showGit ? "− Hide repository & packages" : "+ Connect a Git repository / Python packages (optional)"}
+                    </button>
+                    {showGit && (
+                      <div className="mt-3 space-y-3 rounded-lg border border-border p-3">
                         <input
-                          value={repoBranch}
-                          onChange={(e) => setRepoBranch(e.target.value)}
-                          placeholder="main"
+                          value={repoUrl}
+                          onChange={(e) => setRepoUrl(e.target.value)}
+                          placeholder="https://github.com/you/your-addons.git"
                           className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
                         />
-                        <input
-                          value={gitToken}
-                          onChange={(e) => setGitToken(e.target.value)}
-                          placeholder="Access token (private repos)"
-                          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <input
+                            value={repoBranch}
+                            onChange={(e) => setRepoBranch(e.target.value)}
+                            placeholder="main"
+                            className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                          />
+                          <input
+                            value={gitToken}
+                            onChange={(e) => setGitToken(e.target.value)}
+                            placeholder="Access token (private repos)"
+                            className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                          />
+                        </div>
+                        <textarea
+                          value={pipPackages}
+                          onChange={(e) => setPipPackages(e.target.value)}
+                          placeholder="Python packages, one per line (optional)"
+                          rows={2}
+                          className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs outline-none ring-primary/40 focus:ring-1"
                         />
                       </div>
-                      <textarea
-                        value={pipPackages}
-                        onChange={(e) => setPipPackages(e.target.value)}
-                        placeholder="Python packages, one per line (optional)"
-                        rows={2}
-                        className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs outline-none ring-primary/40 focus:ring-1"
-                      />
-                      <p className="text-xs text-muted">
-                        A repo is only needed to create Staging/Development environments — you can add it later.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-6 space-y-1.5 rounded-lg border border-border bg-card/50 p-4 text-sm">
-                  <div className="flex justify-between"><span className="text-muted">Production plan</span><span className="font-medium">{money(price?.total ?? 0, currency)}{perLabel}</span></div>
-                  {projectQuote && (stagingCount + devCount) > 0 && (
-                    <div className="flex justify-between"><span className="text-muted">{stagingCount + devCount} × env server</span><span className="font-medium">{money(projectQuote.env_total, currency)}{perLabel}</span></div>
-                  )}
-                  {supportLine > 0 && (
-                    <div className="flex justify-between"><span className="text-muted">Support — {selSupport?.name}</span><span className="font-medium">{money(supportLine, currency)}{perLabel}</span></div>
-                  )}
-                  {backupLine > 0 && (
-                    <div className="flex justify-between"><span className="text-muted">Daily backups</span><span className="font-medium">{money(backupLine, currency)}{perLabel}</span></div>
-                  )}
-                  <div className="flex justify-between border-t border-border pt-1.5 text-base font-semibold">
-                    <span>Total</span>
-                    <span>{money(grandTotal, currency)}{perLabel}</span>
+                    )}
                   </div>
-                </div>
+                </Card>
 
-                <div className="mt-6 flex items-center gap-3">
-                  <Button variant="secondary" onClick={() => setStep(2)}>← Back</Button>
-                  <Button className="flex-1" size="lg" onClick={goCheckout}>
+                {/* Right: sticky live price breakdown */}
+                <Card className="self-start p-5 lg:sticky lg:top-24">
+                  <h3 className="text-sm font-semibold">Order summary</h3>
+                  <div className="mt-3 space-y-1.5 text-sm">
+                    <div className="flex justify-between"><span className="text-muted">Production plan</span><span className="font-medium">{money(price?.total ?? 0, currency)}{perLabel}</span></div>
+                    {projectQuote && (stagingCount + devCount) > 0 && (
+                      <div className="flex justify-between"><span className="text-muted">{stagingCount + devCount} × env server</span><span className="font-medium">{money(projectQuote.env_total, currency)}{perLabel}</span></div>
+                    )}
+                    {supportLine > 0 && (
+                      <div className="flex justify-between"><span className="text-muted">Support — {selSupport?.name}</span><span className="font-medium">{money(supportLine, currency)}{perLabel}</span></div>
+                    )}
+                    {backupLine > 0 && (
+                      <div className="flex justify-between"><span className="text-muted">Daily backups</span><span className="font-medium">{money(backupLine, currency)}{perLabel}</span></div>
+                    )}
+                    <div className="flex justify-between border-t border-border pt-2 text-base font-semibold">
+                      <span>Total</span>
+                      <span>{money(grandTotal, currency)}{perLabel}</span>
+                    </div>
+                  </div>
+                  <Button className="mt-4 w-full" size="lg" disabled={!subdomain} onClick={goCheckout}>
                     Review &amp; checkout <ArrowRight />
                   </Button>
-                </div>
-              </Card>
+                  <Button variant="secondary" className="mt-2 w-full" onClick={() => setStep(2)}>← Back</Button>
+                </Card>
+              </div>
             )}
           </div>
         )}
