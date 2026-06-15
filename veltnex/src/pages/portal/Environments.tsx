@@ -732,7 +732,8 @@ function MainPanel({
         </div>
       </div>
 
-      {/* Body */}
+      {/* Body — fixed height so the panel doesn't resize when switching tabs */}
+      <div className="h-[calc(100vh-19rem)] min-h-[520px] overflow-y-auto">
       {tab === "databases" ? (
         <div className="p-5">
           <Databases key={env.id} embedId={env.id} />
@@ -838,6 +839,7 @@ function MainPanel({
         )}
       </div>
       )}
+      </div>
     </Card>
   );
 }
