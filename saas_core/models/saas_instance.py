@@ -1,4 +1,6 @@
+import base64
 import datetime
+import json
 import logging
 import math
 import os
@@ -9488,6 +9490,122 @@ class SaasInstance(models.Model):
                     name, login = line, ''
                 rows.append({'name': name, 'admin_login': login})
         return rows
+
+    def hosting_sql_query(self, db_name, query, limit=1000):
+        """Run a **read-only** SQL query against one of the customer's
+        databases — the Odoo.sh-style SQL console.
+
+        Safety, in layers:
+
+        * The target DB must belong to this instance (checked against
+          :meth:`hosting_db_list`, which is prefix-filtered) so one
+          tenant can never reach another's data — even with several
+          databases on the same server.
+        * The statement runs inside a ``READ ONLY`` transaction that is
+          always rolled back, so INSERT/UPDATE/DELETE/DDL are refused by
+          Postgres itself rather than by fragile SQL parsing.
+        * We go through Odoo's own ``db_connect`` *inside the container*
+          (same path as :meth:`hosting_db_list`), so there is no
+          Python -> shell -> psql quoting to get wrong and results come
+          back as typed JSON. The query text travels base64-encoded in
+          an env var.
+
+        Returns ``{'columns': [...], 'rows': [[...]], 'rowcount': int,
+        'truncated': bool, 'error': str|None}``.
+        """
+        self._ensure_hosting_for_db_ops()
+        names = {d['name'] for d in self.hosting_db_list()}
+        if db_name not in names:
+            raise UserError(_("Unknown database for this instance."))
+        if not (query or '').strip():
+            raise UserError(_("Enter a SQL query to run."))
+        try:
+            limit = max(1, min(int(limit or 1000), 10000))
+        except (TypeError, ValueError):
+            limit = 1000
+        q_b64 = base64.b64encode((query or '').encode('utf-8')).decode('ascii')
+        script = (
+            "import os, json, base64\n"
+            "from odoo.sql_db import db_connect\n"
+            "db = os.environ['SAAS_SQL_DB']\n"
+            "q = base64.b64decode(os.environ['SAAS_SQL_B64']).decode('utf-8')\n"
+            "lim = int(os.environ['SAAS_SQL_LIMIT'])\n"
+            "out = {'columns': [], 'rows': [], 'rowcount': 0,"
+            " 'truncated': False, 'error': None}\n"
+            "cr = db_connect(db).cursor()\n"
+            "try:\n"
+            "    cr.execute('SET TRANSACTION READ ONLY')\n"
+            "    cr.execute(q)\n"
+            "    if cr.description:\n"
+            "        out['columns'] = [d.name for d in cr.description]\n"
+            "        rows = cr.fetchmany(lim + 1)\n"
+            "        out['truncated'] = len(rows) > lim\n"
+            "        rows = rows[:lim]\n"
+            "        def _cell(v):\n"
+            "            if v is None or isinstance(v, (bool, int, float, str)):\n"
+            "                return v\n"
+            "            return str(v)\n"
+            "        out['rows'] = [[_cell(c) for c in r] for r in rows]\n"
+            "    out['rowcount'] = cr.rowcount\n"
+            "except Exception as e:\n"
+            "    out['error'] = str(e)\n"
+            "finally:\n"
+            "    try:\n"
+            "        cr.rollback()\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "    try:\n"
+            "        cr.close()\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "print('---SAAS_SQL_BEGIN---')\n"
+            "print(base64.b64encode(json.dumps(out).encode('utf-8'))"
+            ".decode('ascii'))\n"
+            "print('---SAAS_SQL_END---')\n"
+        )
+        try:
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                exit_code, stdout, stderr = self._docker_exec_python(
+                    ssh, script,
+                    env={
+                        'SAAS_SQL_DB': db_name,
+                        'SAAS_SQL_B64': q_b64,
+                        'SAAS_SQL_LIMIT': str(limit),
+                    },
+                    timeout=60,
+                )
+        except Exception:
+            _logger.exception(
+                "hosting_sql_query: SSH failed for %s", self.subdomain)
+            raise UserError(_(
+                "We couldn't reach your instance just now. "
+                "Please try again in a moment."))
+        if exit_code != 0:
+            _logger.warning(
+                "hosting_sql_query failed for %s: exit=%s stderr=%r",
+                self.subdomain, exit_code, (stderr or '')[-500:])
+            raise UserError(_(
+                "The SQL console couldn't run your query right now."))
+        payload = None
+        capturing = False
+        for line in stdout.splitlines():
+            line = line.strip()
+            if line == '---SAAS_SQL_BEGIN---':
+                capturing = True
+                continue
+            if line == '---SAAS_SQL_END---':
+                break
+            if capturing and line:
+                payload = line
+        if not payload:
+            raise UserError(_("The SQL console returned no result."))
+        try:
+            return json.loads(base64.b64decode(payload).decode('utf-8'))
+        except Exception:
+            _logger.exception(
+                "hosting_sql_query: bad payload for %s", self.subdomain)
+            raise UserError(_(
+                "The SQL console returned an unreadable result."))
 
     # ------------------------------------------------------------------
     # Customer DB management via XML-RPC to the instance's own ``db``

@@ -788,6 +788,31 @@ class SaasApi(http.Controller):
             'pending_ops': [{'db_name': o.db_name, 'operation': o.operation} for o in ops],
         })
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/sql',
+                type='json', auth='public')
+    def sql_query(self, instance_id, db=None, query=None, limit=1000,
+                  access_token=None, **kw):
+        """Odoo.sh-style read-only SQL console. ``db`` selects which of
+        the instance's databases to run against (multi-DB aware)."""
+        try:
+            instance = self._hosting(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        try:
+            self._require_running(instance)
+            result = instance.hosting_sql_query(
+                db or '', query or '', limit=limit)
+        except UserError as e:
+            return err(str(e), 'sql_failed')
+        except Exception:
+            _logger.exception("SQL query failed for %s", instance_id)
+            return err(_("We couldn't run your query right now."), 'sql_failed')
+        # A SQL-level error (syntax, permission, read-only violation) is
+        # surfaced verbatim so the customer can fix their query.
+        if result.get('error'):
+            return err(result['error'], 'sql_error')
+        return ok(result)
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/databases/create',
                 type='json', auth='public')
     def db_create(self, instance_id, name=None, login=None, password=None,

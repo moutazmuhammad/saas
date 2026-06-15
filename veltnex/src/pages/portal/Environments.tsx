@@ -51,6 +51,7 @@ import Databases from "@/pages/portal/Databases";
 import Logs from "@/pages/portal/Logs";
 import Backups from "@/pages/portal/Backups";
 import Code from "@/pages/portal/Code";
+import SqlConsole from "@/pages/portal/SqlConsole";
 
 const TRANSIENT = new Set([
   "pending_payment",
@@ -608,7 +609,7 @@ function MainPanel({
   }[] = [
     { key: "clone", label: "Clone", icon: Copy, enabled: true, action: () => setTool("clone") },
     { key: "shell", label: "Shell", icon: Terminal, enabled: false, soon: "In-browser shell needs a backend agent" },
-    { key: "sql", label: "SQL", icon: FileCode2, enabled: false, soon: "Web SQL console needs a backend agent" },
+    { key: "sql", label: "SQL", icon: FileCode2, enabled: true, action: () => setTool("sql") },
     { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => setTab("logs") },
     { key: "fork", label: "Fork", icon: GitFork, enabled: false, soon: "Fork is coming soon" },
     { key: "merge", label: "Merge", icon: GitMerge, enabled: true, action: onMergeInto },
@@ -698,11 +699,14 @@ function MainPanel({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
         <div className="flex flex-wrap">
           {subtabs.map((t) => {
-            const active = tab === t.key;
+            const active = tab === t.key && tool !== "sql";
             return (
               <button
                 key={t.key}
-                onClick={() => setTab(t.key)}
+                onClick={() => {
+                  setTab(t.key);
+                  setTool("");
+                }}
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors",
                   active
@@ -735,7 +739,11 @@ function MainPanel({
       {/* Body — flex-fills the card so the panel stays within the viewport
           (only this area scrolls) and doesn't resize when switching tabs */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {tab === "databases" ? (
+      {tool === "sql" ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
+          <SqlConsole key={env.id} instanceId={env.id} />
+        </div>
+      ) : tab === "databases" ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <Databases key={env.id} embedId={env.id} />
         </div>

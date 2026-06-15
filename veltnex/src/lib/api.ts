@@ -433,6 +433,15 @@ export interface DbListData {
   pending_ops?: { db_name: string; operation: string }[];
 }
 
+export interface SqlResult {
+  columns: string[];
+  /** Row cells: string | number | boolean | null (typed from Postgres). */
+  rows: (string | number | boolean | null)[][];
+  rowcount: number;
+  truncated: boolean;
+  error: string | null;
+}
+
 /* ──────────────────────────── Endpoints ──────────────────────────── */
 
 export const api = {
@@ -529,6 +538,8 @@ export const api = {
     rpc<StatusData>(`/saas/api/v1/instances/${id}/action`, { action }),
 
   databases: (id: number) => rpc<DbListData>(`/saas/api/v1/instances/${id}/databases`),
+  sqlQuery: (id: number, db: string, query: string, limit = 1000) =>
+    rpc<SqlResult>(`/saas/api/v1/instances/${id}/sql`, { db, query, limit }),
   dbCreate: (id: number, name: string, login: string, password: string) =>
     rpc<{ db_name: string }>(`/saas/api/v1/instances/${id}/databases/create`, {
       name,
