@@ -1,0 +1,129 @@
+# Work Log — SaaS Hosting Platform / VELTNEX
+
+> A running log of what we've done together, so we can resume later.
+> Last updated: 2026-06-15 — branch: `newhosting`
+
+---
+
+## Project overview
+
+- **Odoo 18 SaaS platform**: `saas_core` (models/controllers) + `saas_website`
+  (controllers + QWeb + serves the SPA from `static/spa`).
+- **VELTNEX React SPA**: in `custom/saas/veltnex` (Vite + React + TypeScript +
+  Tailwind + react-router-dom). JSON API at `/saas/api/v1`. The build is
+  emitted into `saas_website/static/spa/`.
+
+---
+
+## Live server (Production)
+
+- Site: **https://odoo.odex.sa** = `165.22.69.199` (DB: `veltnex`).
+- Repo path on server: `/home/odoo/saas`.
+- SPA path: `/home/odoo/saas/saas_website/static/spa`.
+
+### Deploy workflow (important)
+1. `npm run build` locally in `veltnex/`.
+2. commit + push to `origin/newhosting`.
+3. On the server: `cd /home/odoo/saas && git fetch + reset --hard origin/newhosting`.
+4. **Always** run `systemctl restart odoo` after the pull (a cache otherwise
+   keeps serving the old homepage/asset bundle).
+5. Verify: the served `assets/index-*.js` hash must equal the local build's
+   hash (`saas_website/static/spa/index.html`).
+6. Deploys are done over paramiko SSH (no `sshpass` installed).
+
+> ⚠️ **Security**: the root SSH password was typed into chat more than once —
+> it should be rotated.
+
+---
+
+## What has been done
+
+### 1) Odoo.sh-style Environments (complete, deployed)
+- Production (`saas.instance`, the billing anchor) + Staging/Development as
+  children (`parent_id`). Children never self-bill — their cost rides the
+  Production renewal via `_environment_order_lines`, and they're excluded from
+  the crons via `('parent_id','=',False)`.
+- Staging/Dev are always lowest spec (fixed per-server price from the pricing
+  engine).
+- One-click create/delete/merge: `action_create_environment`,
+  `action_delete_environment`, `action_merge_environment`.
+- Per-project Git branch automation in `saas_instance_repo.py`
+  (`_create_branch_on_provider`, `_delete_branch_on_provider`,
+  `_merge_branch_on_provider`, `_list_remote_branches`).
+- Repo + token are **per-PROJECT** (set on Production, propagated to children).
+- `saas.build` model for build/deploy history — **ops-only** (the
+  customer-facing UI/API was removed intentionally).
+
+### 2) Google Cloud Console-style UI/UX redesign (complete, deployed)
+- Design tokens via CSS variables in `src/index.css` (primary `#1a73e8`,
+  page `#f8f9fa`, white cards, borders `#dadce0`, Roboto font, Material buttons).
+- New shell in `PortalLayout.tsx`: top app bar + collapsible left nav
+  (collapsed by default), `ProjectSwitcher`, centered search, avatar dropdown
+  (Settings + Sign out only).
+- `PublicNav.tsx`: solid white bar, UserMenu matching the dashboard avatar
+  dropdown.
+- `Footer.tsx`: compact single-row GitHub-style footer.
+- Shared components: `PageHeader`, `DataTable`, `CommandPalette` (⌘K),
+  `NotificationsBell`, `ProjectSwitcher`, `Dropdown`, `StatusBadge`, `Skeleton`.
+- `Home.tsx`: rich landing (globe kept) + "Start free trial" CTA.
+- `Logs.tsx`: themed log colors (text-danger/warning/muted/foreground).
+- `/my/account` redirects to `/my/settings` (in `portal.py`).
+
+### 3) Latest change (complete, deployed — commit `5f38d21`)
+On the workspace page `/my/instances/<id>/environments`:
+- **In-page tabs (no navigation)**: Overview / Databases / Logs / Backups now
+  swap in place (a `tab` state in `MainPanel`) — like switching from one server
+  to another.
+- **Code moved to project-level Settings** (no longer per-server):
+  `ProjectSettingsPanel` reached from the sidebar "Project settings" button,
+  showing the project's repo/token/packages config (bound to the Production
+  instance).
+- `Databases` / `Logs` / `Backups` / `Code` are now embeddable via an `embedId`
+  prop (suppresses their breadcrumb/heading when rendered inside the workspace).
+
+---
+
+## Bugs hit and their fixes (so we don't repeat them)
+- "column environment does not exist" on live → needed `-u saas_core` (module
+  upgrade after adding fields).
+- `_get_env_plan` created a plan at price 0 → violated `_check_price_floor` on
+  the live DB. Fix: stamp a floor-aware monthly price + link a hosting product.
+- Stale homepage cache after git pull → fix: always `systemctl restart odoo` +
+  verify the hash match.
+- `tsc noUnusedLocals` breaks the build on any unused import left after a
+  refactor — clean up imports.
+- JSX broke once due to an `// eslint-disable` comment placed inside a JSX tag.
+
+---
+
+## Fixed rules/decisions (do not revert)
+- Pricing: yearly discount = infra only (support/backup flat ×12), cheapest
+  region = default, backup billed at checkout, unified tier+custom pricing.
+- Services vs hosting: same system + pricing engine (services priced higher);
+  services is a locked-down MANAGED app — only snapshots exposed, no
+  code/logs/DB-ops.
+- Billing overhaul v46: wallet, auto-renew + provider abstraction, blocks-only
+  overage, full proration, trial 25%×3, recommended-region default.
+- Backup: daily = restic deduplicated, on-demand = zip ephemeral (don't unify).
+- Hosting DB create = PG template clone (`__odoo_template_<sub>` +
+  `CREATE DATABASE WITH TEMPLATE` + filestore `cp -a`).
+
+---
+
+## Open / possible next tasks
+- (Nothing urgent open right now — the last two requests are done, deployed,
+  and verified.)
+- Follow up on any further UI/UX notes from the user.
+- Confirm the SSH password has been rotated (security).
+
+---
+
+## Key files for reference
+- `saas_core/models/saas_instance.py` — environment fields/billing/crons.
+- `saas_core/models/saas_instance_repo.py` — branch automation.
+- `saas_core/models/saas_build.py` — build records.
+- `saas_website/controllers/api.py` — env serializer + repo-per-project.
+- `veltnex/src/pages/portal/Environments.tsx` — the workspace + in-page tabs +
+  ProjectSettingsPanel.
+- `veltnex/src/components/layout/PortalLayout.tsx` / `PublicNav.tsx` / `Footer.tsx`.
+- `veltnex/src/index.css` — design tokens.
