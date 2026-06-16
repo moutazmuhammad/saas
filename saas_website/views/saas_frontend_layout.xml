@@ -161,7 +161,7 @@
                     <div class="container">
                         <a class="navbar-brand d-flex align-items-center" href="/my">
                             <img src="/saas_website/static/src/img/veltnex-icon.svg" alt="VELTNEX" style="height:30px;" class="me-2"/>
-                            <span class="fw-bold">VELT<span style="color:#3656b8;">NEX</span></span>
+                            <span class="fw-bold">VELT<span style="color:#1a73e8;">NEX</span></span>
                         </a>
                         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#coNavbar">
                             <span class="navbar-toggler-icon"></span>
@@ -189,7 +189,7 @@
                                         <a class="nav-link dropdown-toggle d-flex align-items-center" href="#"
                                            role="button" data-bs-toggle="dropdown" aria-expanded="false">
                                             <div class="d-flex align-items-center justify-content-center rounded-circle me-2"
-                                                 style="width:32px;height:32px;background:var(--co-primary, #203c86);font-size:0.8rem;color:white;">
+                                                 style="width:32px;height:32px;background:var(--co-primary, #1a73e8);font-size:0.8rem;color:var(--primary-foreground, #fff);">
                                                 <t t-esc="''.join([w[0] for w in (request.env.user.name or 'U').split()[:2]]).upper() or 'U'"/>
                                             </div>
                                             <span class="d-none d-lg-inline" t-esc="request.env.user.name"/>
@@ -351,7 +351,7 @@
         <xpath expr="//div[hasclass('d-flex','justify-content-start')]" position="replace">
             <div class="d-flex align-items-center gap-3 mb-3 pb-3" style="border-bottom:1px solid var(--border-color, #27272A);">
                 <div class="d-flex align-items-center justify-content-center rounded-circle"
-                     style="width:50px;height:50px;background:var(--co-primary, #203c86);color:white;font-size:1.1rem;font-weight:600;flex-shrink:0;">
+                     style="width:50px;height:50px;background:var(--co-primary, #1a73e8);color:var(--primary-foreground, #fff);font-size:1.1rem;font-weight:600;flex-shrink:0;">
                     <t t-esc="(user_id.name or 'U')[:2].upper()"/>
                 </div>
                 <div>

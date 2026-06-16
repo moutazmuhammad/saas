@@ -11,9 +11,14 @@
    ============================================ */
 
 :root {
-    --primary: #203c86;
-    --primary-hover: #192e6b;
-    --primary-light: rgba(32, 60, 134, 0.1);
+    /* Google Cloud Console palette — dark (mirrors veltnex SPA `.dark`).
+       Default = dark; the `[data-theme="light"]` block below carries light. */
+    --primary: #8ab4f8;
+    --primary-hover: #aecbfa;
+    --primary-light: rgba(138, 180, 248, 0.12);
+    /* Text/icon color that sits ON a primary fill. Dark theme: the primary is
+       a LIGHT blue, so foreground must be dark for contrast (mirrors SPA). */
+    --primary-foreground: #202124;
     --accent: #0db3d0;
     --accent-hover: #0a95ad;
     --success: #10B981;
@@ -25,19 +30,19 @@
     --info: #3B82F6;
     --info-light: rgba(59, 130, 246, 0.1);
 
-    --bg-dark: #0A0A0B;
-    --bg-card: #111113;
-    --bg-card-hover: #18181B;
-    --bg-elevated: #1A1A1D;
-    --bg-input: #18181B;
-    --bg-navbar: rgba(10, 10, 11, 0.95);
+    --bg-dark: #202124;
+    --bg-card: #292a2d;
+    --bg-card-hover: #303134;
+    --bg-elevated: #303134;
+    --bg-input: #292a2d;
+    --bg-navbar: #292a2d;
 
-    --text-primary: #FAFAFA;
-    --text-secondary: #A1A1AA;
-    --text-muted: #71717A;
+    --text-primary: #e8eaed;
+    --text-secondary: #9aa0a6;
+    --text-muted: #9aa0a6;
 
-    --border-color: #27272A;
-    --border-light: #3F3F46;
+    --border-color: #3c4043;
+    --border-light: #5f6368;
 
     --radius-sm: 6px;
     --radius-md: 10px;
@@ -47,7 +52,7 @@
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
-    --shadow-glow: 0 0 40px rgba(32, 60, 134, 0.15);
+    --shadow-glow: 0 0 40px rgba(138, 180, 248, 0.15);
 
     --transition-fast: 150ms ease;
     --transition-base: 250ms ease;
@@ -64,24 +69,30 @@
    ============================================ */
 
 [data-theme="light"] {
-    --bg-dark: #FFFFFF;
-    --bg-card: #F9FAFB;
-    --bg-card-hover: #F3F4F6;
-    --bg-elevated: #F3F4F6;
-    --bg-input: #FFFFFF;
-    --bg-navbar: rgba(255, 255, 255, 0.95);
+    /* Google Cloud Console palette — light (mirrors veltnex SPA `:root`). */
+    --primary: #1a73e8;
+    --primary-hover: #1967d2;
+    --primary-light: rgba(26, 115, 232, 0.1);
+    --primary-foreground: #ffffff;
 
-    --text-primary: #111827;
-    --text-secondary: #4B5563;
-    --text-muted: #9CA3AF;
+    --bg-dark: #f8f9fa;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f1f3f4;
+    --bg-elevated: #ffffff;
+    --bg-input: #ffffff;
+    --bg-navbar: #ffffff;
 
-    --border-color: #E5E7EB;
-    --border-light: #D1D5DB;
+    --text-primary: #202124;
+    --text-secondary: #5f6368;
+    --text-muted: #5f6368;
+
+    --border-color: #dadce0;
+    --border-light: #c4c7c5;
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
-    --shadow-glow: 0 0 40px rgba(32, 60, 134, 0.08);
+    --shadow-glow: 0 0 40px rgba(26, 115, 232, 0.08);
 }
 
 /* ============================================
@@ -1258,10 +1269,10 @@ footer a[href*="odoo.com"],
 
 /* Primary button */
 .co-btn-primary {
-    background: linear-gradient(135deg, #203c86 0%, #192e6b 100%) !important;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%) !important;
     border: none !important;
     border-radius: 10px !important;
-    color: #FFFFFF !important;
+    color: var(--primary-foreground) !important;
     font-weight: 600 !important;
     font-size: 0.95rem !important;
     padding: 0.75rem 1.5rem !important;
@@ -1271,9 +1282,9 @@ footer a[href*="odoo.com"],
     justify-content: center;
 }
 .co-btn-primary:hover {
-    background: linear-gradient(135deg, #192e6b 0%, #0db3d0 100%) !important;
+    background: linear-gradient(135deg, var(--primary-hover) 0%, var(--accent) 100%) !important;
     transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(32, 60, 134, 0.3) !important;
+    box-shadow: 0 4px 16px rgba(26, 115, 232, 0.3) !important;
 }
 .co-btn-primary:active {
     transform: translateY(0);
@@ -1480,7 +1491,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .btn-primary {
     background: var(--primary);
-    color: white;
+    color: var(--primary-foreground);
 }
 
 .btn-primary:hover {
@@ -3942,6 +3953,6 @@ footer.bg-light.o_footer a:hover {
 }
 .saas-help:hover,
 .saas-help:focus {
-    color: #203c86;
+    color: var(--primary);
     text-decoration: none;
 }
