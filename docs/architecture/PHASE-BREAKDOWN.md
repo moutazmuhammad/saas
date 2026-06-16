@@ -1,0 +1,250 @@
+# Phase Breakdown — Granular Executable Steps
+
+**Companion to:** `IMPLEMENTATION-PLAN.md` (the roadmap) and `architecture-spec-v1.md` (the target).
+**Purpose:** every phase decomposed into the smallest safe, verifiable units of work.
+**How to use:** execute top-to-bottom within a phase; respect `(needs: …)` dependencies; check the
+"Done when" before moving on; tick the box and log it in `IMPLEMENTATION-PLAN.md` §10.
+**Step sizing rule:** each step ≈ a few hours, one clear deliverable, independently verifiable, reversible.
+
+> What "stronger than Odoo.sh + profitable" actually requires from this breakdown:
+> (a) per-tenant margin visibility (Phase 4) so you know you're profitable;
+> (b) a large-tenant scale-out tier (Phase 5) Odoo.sh charges a premium for;
+> (c) clean seams (Phases 1–2) so you add capacity without rewrites.
+> These three are the profit/differentiation levers — everything else is hygiene.
+
+---
+
+## START SMALL, SCALE WITHOUT A REWRITE — what to build NOW vs LATER
+
+The principle: **a seam is cheap, an implementation is expensive.** Build every seam now so scaling is
+additive; defer every heavy implementation until real demand. This keeps day-one cost near the
+~$100/mo / one-server profile while guaranteeing no Control-Plane rewrite later.
+
+### ✅ DO NOW (cheap, enables scale, prevents future rewrites)
+- **Phase 0** — safety net (so we can change anything fast and safely).
+- **Phase 1** — ComputeDriver + DataService seams. *This is the #1 anti-rewrite investment.* Cheap to
+  build, it's what lets Kubernetes/scale-out/upgrades be additions instead of rewrites.
+- **Phase 2** — object-storage filestore + immutable registry images. Makes compute disposable; cheap to
+  run on one server; prerequisite for everything multi-host.
+- **Phase 4** — per-tenant margin dashboard. Cheap, and it's how you know you're *profitable* (your goal).
+- **Phase 3 (light)** — a minimal reconciler so a dead container self-heals.
+
+> Minimal "start small" footprint = ONE server, single-container tenants, shared PostgreSQL,
+> object-storage filestore, registry images, the seams, and the margin dashboard. Cheap to run,
+> fully scale-ready.
+
+### 🟡 SEAM NOW, IMPLEMENTATION LATER (design the boundary, don't build the heavy part yet)
+- **Phase 5 model only** — when convenient, avoid hardcoding "one container per instance" (allow the
+  `container_ids`/`role` concept to exist). But do NOT build LB / PgBouncer / read replica / dedicated PG
+  until a real large tenant needs it.
+- **Phase 6 interface only** — the `ComputeDriver` interface from Phase 1 already IS the K8s seam. Do not
+  implement `KubernetesDriver` until single-server bin-packing actually hurts.
+
+### 🔴 DEFER UNTIL DEMAND (do not build now — this is where money/time gets wasted)
+- **Phase 5 scale-out implementation** (multi-host LB, read replica, dedicated tuned PG, PgBouncer) →
+  triggered by the first large tenant, not by anticipation.
+- **Phase 6 KubernetesDriver** → triggered by running out of single-server headroom.
+- **Phase 7 upgrade automation** → triggered by the first real version-migration need.
+
+**Rule of thumb:** if a step adds a *seam/interface*, it's probably DO-NOW (cheap insurance). If it adds
+*infrastructure you must run and pay for*, it's probably DEFER until a tenant's load demands it.
+
+---
+
+## PHASE 0 — Audit & Safety Net
+
+### 0.1 Get a verification environment running
+- [ ] **0.1.1** Inventory the machine: confirm presence/versions of Odoo 18, PostgreSQL, Docker, and
+      python deps (paramiko, jinja2, boto3, google-cloud-storage). *Done when:* a written list of
+      what's installed vs missing.
+- [ ] **0.1.2** Install whatever is missing (or document the gap). *Done when:* all deps resolvable.
+- [ ] **0.1.3** Create a local Odoo 18 dev config (odoo.conf, addons_path includes `custom/saas`).
+      *Done when:* `odoo-bin` starts without import errors.
+- [ ] **0.1.4** Create a fresh dev DB and install `saas_core` + `saas_website`. *Done when:* both modules
+      install clean; backend loads.
+- [ ] **0.1.5** Build the SPA (`cd veltnex && npm ci && npm run build`) and confirm it serves.
+      *Done when:* the VELTNEX homepage renders locally.
+- [ ] **0.1.6** Write `scripts/dev-up.md` documenting exact start/stop/rebuild steps. *Done when:* a
+      second person could reproduce the env from the doc.
+
+### 0.2 Map the as-built system (output: `docs/as-built/*.md`)
+- [ ] **0.2.1** Read `SESSION_NOTES.md`, `docker/SERVER-SETUP.md`, `docker/README.md`; write a 1-page summary.
+- [ ] **0.2.2** Trace the **provisioning flow** end to end (`action_deploy → _do_deploy →
+      _provision_postgresql → _render_and_write_configs → container up → webhooks`) as a numbered sequence.
+- [ ] **0.2.3** Trace the **backup / restore / clone** flow (restic + `_pg_clone_db` + `_restore_snapshot`).
+- [ ] **0.2.4** Trace the **billing/wallet/pricing** flow + list every cron from `__manifest__` data files.
+- [ ] **0.2.5** Trace **environments** (create/merge/delete, parent_id billing rules).
+- [ ] **0.2.6** Catalog **every Docker/SSH call site** with `file:line` (grep paramiko/docker/ssh). This is
+      the Phase-1 driver boundary. *Done when:* a complete table exists.
+- [ ] **0.2.7** Bucket the **248 god-model methods** into concerns (provisioning · PG ops · environments ·
+      billing · usage · deploy/build · crons). *Done when:* a method→concern table exists.
+- [ ] **0.2.8** **Decide:** is deploy source-clone (mutable) or image-based? *Done when:* answer recorded;
+      it sets Phase-2 scope.
+
+### 0.3 Build the safety net (tests we refactor behind)
+- [ ] **0.3.1** Stand up the Odoo test harness for `saas_core` (`TransactionCase`, tagged tests, runner cmd).
+- [ ] **0.3.2** Characterization test: provisioning with the driver/SSH **mocked** — assert the side effects
+      (DB created, configs rendered, ports assigned). *Done when:* test passes on dev.
+- [ ] **0.3.3** Characterization test: **backup → destroy → restore** round-trip against a disposable DB;
+      assert data identical. *Done when:* green and repeatable.
+- [ ] **0.3.4** `scripts/test.sh` one-command runner. *Done when:* runs all saas tests locally.
+
+**Phase 0 acceptance:** dev env reproducible + as-built docs written + a green provision and
+backup/restore test. Only then do we touch the god-model.
+
+---
+
+## PHASE 1 — Seams: ComputeDriver + DataService  *(needs: Phase 0)*
+
+### 1.1 Define the ComputeDriver contract
+- [ ] **1.1.1** Create `saas_core/drivers/base.py` with abstract `ComputeDriver`: `create / destroy /
+      start / stop / restart / exec / logs / endpoint / health` — signatures + docstrings, no impl.
+- [ ] **1.1.2** Define a plain descriptor object for a container/env handle (server, name, ports, db).
+      *Done when:* importable, type-checked, no Odoo coupling in the interface.
+
+### 1.2 Implement SshDockerDriver (the ONE impl)
+- [ ] **1.2.1** Create `drivers/ssh_docker_driver.py` skeleton implementing the interface (raises NotImpl).
+- [ ] **1.2.2** Move the SSH connection helper (`_ensure_can_ssh` / paramiko setup) into the driver.
+- [ ] **1.2.3** Move container lifecycle (`action_stop`/start/restart/create/destroy) Docker calls in.
+- [ ] **1.2.4** Move `exec` + `logs` (container_logs / ssh_terminal paths) behind driver methods.
+- [ ] **1.2.5** Move stats/health sampling (`_sample_live_metrics_for_host`, docker stats) into
+      `health()`/`endpoint()`. *Done when:* driver fully implements the interface.
+
+### 1.3 Wire the model to the driver (incremental, test each)
+- [ ] **1.3.1** Add `instance._driver()` factory (selects SshDockerDriver by server type).
+- [ ] **1.3.2** Replace direct call sites in `saas_instance.py` with `self._driver().X()` — **one method per
+      commit**, run 0.3 tests after each.
+- [ ] **1.3.3** Remove now-unused direct paramiko/docker imports from `saas_instance.py`.
+- [ ] **1.3.4** Full test pass; confirm zero behavior change. *Done when:* no Docker/SSH ref outside the driver.
+
+### 1.4 Consolidate DataService
+- [ ] **1.4.1** Create `saas_core/dataservice/service.py` with `snapshot(instance)` + `materialize(snapshot,
+      target, neutralize=False)` signatures.
+- [ ] **1.4.2** Wrap existing restic backup logic into `snapshot()` (delegate, don't rewrite).
+- [ ] **1.4.3** Wrap `_restore_snapshot` into `materialize()`.
+- [ ] **1.4.4** Implement `clone = snapshot + materialize(new identity)`; route `_pg_clone_db` through it.
+- [ ] **1.4.5** Implement `neutralize` (disable outbound mail + crons) for non-prod materializations.
+- [ ] **1.4.6** Parity tests: backup/restore/clone via DataService match pre-refactor behavior. *Done when:* green.
+
+**Phase 1 acceptance:** business logic calls `ComputeDriver` + `DataService` only; a future
+`KubernetesDriver` is a new file, not a rewrite; all Phase-0 tests still pass.
+
+---
+
+## PHASE 2 — Storage to spec: object-storage filestore + container registry  *(needs: Phase 1)*
+
+### 2.1 Object-storage-first filestore (JuiceFS)
+- [ ] **2.1.1** Pick object store: MinIO (dev) + R2/B2 (prod); create a bucket + credentials.
+- [ ] **2.1.2** Initialize JuiceFS with metadata on the meta PostgreSQL; mount on a dev host with local cache.
+- [ ] **2.1.3** Point a NEW tenant's filestore at the JuiceFS mount; verify attachments read/write.
+- [ ] **2.1.4** DataService routine to migrate one tenant's filestore local → object store.
+- [ ] **2.1.5** Measure page-load latency with cache warm/cold; confirm acceptable. *Done when:* no
+      regression vs local for hot attachments.
+- [ ] **2.1.6** Switch `clone` to reference object-store filestore (drop `cp -a`). *Done when:* clone works
+      without local filestore copy.
+
+### 2.2 Container registry + immutable images
+- [ ] **2.2.1** Stand up a registry (self-hosted Distribution or managed); auth configured.
+- [ ] **2.2.2** Build + push the Odoo 18 **base image** (then 17, 16).
+- [ ] **2.2.3** Implement platform-generated **tenant Dockerfile** template (base + custom modules + pip,
+      requirements layer cached before module layer).
+- [ ] **2.2.4** Build pipeline step: produce `tenant-18-<sha>`, push to registry, record on `saas.build`.
+- [ ] **2.2.5** **Sandbox the build worker** (ephemeral, rootless, egress-restricted, no platform creds) —
+      it runs untrusted customer code. *Done when:* a malicious `requirements.txt` cannot reach secrets.
+- [ ] **2.2.6** Change deploy to **pull image by SHA** instead of source clone+build on host.
+- [ ] **2.2.7** Rollback path: redeploy previous SHA; test it. *Done when:* one-command rollback verified.
+
+**Phase 2 acceptance:** a tenant runs from a registry image by SHA with filestore in object storage;
+destroying its host and recreating elsewhere loses no data; rollback to a prior SHA works.
+
+---
+
+## PHASE 3 — Reconciliation Engine  *(needs: Phase 1; better after Phase 2)*
+
+- [ ] **3.1.1** Add `desired_state` (running/stopped) + `target_image_sha` fields to the instance.
+- [ ] **3.1.2** Add `actual_state` derived from `driver.health()`.
+- [ ] **3.2.1** Write `reconcile(instance)`: diff desired vs actual → ordered actions.
+- [ ] **3.2.2** Make it idempotent + crash-safe (safe to re-run mid-action).
+- [ ] **3.2.3** Drive it from a single cron/loop over all instances.
+- [ ] **3.2.4** Fold `_cron_retry_pending_provision` + `_cron_recover_stuck_provisioning` into the reconciler;
+      remove the duplicates.
+- [ ] **3.2.5** Add a health gate before routing traffic on (re)deploy.
+- [ ] **3.2.6** Test: kill a container → reconciler restores it within one loop. *Done when:* green.
+
+**Phase 3 acceptance:** reality self-heals toward desired state; a half-failed deploy converges or rolls back.
+
+---
+
+## PHASE 4 — Observability & per-tenant margin  *(needs: Phase 0; independent of 1–3)*
+
+- [ ] **4.1.1** Define the `tenant_id` label schema; ensure every metric + log line carries the instance id.
+- [ ] **4.2.1** Deploy VictoriaMetrics + Grafana (single-node).
+- [ ] **4.2.2** Export container stats (cAdvisor or the existing `docker stats` sampler) tagged `tenant_id`.
+- [ ] **4.2.3** Export per-DB size + `pg_stat_statements` per tenant.
+- [ ] **4.3.1** Define the cost model: CPU/RAM/storage/egress → currency per tenant.
+- [ ] **4.3.2** Pull per-tenant revenue (wallet/plan) into a Grafana datasource.
+- [ ] **4.3.3** Build the **margin dashboard** (revenue − cost per tenant). *Done when:* it shows live numbers.
+- [ ] **4.3.4** Alerts: unprofitable tenant, runaway CPU/RAM, storage near limit.
+
+**Phase 4 acceptance:** one dashboard answers "which tenants are profitable?" from live data.
+
+---
+
+## PHASE 5 — Tiered PostgreSQL + large-tenant scale-out tier  *(needs: Phase 2; uses Phase 1)*
+
+### 5.1 Multi-container instance model
+- [ ] **5.1.1** Add `container_ids` One2many + `role` field (`app` / `cron` / `longpoll`) to the instance.
+- [ ] **5.1.2** Refactor provisioning so a scale-out instance creates a SET of containers via the driver.
+- [ ] **5.1.3** Ensure exactly ONE cron node runs `ir.cron` (others `--max-cron-threads=0`).
+- [ ] **5.1.4** Dedicated gevent/longpolling node for websockets/bus.
+
+### 5.2 Load balancer + sessions
+- [ ] **5.2.1** Put HAProxy/nginx in front of the app containers (replace `upstream=127.0.0.1`).
+- [ ] **5.2.2** Sticky sessions first; design a shared session store as the follow-up.
+
+### 5.3 PostgreSQL tiers
+- [ ] **5.3.1** Model PG tier as an operational attribute (decoupled from billing plan).
+- [ ] **5.3.2** Provision a dedicated, tuned PG for the Business tier.
+- [ ] **5.3.3** Add PgBouncer (transaction pooling) in front.
+- [ ] **5.3.4** Add a streaming read replica.
+- [ ] **5.3.5** Route heavy reports/exports to the replica (config + app guardrails).
+
+### 5.4 Promotion
+- [ ] **5.4.1** Define size/load triggers (DB size, p99 query, IOPS) that flag a tenant for promotion.
+- [ ] **5.4.2** Implement `DataService.migrate(tenant, to_tier)` (dump mode first; logical replication later).
+- [ ] **5.4.3** Test: one tenant served by ≥2 app containers across hosts + read replica, no impact on others.
+
+**Phase 5 acceptance:** a single large tenant scales out (app + reads) with zero effect on neighbors.
+**Ceiling to communicate:** one Odoo DB can't be sharded — writes bound by one PG primary; beyond the
+biggest box the levers are app-side (indexing, partitioning, archiving).
+
+---
+
+## PHASE 6 — Placement Service + KubernetesDriver  *(future; needs: Phase 1)*
+- [ ] **6.1** Formalize a `Placement` interface (host + PG tier decision); v1 wraps current `_allocate_*`.
+- [ ] **6.2** Implement `KubernetesDriver` against the Phase-1 interface; pilot a subset of tenants.
+- [ ] **6.3** Keep tenant PostgreSQL on dedicated/managed hosts — never on K8s ephemeral storage.
+- **Acceptance:** a tenant runs under either driver with no Control-Plane change.
+
+## PHASE 7 — Upgrade Flow (clone-upgrade-promote)  *(future; needs: Phase 1)*
+- [ ] **7.1** Odoo version migration as a DataService op: clone → migrate (OpenUpgrade/official) → validate on
+      staging URL → promote via cutover; keep original as rollback.
+- [ ] **7.2** Reuse the same discipline for tier/server moves and major PG engine upgrades.
+- **Acceptance:** a tenant is upgraded with a tested rollback and no in-place mutation.
+
+---
+
+## CROSS-CUTTING — God-model decomposition (every phase)
+Each phase extracts its concern out of `saas_instance.py` behind the Phase-0 tests:
+- [ ] Phase 1 removes provisioning/PG/lifecycle internals → driver + DataService.
+- [ ] Phase 3 removes recovery crons → reconciler.
+- [ ] Phase 5 removes single-container assumptions → multi-container model.
+- **End-state:** `saas_instance` is a thin aggregate; concerns live in focused units. Never big-bang.
+
+---
+
+## Execution conventions
+- One step = one commit (or a tight set); run `scripts/test.sh` before moving on.
+- Update `IMPLEMENTATION-PLAN.md` §10 progress log after each step.
+- If a step uncovers a surprise, add a sub-step rather than widening the current one.
+- Production/staging changes only after the user reviews (even though there are no live customers yet).

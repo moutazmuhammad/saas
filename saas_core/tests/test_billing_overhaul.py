@@ -139,7 +139,9 @@ class TestBillingV47(TransactionCase):
         bonus = w._credit(15.0, origin='goodwill',
                           credit_class='system_issued',
                           expiry_date=date.today() - timedelta(days=1))
-        self.assertAlmostEqual(w.balance, 55.0, 2)
+        # Balance counts only LIVE credit, so the already-expired bonus is
+        # excluded immediately (the cron only flips its state, not the balance).
+        self.assertAlmostEqual(w.balance, 40.0, 2)
         # Expired bonus is not spendable even before the cron runs.
         self.assertFalse(bonus._is_live())
         self.assertTrue(funded._is_live())

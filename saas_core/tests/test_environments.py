@@ -109,30 +109,32 @@ class TestEnvironments(TransactionCase):
         self.assertAlmostEqual(prod._env_server_price('monthly'), full * 0.5, 2)
 
     # -------------------------------------------------------------- renewal line
-    def test_environment_order_lines_one_per_active_child(self):
+    def test_environment_order_lines_one_per_slot(self):
+        # Billing follows purchased SLOTS (entitlement), not how many children
+        # are spun up — creating within slots is free, so renewal bills slots.
         prod = self._mk_prod('plines', due=date(2026, 2, 1),
                              last=date(2026, 1, 1))
-        self._mk_child(prod, 'staging', sub='plines-stg')
-        dev = self._mk_child(prod, 'development', sub='plines-dev')
+        prod.write({'staging_slots': 1, 'dev_slots': 1})
         lines = prod._environment_order_lines('monthly')
         self.assertEqual(len(lines), 2)
         price = prod._env_server_price('monthly')
         for cmd in lines:
             self.assertAlmostEqual(cmd[2]['price_unit'], price, 2)
             self.assertEqual(cmd[2]['product_uom_qty'], 1)
-        # A cancelled child drops out of the recurring lines.
-        dev.state = 'cancelled'
+        # Releasing a slot drops its recurring line.
+        prod.write({'dev_slots': 0})
         self.assertEqual(len(prod._environment_order_lines('monthly')), 1)
 
     def test_renewal_invoice_includes_environment_lines(self):
         prod = self._mk_prod('prenew', due=date(2026, 1, 1),
                              last=date(2025, 12, 1))
-        self._mk_child(prod, 'staging', sub='prenew-stg')
+        prod.write({'staging_slots': 1})
         prod._generate_renewal_invoice()
         so = self.env['sale.order'].sudo().search(
             [('origin', '=', 'SAAS:RENEWAL:%s' % prod.name)],
             order='id desc', limit=1)
-        env_lines = [l for l in so.order_line if 'server' in (l.name or '')]
+        # Recurring env lines are labelled "… slot #N (…)".
+        env_lines = [l for l in so.order_line if 'slot' in (l.name or '')]
         self.assertEqual(len(env_lines), 1)
 
     # ------------------------------------------------------------ cron exclusion
