@@ -539,7 +539,11 @@
                                         <t t-foreach="invoice.invoice_line_ids" t-as="line">
                                             <tr t-if="line.display_type not in ('line_section', 'line_note')">
                                                 <td>
-                                                    <t t-esc="line.name"/>
+                                                    <!-- Clean label: drop the product-code prefix line
+                                                         ("[SAAS-SUB] SaaS Subscription") and the trailing
+                                                         "— &lt;instance&gt;" (already shown in Configuration). -->
+                                                    <t t-set="charge_label" t-value="(line.name or '').split('\n')[-1].split(' — ')[0].strip()"/>
+                                                    <t t-esc="charge_label or line.name"/>
                                                     <t t-if="line.quantity and line.quantity != 1">
                                                         <span style="color:var(--text-muted);">&#215; <t t-esc="line.quantity"/></span>
                                                     </t>
