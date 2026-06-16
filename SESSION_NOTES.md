@@ -118,6 +118,24 @@ On the workspace page `/my/instances/<id>/environments`:
   (a plain restart won't re-read view arch). New CSS classes live in
   `cloudodoo.css` (`.vx-avatar*`, `.vx-account-*`, `.co-footer-social`).
 
+### 5) Awaiting-payment orders: hidden from list + abandonable (`02f0f9b`)
+- `pending_payment` instances are **incomplete orders**, not real projects:
+  - Hidden from the customer's **projects list + search** via a new
+    `_LIST_STATES` (= `_ACTIVE_STATES` minus `pending_payment`) in
+    `api.py::instances()`. Cancelled states stay visible (reactivation).
+  - Still surfaced on the **Dashboard "Needs your attention"** (separate
+    dashboard endpoint keeps them) + filtered out of the Dashboard "Your
+    projects" preview.
+- **"Don't complete"** button beside each awaiting-payment alert (Dashboard)
+  → confirm dialog → `api.invoiceCancel` → `action_client_cancel_invoice`
+  (cancels the instance, frees the subdomain), then reloads.
+- ⚠️ The blocker: `_invoice_is_client_cancellable` refused `SAAS:INITIAL:`
+  invoices. Fix: a never-deployed (`pending_payment`/`draft`) order is always
+  client-cancellable (nothing provisioned); the non-cancellable rule now only
+  guards LIVE renewals/restorations.
+- Deploy: SPA rebuild + Python (api.py + model) → `git pull` + **restart**
+  (no `-u` — no XML/view change this round).
+
 ## Bugs hit and their fixes (so we don't repeat them)
 - "column environment does not exist" on live → needed `-u saas_core` (module
   upgrade after adding fields).
