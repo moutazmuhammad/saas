@@ -31,6 +31,14 @@ from .main import SaasWebsite, _ACTIVE_STATES
 
 _logger = logging.getLogger(__name__)
 
+# States shown in the customer's PROJECTS LIST and search. An instance still
+# awaiting its first payment isn't a real project yet — it's an incomplete
+# order — so it's excluded here (the customer reaches it from the Dashboard
+# "Needs attention" alert, where they can either complete payment or abandon
+# it). Every other active/cancelled state stays visible (cancelled instances
+# remain reachable for reactivation).
+_LIST_STATES = tuple(s for s in _ACTIVE_STATES if s != 'pending_payment')
+
 EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 PHONE_RE = re.compile(r'^\+?[\d\s\-\(\)]{7,20}$')
 
@@ -562,7 +570,9 @@ class SaasApi(http.Controller):
             return err(_("Please sign in."), 'auth_required')
         domain = [
             ('partner_id', '=', partner.id),
-            ('state', 'in', _ACTIVE_STATES),
+            # Awaiting-payment orders are hidden from the list + search
+            # (surfaced on the Dashboard instead). See _LIST_STATES.
+            ('state', 'in', _LIST_STATES),
             # Top-level only — children are listed on their project's board.
             ('parent_id', '=', False),
         ]

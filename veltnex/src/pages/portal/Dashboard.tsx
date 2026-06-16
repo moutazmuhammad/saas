@@ -7,9 +7,11 @@ import {
   CheckCircle2,
   AlertTriangle,
   Server,
+  Ban,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { Skeleton, SkeletonCard } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
@@ -28,6 +30,10 @@ interface ActionItem {
   text: string;
   cta: string;
   to: string;
+  // When set, the item is an awaiting-payment order: show a secondary
+  // "Don't complete" button that abandons the order (this instance id).
+  cancelId?: number;
+  cancelName?: string;
 }
 
 function projectLink(i: ApiInstance) {
@@ -41,13 +47,37 @@ export default function Dashboard() {
   const createTo = sections.hosting ? "/hosting" : "/services";
   const [data, setData] = React.useState<DashboardData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // Awaiting-payment order pending abandon-confirmation, + in-flight flag.
+  const [cancelTarget, setCancelTarget] = React.useState<{ id: number; name: string } | null>(null);
+  const [cancelling, setCancelling] = React.useState(false);
+  const [cancelError, setCancelError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
+  const load = React.useCallback(() => {
     api
       .dashboard()
       .then(setData)
       .catch((e) => setError(e instanceof ApiError ? e.message : "Could not load your dashboard."));
   }, []);
+
+  React.useEffect(() => {
+    load();
+  }, [load]);
+
+  const confirmCancel = async () => {
+    if (!cancelTarget) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await api.invoiceCancel(cancelTarget.id);
+      setCancelTarget(null);
+      setData(null);
+      load();
+    } catch (e) {
+      setCancelError(e instanceof ApiError ? e.message : "Couldn't cancel the order. Please try again.");
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const currency = data?.currency || data?.wallet?.currency || "USD";
   const outstanding = data?.stats.outstanding ?? 0;
@@ -55,6 +85,9 @@ export default function Dashboard() {
   const total = data?.stats.instances ?? 0;
   const running = data?.stats.running ?? 0;
   const wallet = data?.wallet?.total ?? data?.stats.wallet_balance ?? 0;
+  // The projects grid excludes awaiting-payment orders (they're surfaced in
+  // "Needs your attention" instead) so the customer's project list stays clean.
+  const visibleProjects = (data?.instances ?? []).filter((i) => i.state !== "pending_payment");
 
   const actions: ActionItem[] = React.useMemo(() => {
     if (!data) return [];
@@ -75,7 +108,7 @@ export default function Dashboard() {
       else if (i.state === "failed")
         items.push({ id: `f-${i.id}`, text: `${i.name} failed to deploy`, cta: "View", to: projectLink(i) });
       else if (i.state === "pending_payment")
-        items.push({ id: `p-${i.id}`, text: `${i.name} is awaiting payment`, cta: "Checkout", to: `/my/instances/${i.id}/checkout` });
+        items.push({ id: `p-${i.id}`, text: `${i.name} is awaiting payment`, cta: "Checkout", to: `/my/instances/${i.id}/checkout`, cancelId: i.id, cancelName: i.name });
     }
     return items.slice(0, 6);
   }, [data]);
@@ -188,9 +221,22 @@ export default function Dashboard() {
                       <span className="size-2 shrink-0 rounded-full bg-warning" />
                       {a.text}
                     </span>
-                    <Button size="sm" variant="secondary" onClick={() => navigate(a.to)}>
-                      {a.cta}
-                    </Button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {a.cancelId !== undefined && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-danger hover:bg-danger/10"
+                          onClick={() => setCancelTarget({ id: a.cancelId!, name: a.cancelName || "this order" })}
+                        >
+                          <Ban className="size-4" />
+                          Don't complete
+                        </Button>
+                      )}
+                      <Button size="sm" variant="secondary" onClick={() => navigate(a.to)}>
+                        {a.cta}
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -204,7 +250,7 @@ export default function Dashboard() {
               View all <ArrowRight className="size-3.5" />
             </Link>
           </div>
-          {data.instances.length === 0 ? (
+          {visibleProjects.length === 0 ? (
             <Card className="mt-3 p-5">
               <EmptyState
                 icon={Server}
@@ -215,7 +261,7 @@ export default function Dashboard() {
             </Card>
           ) : (
             <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {data.instances.slice(0, 6).map((i) => (
+              {visibleProjects.slice(0, 6).map((i) => (
                 <Link key={i.id} to={projectLink(i)}>
                   <Card className="group p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40">
                     <div className="flex items-start justify-between gap-3">
@@ -240,6 +286,24 @@ export default function Dashboard() {
           )}
         </>
       ) : null}
+
+      {/* Abandon (don't complete) an awaiting-payment order. */}
+      <Dialog
+        open={!!cancelTarget}
+        onClose={() => { if (!cancelling) { setCancelTarget(null); setCancelError(null); } }}
+        title="Don't complete this order?"
+        description={cancelTarget ? `${cancelTarget.name} will be cancelled and its subdomain released. This can't be undone.` : ""}
+      >
+        {cancelError && <AlertBanner className="mb-4" variant="danger" title="Couldn't cancel" description={cancelError} />}
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" disabled={cancelling} onClick={() => { setCancelTarget(null); setCancelError(null); }}>
+            Keep order
+          </Button>
+          <Button variant="danger" disabled={cancelling} onClick={confirmCancel}>
+            {cancelling ? "Cancelling…" : "Yes, don't complete"}
+          </Button>
+        </div>
+      </Dialog>
     </div>
   );
 }
