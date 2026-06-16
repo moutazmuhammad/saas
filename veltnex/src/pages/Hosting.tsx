@@ -469,30 +469,81 @@ export default function Hosting() {
                   </p>
                 </div>
 
-                {/* Billing toggle */}
-                <div className="mx-auto max-w-xs">
-                  <div className="mb-1.5 flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
-                    Billing cycle
-                    <FieldHint text="Pay monthly, or yearly to save. The yearly discount applies to infrastructure; support and backups are billed monthly ×12." />
+                {/* Billing cycle + region — both drive the prices shown below */}
+                <div className="mx-auto flex max-w-2xl flex-col items-stretch justify-center gap-4 sm:flex-row">
+                  <div className="w-full sm:max-w-xs">
+                    <div className="mb-1.5 flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
+                      Billing cycle
+                      <FieldHint text="Pay monthly, or yearly to save. The yearly discount applies to infrastructure; support and backups are billed monthly ×12." />
+                    </div>
+                    <div className="inline-flex w-full rounded-xl border border-border bg-card p-1">
+                      {(["monthly", "yearly"] as const).map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => setCycle(c)}
+                          className={cn(
+                            "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium capitalize transition-colors",
+                            config.cycle === c ? "bg-primary/20 text-foreground ring-1 ring-primary/40" : "text-muted hover:text-foreground",
+                          )}
+                        >
+                          {c}
+                          {c === "yearly" && maxSave.amount > 0 && (
+                            <span className="rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold text-success">Save</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="inline-flex w-full rounded-xl border border-border bg-card p-1">
-                    {(["monthly", "yearly"] as const).map((c) => (
-                      <button
-                        key={c}
-                        onClick={() => setCycle(c)}
-                        className={cn(
-                          "flex flex-1 items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium capitalize transition-colors",
-                          config.cycle === c ? "bg-primary/20 text-foreground ring-1 ring-primary/40" : "text-muted hover:text-foreground",
-                        )}
+
+                  {showRegionPicker && (
+                    <div className="w-full sm:max-w-xs">
+                      <div className="mb-1.5 flex items-center justify-center gap-1.5 text-xs font-medium text-muted">
+                        <Globe className="size-3.5 text-primary" /> Region
+                        <FieldHint text="Where your server runs. Price varies by region — pick the cheapest (Budget) or the one nearest your users (Recommended). The prices below update instantly." />
+                      </div>
+                      <select
+                        value={regionId ?? ""}
+                        onChange={(e) => setRegionId(Number(e.target.value))}
+                        className="h-[42px] w-full cursor-pointer rounded-xl border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
                       >
-                        {c}
-                        {c === "yearly" && maxSave.amount > 0 && (
-                          <span className="rounded bg-success/20 px-1.5 py-0.5 text-[10px] font-semibold text-success">Save</span>
-                        )}
-                      </button>
-                    ))}
-                  </div>
+                        {sortedRegions.map((r) => {
+                          const tags: string[] = [];
+                          if (r.recommended || r.default) tags.push("Recommended");
+                          if (r.budget || (cheapestRegion && r.id === cheapestRegion.id)) tags.push("Cheapest");
+                          const delta =
+                            r.multiplier !== 1
+                              ? ` (${r.multiplier > 1 ? "+" : ""}${Math.round((r.multiplier - 1) * 100)}%)`
+                              : "";
+                          const tag = tags.length ? ` — ${tags.join(" · ")}` : "";
+                          return (
+                            <option key={r.id} value={r.id}>
+                              {r.name}{tag}{delta}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  )}
                 </div>
+
+                {/* How much yearly billing saves (tiers view; the custom
+                    builder shows its own exact figure). */}
+                {!customize && maxSave.amount > 0 && (
+                  <p className="-mt-3 text-center text-sm text-muted">
+                    {config.cycle === "monthly" ? (
+                      <>
+                        Switch to <span className="font-medium text-foreground">yearly</span> billing and save up to{" "}
+                        <span className="font-semibold text-success">{money(maxSave.amount, maxSave.currency)}/yr</span>.
+                      </>
+                    ) : (
+                      <>
+                        You're saving up to{" "}
+                        <span className="font-semibold text-success">{money(maxSave.amount, maxSave.currency)}/yr</span>{" "}
+                        with yearly billing.
+                      </>
+                    )}
+                  </p>
+                )}
 
                 {tiers && tiers.length > 0 && !customize ? (
                   <>
