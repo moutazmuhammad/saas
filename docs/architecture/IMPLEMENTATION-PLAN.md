@@ -202,6 +202,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | — | Decomposed all phases into granular steps → `PHASE-BREAKDOWN.md` | ✅ | step IDs 0.1.1 … 7.2 |
 | 2026-06-17 | 0 | 0.1.1 machine inventory: Odoo18 src, PG12+PG14, Docker, Node, venv `.env` (py3.12) all present | ✅ | no git token needed |
 | 2026-06-17 | 0 | 0.1.2–0.1.4 deps present in `.env`; fresh DB `saas_dev` installed `saas_core`+`saas_website` clean (exit 0) | ✅ | only harmless warnings |
+| 2026-06-17 | 0 | 0.3.1 ran suite: baseline RED (3/54 failed); root-caused as STALE tests; fixed → GREEN (0 failed of 54) | ✅ | see PHASE-0-FINDINGS.md |
+| 2026-06-17 | 0 | Branch `architecture-evolution` created; docs + test fixes committed & pushed to origin | ✅ | repo `docs/architecture/` is now canonical |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).
