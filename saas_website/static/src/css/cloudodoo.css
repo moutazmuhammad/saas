@@ -444,6 +444,20 @@ html {
 }
 /* Footer parity with the SPA Footer.tsx (text-xs, page bg, social row) */
 .co-footer { padding: 0; }
+/* Full-width footer like the SPA (`mx-auto w-full px-4 sm:px-6 lg:px-8`,
+   NO max-width) — mirrors the full-width header so both span edge-to-edge. */
+.co-footer > .container {
+    max-width: none !important;
+    width: 100%;
+    padding-left: 1rem;             /* px-4 */
+    padding-right: 1rem;
+}
+@media (min-width: 640px) {
+    .co-footer > .container { padding-left: 1.5rem; padding-right: 1.5rem; }
+}
+@media (min-width: 1024px) {
+    .co-footer > .container { padding-left: 2rem; padding-right: 2rem; }
+}
 .co-footer-copy {
     font-size: 0.75rem;             /* SPA: text-xs */
     color: var(--text-muted);
