@@ -158,7 +158,7 @@
             <header id="top" data-anchor="true">
                 <nav class="navbar navbar-expand-lg fixed-top co-navbar">
                     <div class="container">
-                        <a class="navbar-brand d-flex align-items-center" href="/">
+                        <a class="navbar-brand d-flex align-items-center" href="/my">
                             <img src="/saas_website/static/src/img/veltnex-icon.svg" alt="VELTNEX" style="height:30px;" class="me-2"/>
                             <span class="fw-bold">VELT<span style="color:#3656b8;">NEX</span></span>
                         </a>
@@ -166,17 +166,9 @@
                             <span class="navbar-toggler-icon"></span>
                         </button>
                         <div class="collapse navbar-collapse" id="coNavbar">
-                            <ul class="navbar-nav me-auto align-items-center">
-                                <li t-if="show_services_section" class="nav-item">
-                                    <a class="nav-link" href="/services">Services</a>
-                                </li>
-                                <li t-if="show_hosting_section" class="nav-item">
-                                    <a class="nav-link" href="/hosting">Hosting</a>
-                                </li>
-                                <li class="nav-item">
-                                    <a class="nav-link" href="/docs">Docs</a>
-                                </li>
-                            </ul>
+                            <!-- Dashboard-style bar: no marketing links, just the
+                                 logo + theme toggle + account menu. -->
+                            <ul class="navbar-nav me-auto align-items-center"></ul>
                             <ul class="navbar-nav align-items-center">
                                 <li class="nav-item me-2">
                                     <!-- Click handler wired via event delegation in
@@ -260,51 +252,20 @@
                t-value="request.env['ir.config_parameter'].sudo().get_param('saas_master.show_hosting_section', 'True') != 'False'"/>
             <footer id="bottom" data-anchor="true" class="co-footer">
                 <div class="container">
-                    <div class="row g-4 py-5">
-                        <div class="col-12 col-lg-3">
-                            <a href="/" class="d-flex align-items-center mb-3 text-decoration-none">
-                                <img src="/saas_website/static/src/img/veltnex-icon.svg" alt="VELTNEX" style="height:30px;" class="me-2"/>
-                                <span class="fw-bold fs-5" style="color:var(--co-text-primary, #FAFAFA);">VELT<span style="color:#3656b8;">NEX</span></span>
-                            </a>
-                            <p class="small mb-4" style="color:var(--co-text-muted, #71717A);max-width:22rem;">The Logic of Stability. Enterprise-grade managed hosting for Odoo, built for teams that can't afford downtime.</p>
-                            <div class="d-flex gap-2">
-                                <a href="#" class="co-social" aria-label="Twitter"><i class="fab fa-twitter"></i></a>
-                                <a href="#" class="co-social" aria-label="GitHub"><i class="fab fa-github"></i></a>
-                                <a href="#" class="co-social" aria-label="LinkedIn"><i class="fab fa-linkedin"></i></a>
-                            </div>
-                        </div>
-                        <div class="col-6 col-lg-3">
-                            <h6 class="fw-bold mb-3">Product</h6>
-                            <ul class="list-unstyled">
-                                <li t-if="show_services_section"><a href="/services" class="co-footer-link">Services</a></li>
-                                <li t-if="show_hosting_section"><a href="/hosting" class="co-footer-link">Hosting</a></li>
-                                <li t-if="show_hosting_section"><a href="/hosting/configure" class="co-footer-link">Configure</a></li>
-                                <li><a href="/docs" class="co-footer-link">Docs</a></li>
-                            </ul>
-                        </div>
-                        <div class="col-6 col-lg-3">
-                            <h6 class="fw-bold mb-3">Company</h6>
-                            <ul class="list-unstyled">
-                                <li><a href="#" class="co-footer-link">About</a></li>
-                                <li><a href="#" class="co-footer-link">Customers</a></li>
-                                <li><a href="#" class="co-footer-link">Careers</a></li>
-                                <li><a href="/contactus" class="co-footer-link">Contact</a></li>
-                            </ul>
-                        </div>
-                        <div class="col-6 col-lg-3">
-                            <h6 class="fw-bold mb-3">Account</h6>
-                            <ul class="list-unstyled">
-                                <li><a href="/login" class="co-footer-link">Sign in</a></li>
-                                <li><a href="/services/register" class="co-footer-link">Get started</a></li>
-                                <li><a href="/my" class="co-footer-link">Dashboard</a></li>
-                                <li><a href="/my/billing" class="co-footer-link">Invoices</a></li>
-                            </ul>
-                        </div>
-                    </div>
-                    <div class="d-flex flex-column flex-sm-row justify-content-between align-items-center gap-2 py-4"
+                    <!-- Compact dashboard-style footer (single row) -->
+                    <div class="d-flex flex-column flex-sm-row align-items-center gap-3 py-4"
                          style="border-top:1px solid var(--border-color, #27272A);">
-                        <p class="small mb-0" style="color:var(--co-text-muted, #71717A);">&#169; 2026 VELTNEX, Inc. All rights reserved.</p>
-                        <p class="small mb-0" style="color:var(--co-text-muted, #71717A);">Status: <span style="color:#10B981;">All systems operational</span></p>
+                        <a href="/my" class="d-flex align-items-center text-decoration-none">
+                            <img src="/saas_website/static/src/img/veltnex-icon.svg" alt="VELTNEX" style="height:24px;" class="me-2"/>
+                            <span class="small" style="color:var(--co-text-muted, #71717A);">&#169; 2026 VELTNEX, Inc.</span>
+                        </a>
+                        <nav class="d-flex flex-wrap align-items-center gap-3 small">
+                            <a href="/my/instances" class="co-footer-link">Dashboard</a>
+                            <a href="/my/billing" class="co-footer-link">Invoices</a>
+                            <a href="/docs" class="co-footer-link">Docs</a>
+                            <a href="/help" class="co-footer-link">Help</a>
+                        </nav>
+                        <p class="small mb-0 ms-sm-auto" style="color:var(--co-text-muted, #71717A);">Status: <span style="color:#10B981;">All systems operational</span></p>
                     </div>
                 </div>
             </footer>
