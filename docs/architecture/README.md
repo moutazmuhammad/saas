@@ -9,6 +9,8 @@ Odoo.sh-class hosting product. Keep these updated as work proceeds (especially t
 | `IMPLEMENTATION-PLAN.md` | The **roadmap** — phases 0–7 that evolve the existing system toward the spec, ordered by dependency. Has a living progress log. |
 | `PHASE-BREAKDOWN.md` | Every phase decomposed into **small, ID'd, verifiable steps** (0.1.1 … 7.2). The executable checklist. Includes the "start small / scale without rewrite" DO-NOW vs DEFER classification. |
 | `PHASE-0-FINDINGS.md` | Results of the Phase 0 audit (env verified, module install, test baseline green, as-built facts). |
+| `AS-BUILT.md` | The as-built provisioning/deploy flow + the deploy-mechanism finding (hybrid base-image + mounted source). |
+| `DRIVER-BOUNDARY.md` | Catalog of the ~140 SSH/Docker call sites + the proposed `ComputeDriver` interface — the direct input to Phase 1. |
 
 ## Guiding intent
 - **Start small, scale without a rewrite:** build cheap seams now (driver, DataService, object storage,

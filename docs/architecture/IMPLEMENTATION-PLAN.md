@@ -204,6 +204,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 0 | 0.1.2–0.1.4 deps present in `.env`; fresh DB `saas_dev` installed `saas_core`+`saas_website` clean (exit 0) | ✅ | only harmless warnings |
 | 2026-06-17 | 0 | 0.3.1 ran suite: baseline RED (3/54 failed); root-caused as STALE tests; fixed → GREEN (0 failed of 54) | ✅ | see PHASE-0-FINDINGS.md |
 | 2026-06-17 | 0 | Branch `architecture-evolution` created; docs + test fixes committed & pushed to origin | ✅ | repo `docs/architecture/` is now canonical |
+| 2026-06-17 | 0 | 0.2.2/0.2.8 as-built map + deploy mechanism (hybrid base-image + mounted source) → `AS-BUILT.md` | ✅ | confirms Phase-2 scope |
+| 2026-06-17 | 0 | 0.2.6 driver-boundary catalog (~140 docker sites; transport already clean) → `DRIVER-BOUNDARY.md` | ✅ | direct Phase-1 input |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).
