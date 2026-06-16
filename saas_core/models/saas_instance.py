@@ -1312,6 +1312,13 @@ class SaasInstance(models.Model):
             return False
         if invoice.payment_state in ('paid', 'in_payment'):
             return False
+        # A never-deployed order still awaiting its first payment can always be
+        # abandoned by the client ("don't complete the purchase"): nothing was
+        # provisioned, so cancelling just frees the subdomain. The
+        # non-cancellable rule below only guards LIVE instances (renewals /
+        # restorations the dunning system must enforce).
+        if self.state in ('pending_payment', 'draft'):
+            return True
         origins = invoice.line_ids.sale_line_ids.order_id.mapped('origin')
         return not any(
             o and any(o.startswith(p) for p in self._NON_CANCELLABLE_INVOICE_PREFIXES)
