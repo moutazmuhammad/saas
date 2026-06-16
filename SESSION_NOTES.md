@@ -83,6 +83,23 @@ On the workspace page `/my/instances/<id>/environments`:
 
 ---
 
+### 4) Checkout/portal palette = dashboard (complete, deployed — `a793263`)
+- The QWeb portal pages (`/my/instances/<id>/checkout`, change-plan, invoices,
+  ...) render via `cloudodoo_layout → website.layout` and already had VELTNEX
+  header/footer/logo, but used an OLD navy/near-black palette. Re-pointed the
+  shared `saas_website/static/src/css/cloudodoo.css` design tokens to the SPA's
+  Google Cloud palette so the whole QWeb side matches the dashboard.
+  - `:root` (dark) → GCP dark: `--primary #8ab4f8`, page `#202124`, card
+    `#292a2d`, border `#3c4043`, text `#e8eaed/#9aa0a6`, solid navbar `#292a2d`.
+  - `[data-theme=light]` → GCP light: `--primary #1a73e8`, page `#f8f9fa`,
+    card `#fff`, border `#dadce0`, text `#202124/#5f6368`, solid white navbar.
+  - Added `--primary-foreground` (dark text on the light-blue dark-mode primary,
+    white in light mode) → applied to `.btn-primary`, `.co-btn-primary`, header
+    + sidebar avatars so primary buttons stay readable in dark mode.
+  - Logo box (`veltnex-icon.svg`) + header "NEX" wordmark → `#1a73e8`.
+- No SPA rebuild (QWeb CSS/XML/SVG only). Bundle is content-hashed → restart
+  regenerates it. Verified deployed source tokens + no log errors.
+
 ## Bugs hit and their fixes (so we don't repeat them)
 - "column environment does not exist" on live → needed `-u saas_core` (module
   upgrade after adding fields).

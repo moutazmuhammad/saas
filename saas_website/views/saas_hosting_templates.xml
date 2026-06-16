@@ -14,7 +14,7 @@
          so this page is a read-only summary that posts to /hosting/order. -->
     <template id="hosting_review_form" name="Review Hosting Order">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <nav aria-label="breadcrumb">
                         <ol class="breadcrumb">
@@ -119,7 +119,7 @@
 
     <template id="hosting_configure_form" name="Configure Hosting Instance">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <nav aria-label="breadcrumb">
                         <ol class="breadcrumb">

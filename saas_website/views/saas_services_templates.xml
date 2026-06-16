@@ -17,7 +17,7 @@
 
     <template id="service_configure_form" name="Configure Instance">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <!-- Breadcrumb -->
                     <nav aria-label="breadcrumb">
@@ -201,7 +201,7 @@
 
     <template id="service_custom_configure_form" name="Configure Custom Instance">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <!-- Breadcrumb -->
                     <nav aria-label="breadcrumb">

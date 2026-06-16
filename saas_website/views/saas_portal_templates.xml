@@ -229,7 +229,7 @@
 
     <template id="portal_instance_upgrade" name="Upgrade Plan">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <div class="page-header">
                         <nav aria-label="breadcrumb">
@@ -429,7 +429,7 @@
 
     <template id="portal_checkout" name="Checkout">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <div class="mb-4">
                         <h1 class="h3">Complete Your Order</h1>
@@ -630,7 +630,7 @@
 
     <template id="portal_instance_change_plan" name="Change Plan">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <div class="page-header">
                         <nav aria-label="breadcrumb">
@@ -894,7 +894,7 @@
 
     <template id="portal_instance_reactivate" name="Reactivate Instance">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <div class="page-header">
                         <nav aria-label="breadcrumb">
@@ -1098,7 +1098,7 @@
     <!-- ============================================================ -->
     <template id="portal_daily_backup_checkout" name="Daily Backup Checkout">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6" style="padding-top:120px;">
+            <section class="py-6">
                 <div class="container">
                     <nav aria-label="breadcrumb">
                         <ol class="breadcrumb">
