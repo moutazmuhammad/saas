@@ -283,7 +283,10 @@ html {
     transition: background-color 200ms ease, border-color 200ms ease;
 }
 .co-navbar > .container {
-    max-width: 80rem;               /* SPA: max-w-7xl = 1280px */
+    /* Full-width app bar like the SPA PublicNav/home (`w-full px-4 sm:px-6
+       lg:px-8`, NO max-width) so the logo sits flush at the left edge. */
+    max-width: none !important;
+    width: 100%;
     padding-left: 1rem;             /* SPA: px-4 */
     padding-right: 1rem;
 }
@@ -312,6 +315,29 @@ html {
 .co-navbar .navbar-brand img {
     height: 32px !important;        /* SPA Logo: size-8 = 32px */
     width: auto;
+}
+/* Inline logo mark — mirrors the SPA Logo box 1:1 (size-8 rounded-lg
+   bg-primary shadow-glow). Theme-aware via --primary, so it tracks the
+   home page in both light (#1a73e8) and dark (#8ab4f8). */
+.co-logo-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;                    /* SPA: size-8 */
+    height: 32px;
+    border-radius: 0.5rem;          /* SPA: rounded-lg */
+    background: var(--primary);
+    box-shadow: var(--shadow-glow);
+    flex-shrink: 0;
+}
+.co-logo-mark--sm {
+    width: 24px;                    /* footer icon */
+    height: 24px;
+}
+.co-logo-word {
+    color: var(--text-primary);
+    font-size: 1rem;                /* SPA: text-base */
+    letter-spacing: -0.025em;       /* SPA: tracking-tight */
 }
 /* Right-side controls: gap-3 between toggle + account (SPA parity) */
 .co-navbar .navbar-nav.align-items-center {

@@ -100,6 +100,24 @@ On the workspace page `/my/instances/<id>/environments`:
 - No SPA rebuild (QWeb CSS/XML/SVG only). Bundle is content-hashed → restart
   regenerates it. Verified deployed source tokens + no log errors.
 
+### 4b) Header/footer matched to the dashboard 1:1 (`4d74cc9`)
+- The QWeb header had been built to mirror the marketing **PublicNav** (a
+  bordered "pill" avatar + name + chevron). Users compare it to the
+  **dashboard** (`PortalLayout`), so re-did it to match that instead:
+  - Avatar = plain 36px circle (`vx-avatar`, bg-primary + initials), no
+    pill/name/caret, primary ring on open (SPA `size-9`).
+  - Account dropdown = `vx-account-menu`: rounded-xl + border + bg-card +
+    `p-1.5` + shadow-2xl + `w-64`, with a name+email header, divider, and
+    `rounded-lg` items (Settings, Backend for staff, Sign out in danger).
+  - Header `fixed-top` → `sticky-top`; removed the matching
+    `padding-top:120px` spacer from every QWeb section (sed across
+    portal/hosting/services templates).
+  - Footer rewritten to mirror `Footer.tsx` (logo + copyright · center links ·
+    social icons, text-xs on page bg).
+- ⚠️ These are **template (XML)** changes → deploy needs `-u saas_website`
+  (a plain restart won't re-read view arch). New CSS classes live in
+  `cloudodoo.css` (`.vx-avatar*`, `.vx-account-*`, `.co-footer-social`).
+
 ## Bugs hit and their fixes (so we don't repeat them)
 - "column environment does not exist" on live → needed `-u saas_core` (module
   upgrade after adding fields).

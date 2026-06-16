@@ -159,9 +159,17 @@
                 <nav class="navbar navbar-expand-lg sticky-top co-navbar"
                      style="background: var(--bg-navbar, #ffffff) !important; border-bottom: 1px solid var(--border-color, #dadce0); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);">
                     <div class="container">
-                        <a class="navbar-brand d-flex align-items-center" href="/my">
-                            <img src="/saas_website/static/src/img/veltnex-icon.svg" alt="VELTNEX" style="height:30px;" class="me-2"/>
-                            <span class="fw-bold">VELT<span style="color:#1a73e8;">NEX</span></span>
+                        <a class="navbar-brand co-logo d-flex align-items-center" href="/my">
+                            <!-- Inline SVG mark identical to the SPA Logo: a
+                                 rounded-lg box on the theme-aware --primary
+                                 (light #1a73e8 / dark #8ab4f8) with a stroked
+                                 chevron + shadow-glow. -->
+                            <span class="co-logo-mark">
+                                <svg viewBox="0 0 32 32" width="20" height="20" aria-hidden="true">
+                                    <path d="M8 9 L16 23 L24 9" fill="none" stroke="#FAFAFA" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </span>
+                            <span class="co-logo-word fw-bold">VELT<span style="color:var(--primary);">NEX</span></span>
                         </a>
                         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#coNavbar">
                             <span class="navbar-toggler-icon"></span>
@@ -273,7 +281,11 @@
                          social icons, on the page background. -->
                     <div class="d-flex flex-column flex-sm-row align-items-center gap-3 py-4">
                         <div class="d-flex align-items-center gap-2">
-                            <img src="/saas_website/static/src/img/veltnex-icon.svg" alt="VELTNEX" style="height:22px;"/>
+                            <span class="co-logo-mark co-logo-mark--sm">
+                                <svg viewBox="0 0 32 32" width="16" height="16" aria-hidden="true">
+                                    <path d="M8 9 L16 23 L24 9" fill="none" stroke="#FAFAFA" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </span>
                             <span class="co-footer-copy">&#169; 2026 VELTNEX, Inc.</span>
                         </div>
                         <nav class="d-flex flex-wrap align-items-center justify-content-center gap-3">
