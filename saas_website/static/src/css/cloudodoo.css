@@ -474,6 +474,51 @@ html {
 .co-footer-social a:hover { color: var(--text-primary); }
 
 /* ============================================================
+   Checkout page — compact layout so the whole order summary
+   (Configuration + Charges) fits without scrolling.
+   ============================================================ */
+.vx-checkout .info-card { padding: 1.1rem 1.25rem; margin-bottom: 0; }
+.vx-sec-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 0.35rem;
+}
+.vx-config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 1.5rem;
+}
+@media (max-width: 575.98px) {
+    .vx-config-grid { grid-template-columns: 1fr; }
+}
+.vx-config-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.83rem;
+    min-width: 0;
+}
+.vx-config-label { color: var(--text-muted); white-space: nowrap; }
+.vx-config-value {
+    color: var(--text-primary);
+    font-weight: 500;
+    text-align: right;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* Compact itemized charges table */
+.vx-charges td { padding: 0.4rem 0.25rem !important; font-size: 0.85rem; }
+.vx-charges tfoot tr:last-child td { padding-top: 0.6rem !important; }
+
+/* ============================================================
    Account menu — mirror the dashboard (PortalLayout) app bar:
    a plain 36px circle avatar (no pill / name / caret) opening a
    rounded-xl panel with a name+email header and rounded-lg items.

@@ -429,20 +429,19 @@
 
     <template id="portal_checkout" name="Checkout">
         <t t-call="saas_website.cloudodoo_layout">
-            <section class="py-6">
+            <section class="py-4 vx-checkout">
                 <div class="container">
-                    <div class="mb-4">
-                        <h1 class="h3">Complete Your Order</h1>
-                        <p class="text-muted">Secure payment powered by SSL encryption</p>
+                    <div class="mb-3">
+                        <h1 class="h4 mb-0">Complete Your Order</h1>
+                        <p class="text-muted small mb-0">Secure payment powered by SSL encryption</p>
                     </div>
 
-                    <div class="row g-4">
+                    <div class="row g-3">
                         <!-- Order Summary -->
                         <div class="col-lg-7">
                             <div class="info-card">
-                                <h5>Order Summary</h5>
-                                <div class="d-flex align-items-center gap-3 mb-4">
-                                    <div class="service-icon" style="width:56px;height:56px;font-size:1.5rem;">
+                                <div class="d-flex align-items-center gap-3 mb-3">
+                                    <div class="service-icon" style="width:44px;height:44px;font-size:1.25rem;">
                                         <t t-if="instance.saas_product_id.icon">
                                             <i t-att-class="instance.saas_product_id.icon"/>
                                         </t>
@@ -450,7 +449,7 @@
                                     </div>
                                     <div>
                                         <h5 class="mb-0" t-esc="instance.saas_product_id.name"/>
-                                        <span class="text-muted" t-esc="target_plan.name"/>
+                                        <span class="text-muted small" t-esc="target_plan.name"/>
                                     </div>
                                 </div>
 
@@ -479,76 +478,63 @@
                                 </t>
 
                                 <!-- ===== Configuration (full spec of what's purchased) ===== -->
-                                <div class="fw-semibold mb-2" style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);">Configuration</div>
-                                <table class="table table-dark-custom mb-4">
-                                    <tbody>
-                                        <tr>
-                                            <td>Service</td>
-                                            <td class="text-end" t-esc="instance.saas_product_id.name or '—'"/>
-                                        </tr>
-                                        <tr>
-                                            <td>Instance</td>
-                                            <td class="text-end">
-                                                <t t-esc="instance.subdomain"/>.<t t-esc="instance.domain_id.name"/>
-                                            </td>
-                                        </tr>
-                                        <tr>
-                                            <td>Plan</td>
-                                            <td class="text-end" t-esc="target_plan.name"/>
-                                        </tr>
-                                        <tr t-if="instance.region_id">
-                                            <td>Region</td>
-                                            <td class="text-end" t-esc="instance.region_id.name"/>
-                                        </tr>
-                                        <tr t-if="instance.odoo_version_id">
-                                            <td>Odoo Version</td>
-                                            <td class="text-end" t-esc="instance.odoo_version_id.name"/>
-                                        </tr>
-                                        <tr>
-                                            <td>Billing</td>
-                                            <td class="text-end">
-                                                <t t-if="checkout_is_yearly">
-                                                    Yearly
-                                                    <t t-if="target_plan.yearly_discount_pct > 0">
-                                                        <span style="background:rgba(16,185,129,0.15);color:var(--success);font-size:0.7rem;font-weight:600;padding:0.1rem 0.4rem;border-radius:12px;margin-left:4px;">
-                                                            -<t t-esc="'%.0f' % target_plan.yearly_discount_pct"/>%
-                                                        </span>
-                                                    </t>
-                                                </t>
-                                                <t t-else="">Monthly</t>
-                                            </td>
-                                        </tr>
-                                        <tr>
-                                            <td>Workers</td>
-                                            <td class="text-end"><t t-esc="target_plan.workers"/></td>
-                                        </tr>
-                                        <tr>
-                                            <td>Storage</td>
-                                            <td class="text-end"><t t-esc="int(target_plan.storage_limit)"/>GB</td>
-                                        </tr>
-                                        <tr t-if="instance.support_plan_id">
-                                            <td>Support Plan</td>
-                                            <td class="text-end" t-esc="instance.support_plan_id.name"/>
-                                        </tr>
-                                        <tr>
-                                            <td>Daily Backup</td>
-                                            <td class="text-end">
-                                                <t t-if="instance.daily_backup_enabled">Included</t>
-                                                <t t-else="">Not included</t>
-                                            </td>
-                                        </tr>
-                                        <tr t-if="instance.is_hosting and instance.child_env_ids">
-                                            <td>Environments</td>
-                                            <td class="text-end">
-                                                <t t-esc="', '.join([(e.environment or '').capitalize() for e in instance.child_env_ids])"/>
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
+                                <div class="vx-sec-label">Configuration</div>
+                                <div class="vx-config-grid mb-3">
+                                    <div class="vx-config-item">
+                                        <span class="vx-config-label">Service</span>
+                                        <span class="vx-config-value" t-esc="instance.saas_product_id.name or '—'"/>
+                                    </div>
+                                    <div class="vx-config-item">
+                                        <span class="vx-config-label">Instance</span>
+                                        <span class="vx-config-value"><t t-esc="instance.subdomain"/>.<t t-esc="instance.domain_id.name"/></span>
+                                    </div>
+                                    <div class="vx-config-item">
+                                        <span class="vx-config-label">Plan</span>
+                                        <span class="vx-config-value" t-esc="target_plan.name"/>
+                                    </div>
+                                    <div class="vx-config-item" t-if="instance.region_id">
+                                        <span class="vx-config-label">Region</span>
+                                        <span class="vx-config-value" t-esc="instance.region_id.name"/>
+                                    </div>
+                                    <div class="vx-config-item" t-if="instance.odoo_version_id">
+                                        <span class="vx-config-label">Odoo Version</span>
+                                        <span class="vx-config-value" t-esc="instance.odoo_version_id.name"/>
+                                    </div>
+                                    <div class="vx-config-item">
+                                        <span class="vx-config-label">Billing</span>
+                                        <span class="vx-config-value">
+                                            <t t-if="checkout_is_yearly">Yearly<t t-if="target_plan.yearly_discount_pct > 0"> (-<t t-esc="'%.0f' % target_plan.yearly_discount_pct"/>%)</t></t>
+                                            <t t-else="">Monthly</t>
+                                        </span>
+                                    </div>
+                                    <div class="vx-config-item">
+                                        <span class="vx-config-label">Workers</span>
+                                        <span class="vx-config-value"><t t-esc="target_plan.workers"/></span>
+                                    </div>
+                                    <div class="vx-config-item">
+                                        <span class="vx-config-label">Storage</span>
+                                        <span class="vx-config-value"><t t-esc="int(target_plan.storage_limit)"/>GB</span>
+                                    </div>
+                                    <div class="vx-config-item" t-if="instance.support_plan_id">
+                                        <span class="vx-config-label">Support</span>
+                                        <span class="vx-config-value" t-esc="instance.support_plan_id.name"/>
+                                    </div>
+                                    <div class="vx-config-item">
+                                        <span class="vx-config-label">Daily Backup</span>
+                                        <span class="vx-config-value">
+                                            <t t-if="instance.daily_backup_enabled">Included</t>
+                                            <t t-else="">Not included</t>
+                                        </span>
+                                    </div>
+                                    <div class="vx-config-item" t-if="instance.is_hosting and instance.child_env_ids">
+                                        <span class="vx-config-label">Environments</span>
+                                        <span class="vx-config-value" t-esc="', '.join([(e.environment or '').capitalize() for e in instance.child_env_ids])"/>
+                                    </div>
+                                </div>
 
                                 <!-- ===== Itemized charges (the actual invoice lines) ===== -->
-                                <div class="fw-semibold mb-2" style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted);">Charges</div>
-                                <table class="table table-dark-custom">
+                                <div class="vx-sec-label">Charges</div>
+                                <table class="table table-dark-custom vx-charges mb-0">
                                     <tbody>
                                         <t t-foreach="invoice.invoice_line_ids" t-as="line">
                                             <tr t-if="line.display_type not in ('line_section', 'line_note')">
