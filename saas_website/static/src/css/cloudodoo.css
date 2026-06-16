@@ -258,8 +258,14 @@ html {
    `.co-navbar--scrolled` class is toggled by an inline script in
    the QWeb head (saas_frontend_layout.xml). */
 .co-navbar {
-    background: transparent !important;
-    border-bottom: 1px solid transparent;
+    /* Solid by default (like the logged-in dashboard app bar) — these
+       QWeb pages (checkout / invoices / payment) are not marketing hero
+       pages, so the header should read as a solid bar, not a transparent
+       overlay. */
+    background: var(--bg-navbar) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border-color);
     padding: 0 !important;          /* height controlled by min-height */
     min-height: 64px;               /* SPA: h-16 */
     z-index: 40;                    /* SPA: z-40 */
