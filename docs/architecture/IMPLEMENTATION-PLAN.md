@@ -206,6 +206,7 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 0 | Branch `architecture-evolution` created; docs + test fixes committed & pushed to origin | ✅ | repo `docs/architecture/` is now canonical |
 | 2026-06-17 | 0 | 0.2.2/0.2.8 as-built map + deploy mechanism (hybrid base-image + mounted source) → `AS-BUILT.md` | ✅ | confirms Phase-2 scope |
 | 2026-06-17 | 0 | 0.2.6 driver-boundary catalog (~140 docker sites; transport already clean) → `DRIVER-BOUNDARY.md` | ✅ | direct Phase-1 input |
+| 2026-06-17 | 1 | 1.1.1 defined `ComputeDriver` interface + `ComputeSpec`/`ComputeHandle`/`ExecResult`/`HealthStatus` (drivers/base.py) | ✅ | additive, not wired in; baseline still green |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).
