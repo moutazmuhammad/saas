@@ -90,3 +90,22 @@ class TestReconcile(TransactionCase):
             action = inst.reconcile()
         drv.assert_not_called()
         self.assertEqual(action, 'skipped')
+
+    # -------- Phase 5.1: multi-container model seam --------
+    def test_workloads_default_single_app_container(self):
+        inst = self._inst('rwl1', 'running')
+        self.assertEqual(inst._workloads(), [('app', 'odoo_rwl1')])
+        self.assertEqual(len(inst._compute_handles()), 1)
+
+    def test_workloads_explicit_scale_out_set(self):
+        inst = self._inst('rwl2', 'running')
+        self.env['saas.instance.container'].sudo().create([
+            {'instance_id': inst.id, 'role': 'app', 'name': 'odoo_rwl2_app1'},
+            {'instance_id': inst.id, 'role': 'app', 'name': 'odoo_rwl2_app2'},
+            {'instance_id': inst.id, 'role': 'cron', 'name': 'odoo_rwl2_cron'},
+        ])
+        roles = [r for r, _n in inst._workloads()]
+        self.assertEqual(roles, ['app', 'app', 'cron'])
+        self.assertEqual(len(inst._compute_handles()), 3)
+        self.assertEqual({h.container_name for h in inst._compute_handles()},
+                         {'odoo_rwl2_app1', 'odoo_rwl2_app2', 'odoo_rwl2_cron'})

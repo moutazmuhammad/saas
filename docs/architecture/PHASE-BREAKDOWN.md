@@ -255,7 +255,11 @@ stack (4.2.x) stays deferred per "start small" until historical trends are actua
 ## PHASE 5 — Tiered PostgreSQL + large-tenant scale-out tier  *(needs: Phase 2; uses Phase 1)*
 
 ### 5.1 Multi-container instance model
-- [ ] **5.1.1** Add `container_ids` One2many + `role` field (`app` / `cron` / `longpoll`) to the instance.
+- [x] **5.1.1** SEAM ONLY: `saas.instance.container` (instance_id + `role` app/cron/longpoll + name) +
+      `container_ids` One2many; `_workloads()` / `_compute_handles()` enumerate a tenant's workloads —
+      falling back to the implicit single 'app' container so the existing path is byte-unchanged. Empty for
+      normal tenants; a scale-out instance populates explicit rows → scale-out is additive (no rewrite).
+      104/104 unit (+2). **Heavy parts below stay deferred until a real large tenant.**
 - [ ] **5.1.2** Refactor provisioning so a scale-out instance creates a SET of containers via the driver.
 - [ ] **5.1.3** Ensure exactly ONE cron node runs `ir.cron` (others `--max-cron-threads=0`).
 - [ ] **5.1.4** Dedicated gevent/longpolling node for websockets/bus.

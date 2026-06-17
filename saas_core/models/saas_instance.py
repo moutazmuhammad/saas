@@ -903,6 +903,38 @@ class SaasInstance(models.Model):
         want = value if operator == '=' else not value
         return [('id', 'in' if want else 'not in', ids)]
 
+    # ===== Phase 5.1: multi-container model SEAM (no scale-out impl yet) =====
+    container_ids = fields.One2many(
+        'saas.instance.container', 'instance_id', string='Workloads',
+        help='Scale-out seam: explicit role-tagged workloads (app/cron/longpoll). '
+             'Empty for normal single-container tenants — the lifecycle then uses '
+             'the implicit single app container. Populated only by a scale-out '
+             'instance, so multi-host scale-out is additive (no rewrite).')
+
+    def _workloads(self):
+        """Return [(role, container_name)] for this instance. v1 (the only path
+        exercised today) yields the single implicit app container; a scale-out
+        instance yields its explicit ``container_ids``. This is the ONE place the
+        rest of the platform should ask "what containers make up this tenant?",
+        so adding workers later doesn't touch lifecycle/reconcile call sites."""
+        self.ensure_one()
+        if self.container_ids:
+            return [(c.role, c.name) for c in self.container_ids]
+        return [('app', self._get_container_name())]
+
+    def _compute_handles(self):
+        """ComputeHandle per workload (parallel to _compute_handle for the single
+        container). Future multi-container lifecycle/reconcile iterates these."""
+        self.ensure_one()
+        base = self._compute_handle()
+        if not self.container_ids:
+            return [base]
+        from ..drivers.base import ComputeHandle
+        return [ComputeHandle(
+            server_id=base.server_id, container_name=name,
+            instance_path=base.instance_path, host=base.host,
+            http_port=base.http_port) for _role, name in self._workloads()]
+
     # ===== Phase 3: reconciliation engine (desired → actual) =====
     desired_state = fields.Selection(
         [('running', 'Running'), ('stopped', 'Stopped'), ('ignore', 'Not reconciled')],
