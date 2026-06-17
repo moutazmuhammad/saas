@@ -799,6 +799,87 @@ class SaasInstance(models.Model):
                 (rec.total_storage_bytes or 0.0) / (1024 ** 3), 2)
             rec.storage_limit_gb = rec.plan_id.storage_limit or 0.0
 
+    # ===== Phase 4: per-tenant margin (revenue − infra cost) =====
+    margin_currency_id = fields.Many2one(
+        'res.currency', compute='_compute_margin', string='Margin Currency')
+    monthly_cost = fields.Monetary(
+        string='Infra Cost / month', compute='_compute_margin',
+        currency_field='margin_currency_id', store=False,
+        help='Phase 4: provisioned CPU/RAM + used storage × this server\'s rate '
+             'card. For a Production env, includes its child (staging/dev) costs.')
+    monthly_revenue = fields.Monetary(
+        string='Revenue / month', compute='_compute_margin',
+        currency_field='margin_currency_id', store=False,
+        help='Monthly-equivalent recurring revenue (plan + support, period-normalized). '
+             'Child environments bill via the parent, so their own revenue is 0.')
+    monthly_margin = fields.Monetary(
+        string='Margin / month', compute='_compute_margin',
+        currency_field='margin_currency_id', store=False,
+        help='Revenue − infra cost. Negative = this tenant loses money.')
+    margin_pct = fields.Float(
+        string='Margin %', compute='_compute_margin',
+        help='Margin as a percentage of revenue.')
+    is_profitable = fields.Boolean(
+        string='Profitable', compute='_compute_margin', search='_search_profitable',
+        help='True when monthly margin ≥ 0.')
+
+    def _instance_infra_cost(self):
+        """Own monthly infra cost from the server rate card (excludes children)."""
+        self.ensure_one()
+        srv = self.docker_server_id
+        if not srv:
+            return 0.0
+        plan = self.plan_id
+        cpu = plan.cpu_limit or 0.0
+        ram_gb = (self._parse_ram_string(plan.ram_limit) / (1024 ** 3)) if plan and plan.ram_limit else 0.0
+        storage_gb = self.storage_used_gb or 0.0
+        return (cpu * (srv.cost_per_cpu_month or 0.0)
+                + ram_gb * (srv.cost_per_gb_ram_month or 0.0)
+                + storage_gb * (srv.cost_per_gb_storage_month or 0.0))
+
+    def _instance_monthly_revenue(self):
+        """Monthly-equivalent recurring revenue. Children bill via the parent, so
+        they contribute 0 (their cost rolls up to the parent's margin)."""
+        self.ensure_one()
+        if self.parent_id:
+            return 0.0
+        plan = self.plan_id
+        if not plan:
+            return 0.0
+        base = (plan.yearly_price or plan.price * 12) / 12.0 \
+            if self.billing_period == 'yearly' else plan.price
+        # Support is a flat monthly price (per the pricing rules: support/backup
+        # are flat ×12 for yearly), so it's the same per month regardless of period.
+        support = self.support_plan_id.monthly_price if self.support_plan_id else 0.0
+        return (base or 0.0) + (support or 0.0)
+
+    @api.depends('plan_id', 'billing_period', 'support_plan_id', 'storage_used_gb',
+                 'docker_server_id.cost_per_cpu_month',
+                 'docker_server_id.cost_per_gb_ram_month',
+                 'docker_server_id.cost_per_gb_storage_month',
+                 'child_env_ids.storage_used_gb', 'child_env_ids.plan_id')
+    def _compute_margin(self):
+        company_cur = self.env.company.currency_id
+        for rec in self:
+            rec.margin_currency_id = (rec.plan_id.currency_id or company_cur)
+            # Production rolls up its children's infra cost; children show their own.
+            cost = rec._instance_infra_cost()
+            if not rec.parent_id:
+                cost += sum(c._instance_infra_cost() for c in rec.child_env_ids)
+            revenue = rec._instance_monthly_revenue()
+            rec.monthly_cost = cost
+            rec.monthly_revenue = revenue
+            rec.monthly_margin = revenue - cost
+            rec.margin_pct = (100.0 * (revenue - cost) / revenue) if revenue else 0.0
+            rec.is_profitable = (revenue - cost) >= 0
+
+    def _search_profitable(self, operator, value):
+        # Lightweight search: compute on the candidate set (paid, parentless).
+        recs = self.search([('parent_id', '=', False), ('plan_id', '!=', False)])
+        ids = [r.id for r in recs if r.is_profitable]
+        want = value if operator == '=' else not value
+        return [('id', 'in' if want else 'not in', ids)]
+
     usage_last_updated = fields.Datetime(
         string='Usage Last Updated',
         readonly=True,

@@ -172,6 +172,26 @@ class SaasServer(models.Model):
         string='Docker Containers',
         help='Containers currently running on this server (populated via Refresh).',
     )
+    # ===== Phase 4: per-tenant cost model (rate card) =====
+    # Infra cost rates for tenants on this server, in the company currency per
+    # month. Set them so (rate × provisioned resources) over the server's tenants
+    # recovers the box's real monthly cost at target density. Per-server because
+    # a small droplet and a beefy host have different $/resource.
+    cost_per_cpu_month = fields.Float(
+        string='Cost / CPU-core / month', default=0.0,
+        help='Phase 4 cost model: monthly infra cost attributed per provisioned '
+             'CPU core. Drives per-tenant cost → margin.')
+    cost_per_gb_ram_month = fields.Float(
+        string='Cost / GB-RAM / month', default=0.0,
+        help='Monthly infra cost attributed per provisioned GB of RAM.')
+    cost_per_gb_storage_month = fields.Float(
+        string='Cost / GB-storage / month', default=0.0,
+        help='Monthly infra cost attributed per GB of storage used.')
+    monthly_cost = fields.Float(
+        string='Server Monthly Cost', default=0.0,
+        help='Reference: the real all-in monthly cost of this box (droplet + '
+             'volumes + bandwidth). For sanity-checking the rate card against '
+             'the sum of tenant costs.')
     registry_host = fields.Char(
         string='Container Registry Host',
         help="Phase 2.2: registry endpoint for immutable tenant images "

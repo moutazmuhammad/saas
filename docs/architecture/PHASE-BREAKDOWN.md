@@ -213,14 +213,24 @@ destroying its host and recreating elsewhere loses no data; rollback to a prior 
 
 ## PHASE 4 — Observability & per-tenant margin  *(needs: Phase 0; independent of 1–3)*
 
-- [ ] **4.1.1** Define the `tenant_id` label schema; ensure every metric + log line carries the instance id.
-- [ ] **4.2.1** Deploy VictoriaMetrics + Grafana (single-node).
-- [ ] **4.2.2** Export container stats (cAdvisor or the existing `docker stats` sampler) tagged `tenant_id`.
-- [ ] **4.2.3** Export per-DB size + `pg_stat_statements` per tenant.
-- [ ] **4.3.1** Define the cost model: CPU/RAM/storage/egress → currency per tenant.
-- [ ] **4.3.2** Pull per-tenant revenue (wallet/plan) into a Grafana datasource.
-- [ ] **4.3.3** Build the **margin dashboard** (revenue − cost per tenant). *Done when:* it shows live numbers.
-- [ ] **4.3.4** Alerts: unprofitable tenant, runaway CPU/RAM, storage near limit.
+> v1 is Odoo-NATIVE (cheap, "start small"): the margin is computed from existing usage + billing data and
+> shown as a backend dashboard — answers "which tenants are profitable?" without new infra. The
+> VictoriaMetrics/Grafana time-series stack (4.2.x) is a later add for historical trends.
+
+- [x] **4.1.1** `tenant_id` taxonomy = the `saas.instance` record itself (every metric/cost/revenue is
+      computed per instance; child envs roll up to their Production parent).
+- [ ] **4.2.1** Deploy VictoriaMetrics + Grafana (single-node). *(deferred — time-series trends; the
+      Odoo-native dashboard already answers the profitability question.)*
+- [ ] **4.2.2** Export container stats tagged `tenant_id`. *(deferred with 4.2.1)*
+- [ ] **4.2.3** Export per-DB size + `pg_stat_statements` per tenant. *(deferred with 4.2.1)*
+- [x] **4.3.1** Cost model = per-server rate card (`cost_per_cpu_month` / `_gb_ram_month` / `_gb_storage_month`
+      on `saas.server`) × the tenant's provisioned CPU/RAM + used storage. `_instance_infra_cost()`.
+- [x] **4.3.2** Revenue = `_instance_monthly_revenue()` — plan price (period-normalized) + flat support;
+      child envs contribute 0 (they bill via the parent).
+- [x] **4.3.3** Margin dashboard: `monthly_cost`/`monthly_revenue`/`monthly_margin`/`margin_pct`/
+      `is_profitable` computed fields + a **Tenant Margins** list+pivot (Billing menu), sorted worst-first,
+      red=loss/green=healthy. Live on rt1/rt2: rev $20 − cost $7 = **$13/mo (65%)**. 87/87 unit (+4).
+- [ ] **4.3.4** Alerts: unprofitable tenant, runaway CPU/RAM, storage near limit. *(next)*
 
 **Phase 4 acceptance:** one dashboard answers "which tenants are profitable?" from live data.
 

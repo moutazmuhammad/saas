@@ -68,6 +68,19 @@
                             <field name="allocated_ram_gb"/>
                         </group>
                     </group>
+                    <group string="Cost model (per-tenant margin) &amp; immutable images"
+                           invisible="not is_docker_host">
+                        <group string="Infra cost rate card (per month)">
+                            <field name="cost_per_cpu_month"/>
+                            <field name="cost_per_gb_ram_month"/>
+                            <field name="cost_per_gb_storage_month"/>
+                            <field name="monthly_cost"/>
+                        </group>
+                        <group string="Phase 2 (disposable compute)">
+                            <field name="object_filestore_mount"/>
+                            <field name="registry_host"/>
+                        </group>
+                    </group>
                     <notebook invisible="not is_docker_host">
                         <page string="Docker Containers">
                             <field name="docker_container_ids" nolabel="1"/>

@@ -60,6 +60,7 @@ Key capabilities:
         'views/saas_wallet_views.xml',
         'views/saas_support_plan_views.xml',
         'views/saas_server_views.xml',
+        'views/saas_margin_views.xml',
         'views/saas_domain_views.xml',
         'views/saas_odoo_version_views.xml',
         'views/res_partner_views.xml',
