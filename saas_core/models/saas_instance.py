@@ -10736,31 +10736,43 @@ class SaasInstance(models.Model):
     def _hosting_filestore_path(self, db_name):
         """Return the host-side path to a DB's Odoo filestore.
 
-        The compose volume mounts ``./data/odoo`` →
-        ``/var/lib/odoo`` inside the container, so the host path is
-        ``<instance_path>/data/odoo/filestore/<db>``. Used to copy /
-        delete filestores without entering the container.
+        On an object-storage host (``object_filestore_mount`` set) the filestore
+        is bind-mounted from the JuiceFS mount, so it lives at
+        ``<mount>/<partner>/<sub>/filestore/<db>``. Otherwise the compose volume
+        maps ``./data/odoo`` → ``/var/lib/odoo``, so it's
+        ``<instance_path>/data/odoo/filestore/<db>``. Used to copy / delete
+        filestores without entering the container.
         """
+        mount = self._get_filestore_mount()
+        if mount:
+            return '%s/%s' % (mount, db_name)
         return '%s/data/odoo/filestore/%s' % (
             self._get_instance_path(), db_name,
         )
 
     def _hosting_clone_filestore(self, source_db, target_db):
-        """Copy the template's filestore directory to the new DB's path.
+        """Clone the template's filestore directory to the new DB's path.
 
-        Runs ``cp -a`` on the docker host (sudo so we can read the
-        container-owned source even when our SSH user can't), then
-        fixes ownership so the running container can write to it.
-        If the template never had a filestore directory (no modules
-        wrote any files), we just create an empty target.
+        On an object-storage host the filestore lives on JuiceFS, so we use
+        ``juicefs clone`` — a metadata-only copy-on-write that is instant and
+        consumes no extra object storage (no byte copy, dropping ``cp -a``).
+        On a local-disk host we keep ``cp -a``. Either way we run sudo (the
+        source is container-owned) and fix ownership so the running container
+        can write. If the template never wrote a filestore, create an empty one.
         """
         self.ensure_one()
         src = self._hosting_filestore_path(source_db)
         dst = self._hosting_filestore_path(target_db)
-        instance_path = self._get_instance_path()
+        use_object_store = bool(self._get_filestore_mount())
 
         with self.docker_server_id._get_ssh_connection() as ssh:
             container_uid = self._get_container_uid(ssh)
+            # CoW clone on JuiceFS (instant, no extra storage) vs byte copy.
+            copy_step = (
+                '  sudo juicefs clone %(src)s %(dst)s; '
+                if use_object_store else
+                '  sudo cp -a %(src)s %(dst)s; '
+            )
             cmd = (
                 # Idempotent: if dst already exists from a previous
                 # half-run, blow it away first.
@@ -10769,7 +10781,7 @@ class SaasInstance(models.Model):
                 # legitimately not exist if no module wrote anything
                 # to disk; cover that case so we don't error out.
                 'if [ -d %(src)s ]; then '
-                '  sudo cp -a %(src)s %(dst)s; '
+                + copy_step +
                 'else '
                 '  sudo mkdir -p %(dst)s; '
                 'fi && '

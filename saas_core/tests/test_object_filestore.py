@@ -87,3 +87,39 @@ class TestObjectFilestore(TransactionCase):
         self.assertIn('cp -a', joined)
         self.assertIn('/data/odoo/filestore/.', joined)
         self.assertIn('chown -R 101:101', joined)
+
+    # -------- 2.1.6 clone uses JuiceFS CoW on an object-store host --------
+    def _clone_cmds(self, server):
+        inst = self._instance('ofclone', server)
+        cmds = []
+
+        class FakeSSH:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, cmd, timeout=None):
+                cmds.append(cmd); return (0, '', '')
+
+        with patch.object(type(server), '_get_ssh_connection', return_value=FakeSSH()), \
+             patch.object(type(inst), '_get_container_uid', return_value='101'):
+            inst._hosting_clone_filestore('__tmpl', 'newdb')
+        return inst, '\n'.join(cmds)
+
+    def test_clone_uses_juicefs_cow_on_object_host(self):
+        srv = self.env['saas.server'].sudo().create(
+            {'name': 'of-clone-obj', 'object_filestore_mount': '/mnt/jfs',
+             'docker_base_path': '/home/odoo'})
+        inst, joined = self._clone_cmds(srv)
+        self.assertIn('juicefs clone', joined)
+        self.assertNotIn('cp -a', joined)
+        # paths resolve under the object mount, not the local data dir
+        self.assertIn('/mnt/jfs/', joined)
+        self.assertEqual(inst._hosting_filestore_path('newdb'),
+                         inst._get_filestore_mount() + '/newdb')
+
+    def test_clone_uses_cp_on_local_host(self):
+        srv = self.env['saas.server'].sudo().create(
+            {'name': 'of-clone-local', 'docker_base_path': '/home/odoo'})
+        inst, joined = self._clone_cmds(srv)
+        self.assertIn('cp -a', joined)
+        self.assertNotIn('juicefs clone', joined)
+        self.assertIn('/data/odoo/filestore/newdb', inst._hosting_filestore_path('newdb'))

@@ -150,10 +150,16 @@ backup/restore test. Only then do we touch the god-model.
       already bind-mounted. Verified on rt2: caught via a **Selenium** UI test that asset bundles 500'd after
       a bare reconfigure (empty object fs), then the migration back-filled them → **0 severe console errors**,
       UI fully renders. NB: NEW tenants need no migration (empty fs regenerates fresh).
-- [ ] **2.1.5** Measure page-load latency with cache warm/cold; confirm acceptable. *Done when:* no
-      regression vs local for hot attachments.
-- [ ] **2.1.6** Switch `clone` to reference object-store filestore (drop `cp -a`). *Done when:* clone works
-      without local filestore copy.
+- [x] **2.1.5** Benchmarked on the test box (8×2 MB reads): JuiceFS **warm 4–5 ms/file ≈ local-disk warm
+      4 ms/file** (no regression for hot attachments ✅); cold (MinIO fetch) ~30 ms/file vs 13 ms local —
+      a one-time miss penalty that warms away. User-facing: rt2's 474 KB filestore-backed asset bundle
+      serves in ~0.12–0.15 s over HTTPS. Caveat: cold reads in prod (DO Spaces, not loopback) will be
+      higher, but the local NVMe cache keeps hot files at local speed.
+- [x] **2.1.6** `_hosting_filestore_path` is object-store-aware; `_hosting_clone_filestore` uses
+      **`juicefs clone` (copy-on-write)** instead of `cp -a` on an object-store host. Verified on rt2:
+      created a 2nd DB (`rt2_cow`) — all 10 attachment files byte-identical to the template, DB serves, and
+      **MinIO usage stayed flat (20 MiB / 40 objects)** ⇒ zero data duplication; drop cleaned the object
+      filestore. NB: the CoW skips Odoo's `checklist/` GC hard-links (rebuilt by Odoo — no data loss).
 
 ### 2.2 Container registry + immutable images
 - [ ] **2.2.1** Stand up a registry (self-hosted Distribution or managed); auth configured.
