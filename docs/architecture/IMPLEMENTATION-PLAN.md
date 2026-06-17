@@ -261,6 +261,7 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 3 | Reconciler: `desired_state`/`actual_state` + `reconcile()` + `_cron_reconcile` (folds health-check); form shows reconcile+margin; **rt2 `docker rm -f` → reconciler recreated → healthy 200**; 95/95 unit (+7) | ✅ | **Phase 3 acceptance MET** (self-heal proven) |
 | 2026-06-17 | 6 | **Seam proof**: `KubernetesDriver` (2nd ComputeDriver) + `saas.server.compute_driver` switch; `_do_stop` on a k8s server → `kubectl scale --replicas=0` via UNCHANGED business logic; 102/102 unit (+7) | ✅ | "new backend = new file, not a rewrite" — proven. Live-cluster pilot awaits demand |
 | 2026-06-17 | 5 | 5.1.1 multi-container model SEAM: `saas.instance.container` (role app/cron/longpoll) + `container_ids` + `_workloads()`/`_compute_handles()` (fallback to single 'app'); 104/104 unit (+2) | ✅ | seam only — LB/PgBouncer/replica deferred to real demand |
+| 2026-06-18 | 2 | **Custom-addons immutable gap CLOSED (live)**: real module + repo on rt2 → built+deployed by digest → module baked at /opt/tenant-addons, addons_path correct, Odoo `update_list` finds it; 200; reverted clean | ✅ | last Phase-2 verification gap closed |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

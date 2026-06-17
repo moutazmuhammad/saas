@@ -175,6 +175,10 @@ backup/restore test. Only then do we touch the god-model.
       requirements + addons), builds `tenant-<sub>:<sha>`, pushes, records `saas.build` (image_ref/digest).
       Verified on rt2: built+pushed in **6.8 s** (FROM cached base + minimal layers). Custom modules bake to
       `/opt/tenant-addons` (non-VOLUME path) + `addons_path` re-rooted there in immutable mode.
+      **Custom-addons gap CLOSED (live):** placed a real module + a cloned repo on rt2 → built the immutable
+      image → deployed by digest → the module is baked at `/opt/tenant-addons/probemods/saas_addon_probe`
+      (no mount), `addons_path` includes it, and Odoo `update_list()` finds it
+      (`state=uninstalled, 'SAAS Addon Probe'`); rt2 served 200, then reverted clean.
 - [x] **2.2.5** `provision-build-sandbox.sh` + `_image_build_cmd()` build untrusted tenant images on an
       **egress-restricted** `saas-build` network (legacy builder + `--network`). DOCKER-USER (FORWARD) +
       INPUT firewall rules confine RUN steps: **cloud metadata (169.254.169.254) and internal PostgreSQL
