@@ -225,6 +225,24 @@
                         </group>
                     </group>
 
+                    <group string="Reconciliation &amp; margin"
+                           groups="saas_core.group_saas_manager"
+                           invisible="state not in ('running','stopped','suspended')">
+                        <group string="Reconciler (desired → actual)">
+                            <field name="desired_state"/>
+                            <field name="actual_state"/>
+                            <field name="last_reconcile"/>
+                            <field name="deploy_image"/>
+                        </group>
+                        <group string="Margin / month">
+                            <field name="monthly_revenue"/>
+                            <field name="monthly_cost"/>
+                            <field name="monthly_margin"/>
+                            <field name="is_profitable"/>
+                            <field name="margin_currency_id" column_invisible="1"/>
+                        </group>
+                    </group>
+
                     <notebook>
                         <page string="Backups">
                             <field name="backup_ids" nolabel="1">

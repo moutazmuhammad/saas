@@ -903,6 +903,33 @@ class SaasInstance(models.Model):
         want = value if operator == '=' else not value
         return [('id', 'in' if want else 'not in', ids)]
 
+    # ===== Phase 3: reconciliation engine (desired → actual) =====
+    desired_state = fields.Selection(
+        [('running', 'Running'), ('stopped', 'Stopped'), ('ignore', 'Not reconciled')],
+        string='Desired State', compute='_compute_desired_state',
+        help='What the container SHOULD be doing, derived from the lifecycle '
+             'state. The reconciler drives the real container toward this.')
+    actual_state = fields.Char(
+        string='Actual State', readonly=True, copy=False,
+        help='Last container status observed by the reconciler (running / '
+             'exited / not_found / restarting …).')
+    last_reconcile = fields.Datetime(string='Last Reconciled', readonly=True, copy=False)
+
+    # Lifecycle states whose container should be RUNNING vs STOPPED; others
+    # (draft/provisioning/cancelled) are not container-reconciled.
+    _RECONCILE_RUNNING = ('running',)
+    _RECONCILE_STOPPED = ('stopped', 'suspended')
+
+    @api.depends('state')
+    def _compute_desired_state(self):
+        for rec in self:
+            if rec.state in rec._RECONCILE_RUNNING:
+                rec.desired_state = 'running'
+            elif rec.state in rec._RECONCILE_STOPPED:
+                rec.desired_state = 'stopped'
+            else:
+                rec.desired_state = 'ignore'
+
     usage_last_updated = fields.Datetime(
         string='Usage Last Updated',
         readonly=True,
@@ -7596,90 +7623,107 @@ class SaasInstance(models.Model):
             },
         }
 
-    @api.model
-    def _cron_check_container_health(self):
-        """Check running instances for crashed/stopped containers and auto-restart them.
+    _CRASH_LOOP_THRESHOLD = 5
 
-        Groups by Docker server to batch SSH connections.
-        """
+    def reconcile(self, connection=None):
+        """Phase 3: drive THIS instance's container toward its ``desired_state``.
+
+        Idempotent + crash-safe (safe to re-run mid-action): reads the actual
+        container status via ``driver.health``, diffs it against the desired
+        state, and applies the single minimal action to converge. ``connection``
+        reuses an open SSH for batching. Returns the action taken (for tests/logs).
+        Skips instances mid-operation (a deploy/op owns the container then)."""
+        self.ensure_one()
+        desired = self.desired_state
+        if desired == 'ignore' or not self.docker_server_id or self.pending_operation:
+            return 'skipped'
+        driver = self._compute_driver(connection=connection)
+        handle = self._compute_handle()
+        health = driver.health(handle)
+        status = health.status or 'not_found'
+        self.actual_state = status
+        self.last_reconcile = fields.Datetime.now()
+        action = 'none'
+
+        if desired == 'running':
+            crash_looping = (
+                status == 'restarting'
+                or (status in ('exited', 'dead')
+                    and health.restart_count >= self._CRASH_LOOP_THRESHOLD))
+            if crash_looping:
+                # Restarting a crash-looper is futile + burns resources. Break the
+                # loop: stop it, park as 'stopped', surface why (redeploy allowed).
+                _logger.warning(
+                    "[reconcile] %s crash-looping (status=%s restarts=%s) — stopping",
+                    self.subdomain, status, health.restart_count)
+                driver.stop(handle)
+                self._append_log(
+                    "Container kept crashing on startup (status=%s, restarts=%s) — "
+                    "auto-stopped to break the loop. Review your custom modules / "
+                    "Python packages, then redeploy." % (status, health.restart_count))
+                self.write({
+                    'state': 'stopped',
+                    'last_error': 'Container crash-looped on startup and was '
+                                  'auto-stopped. Review your custom code / packages, '
+                                  'then redeploy.',
+                    'last_error_date': fields.Datetime.now(),
+                })
+                action = 'stopped_crashloop'
+            elif status in ('exited', 'dead', 'not_found'):
+                # Genuine one-off down → bring it back (health-gated by start()).
+                _logger.warning(
+                    "[reconcile] %s is %s — restarting", self.subdomain, status)
+                self._append_log(
+                    "Container found in '%s' state — auto-restarting." % status)
+                driver.start(handle)
+                action = 'started'
+            elif status == 'running' and self.last_error:
+                self.last_error = False   # healthy again → clear stale error
+                action = 'cleared_error'
+        elif desired == 'stopped':
+            if status in ('running', 'restarting'):
+                _logger.warning(
+                    "[reconcile] %s should be stopped but is %s — stopping",
+                    self.subdomain, status)
+                driver.stop(handle)
+                action = 'stopped'
+        return action
+
+    @api.model
+    def _cron_reconcile(self):
+        """Phase 3: the single idempotent loop that drives every provisioned
+        tenant toward its desired state. Replaces the ad-hoc health-check;
+        grouped by Docker server for batched SSH."""
         instances = self.search([
-            ('state', '=', 'running'),
+            ('state', 'in', list(self._RECONCILE_RUNNING + self._RECONCILE_STOPPED)),
             ('docker_server_id', '!=', False),
         ])
         if not instances:
-            return
-
+            return 0
         by_server = {}
         for inst in instances:
-            by_server.setdefault(inst.docker_server_id.id, []).append(inst)
-
-        for server_id, inst_list in by_server.items():
-            server = self.env['saas.server'].browse(server_id)
+            by_server.setdefault(inst.docker_server_id, self.browse())
+            by_server[inst.docker_server_id] |= inst
+        acted = 0
+        for server, insts in by_server.items():
             try:
                 with server._get_ssh_connection() as ssh:
-                    for inst in inst_list:
+                    for inst in insts:
                         try:
-                            container = inst._get_container_name()
-                            # Read status AND restart count in one shot (via the
-                            # driver) so we can tell a one-off stop apart from a
-                            # crash-loop. Reuse this host's open ssh connection.
-                            driver = inst._compute_driver(connection=ssh)
-                            handle = inst._compute_handle()
-                            health = driver.health(handle)
-                            status = health.status or 'not_found'
-                            restarts = health.restart_count
-                            CRASH_LOOP = 5
-
-                            crash_looping = (
-                                status == 'restarting'
-                                or (status in ('exited', 'dead') and restarts >= CRASH_LOOP)
-                            )
-                            if crash_looping:
-                                # Restarting a crash-looper is futile and burns
-                                # resources. Break the loop: stop it, park the
-                                # instance as 'stopped', and surface why — the
-                                # customer can fix their code/packages and
-                                # redeploy (redeploy is allowed from stopped).
-                                _logger.warning(
-                                    "Container %s crash-looping (status=%s restarts=%s) "
-                                    "— stopping instance %s", container, status, restarts, inst.name,
-                                )
-                                driver.stop(handle)
-                                inst._append_log(
-                                    "Container kept crashing on startup (status=%s, "
-                                    "restarts=%s) — auto-stopped to break the loop. "
-                                    "Review your custom modules / Python packages, "
-                                    "then redeploy." % (status, restarts)
-                                )
-                                inst.write({
-                                    'state': 'stopped',
-                                    'last_error': 'Container crash-looped on startup and was '
-                                                  'auto-stopped. Review your custom code / '
-                                                  'packages, then redeploy.',
-                                    'last_error_date': fields.Datetime.now(),
-                                })
-                            elif status in ('exited', 'dead', 'not_found'):
-                                # Genuine one-off down → try to bring it back.
-                                _logger.warning(
-                                    "Container %s is %s — restarting instance %s",
-                                    container, status, inst.name,
-                                )
-                                inst._append_log(
-                                    "Container found in '%s' state — auto-restarting." % status
-                                )
-                                driver.start(handle)
-                            elif status == 'running' and inst.last_error:
-                                # Healthy again → clear a stale error so the
-                                # customer's "stopped" banner goes away.
-                                inst.last_error = False
+                            if inst.reconcile(connection=ssh) not in ('skipped', 'none'):
+                                acted += 1
                         except Exception:
                             _logger.exception(
-                                "Health check failed for instance %s", inst.name
-                            )
+                                "[reconcile] failed for instance %s", inst.name)
             except Exception:
                 _logger.exception(
-                    "Cannot connect to server %s for health check", server.name
-                )
+                    "[reconcile] cannot reach server %s", server.name)
+        return acted
+
+    @api.model
+    def _cron_check_container_health(self):
+        """[Phase 3] Back-compat shim: the health check is now the reconciler."""
+        return self._cron_reconcile()
 
     def _cron_check_storage_limits(self):
         """Check total storage of running instances and suspend those exceeding their plan limit.

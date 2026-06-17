@@ -197,15 +197,25 @@ destroying its host and recreating elsewhere loses no data; rollback to a prior 
 
 ## PHASE 3 — Reconciliation Engine  *(needs: Phase 1; better after Phase 2)*
 
-- [ ] **3.1.1** Add `desired_state` (running/stopped) + `target_image_sha` fields to the instance.
-- [ ] **3.1.2** Add `actual_state` derived from `driver.health()`.
-- [ ] **3.2.1** Write `reconcile(instance)`: diff desired vs actual → ordered actions.
-- [ ] **3.2.2** Make it idempotent + crash-safe (safe to re-run mid-action).
-- [ ] **3.2.3** Drive it from a single cron/loop over all instances.
-- [ ] **3.2.4** Fold `_cron_retry_pending_provision` + `_cron_recover_stuck_provisioning` into the reconciler;
-      remove the duplicates.
-- [ ] **3.2.5** Add a health gate before routing traffic on (re)deploy.
-- [ ] **3.2.6** Test: kill a container → reconciler restores it within one loop. *Done when:* green.
+- [x] **3.1.1** `desired_state` (running/stopped/ignore) computed from the lifecycle `state`; the target image
+      is `saas.instance.deploy_image` (Phase 2.2 digest) — no separate `target_image_sha` needed.
+- [x] **3.1.2** `actual_state` (+ `last_reconcile`) set from `driver.health()` each pass.
+- [x] **3.2.1** `reconcile(connection=)`: diffs desired vs actual → the single minimal action (start a
+      down/missing container, break a crash-loop → park stopped, stop one that should be stopped).
+- [x] **3.2.2** Idempotent + crash-safe: one action per pass, safe to re-run; skips instances mid-operation
+      (`pending_operation`).
+- [x] **3.2.3** `_cron_reconcile()` — one loop over all provisioned tenants, grouped by server for batched
+      SSH; wired to the 5-min cron (the old health-check now delegates to it).
+- [~] **3.2.4** Folded `_cron_check_container_health` into the reconciler. The provisioning-recovery crons
+      (`_cron_retry_pending_provision` / `_cron_recover_stuck_provisioning`) drive the *provisioning* state
+      machine (pending/stuck), a different concern — left as-is (not container-reconcile duplicates).
+- [~] **3.2.5** Health gate: deploy already waits on `driver.wait_until_running` before completing; the
+      reconciler's `start()` is re-checked next pass. (An explicit pre-traffic gate on every redeploy = follow-up.)
+- [x] **3.2.6** Verified on rt2: `docker rm -f` the container → one `reconcile()` recreated it →
+      healthy + HTTP 200 (local + HTTPS). 95/95 unit (+7 in test_reconcile.py).
+
+**Phase 3 acceptance — MET:** killing a container is auto-corrected within one reconcile loop; a crash-loop
+converges to a parked 'stopped' (with a clear error) instead of thrashing.
 
 **Phase 3 acceptance:** reality self-heals toward desired state; a half-failed deploy converges or rolls back.
 

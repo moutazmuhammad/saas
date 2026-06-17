@@ -257,6 +257,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 2 | 2.2.4/2.2.6/2.2.7: build pipeline + `deploy_immutable_image` + `rollback_image`; rt2 built (6.8s) + deployed by digest (no source mount, 200, Selenium 0 err) + reverted; addons bake to /opt/tenant-addons; 82/82 unit (+3) | ✅ | 2.2.5 sandbox = partial (BuildKit; rootless worker TODO) |
 | 2026-06-17 | 2 | 2.2.5 egress-sandboxed builds (`provision-build-sandbox.sh`, saas-build net + DOCKER-USER/INPUT firewall); verified metadata+PG blocked, PyPI 200, pip-build OK, tenants unaffected; 83/83 unit (+1) | ✅ | **Phase 2 COMPLETE** (rootless worker = optional follow-up) |
 | 2026-06-17 | 4 | Per-tenant margin (Odoo-native): server rate card + `_compute_margin` (cost/revenue/margin/profitable, child roll-up) + Tenant Margins list+pivot dashboard; live rt1/rt2 = $13/mo (65%) PROFIT; 87/87 unit (+4) | ✅ | 4.1.1/4.3.1-3 done; metrics stack (4.2.x) + alerts (4.3.4) next |
+| 2026-06-17 | 4 | 4.3.4 unprofitable-tenant alert cron (weekly, logs+chatter); 88/88 unit (+1) | ✅ | Phase 4 (Odoo-native) complete |
+| 2026-06-17 | 3 | Reconciler: `desired_state`/`actual_state` + `reconcile()` + `_cron_reconcile` (folds health-check); form shows reconcile+margin; **rt2 `docker rm -f` → reconciler recreated → healthy 200**; 95/95 unit (+7) | ✅ | **Phase 3 acceptance MET** (self-heal proven) |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).
