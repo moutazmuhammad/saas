@@ -2699,13 +2699,25 @@ class SaasInstance(models.Model):
 
     def _image_build_cmd(self, ctx, image):
         """Return the `docker build` command for the build worker. Sandboxing
-        (2.2.5): the worker runs untrusted customer code (requirements.txt / module
-        setup), so build with the default seccomp/no extra privileges, no host
-        network, and no platform secrets in the context. BuildKit is used for
-        layer caching + reproducibility."""
+        (2.2.5): tenant builds run untrusted customer code (requirements.txt /
+        module setup.py), so the RUN steps are confined to the egress-restricted
+        ``saas-build`` network (see provision-build-sandbox.sh) — PyPI + DNS
+        reachable, but cloud metadata + RFC1918 internals (PG, other tenants, the
+        control plane) are firewalled. No platform secrets are in the context
+        (Dockerfile + requirements + addons only); the push is a separate trusted
+        step so untrusted RUN never sees registry creds. The legacy builder is
+        used because it honours a custom --network (BuildKit only takes
+        default/none/host). The FROM pull happens on the daemon, so the local
+        registry base image still resolves."""
         return (
-            'DOCKER_BUILDKIT=1 docker build --network=default --no-cache=false '
-            '--pull=false -t %s %s 2>&1' % (shlex.quote(image), shlex.quote(ctx)))
+            'DOCKER_BUILDKIT=0 docker build --network %s --pull=false '
+            '-t %s %s 2>&1' % (
+                shlex.quote(self._build_sandbox_network()),
+                shlex.quote(image), shlex.quote(ctx)))
+
+    def _build_sandbox_network(self):
+        """Name of the egress-restricted docker network for untrusted builds."""
+        return 'saas-build'
 
     def deploy_immutable_image(self, build=None, source='redeploy'):
         """Phase 2.2.6: build (if needed) + deploy this tenant from an immutable

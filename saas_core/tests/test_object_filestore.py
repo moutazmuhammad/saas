@@ -179,6 +179,15 @@ class TestObjectFilestore(TransactionCase):
         self.assertIn('/opt/tenant-addons', df)
         self.assertNotIn(':/mnt/extra-addons', df)
 
+    def test_build_cmd_uses_egress_restricted_sandbox(self):
+        inst = self._instance('sbx', self.env['saas.server'].sudo().create(
+            {'name': 'sbx-srv', 'registry_host': '127.0.0.1:5000'}))
+        cmd = inst._image_build_cmd('/ctx', '127.0.0.1:5000/tenant-sbx:abc')
+        # untrusted RUN steps confined to the egress-restricted network,
+        # legacy builder (BuildKit can't take a custom --network)
+        self.assertIn('--network saas-build', cmd)
+        self.assertIn('DOCKER_BUILDKIT=0', cmd)
+
     def test_rollback_requires_successful_build_with_image(self):
         inst = self._instance('rbk', self.env['saas.server'].sudo().create(
             {'name': 'rbk-srv', 'registry_host': '127.0.0.1:5000'}))

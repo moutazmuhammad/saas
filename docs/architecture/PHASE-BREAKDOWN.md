@@ -175,9 +175,14 @@ backup/restore test. Only then do we touch the god-model.
       requirements + addons), builds `tenant-<sub>:<sha>`, pushes, records `saas.build` (image_ref/digest).
       Verified on rt2: built+pushed in **6.8 s** (FROM cached base + minimal layers). Custom modules bake to
       `/opt/tenant-addons` (non-VOLUME path) + `addons_path` re-rooted there in immutable mode.
-- [~] **2.2.5** `_image_build_cmd()` builds via BuildKit on the build host (no `--privileged`, no host creds
-      in the context). PARTIAL: a fully rootless, egress-restricted, ephemeral worker is a follow-up
-      (important given the box's compromise history — untrusted `requirements.txt`/module setup runs here).
+- [x] **2.2.5** `provision-build-sandbox.sh` + `_image_build_cmd()` build untrusted tenant images on an
+      **egress-restricted** `saas-build` network (legacy builder + `--network`). DOCKER-USER (FORWARD) +
+      INPUT firewall rules confine RUN steps: **cloud metadata (169.254.169.254) and internal PostgreSQL
+      (172.17.0.1:5432) are blocked**, while PyPI + DNS work. Verified on the box: build→metadata/PG time
+      out, build→PyPI = 200, a real `docker build` with `pip install` succeeds, normal tenants unaffected.
+      No platform creds in the build context; push is a separate trusted step. (Further hardening — fully
+      rootless buildkit / ephemeral worker — remains a follow-up, but the untrusted-code-reaches-secrets
+      threat is now mitigated + proven.)
 - [x] **2.2.6** `deploy_immutable_image()` + `saas.instance.deploy_image` + compose immutable mode (image by
       digest; no source/addons/pip mounts). Verified on rt2: ran `tenant-rt2@sha256:f12c…`, healthy, HTTP 200
       local+HTTPS, **Selenium 0 console errors**, no source mount.
