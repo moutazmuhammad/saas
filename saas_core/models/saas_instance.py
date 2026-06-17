@@ -10670,11 +10670,10 @@ class SaasInstance(models.Model):
                 "Pausing instance for one-time template build "
                 "(~60-90s, first DB only)..."
             )
-            ssh.execute(
-                'cd %s && docker compose down 2>&1'
-                % shlex.quote(instance_path),
-                timeout=180,
-            )
+            try:
+                self._compute_driver(connection=ssh).destroy(self._compute_handle())
+            except Exception:
+                pass  # best-effort pause before the one-time template build
             # The template only needs ``base``, so build it with a
             # CORE-ONLY addons path (customer ``/mnt/extra-addons`` modules
             # stripped). ``odoo -i base`` scans every manifest in the path,
@@ -10709,11 +10708,10 @@ class SaasInstance(models.Model):
                 # raised — leaving the customer's container down is far
                 # worse than a failed template build.
                 self._append_log("Resuming instance...")
-                ssh.execute(
-                    'cd %s && docker compose up -d 2>&1'
-                    % shlex.quote(instance_path),
-                    timeout=300,
-                )
+                try:
+                    self._compute_driver(connection=ssh).start(self._compute_handle())
+                except Exception as e:
+                    self._append_log("Warning: failed to resume container: %s" % e)
 
         # Verify at the PG level (independent of the container being
         # fully back up). On any failure, drop the partial build + its
