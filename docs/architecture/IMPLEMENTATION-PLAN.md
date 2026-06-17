@@ -211,6 +211,9 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | RT | **Provisioned a REAL tenant via `_do_deploy` end-to-end** — container healthy, HTTPS+SSL, 303 login | ✅ | `REAL-TEST-RESULTS.md`; idle ~200MiB |
 | 2026-06-17 | RT | Real DB create (`rt1_rtdb`, odoo-light+source) — HTTP 200; found official-image breaks template build | ✅ | Test 2 |
 | 2026-06-17 | 0 | **Phase 0 ACCEPTANCE MET on real infra**: backup→restore round-trip PASS (marker gone, data intact, 200) | ✅ | Test 3 — DataService proven |
+| 2026-06-17 | 1 | 1.2 implemented `SshDockerDriver` (start/stop/restart/exec/logs/endpoint/health) + `_compute_driver`/`_compute_handle` on instance | ✅ | additive; not yet routing call sites |
+| 2026-06-17 | 1 | **Verified `SshDockerDriver` against LIVE rt1** (health/exec/logs + real stop→start) | ✅ | real-infra proof |
+| 2026-06-17 | 1 | Unit baseline GREEN on clean DB `saas_ci` (54/54). NB: `saas_dev` now dirty w/ real-test data | ✅ | use saas_ci for unit tests |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

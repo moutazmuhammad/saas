@@ -46,6 +46,8 @@ class ComputeHandle:
     server_id: int               # saas.server record id (where it runs)
     container_name: str
     instance_path: str
+    host: str = ""               # host/IP where the workload is reachable (for endpoint())
+    http_port: int = 0           # host port mapped to the container's HTTP port
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,111 @@
+"""SshDockerDriver — the single v1 implementation of ComputeDriver.
+
+Wraps the existing Docker-over-SSH operations (the ~140 inline `ssh.execute('docker …')`
+call sites cataloged in docs/architecture/DRIVER-BOUNDARY.md) behind the stable interface.
+The transport is the existing `SSHConnection` (utils.py), obtained from the target
+`saas.server` record's `_get_ssh_connection()`.
+
+Phase 1 wires call sites onto this incrementally; behavior must stay identical (same commands,
+same paths) so the green test baseline and real-infra behavior are unchanged.
+"""
+
+from __future__ import annotations
+
+import logging
+import shlex
+
+from .base import (ComputeDriver, ComputeSpec, ComputeHandle, ExecResult, HealthStatus)
+
+_logger = logging.getLogger(__name__)
+
+
+class SshDockerDriver(ComputeDriver):
+    """Docker Compose over SSH. Constructed with the target `saas.server` record,
+    which provides the SSH connection (and thus host-key pinning, key auth, etc.)."""
+
+    def __init__(self, server):
+        # `server` is a saas.server record exposing _get_ssh_connection().
+        self.server = server
+
+    # -- helpers ------------------------------------------------------------
+    def _ssh(self):
+        return self.server._get_ssh_connection()
+
+    def _compose(self, ssh, instance_path, verb, timeout=120):
+        """Run `cd <path> && docker compose <verb>` exactly as the god-model does."""
+        return ssh.execute(
+            'cd %s && docker compose %s 2>&1' % (shlex.quote(instance_path), verb),
+            timeout=timeout,
+        )
+
+    # -- lifecycle ----------------------------------------------------------
+    def create(self, spec: ComputeSpec) -> ComputeHandle:
+        # Full provisioning (render configs + first `up`) still lives in the
+        # god-model's _do_deploy; it will be routed here in a later Phase-1 step.
+        raise NotImplementedError(
+            "SshDockerDriver.create is not wired yet — provisioning still runs "
+            "through saas.instance._do_deploy (Phase 1, later increment)."
+        )
+
+    def start(self, handle: ComputeHandle) -> None:
+        # `up -d` is idempotent: creates if missing, recreates on config drift,
+        # starts if stopped — matches the god-model's start path.
+        with self._ssh() as ssh:
+            rc, out, err = self._compose(ssh, handle.instance_path, 'up -d', timeout=300)
+        if rc != 0:
+            raise RuntimeError('docker compose up failed (rc=%s): %s' % (rc, (out + err)[-500:]))
+
+    def stop(self, handle: ComputeHandle) -> None:
+        with self._ssh() as ssh:
+            rc, out, err = self._compose(ssh, handle.instance_path, 'stop', timeout=120)
+        if rc != 0 and 'No such' not in (out + err):
+            raise RuntimeError('docker compose stop failed (rc=%s): %s' % (rc, (out + err)[-500:]))
+
+    def destroy(self, handle: ComputeHandle) -> None:
+        with self._ssh() as ssh:
+            rc, out, err = self._compose(ssh, handle.instance_path, 'down', timeout=120)
+        if rc != 0 and 'No such' not in (out + err):
+            raise RuntimeError('docker compose down failed (rc=%s): %s' % (rc, (out + err)[-500:]))
+
+    def restart(self, handle: ComputeHandle) -> None:
+        with self._ssh() as ssh:
+            rc, out, err = self._compose(ssh, handle.instance_path, 'restart', timeout=300)
+        if rc != 0:
+            # fall back to stop+start if `restart` isn't viable
+            self.restart_default(handle)
+
+    # -- introspection / interaction ---------------------------------------
+    def exec(self, handle, command, *, user=None, timeout=None) -> ExecResult:
+        uflag = ('-u %s ' % shlex.quote(user)) if user else ''
+        with self._ssh() as ssh:
+            rc, out, err = ssh.execute(
+                'docker exec %s%s sh -c %s' % (
+                    uflag, shlex.quote(handle.container_name), shlex.quote(command)),
+                timeout=timeout or 60,
+            )
+        return ExecResult(rc=rc, stdout=out, stderr=err)
+
+    def logs(self, handle, *, tail=None) -> str:
+        tflag = ('--tail %d ' % int(tail)) if tail else ''
+        with self._ssh() as ssh:
+            rc, out, err = ssh.execute(
+                'docker logs %s%s 2>&1' % (tflag, shlex.quote(handle.container_name)),
+                timeout=60,
+            )
+        return out
+
+    def endpoint(self, handle) -> tuple[str, int]:
+        return (handle.host, handle.http_port)
+
+    def health(self, handle) -> HealthStatus:
+        # status + (optional) healthcheck state in one inspect
+        fmt = "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}"
+        with self._ssh() as ssh:
+            rc, out, err = ssh.execute(
+                "docker inspect -f %s %s 2>&1" % (
+                    shlex.quote(fmt), shlex.quote(handle.container_name)),
+                timeout=30,
+            )
+        detail = (out or err).strip()
+        running = (rc == 0 and detail.split('|', 1)[0] == 'running')
+        return HealthStatus(running=running, detail=detail)

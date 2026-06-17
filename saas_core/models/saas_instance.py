@@ -2560,6 +2560,26 @@ class SaasInstance(models.Model):
         self.ensure_one()
         return 'odoo_%s' % self.subdomain
 
+    # ---- Phase 1: ComputeDriver seam (additive; see docs/architecture) ----
+    def _compute_handle(self):
+        """Backend-agnostic handle describing this instance's compute workload."""
+        self.ensure_one()
+        from ..drivers.base import ComputeHandle
+        server = self.docker_server_id
+        return ComputeHandle(
+            server_id=server.id,
+            container_name=self._get_container_name(),
+            instance_path=self._get_instance_path(),
+            host=server.ip_v4 or '',
+            http_port=self.xmlrpc_port or 0,
+        )
+
+    def _compute_driver(self):
+        """Return the ComputeDriver for this instance's backend (v1: SshDockerDriver)."""
+        self.ensure_one()
+        from ..drivers.ssh_docker_driver import SshDockerDriver
+        return SshDockerDriver(self.docker_server_id)
+
     def _get_db_host(self):
         """Return the hostname/IP for odoo.conf (used inside the container).
 
