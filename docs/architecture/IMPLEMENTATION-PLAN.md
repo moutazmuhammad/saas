@@ -230,7 +230,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 1 | Routed `_do_suspend` + restore-path pre-stop → driver.stop (2 more raw-stop sites) | ✅ | 66/66 saas_ci |
 | 2026-06-17 | 1 | Real test on LIVE rt1: routed suspend (running→suspended→running) | ✅ | real-infra |
 | 2026-06-17 | 1 | Routed 2 restore-path `up` sites → driver.start(conn reuse); 66/66 saas_ci | ✅ | driver.start already real-proven |
-| 2026-06-17 | 1 | FINDING: after destroy+start recreates the container/network, the backup’s in-container pg_dump returns empty (DB healthy; host pg_dump=3.9MB) | ⚠️ | investigate next: backup pg_dump `-h` vs odoo.conf db_host after net recreate |
+| 2026-06-17 | 1 | RESOLVED: empty-backup root cause = my integrity-marker tables were superuser-owned → tenant `pg_dump` hit "permission denied" | ✅ | NOT a bug/regression; dropped markers, backup OK |
+| 2026-06-17 | 1 | Clean DataService round-trip re-verified on rt1 (TENANT-owned marker gone, users=5, 200) | ✅ | lesson: integrity markers must be owned by the tenant role |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).
