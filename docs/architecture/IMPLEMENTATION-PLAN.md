@@ -240,6 +240,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 1 | Real test: created DB on rt2 (triggers template build) → rt2_rtdb, serves 200 | ✅ | template build via driver |
 | 2026-06-17 | 1 | Added driver.destroy(purge=True); routed cancel/teardown `down -v --remove-orphans` | ✅ | best-effort |
 | 2026-06-17 | 1 | Real test: purge+start on rt2 → recreated, data survived (PG+bind mounts), 200 | ✅ | real-infra |
+| 2026-06-17 | 1 | Routed restic-restore Step2 down→destroy + Step5 up→start (conn reuse) | ✅ | the path DataService uses |
+| 2026-06-17 | 1 | Real test: DataService round-trip on rt1 via routed restore (marker gone, 200) | ✅ | real-infra |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

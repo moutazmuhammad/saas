@@ -6182,16 +6182,11 @@ class SaasInstance(models.Model):
                 # 2. Stop container before mutating files.
                 self._restore_log("Step 2/5: stopping container...")
                 t_stop = _time.time()
-                exit_code, stdout, stderr = ssh.execute(
-                    'cd %s && docker compose down 2>&1'
-                    % shlex.quote(instance_path),
-                )
-                if exit_code != 0 and 'No such' not in (stdout + stderr):
+                try:
+                    self._compute_driver(connection=ssh).destroy(self._compute_handle())
+                except Exception as e:
                     self._restore_log(
-                        "docker compose down FAILED exit=%s out=%r"
-                        % (exit_code, (stdout + stderr)[-500:]),
-                        level='error',
-                    )
+                        "docker compose down FAILED: %s" % e, level='error')
                     raise UserError(_(
                         "We couldn't pause your instance to start the "
                         "restore. Please try again in a moment."
@@ -6407,27 +6402,18 @@ class SaasInstance(models.Model):
                     "missing, recreates if config drifted)..."
                 )
                 t_up = _time.time()
-                exit_code, stdout, stderr = ssh.execute(
-                    'cd %s && docker compose up -d 2>&1'
-                    % shlex.quote(instance_path),
-                    timeout=300,
-                )
-                if exit_code != 0:
+                try:
+                    self._compute_driver(connection=ssh).start(self._compute_handle())
+                except Exception as e:
                     self._restore_log(
-                        "Step 5/5 FAILED: docker compose up exit=%s "
-                        "stderr=%r" % (exit_code, stderr[-500:]),
-                        level='error',
-                    )
+                        "Step 5/5 FAILED: docker compose up: %s" % e, level='error')
                     raise UserError(_(
                         "Your data was restored, but the instance didn't "
                         "come back up automatically. Please contact "
                         "support so we can bring it online."
                     ))
                 self._restore_log(
-                    "Step 5/5 OK: container up in %.1fs. Compose "
-                    "output: %r"
-                    % (_time.time() - t_up, (stdout + stderr)[-400:])
-                )
+                    "Step 5/5 OK: container up in %.1fs." % (_time.time() - t_up))
         finally:
             if gcs_path:
                 try:
