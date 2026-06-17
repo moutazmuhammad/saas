@@ -129,6 +129,16 @@ class SshDockerDriver(ComputeDriver):
     def endpoint(self, handle) -> tuple[str, int]:
         return (handle.host, handle.http_port)
 
+    def stats(self, handle, *, fmt='{{.CPUPerc}}||{{.MemUsage}}||{{.MemPerc}}',
+              timeout=None) -> ExecResult:
+        """Raw `docker stats --no-stream` for the container; caller parses the output."""
+        with self._ssh() as ssh:
+            rc, out, err = ssh.execute(
+                'docker stats --no-stream --format %s %s' % (
+                    shlex.quote(fmt), shlex.quote(handle.container_name)),
+                timeout=timeout or 60)
+        return ExecResult(rc=rc, stdout=out, stderr=err)
+
     def health(self, handle) -> HealthStatus:
         # status + (optional) healthcheck state in one inspect
         fmt = "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}"

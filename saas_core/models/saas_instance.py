@@ -3655,12 +3655,9 @@ class SaasInstance(models.Model):
         plan_ram_bytes = self._parse_ram_string(plan.ram_limit) if plan else 0
         plan_storage_gb = plan.storage_limit if plan else 0
 
-        # -- Fetch container stats via docker stats JSON format --
-        stats_cmd = (
-            'docker stats --no-stream --format '
-            '"{{.CPUPerc}}||{{.MemUsage}}||{{.MemPerc}}" %s'
-        ) % shlex.quote(container_name)
-        exit_code, stdout, stderr = ssh.execute(stats_cmd)
+        # -- Fetch container stats via the ComputeDriver (reuse this ssh) --
+        _stats = self._compute_driver(connection=ssh).stats(self._compute_handle())
+        exit_code, stdout, stderr = _stats.rc, _stats.stdout, _stats.stderr
 
         raw_cpu_pct = 0.0  # CPU % relative to host (e.g. 150% = 1.5 cores)
         ram_used_bytes = 0
