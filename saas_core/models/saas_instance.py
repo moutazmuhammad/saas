@@ -5976,9 +5976,9 @@ class SaasInstance(models.Model):
 
             # 6. Start the container
             self._append_log("Starting container...")
-            start_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
-            exit_code, stdout, stderr = ssh.execute(start_cmd, timeout=300)
-            if exit_code != 0:
+            try:
+                self._compute_driver(connection=ssh).start(self._compute_handle())
+            except Exception:
                 raise UserError(
                     _("Your data was restored, but the instance didn't "
                       "come back up automatically. Please contact support.")
@@ -6886,11 +6886,11 @@ class SaasInstance(models.Model):
             # running so other databases stayed online; nothing to start.
             if not self.is_hosting:
                 self._append_log("Starting container...")
-                start_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
-                exit_code, stdout, stderr = ssh.execute(start_cmd)
-                if exit_code != 0:
+                try:
+                    self._compute_driver(connection=ssh).start(self._compute_handle())
+                except Exception as e:
                     raise UserError(
-                        _("Failed to start container:\n%s") % stderr
+                        _("Failed to start container:\n%s") % e
                     )
 
         self.state = 'running'
