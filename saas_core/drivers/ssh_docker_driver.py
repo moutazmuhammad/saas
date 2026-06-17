@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+import time
 from contextlib import nullcontext
 
 from .base import (ComputeDriver, ComputeSpec, ComputeHandle, ExecResult, HealthStatus)
@@ -109,12 +110,16 @@ class SshDockerDriver(ComputeDriver):
             raise RuntimeError('docker restart failed (rc=%s): %s' % (rc, (out + err)[-500:]))
 
     # -- introspection / interaction ---------------------------------------
-    def exec(self, handle, command, *, user=None, timeout=None) -> ExecResult:
+    def exec(self, handle, command, *, user=None, shell='sh', timeout=None) -> ExecResult:
+        # ``shell`` picks the in-container interpreter (`sh -c` default; `bash`
+        # for the pip helpers that rely on bashisms). ``command`` is the literal
+        # script to run — quoting is handled here, callers pass it unescaped.
         uflag = ('-u %s ' % shlex.quote(user)) if user else ''
         with self._ssh() as ssh:
             rc, out, err = ssh.execute(
-                'docker exec %s%s sh -c %s' % (
-                    uflag, shlex.quote(handle.container_name), shlex.quote(command)),
+                'docker exec %s%s %s -c %s' % (
+                    uflag, shlex.quote(handle.container_name),
+                    shell, shlex.quote(command)),
                 timeout=timeout or 60,
             )
         return ExecResult(rc=rc, stdout=out, stderr=err)
@@ -141,15 +146,53 @@ class SshDockerDriver(ComputeDriver):
                 timeout=timeout or 60)
         return ExecResult(rc=rc, stdout=out, stderr=err)
 
-    def health(self, handle) -> HealthStatus:
-        # status + (optional) healthcheck state in one inspect
-        fmt = "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}"
+    def stats_many(self, container_names, *,
+                   fmt='{{.Name}}||{{.CPUPerc}}||{{.MemUsage}}', timeout=30) -> ExecResult:
+        """One `docker stats --no-stream` over MANY containers in a SINGLE call
+        (the host-batch live-metrics sampler). Caller parses the multi-line
+        output (one line per container). Matches the god-model's batched cmd."""
         with self._ssh() as ssh:
             rc, out, err = ssh.execute(
-                "docker inspect -f %s %s 2>&1" % (
+                'docker stats --no-stream --format %s %s' % (
+                    shlex.quote(fmt),
+                    ' '.join(shlex.quote(n) for n in container_names)),
+                timeout=timeout)
+        return ExecResult(rc=rc, stdout=out, stderr=err)
+
+    def health(self, handle) -> HealthStatus:
+        # status + restart count + (optional) healthcheck state in one inspect.
+        # RestartCount lets callers tell a one-off stop apart from a crash-loop.
+        fmt = "{{.State.Status}}|{{.RestartCount}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}"
+        with self._ssh() as ssh:
+            rc, out, err = ssh.execute(
+                "docker inspect -f %s %s 2>/dev/null" % (
                     shlex.quote(fmt), shlex.quote(handle.container_name)),
                 timeout=30,
             )
-        detail = (out or err).strip()
-        running = (rc == 0 and detail.split('|', 1)[0] == 'running')
-        return HealthStatus(running=running, detail=detail)
+        raw = (out or '').strip().strip('"')
+        if rc != 0 or not raw:
+            # No such container / unreachable -> treat as 'not_found' (matches
+            # the god-model's `|| echo "not_found|0"` fallback).
+            return HealthStatus(running=False, status='not_found', restart_count=0,
+                                detail=(err or out or 'not_found').strip())
+        parts = raw.split('|')
+        status = (parts[0] or 'not_found').strip()
+        try:
+            restart_count = int(parts[1])
+        except (IndexError, ValueError):
+            restart_count = 0
+        return HealthStatus(running=(status == 'running'), status=status,
+                            restart_count=restart_count, detail=raw)
+
+    def wait_until_running(self, handle, *, attempts=30, interval=2) -> HealthStatus:
+        """Poll health() until the container is 'running', hits a terminal
+        ('exited'/'dead') state, or attempts run out. Returns the final
+        HealthStatus. Replaces the inline remote `for i in seq 1 30 …` bash
+        wait-loop with a health-based poll (same 30×2s ceiling)."""
+        last = self.health(handle)
+        for _ in range(attempts - 1):
+            if last.status in ('running', 'exited', 'dead'):
+                return last
+            time.sleep(interval)
+            last = self.health(handle)
+        return last

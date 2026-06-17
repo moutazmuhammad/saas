@@ -1,8 +1,10 @@
 # Phase 1 Status — ComputeDriver + DataService seams
 
 **Date:** 2026-06-17 · **Branch:** `architecture-evolution`
-**Outcome:** the substantive Phase 1 goal is met — every important code path runs through the
-`ComputeDriver` / `DataService` seams, each verified on **real infrastructure** (live tenants `rt1`, `rt2`).
+**Outcome:** **Phase 1 complete.** Every ComputeDriver-lifecycle/introspection code path runs through the
+`ComputeDriver` / `DataService` seams — incl. the full tail (host-batch stats, pip `bash` exec, health-poll
+deploy wait, crash-loop health cron) — each verified on **real infrastructure** (live tenants `rt1`, `rt2`).
+The only inline `docker` left is one-shot `odoo`-CLI/image work owned by the Phase-2 Build seam (see below).
 
 ---
 
@@ -33,20 +35,34 @@ addons-restart down+up · restic-restore Step2/Step5 · zip-restore pre-stop · 
 - `rt1` + `rt2` both healthy and serving 200 after all churn.
 - **66/66 unit tests** green on clean DB `saas_ci` (`test_compute_driver.py`, `test_dataservice.py`).
 
-## Remaining tail (~10 bespoke call sites — finish in a focused pass)
-Each needs a small, deliberate decision, NOT a mechanical reroute:
-1. `_sample_live_metrics_for_host` — a **host-batch** `docker stats` over many containers at once;
-   add a `stats_many(container_names)` driver method (doesn't fit per-handle `stats`).
-2. `_docker_exec_*` pip-install helpers — use `bash -c` (driver `exec` uses `sh -c`); add a
-   `shell=` option to `exec`, then route. Trigger needs custom pip packages to real-test.
-3. deploy **wait-loop** `docker inspect` poll — replace the bash loop with a `health`-based poll.
-4. one health-check `docker inspect` (`{{.State.Status}}|{{.RestartCount}}`) and a repair/upgrade `up`.
+## Tail — ComputeDriver lifecycle/introspection (DONE, real-proven 2026-06-17)
+All four enumerated tail items are routed through the driver and verified live on `rt1`/`rt2`:
+1. ✅ `_sample_live_metrics_for_host` → new `driver.stats_many(container_names)` (host-batch `docker stats`
+   in one SSH). Live: both tenants sampled in one call; cpu/ram written.
+2. ✅ pip-install helpers (`_pre_restore` + `_apply_pip_packages`) → `driver.exec(..., shell='bash')`
+   (new `shell=` option; default stays `sh -c`). Live: `bash -c` confirmed in-container; the
+   `awk '{print $1}'` single-quote escaping survives the driver's `shlex.quote` (md5 stamped correctly).
+3. ✅ deploy **wait-loop** → new `driver.wait_until_running(handle)` (health-based poll, same 30×2s ceiling);
+   failure path now uses `driver.logs(handle, tail=50)`.
+4. ✅ health-check cron `_cron_check_container_health` → `driver.health()` now returns `status` +
+   `restart_count` (one-off stop vs. crash-loop); repair stop/up → `driver.stop`/`driver.start`.
+   Live: `health` = `running|0|healthy`; cron ran clean over both healthy tenants.
 
-**Definition of done:** real `docker `-command call sites in `saas_instance.py` = 0 (remaining grep hits are
-comments / log strings), unit suite green, and a fresh end-to-end re-provision + backup/restore on the
-server still passes. At that point a `KubernetesDriver` is purely a new file.
+Driver surface added: `stats_many`, `wait_until_running`, `exec(shell=)`, `health` now carries
+`status`/`restart_count`. Unit suite **70/70** on clean DB `saas_ci` (+4 new tests).
 
-## Note
-Routing the tail above is best done with a fresh context budget so the bespoke nuances (host-batch,
-shell choice, poll semantics) are handled without behavior drift. The high-risk, design-bearing work
-(provisioning, template build, backup/restore, lifecycle) is complete and proven.
+## Residual `docker` grep hits = Build/DataService seam, NOT ComputeDriver (Phase 2)
+The remaining inline `docker` command sites are **one-shot `odoo`-CLI / image-introspection** ops, which
+are deliberately out of the compute-lifecycle boundary (a workload `handle` doesn't even apply to them).
+They are owned by the Phase-2 Build Pipeline (immutable images replace "run `odoo -i/-u` on the host"), so
+wrapping them in `ComputeDriver` now would be throwaway work Phase 2 rewrites:
+- `_get_container_uid` (2638): `docker run --rm --entrypoint id <IMAGE>` — image introspection, no handle.
+- first-deploy DB init (4528): `docker compose run --rm -T odoo odoo -d <db> -i base …`.
+- module upgrade (9892/9912/9931): `compose stop odoo` + `compose run … odoo -u <mod>` + `compose up -d`,
+  one atomic op with bespoke per-command output capture for the customer report.
+- clone init (10641): `docker compose run --rm -T odoo odoo …`.
+
+**Definition of done (revised):** every ComputeDriver-lifecycle/introspection call site routes through the
+driver (✅), unit suite green (✅ 70/70), routed paths verified on the live server (✅). The remaining
+`docker compose run odoo …` one-shots are Phase-2 Build-seam work. At this point a `KubernetesDriver`
+is purely a new file for the lifecycle surface.

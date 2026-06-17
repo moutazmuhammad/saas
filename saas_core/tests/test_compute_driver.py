@@ -65,12 +65,21 @@ class TestComputeDriver(TransactionCase):
         self.assertIn('odoo_x', calls[-1])
         hs = d.health(h)
         self.assertTrue(hs.running)
-        self.assertEqual(hs.detail, 'running|healthy')
+        self.assertEqual(hs.status, 'running')
         self.assertEqual(d.endpoint(h), ('1.2.3.4', 8069))
         r = d.exec(h, 'echo hi')
         self.assertTrue(r.ok)
         self.assertIn('docker exec', calls[-1])
+        self.assertIn('sh -c', calls[-1])
         self.assertIn('odoo_x', calls[-1])
+        # shell= switches the in-container interpreter (pip helpers use bash)
+        d.exec(h, 'echo hi', shell='bash')
+        self.assertIn('bash -c', calls[-1])
+        # stats_many batches MANY containers into one docker stats call
+        d.stats_many(['odoo_a', 'odoo_b'])
+        self.assertIn('docker stats --no-stream --format', calls[-1])
+        self.assertIn('odoo_a', calls[-1])
+        self.assertIn('odoo_b', calls[-1])
 
     def test_driver_health_reports_not_running(self):
         from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
@@ -87,6 +96,69 @@ class TestComputeDriver(TransactionCase):
         d = SshDockerDriver(server)
         h = ComputeHandle(server_id=1, container_name='odoo_x', instance_path='/srv/x')
         self.assertFalse(d.health(h).running)
+
+    def test_health_parses_status_and_restart_count(self):
+        from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
+        from odoo.addons.saas_core.drivers.base import ComputeHandle
+
+        class FakeSSH:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, cmd, timeout=None):
+                return (0, 'restarting|7|', '')
+
+        server = MagicMock()
+        server._get_ssh_connection.return_value = FakeSSH()
+        d = SshDockerDriver(server)
+        h = ComputeHandle(server_id=1, container_name='odoo_x', instance_path='/srv/x')
+        hs = d.health(h)
+        self.assertEqual(hs.status, 'restarting')
+        self.assertEqual(hs.restart_count, 7)
+        self.assertFalse(hs.running)
+
+    def test_health_missing_container_is_not_found(self):
+        from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
+        from odoo.addons.saas_core.drivers.base import ComputeHandle
+
+        class FakeSSH:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, cmd, timeout=None):
+                return (1, '', 'Error: No such object: odoo_x')
+
+        server = MagicMock()
+        server._get_ssh_connection.return_value = FakeSSH()
+        d = SshDockerDriver(server)
+        h = ComputeHandle(server_id=1, container_name='odoo_x', instance_path='/srv/x')
+        hs = d.health(h)
+        self.assertEqual(hs.status, 'not_found')
+        self.assertFalse(hs.running)
+
+    def test_wait_until_running_stops_on_running(self):
+        from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
+        from odoo.addons.saas_core.drivers.base import ComputeHandle, HealthStatus
+
+        d = SshDockerDriver(MagicMock())
+        h = ComputeHandle(server_id=1, container_name='odoo_x', instance_path='/srv/x')
+        seq = [HealthStatus(running=False, status='created'),
+               HealthStatus(running=True, status='running')]
+        with patch.object(SshDockerDriver, 'health', side_effect=seq), \
+             patch('odoo.addons.saas_core.drivers.ssh_docker_driver.time.sleep'):
+            hs = d.wait_until_running(h, attempts=5, interval=0)
+        self.assertTrue(hs.running)
+
+    def test_wait_until_running_returns_on_terminal(self):
+        from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
+        from odoo.addons.saas_core.drivers.base import ComputeHandle, HealthStatus
+
+        d = SshDockerDriver(MagicMock())
+        h = ComputeHandle(server_id=1, container_name='odoo_x', instance_path='/srv/x')
+        with patch.object(SshDockerDriver, 'health',
+                          return_value=HealthStatus(running=False, status='exited')), \
+             patch('odoo.addons.saas_core.drivers.ssh_docker_driver.time.sleep'):
+            hs = d.wait_until_running(h, attempts=5, interval=0)
+        self.assertFalse(hs.running)
+        self.assertEqual(hs.status, 'exited')
 
     # -------- god-model: _do_stop/_do_restart route to the driver --------
     def test_do_stop_routes_to_driver(self):

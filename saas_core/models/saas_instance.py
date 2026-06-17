@@ -3839,13 +3839,11 @@ class SaasInstance(models.Model):
                 continue
         if not names:
             return
-        fmt = '{{.Name}}||{{.CPUPerc}}||{{.MemUsage}}'
-        cmd = 'docker stats --no-stream --format %s %s' % (
-            shlex.quote(fmt),
-            ' '.join(shlex.quote(n) for n in names),
-        )
-        with server._get_ssh_connection() as ssh:
-            exit_code, stdout, _stderr = ssh.execute(cmd, timeout=30)
+        # Host-batch sampler: ONE docker stats over every watched container on
+        # this host, via the driver (the cost-scaling core — one SSH per host).
+        from ..drivers.ssh_docker_driver import SshDockerDriver
+        res = SshDockerDriver(server).stats_many(list(names))
+        exit_code, stdout = res.rc, res.stdout
         if exit_code != 0 or not stdout:
             return
         now = fields.Datetime.now()
@@ -4566,24 +4564,13 @@ class SaasInstance(models.Model):
                 )
             self._append_log("Container started.")
 
-            # Wait for container to be ready
+            # Wait for container to be ready (health-based poll, 30×2s ceiling)
             self._append_log("Waiting for container to be ready...")
-            wait_cmd = (
-                'for i in $(seq 1 30); do '
-                '  STATUS=$(docker inspect -f "{{.State.Status}}" %s 2>/dev/null); '
-                '  if [ "$STATUS" = "running" ]; then echo "READY"; exit 0; fi; '
-                '  if [ "$STATUS" = "exited" ] || [ "$STATUS" = "dead" ]; then '
-                '    echo "FAILED:$STATUS"; exit 1; '
-                '  fi; '
-                '  sleep 2; '
-                'done; '
-                'echo "TIMEOUT"; exit 1'
-            ) % shlex.quote(container_name)
-            exit_code, stdout, stderr = ssh.execute(wait_cmd)
-            if exit_code != 0 or 'READY' not in stdout:
-                _ec, logs_out, _err = ssh.execute(
-                    'docker logs --tail 50 %s 2>&1' % shlex.quote(container_name)
-                )
+            driver = self._compute_driver(connection=ssh)
+            handle = self._compute_handle()
+            health = driver.wait_until_running(handle, attempts=30, interval=2)
+            if not health.running:
+                logs_out = driver.logs(handle, tail=50)
                 self._append_log(
                     "Container failed to start.\n"
                     "Container logs:\n%s"
@@ -6908,7 +6895,6 @@ class SaasInstance(models.Model):
         if self.pip_packages:
             self._append_log("Installing pip packages...")
             try:
-                container = 'odoo_%s' % self.subdomain
                 pkgs = [
                     p.strip() for p in self.pip_packages.splitlines()
                     if p.strip() and not p.strip().startswith('#')
@@ -6917,25 +6903,22 @@ class SaasInstance(models.Model):
                     self._ensure_can_ssh()
                     with self.docker_server_id._get_ssh_connection() as ssh:
                         install_cmd = (
-                            'docker exec %s bash -c "'
                             'mkdir -p /var/lib/odoo/pip_packages && '
                             'pip3 install --target=/var/lib/odoo/pip_packages '
                             '--upgrade --no-warn-script-location %s'
-                            '" 2>&1'
-                        ) % (shlex.quote(container), ' '.join(
-                            shlex.quote(p) for p in pkgs
-                        ))
-                        exit_code, stdout, stderr = ssh.execute(
-                            install_cmd, timeout=300,
+                        ) % ' '.join(shlex.quote(p) for p in pkgs)
+                        res = self._compute_driver(connection=ssh).exec(
+                            self._compute_handle(), install_cmd,
+                            shell='bash', timeout=300,
                         )
-                        if exit_code == 0:
+                        if res.ok:
                             self._append_log(
                                 "Pip packages installed: %s" % ', '.join(pkgs)
                             )
                         else:
                             self._append_log(
                                 "WARNING: pip install issues:\n%s"
-                                % (stdout or stderr)[:500]
+                                % (res.stdout or res.stderr)[:500]
                             )
             except Exception as e:
                 self._append_log("WARNING: pip install failed: %s" % e)
@@ -7314,20 +7297,15 @@ class SaasInstance(models.Model):
                 with server._get_ssh_connection() as ssh:
                     for inst in inst_list:
                         try:
-                            container = 'odoo_%s' % inst.subdomain
-                            # Read status AND restart count in one shot so we
-                            # can tell a one-off stop apart from a crash-loop.
-                            exit_code, stdout, stderr = ssh.execute(
-                                'docker inspect -f "{{.State.Status}}|{{.RestartCount}}" %s '
-                                '2>/dev/null || echo "not_found|0"' % container
-                            )
-                            raw = (stdout or '').strip().strip('"')
-                            status = (raw.split('|')[0] or 'not_found').strip()
-                            try:
-                                restarts = int(raw.split('|')[1])
-                            except (IndexError, ValueError):
-                                restarts = 0
-                            path = inst._get_instance_path()
+                            container = inst._get_container_name()
+                            # Read status AND restart count in one shot (via the
+                            # driver) so we can tell a one-off stop apart from a
+                            # crash-loop. Reuse this host's open ssh connection.
+                            driver = inst._compute_driver(connection=ssh)
+                            handle = inst._compute_handle()
+                            health = driver.health(handle)
+                            status = health.status or 'not_found'
+                            restarts = health.restart_count
                             CRASH_LOOP = 5
 
                             crash_looping = (
@@ -7344,7 +7322,7 @@ class SaasInstance(models.Model):
                                     "Container %s crash-looping (status=%s restarts=%s) "
                                     "— stopping instance %s", container, status, restarts, inst.name,
                                 )
-                                ssh.execute('cd %s && docker compose stop 2>&1' % path)
+                                driver.stop(handle)
                                 inst._append_log(
                                     "Container kept crashing on startup (status=%s, "
                                     "restarts=%s) — auto-stopped to break the loop. "
@@ -7367,7 +7345,7 @@ class SaasInstance(models.Model):
                                 inst._append_log(
                                     "Container found in '%s' state — auto-restarting." % status
                                 )
-                                ssh.execute('cd %s && docker compose up -d' % path)
+                                driver.start(handle)
                             elif status == 'running' and inst.last_error:
                                 # Healthy again → clear a stale error so the
                                 # customer's "stopped" banner goes away.
@@ -7743,7 +7721,6 @@ class SaasInstance(models.Model):
         -reinstall`` is used so a package is always (re)installed cleanly.
         """
         self.ensure_one()
-        container = self._get_container_name()
         pkgs = [
             p.strip() for p in (self.pip_packages or '').splitlines()
             if p.strip() and not p.strip().startswith('#')
@@ -7754,22 +7731,21 @@ class SaasInstance(models.Model):
         self._ensure_can_ssh()
         self._append_log("Installing pip packages (forced): %s" % ', '.join(pkgs))
         # Install, then on success stamp the checksum so the boot-time
-        # entrypoint skips a duplicate install.
+        # entrypoint skips a duplicate install. ``command`` is the literal
+        # bash script — the driver quotes it (so awk's single quotes are fine).
         install = (
-            'docker exec %s bash -c '
-            '"mkdir -p /var/lib/odoo/pip_packages && '
+            'mkdir -p /var/lib/odoo/pip_packages && '
             'pip3 install --target=/var/lib/odoo/pip_packages --upgrade '
             '--force-reinstall --no-warn-script-location %s '
             '&& md5sum /etc/odoo/requirements.txt 2>/dev/null '
-            '| awk \'{print \\$1}\' > /var/lib/odoo/pip_packages/.requirements.md5 '
-            '&& rm -f /var/lib/odoo/pip_packages/.pip_error" 2>&1'
-        ) % (
-            shlex.quote(container),
-            ' '.join(shlex.quote(p) for p in pkgs),
-        )
+            "| awk '{print $1}' > /var/lib/odoo/pip_packages/.requirements.md5 "
+            '&& rm -f /var/lib/odoo/pip_packages/.pip_error'
+        ) % ' '.join(shlex.quote(p) for p in pkgs)
         with self.docker_server_id._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = ssh.execute(install, timeout=900)
-        output = (stdout or stderr or '').strip()
+            res = self._compute_driver(connection=ssh).exec(
+                self._compute_handle(), install, shell='bash', timeout=900)
+        exit_code = res.rc
+        output = (res.stdout or res.stderr or '').strip()
         if exit_code == 0:
             self.pip_install_error = False
             self._append_log("Pip packages installed: %s" % ', '.join(pkgs))
