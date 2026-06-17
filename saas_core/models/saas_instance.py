@@ -4847,17 +4847,15 @@ class SaasInstance(models.Model):
 
             # Restart the container (down + up to pick up volume changes)
             self._append_log("Restarting container...")
-            down_cmd = 'cd %s && docker compose down 2>&1' % shlex.quote(instance_path)
-            exit_code, stdout, stderr = ssh.execute(down_cmd)
-            if exit_code != 0:
+            driver = self._compute_driver(connection=ssh)
+            handle = self._compute_handle()
+            try:
+                driver.destroy(handle)
+                driver.start(handle)
+            except Exception as e:
                 raise UserError(
-                    _("docker compose down failed:\n%s\n%s") % (stdout, stderr)
-                )
-            up_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
-            exit_code, stdout, stderr = ssh.execute(up_cmd)
-            if exit_code != 0:
-                raise UserError(
-                    _("docker compose up -d failed:\n%s\n%s") % (stdout, stderr)
+                    _("Failed to restart container '%s':\n%s")
+                    % (self._get_container_name(), e)
                 )
             self._append_log("Container restarted successfully.")
 
@@ -7751,19 +7749,16 @@ class SaasInstance(models.Model):
 
         with server._get_ssh_connection() as ssh:
             self._append_log("Restarting container...")
-            # Use docker compose down + up to pick up volume changes
-            down_cmd = 'cd %s && docker compose down 2>&1' % shlex.quote(instance_path)
-            exit_code, stdout, stderr = ssh.execute(down_cmd)
-            if exit_code != 0:
+            # down + up (via driver, reusing this ssh) to pick up volume changes
+            driver = self._compute_driver(connection=ssh)
+            handle = self._compute_handle()
+            try:
+                driver.destroy(handle)
+                driver.start(handle)
+            except Exception as e:
                 raise UserError(
-                    _("docker compose down failed:\n%s\n%s") % (stdout, stderr)
-                )
-
-            up_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
-            exit_code, stdout, stderr = ssh.execute(up_cmd)
-            if exit_code != 0:
-                raise UserError(
-                    _("docker compose up -d failed:\n%s\n%s") % (stdout, stderr)
+                    _("Failed to restart container '%s':\n%s")
+                    % (self._get_container_name(), e)
                 )
             self._append_log("Container restarted successfully.")
 
