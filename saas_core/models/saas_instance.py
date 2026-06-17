@@ -5205,16 +5205,13 @@ class SaasInstance(models.Model):
 
         # 3. Tear down infrastructure (tolerant of partial state)
         with server._get_ssh_connection() as ssh:
-            # Stop container if it exists
-            down_cmd = (
-                'cd %s && docker compose down -v --remove-orphans 2>&1'
-                % shlex.quote(instance_path)
-            )
-            exit_code, stdout, stderr = ssh.execute(down_cmd)
-            if exit_code != 0:
+            # Stop + purge container/network/volumes if they exist (best-effort)
+            try:
+                self._compute_driver(connection=ssh).destroy(
+                    self._compute_handle(), purge=True)
+            except Exception as e:
                 self._append_log(
-                    "docker compose down: %s (may not exist yet)"
-                    % (stderr.strip() or stdout.strip())
+                    "docker compose down: %s (may not exist yet)" % e
                 )
 
             # Remove instance directory if it exists

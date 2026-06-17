@@ -238,6 +238,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 1 | Real test: provisioned a FRESH tenant rt2 end-to-end — healthy, HTTPS 303, own port/SSL; rt1+rt2 both running | ✅ | multi-tenant via driver |
 | 2026-06-17 | 1 | Routed template-build down/up → driver.destroy/start (best-effort) | ✅ | other critical path |
 | 2026-06-17 | 1 | Real test: created DB on rt2 (triggers template build) → rt2_rtdb, serves 200 | ✅ | template build via driver |
+| 2026-06-17 | 1 | Added driver.destroy(purge=True); routed cancel/teardown `down -v --remove-orphans` | ✅ | best-effort |
+| 2026-06-17 | 1 | Real test: purge+start on rt2 → recreated, data survived (PG+bind mounts), 200 | ✅ | real-infra |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

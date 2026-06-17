@@ -91,10 +91,12 @@ class SshDockerDriver(ComputeDriver):
         if rc != 0 and 'No such container' not in (out + err):
             raise RuntimeError('docker stop failed (rc=%s): %s' % (rc, (out + err)[-500:]))
 
-    def destroy(self, handle: ComputeHandle) -> None:
+    def destroy(self, handle: ComputeHandle, *, purge=False) -> None:
         # Removes the compose project (network + container); needs instance_path.
+        # purge=True also drops named volumes + orphans (`-v --remove-orphans`).
+        verb = 'down -v --remove-orphans' if purge else 'down'
         with self._ssh() as ssh:
-            rc, out, err = self._compose(ssh, handle.instance_path, 'down', timeout=120)
+            rc, out, err = self._compose(ssh, handle.instance_path, verb, timeout=120)
         if rc != 0 and 'No such' not in (out + err):
             raise RuntimeError('docker compose down failed (rc=%s): %s' % (rc, (out + err)[-500:]))
 

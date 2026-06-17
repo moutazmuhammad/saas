@@ -58,6 +58,8 @@ class TestComputeDriver(TransactionCase):
         self.assertIn('docker compose up -d', calls[-1])
         d.destroy(h)
         self.assertIn('docker compose down', calls[-1])
+        d.destroy(h, purge=True)
+        self.assertIn('docker compose down -v --remove-orphans', calls[-1])
         d.stats(h)
         self.assertIn('docker stats --no-stream --format', calls[-1])
         self.assertIn('odoo_x', calls[-1])
