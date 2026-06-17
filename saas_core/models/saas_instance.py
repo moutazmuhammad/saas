@@ -4618,18 +4618,14 @@ class SaasInstance(models.Model):
                 # restart to pick them up.
                 self._render_and_write_configs(ssh)
                 self._append_log("Restarting container to load custom addons...")
-                ssh.execute(
-                    'cd %s && docker compose down 2>&1'
-                    % shlex.quote(instance_path)
-                )
-                exit_code, stdout, stderr = ssh.execute(
-                    'cd %s && docker compose up -d 2>&1'
-                    % shlex.quote(instance_path)
-                )
-                if exit_code != 0:
+                try:
+                    driver = self._compute_driver(connection=ssh)
+                    handle = self._compute_handle()
+                    driver.destroy(handle)
+                    driver.start(handle)
+                except Exception as e:
                     raise UserError(
-                        _("docker compose restart failed:\n%s\n%s")
-                        % (stdout, stderr)
+                        _("docker compose restart failed:\n%s") % e
                     )
                 self._append_log("Container restarted with custom addons.")
 
@@ -5862,13 +5858,12 @@ class SaasInstance(models.Model):
             # 1. Stop the container — full restore replaces /data, so no
             # connections can be left open.
             self._append_log("Stopping container...")
-            exit_code, stdout, stderr = ssh.execute(
-                'cd %s && docker compose down 2>&1' % shlex.quote(instance_path)
-            )
-            if exit_code != 0 and 'No such container' not in (stdout + stderr):
+            try:
+                self._compute_driver(connection=ssh).destroy(self._compute_handle())
+            except Exception as e:
                 raise UserError(_(
-                    "Failed to stop container before restore:\n%s\n%s"
-                ) % (stdout, stderr))
+                    "Failed to stop container before restore:\n%s"
+                ) % e)
 
             # 2. Download + extract the backup zip
             self._append_log("Downloading backup...")
