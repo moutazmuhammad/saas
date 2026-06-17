@@ -109,3 +109,45 @@ class TestComputeDriver(TransactionCase):
              patch.object(type(inst), '_compute_handle', return_value='H'):
             with self.assertRaises(UserError):
                 inst._do_stop()
+
+    # -------- service_exec: compose-exec form + connection reuse --------
+    def test_service_exec_builds_compose_exec_command(self):
+        from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
+        from odoo.addons.saas_core.drivers.base import ComputeHandle
+
+        class FakeSSH:
+            def __init__(self): self.cmds = []
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, cmd, timeout=None):
+                self.cmds.append(cmd); return (0, 'ok', '')
+
+        fake = FakeSSH()
+        server = MagicMock()
+        server._get_ssh_connection.return_value = fake
+        d = SshDockerDriver(server)
+        h = ComputeHandle(server_id=1, container_name='odoo_x', instance_path='/srv/x')
+        r = d.service_exec(h, 'psql -tA -c "select 1"', env={'PGPASSWORD': 'secret'})
+        server._get_ssh_connection.assert_called_once()
+        self.assertIn(
+            'cd /srv/x && docker compose exec -T -e PGPASSWORD=secret odoo psql',
+            fake.cmds[-1])
+        self.assertTrue(r.ok)
+
+    def test_service_exec_reuses_provided_connection(self):
+        from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
+        from odoo.addons.saas_core.drivers.base import ComputeHandle
+
+        class FakeConn:
+            def __init__(self): self.cmds = []
+            def execute(self, cmd, timeout=None):
+                self.cmds.append(cmd); return (0, 'ok', '')
+
+        conn = FakeConn()
+        server = MagicMock()
+        d = SshDockerDriver(server, connection=conn)
+        h = ComputeHandle(server_id=1, container_name='odoo_x', instance_path='/srv/x')
+        d.service_exec(h, 'echo hi')
+        # reused the open connection; never opened a new one
+        server._get_ssh_connection.assert_not_called()
+        self.assertIn('docker compose exec -T  odoo echo hi', conn.cmds[-1])

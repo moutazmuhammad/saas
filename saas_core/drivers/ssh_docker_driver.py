@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+from contextlib import nullcontext
 
 from .base import (ComputeDriver, ComputeSpec, ComputeHandle, ExecResult, HealthStatus)
 
@@ -21,15 +22,41 @@ _logger = logging.getLogger(__name__)
 
 class SshDockerDriver(ComputeDriver):
     """Docker Compose over SSH. Constructed with the target `saas.server` record,
-    which provides the SSH connection (and thus host-key pinning, key auth, etc.)."""
+    which provides the SSH connection (and thus host-key pinning, key auth, etc.).
 
-    def __init__(self, server):
+    Pass ``connection`` (an already-open SSHConnection) to REUSE it instead of
+    opening a new one — lets fine-grained call sites inside an existing
+    ``with server._get_ssh_connection() as ssh:`` block route through the driver
+    without losing connection reuse. When reusing, the driver never closes it
+    (the owning ``with`` block does)."""
+
+    def __init__(self, server, connection=None):
         # `server` is a saas.server record exposing _get_ssh_connection().
         self.server = server
+        self._conn = connection
 
     # -- helpers ------------------------------------------------------------
     def _ssh(self):
+        # Reuse a caller-provided connection (no-op close), else open a fresh one.
+        if self._conn is not None:
+            return nullcontext(self._conn)
         return self.server._get_ssh_connection()
+
+    def service_exec(self, handle, command, *, service='odoo', env=None, timeout=60):
+        """Run ``command`` inside a compose SERVICE via `docker compose exec -T`,
+        with optional ``env`` (passed as `-e K=V`). Matches the god-model's
+        `cd <path> && docker compose exec -T <env> <service> <command>` exactly,
+        so it can replace those inline calls faithfully. ``command`` is taken
+        verbatim (caller does any quoting / heredoc)."""
+        env_flags = ''
+        if env:
+            env_flags = ' '.join(
+                '-e %s=%s' % (k, shlex.quote(str(v))) for k, v in env.items())
+        cmd = 'cd %s && docker compose exec -T %s %s %s' % (
+            shlex.quote(handle.instance_path), env_flags, service, command)
+        with self._ssh() as ssh:
+            rc, out, err = ssh.execute(cmd, timeout=timeout)
+        return ExecResult(rc=rc, stdout=out, stderr=err)
 
     def _compose(self, ssh, instance_path, verb, timeout=120):
         """Run `cd <path> && docker compose <verb>` exactly as the god-model does."""

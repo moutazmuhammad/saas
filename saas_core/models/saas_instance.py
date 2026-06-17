@@ -2574,11 +2574,14 @@ class SaasInstance(models.Model):
             http_port=self.xmlrpc_port or 0,
         )
 
-    def _compute_driver(self):
-        """Return the ComputeDriver for this instance's backend (v1: SshDockerDriver)."""
+    def _compute_driver(self, connection=None):
+        """Return the ComputeDriver for this instance's backend (v1: SshDockerDriver).
+
+        Pass an open SSHConnection as ``connection`` to reuse it (for call sites
+        already inside a ``with server._get_ssh_connection()`` block)."""
         self.ensure_one()
         from ..drivers.ssh_docker_driver import SshDockerDriver
-        return SshDockerDriver(self.docker_server_id)
+        return SshDockerDriver(self.docker_server_id, connection=connection)
 
     def _data_service(self):
         """Return the DataService (snapshot/materialize primitives)."""
@@ -9468,13 +9471,6 @@ class SaasInstance(models.Model):
 
         Returns ``(exit_code, stdout, stderr)``.
         """
-        instance_path = self._get_instance_path()
-        env_flags = ''
-        if env:
-            env_flags = ' '.join(
-                '-e %s=%s' % (k, shlex.quote(str(v)))
-                for k, v in env.items()
-            )
         # ``import odoo`` no longer auto-imports the ``tools`` submodule
         # in current Odoo (was implicit in older versions). The explicit
         # ``import odoo.tools`` keeps ``odoo.tools.config`` reachable
@@ -9486,12 +9482,12 @@ class SaasInstance(models.Model):
             "odoo.tools.config.parse_config(['-c','/etc/odoo/odoo.conf'])\n"
         )
         full_script = prelude + py_script
-        cmd = (
-            "cd %s && docker compose exec -T %s odoo python3 - <<'SAAS_DBOPS_EOF'\n"
-            "%s\n"
-            "SAAS_DBOPS_EOF"
-        ) % (shlex.quote(instance_path), env_flags, full_script)
-        return ssh.execute(cmd, timeout=timeout)
+        # Routed via ComputeDriver.service_exec (reusing the caller's ssh). The
+        # heredoc rides along as part of the command, exactly as before.
+        command = "python3 - <<'SAAS_DBOPS_EOF'\n%s\nSAAS_DBOPS_EOF" % full_script
+        r = self._compute_driver(connection=ssh).service_exec(
+            self._compute_handle(), command, env=env, timeout=timeout)
+        return (r.rc, r.stdout, r.stderr)
 
     def _docker_exec_sql(self, ssh, sql, db='postgres', timeout=60):
         """Run a single SQL via psql inside the container.
@@ -9499,24 +9495,19 @@ class SaasInstance(models.Model):
         ``db_password`` is passed via PGPASSWORD env so it doesn't show
         up in process listings.
         """
-        instance_path = self._get_instance_path()
         psql_server = self.db_server_id
-        env_flags = (
-            '-e PGPASSWORD=%s' % shlex.quote(self.sudo().db_password or '')
-        )
-        cmd = (
-            "cd %s && docker compose exec -T %s odoo psql "
-            "-h %s -p %s -U %s -d %s -tA -c %s"
-        ) % (
-            shlex.quote(instance_path),
-            env_flags,
+        command = "psql -h %s -p %s -U %s -d %s -tA -c %s" % (
             shlex.quote(self._get_db_host()),
             shlex.quote(str(psql_server.psql_port or 5432)),
             shlex.quote(self.sudo().db_user or ''),
             shlex.quote(db),
             shlex.quote(sql),
         )
-        return ssh.execute(cmd, timeout=timeout)
+        # Routed via ComputeDriver.service_exec (reusing the caller's ssh).
+        r = self._compute_driver(connection=ssh).service_exec(
+            self._compute_handle(), command,
+            env={'PGPASSWORD': self.sudo().db_password or ''}, timeout=timeout)
+        return (r.rc, r.stdout, r.stderr)
 
     def hosting_db_list(self):
         """List databases this instance's customer owns.

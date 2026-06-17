@@ -220,6 +220,9 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 1 | 1.4 added `DataService` (snapshot/materialize) delegating to proven restic backup + 5-step restore | ✅ | seam, no rewrite |
 | 2026-06-17 | 1 | `test_dataservice.py` (4 tests); 63/63 green on saas_ci | ✅ | unit |
 | 2026-06-17 | 1 | Real test: DataService snapshot→materialize on LIVE rt1 (marker gone, data intact, 200) | ✅ | real-infra |
+| 2026-06-17 | 1 | 1.3 driver gains `service_exec` + connection-reuse; routed `_docker_exec_sql`/`_docker_exec_python` (4 more sites) | ✅ | faithful, no perf regression |
+| 2026-06-17 | 1 | 2 new unit tests (service_exec cmd + conn reuse); 65/65 on saas_ci | ✅ | unit |
+| 2026-06-17 | 1 | Real test on LIVE rt1: routed `_docker_exec_sql` (SELECT 1→1) + `_docker_exec_python` (PYEXEC_OK) | ✅ | real-infra |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).
