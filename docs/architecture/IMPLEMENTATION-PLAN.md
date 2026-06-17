@@ -234,6 +234,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 1 | Clean DataService round-trip re-verified on rt1 (TENANT-owned marker gone, users=5, 200) | ✅ | lesson: integrity markers must be owned by the tenant role |
 | 2026-06-17 | 1 | Added driver.stats; routed `_refresh_usage_with_ssh` docker-stats call (conn reuse) | ✅ | 67/67 saas_ci |
 | 2026-06-17 | 1 | Real test on LIVE rt1: driver.stats + action_refresh_usage (cpu/mem parsed OK) | ✅ | real-infra |
+| 2026-06-17 | 1 | **Routed the first-`_do_deploy` `up` → driver.start** (the critical provisioning path) | ✅ | capstone |
+| 2026-06-17 | 1 | Real test: provisioned a FRESH tenant rt2 end-to-end — healthy, HTTPS 303, own port/SSL; rt1+rt2 both running | ✅ | multi-tenant via driver |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

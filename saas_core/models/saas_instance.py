@@ -4556,16 +4556,13 @@ class SaasInstance(models.Model):
             ) % {'path': instance_path, 'uid': container_uid}
             ssh.execute(perms_cmd)
 
-            # Start the server
+            # Start the server (via ComputeDriver, reusing this ssh)
             self._append_log("Starting container with docker compose up -d...")
-            up_cmd = 'cd %s && docker compose up -d 2>&1' % shlex.quote(instance_path)
-            exit_code, stdout, stderr = ssh.execute(up_cmd)
-            self._append_log(
-                "docker compose up output:\n%s\n%s" % (stdout, stderr)
-            )
-            if exit_code != 0:
+            try:
+                self._compute_driver(connection=ssh).start(self._compute_handle())
+            except Exception as e:
                 raise UserError(
-                    _("docker compose up failed:\n%s\n%s") % (stdout, stderr)
+                    _("docker compose up failed:\n%s") % e
                 )
             self._append_log("Container started.")
 
