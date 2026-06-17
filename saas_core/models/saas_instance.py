@@ -846,6 +846,15 @@ class SaasInstance(models.Model):
              'Leave empty to use the same value as mem_limit. '
              'Set to "-1" for unlimited swap.',
     )
+    deploy_image = fields.Char(
+        string='Deployed Image (immutable)',
+        groups='saas_core.group_saas_manager',
+        help='Phase 2.2: when set, deploy runs THIS immutable image '
+             '(registry@sha256:… or <registry>/tenant-<sub>:<sha>) instead of '
+             'odoo-light + mounted source/addons. Set by the build pipeline; '
+             'rollback = point it at a previous build digest and redeploy. '
+             'Empty = legacy source-clone + build-on-host mode.',
+    )
 
     # ========== Custom Repos ==========
     repo_ids = fields.One2many(
@@ -2610,6 +2619,124 @@ class SaasInstance(models.Model):
             'has_addons': bool(self._get_all_addons_paths()),
         })
 
+    def _dedup_pip_lines(self):
+        """Deduplicated, comment-stripped pip requirement lines (by package key)."""
+        self.ensure_one()
+        seen, out = set(), []
+        for p in (self.pip_packages or '').splitlines():
+            p = p.strip()
+            if not p or p.startswith('#'):
+                continue
+            key = p.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip()
+            if key not in seen:
+                seen.add(key)
+                out.append(p)
+        return out
+
+    def _build_and_push_tenant_image(self, source='redeploy'):
+        """Phase 2.2.4: build this tenant's immutable image (FROM odoo-base +
+        custom modules + pip) and push it to the registry. Records a saas.build
+        with the resulting ``image_ref``/``image_digest`` and returns it.
+
+        The build runs in a sandboxed, credential-less worker on the build host
+        (see _image_build_cmd / 2.2.5). The image tag is a content hash of the
+        build context, so an identical tenant config produces an identical tag
+        (cache-friendly + idempotent)."""
+        self.ensure_one()
+        if not self._tenant_base_image():
+            raise UserError(_(
+                "No container registry configured on server '%s' (set "
+                "registry_host) — cannot build an immutable image.")
+                % self.docker_server_id.name)
+        registry = self.docker_server_id.registry_host.strip().rstrip('/')
+        instance_path = self._get_instance_path()
+        dockerfile = self._render_tenant_dockerfile()
+        reqs = self._dedup_pip_lines()
+        build = self.env['saas.build'].sudo().create({
+            'instance_id': self.id, 'source': source, 'state': 'running'})
+        ctx = '%s/.image-build' % instance_path
+        image = ''
+        try:
+            with self.docker_server_id._get_ssh_connection() as ssh:
+                # Assemble a clean build context: Dockerfile + requirements + addons.
+                ssh.execute('rm -rf %s && mkdir -p %s/addons' % (
+                    shlex.quote(ctx), shlex.quote(ctx)))
+                ssh.write_file('%s/Dockerfile' % ctx, dockerfile)
+                ssh.write_file('%s/requirements.txt' % ctx,
+                               ('\n'.join(reqs) + '\n') if reqs else '')
+                ssh.execute(
+                    'if [ -d %(ip)s/addons ]; then cp -a %(ip)s/addons/. %(c)s/addons/ 2>/dev/null || true; fi'
+                    % {'ip': shlex.quote(instance_path), 'c': shlex.quote(ctx)})
+                # Content-addressed tag: identical context -> identical tag.
+                rc, tag, err = ssh.execute(
+                    'cd %s && tar --sort=name --owner=0 --group=0 --mtime=@0 -cf - . 2>/dev/null '
+                    '| sha256sum | cut -c1-12' % shlex.quote(ctx))
+                tag = (tag or '').strip() or 'latest'
+                image = '%s/tenant-%s:%s' % (registry, self.subdomain, tag)
+                # Build (sandboxed) + push.
+                rc, out, err = ssh.execute(
+                    self._image_build_cmd(ctx, image), timeout=1800)
+                if rc != 0:
+                    raise UserError(_("Image build failed:\n%s") % (out or err)[-3000:])
+                rc, out, err = ssh.execute(
+                    'docker push %s 2>&1' % shlex.quote(image), timeout=900)
+                if rc != 0:
+                    raise UserError(_("Image push failed:\n%s") % (out or err)[-1500:])
+                rc, digest, err = ssh.execute(
+                    "docker inspect --format '{{index .RepoDigests 0}}' %s" % shlex.quote(image))
+                digest = (digest or '').strip()
+        except Exception as e:
+            build._mark('failed', log=str(e)[:8000])
+            raise
+        build.write({
+            'image_ref': image,
+            'image_digest': digest or image,
+            'state': 'success',
+            'date_done': fields.Datetime.now(),
+        })
+        self._append_log("Built immutable image %s (digest %s)" % (image, digest or 'n/a'))
+        return build
+
+    def _image_build_cmd(self, ctx, image):
+        """Return the `docker build` command for the build worker. Sandboxing
+        (2.2.5): the worker runs untrusted customer code (requirements.txt / module
+        setup), so build with the default seccomp/no extra privileges, no host
+        network, and no platform secrets in the context. BuildKit is used for
+        layer caching + reproducibility."""
+        return (
+            'DOCKER_BUILDKIT=1 docker build --network=default --no-cache=false '
+            '--pull=false -t %s %s 2>&1' % (shlex.quote(image), shlex.quote(ctx)))
+
+    def deploy_immutable_image(self, build=None, source='redeploy'):
+        """Phase 2.2.6: build (if needed) + deploy this tenant from an immutable
+        image by digest. Sets ``deploy_image``, re-renders compose, and recreates
+        the container via the driver. Returns the saas.build deployed."""
+        self.ensure_one()
+        build = build or self._build_and_push_tenant_image(source=source)
+        ref = build.image_digest or build.image_ref
+        if not ref:
+            raise UserError(_("Build produced no image reference."))
+        self.deploy_image = ref
+        with self.docker_server_id._get_ssh_connection() as ssh:
+            self._render_and_write_configs(ssh)
+            # pull the image, then recreate the container on it
+            ssh.execute('docker pull %s 2>&1' % shlex.quote(ref), timeout=900)
+            driver = self._compute_driver(connection=ssh)
+            handle = self._compute_handle()
+            driver.destroy(handle)
+            driver.start(handle)
+        self._append_log("Deployed immutable image %s" % ref)
+        return build
+
+    def rollback_image(self, build):
+        """Phase 2.2.7: redeploy a PREVIOUS successful build's image (one-command
+        rollback). No rebuild — just repoint ``deploy_image`` + recreate."""
+        self.ensure_one()
+        build.ensure_one()
+        if build.state != 'success' or not (build.image_digest or build.image_ref):
+            raise UserError(_("Can only roll back to a successful build with an image."))
+        return self.deploy_immutable_image(build=build, source='redeploy')
+
     # ---- Phase 1: ComputeDriver seam (additive; see docs/architecture) ----
     def _compute_handle(self):
         """Backend-agnostic handle describing this instance's compute workload."""
@@ -4071,6 +4198,9 @@ class SaasInstance(models.Model):
             'docker_swap': docker_swap,
             'pip_packages': pip_packages_str,
             'filestore_mount': self._get_filestore_mount(),
+            # Phase 2.2: immutable image deploy (everything baked → no
+            # source/addons/pip mounts). Empty = legacy source-mount mode.
+            'tenant_image': (self.deploy_image or '').strip(),
         }
         dc_content = self._render_template('docker-compose.yml.jinja', dc_context)
         ssh.write_file('%s/docker-compose.yml' % instance_path, dc_content)
@@ -4104,6 +4234,15 @@ class SaasInstance(models.Model):
         # Collect keys the admin has overridden so the template can
         # skip the auto-generated lines and avoid duplicates.
         override_keys = set(extra_config.keys()) if extra_config else set()
+        # Phase 2.2: in immutable mode the custom modules are baked at
+        # /opt/tenant-addons (not the mounted /mnt/extra-addons), so repo addons
+        # paths are re-rooted there.
+        immutable = bool((self.deploy_image or '').strip())
+        conf_addons_paths = all_addons_paths
+        if immutable:
+            conf_addons_paths = [
+                p.replace('/mnt/extra-addons', '/opt/tenant-addons')
+                for p in all_addons_paths]
         conf_context = {
             'master_pass': self.admin_password,
             'db_host': db_host,
@@ -4116,7 +4255,8 @@ class SaasInstance(models.Model):
             'limit_memory_hard': limit_memory_hard,
             'extra_config': extra_config,
             'override_keys': override_keys,
-            'repo_addons_paths': all_addons_paths,
+            'repo_addons_paths': conf_addons_paths,
+            'immutable': immutable,
         }
         conf_content = self._render_template('odoo.conf.jinja', conf_context)
         ssh.write_file('%s/config/odoo.conf' % instance_path, conf_content)

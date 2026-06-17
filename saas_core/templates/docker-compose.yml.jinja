@@ -1,7 +1,13 @@
 services:
 
   odoo:
+{%- if tenant_image %}
+    # Phase 2.2: immutable image by SHA — Odoo source + custom modules + pip all
+    # baked in; nothing mounted but data/config (+ object-store filestore).
+    image: {{ tenant_image }}
+{%- else %}
     image: {{ odoo_image | default("odoo") }}:{{ odoo_version }}
+{%- endif %}
     container_name: odoo_{{ subdomain }}
     restart: unless-stopped
     stop_grace_period: 30s
@@ -9,13 +15,16 @@ services:
       - "{{ host_ip | default('127.0.0.1') }}:{{ xmlrpc_port }}:8069"
       - "{{ host_ip | default('127.0.0.1') }}:{{ longpolling_port }}:8072"
     volumes:
+{%- if not tenant_image %}
       - /opt/odoo-source/{{ odoo_version }}:/opt/odoo:ro
+{%- endif %}
       - ./data/odoo:/var/lib/odoo
 {%- if filestore_mount %}
       # Phase 2: filestore on object storage (JuiceFS) — keeps compute disposable
       - {{ filestore_mount }}:/var/lib/odoo/filestore
 {%- endif %}
       - ./config:/etc/odoo
+{%- if not tenant_image %}
       - ./addons:/mnt/extra-addons
       - ./requirements.txt:/etc/odoo/requirements.txt:ro
 {%- if pip_packages %}
@@ -23,6 +32,7 @@ services:
     entrypoint: ["bash", "/etc/odoo/pip_install.sh"]
     environment:
       - PYTHONPATH=/var/lib/odoo/pip_packages
+{%- endif %}
 {%- endif %}
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8069/web/login || exit 1"]

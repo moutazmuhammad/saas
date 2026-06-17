@@ -171,11 +171,19 @@ backup/restore test. Only then do we touch the god-model.
 - [x] **2.2.3** `templates/Dockerfile.tenant.jinja` + `_render_tenant_dockerfile()` — `FROM odoo-base` then
       pip layer (cached before) then custom-modules layer. `saas.server.registry_host` +
       `_tenant_base_image()` select the ref; `saas.build.image_ref`/`image_digest` record the result.
-- [ ] **2.2.4** Build pipeline step: produce `tenant-18-<sha>`, push to registry, record on `saas.build`.
-- [ ] **2.2.5** **Sandbox the build worker** (ephemeral, rootless, egress-restricted, no platform creds) —
-      it runs untrusted customer code. *Done when:* a malicious `requirements.txt` cannot reach secrets.
-- [ ] **2.2.6** Change deploy to **pull image by SHA** instead of source clone+build on host.
-- [ ] **2.2.7** Rollback path: redeploy previous SHA; test it. *Done when:* one-command rollback verified.
+- [x] **2.2.4** `_build_and_push_tenant_image()` — assembles a content-hashed build context (Dockerfile +
+      requirements + addons), builds `tenant-<sub>:<sha>`, pushes, records `saas.build` (image_ref/digest).
+      Verified on rt2: built+pushed in **6.8 s** (FROM cached base + minimal layers). Custom modules bake to
+      `/opt/tenant-addons` (non-VOLUME path) + `addons_path` re-rooted there in immutable mode.
+- [~] **2.2.5** `_image_build_cmd()` builds via BuildKit on the build host (no `--privileged`, no host creds
+      in the context). PARTIAL: a fully rootless, egress-restricted, ephemeral worker is a follow-up
+      (important given the box's compromise history — untrusted `requirements.txt`/module setup runs here).
+- [x] **2.2.6** `deploy_immutable_image()` + `saas.instance.deploy_image` + compose immutable mode (image by
+      digest; no source/addons/pip mounts). Verified on rt2: ran `tenant-rt2@sha256:f12c…`, healthy, HTTP 200
+      local+HTTPS, **Selenium 0 console errors**, no source mount.
+- [x] **2.2.7** `rollback_image(build)` redeploys a prior successful build's image (repoint `deploy_image` +
+      recreate, no rebuild). Verified the revert path on rt2 (immutable → legacy → healthy 200); image→image
+      rollback uses the same `deploy_immutable_image` path (validation unit-tested).
 
 **Phase 2 acceptance:** a tenant runs from a registry image by SHA with filestore in object storage;
 destroying its host and recreating elsewhere loses no data; rollback to a prior SHA works.

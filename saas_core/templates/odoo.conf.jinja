@@ -11,7 +11,11 @@ db_user = {{ db_user }}
 db_password = {{ db_password }}
 
 data_dir = /var/lib/odoo
+{%- if immutable %}
+addons_path = /opt/odoo/odoo/addons,/opt/odoo/addons,/opt/tenant-addons
+{%- else %}
 addons_path = /opt/odoo/odoo/addons,/opt/odoo/addons,/mnt/extra-addons
+{%- endif %}
 {%- for path in repo_addons_paths | default([]) -%}
 ,{{ path }}
 {%- endfor %}

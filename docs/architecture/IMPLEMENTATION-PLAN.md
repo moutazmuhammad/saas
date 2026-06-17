@@ -254,6 +254,7 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 2 | 2.1.6 clone via `juicefs clone` (CoW); rt2 2nd DB: files byte-identical, MinIO flat (no dup), drop cleans; 77/77 unit (+2) | ✅ | **Phase 2.1 (object-storage filestore) COMPLETE** |
 | 2026-06-17 | 2 | 2.2.1 registry (`provision-registry.sh`, registry:2 localhost+bcrypt) push/pull verified; 2.2.2 `odoo-base:18.0` built+pushed (source baked at /opt/odoo, odoo runs no-mount, 29 core+624 extra addons) | ✅ | `.dockerignore` excl .git; COPY --chown single layer |
 | 2026-06-17 | 2 | 2.2.3 `Dockerfile.tenant.jinja` + `_render_tenant_dockerfile`/`_tenant_base_image`; `saas.server.registry_host`, `saas.build.image_ref/digest`; 79/79 unit (+2) | ✅ | substrate ready; pipeline=2.2.4 next |
+| 2026-06-17 | 2 | 2.2.4/2.2.6/2.2.7: build pipeline + `deploy_immutable_image` + `rollback_image`; rt2 built (6.8s) + deployed by digest (no source mount, 200, Selenium 0 err) + reverted; addons bake to /opt/tenant-addons; 82/82 unit (+3) | ✅ | 2.2.5 sandbox = partial (BuildKit; rootless worker TODO) |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

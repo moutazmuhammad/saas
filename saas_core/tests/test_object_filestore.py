@@ -143,3 +143,47 @@ class TestObjectFilestore(TransactionCase):
         df = inst._render_tenant_dockerfile()
         self.assertIn('FROM 127.0.0.1:5000/odoo-base:', df)
         self.assertIn('USER odoo', df)
+
+    def test_compose_immutable_mode_skips_mounts(self):
+        inst = self._instance('immut', self.env['saas.server'].sudo().create(
+            {'name': 'immut-srv'}))
+        img = '127.0.0.1:5000/tenant-immut@sha256:abc'
+        immutable = inst._render_template('docker-compose.yml.jinja', {
+            'odoo_version': '18.0', 'subdomain': 'immut', 'xmlrpc_port': 8069,
+            'longpolling_port': 8072, 'tenant_image': img})
+        self.assertIn('image: %s' % img, immutable)
+        self.assertNotIn('/opt/odoo-source/', immutable)        # no source mount
+        self.assertNotIn(':/mnt/extra-addons', immutable)       # no addons mount
+        self.assertNotIn('requirements.txt:/etc/odoo', immutable)
+        # legacy mode keeps the mounts
+        legacy = inst._render_template('docker-compose.yml.jinja', {
+            'odoo_version': '18.0', 'subdomain': 'immut', 'xmlrpc_port': 8069,
+            'longpolling_port': 8072, 'odoo_image': 'odoo-light', 'tenant_image': ''})
+        self.assertIn('/opt/odoo-source/18.0:/opt/odoo', legacy)
+        self.assertIn(':/mnt/extra-addons', legacy)
+
+    def test_immutable_addons_path_and_bake_dir(self):
+        inst = self._instance('adn', self.env['saas.server'].sudo().create(
+            {'name': 'adn-srv', 'registry_host': '127.0.0.1:5000'}))
+        # odoo.conf: immutable mode points addons_path at the baked /opt/tenant-addons
+        conf_immut = inst._render_template('odoo.conf.jinja', {
+            'immutable': True, 'repo_addons_paths': ['/opt/tenant-addons/myrepo']})
+        self.assertIn('/opt/tenant-addons', conf_immut)
+        self.assertNotIn('/mnt/extra-addons', conf_immut)
+        conf_legacy = inst._render_template('odoo.conf.jinja', {
+            'immutable': False, 'repo_addons_paths': []})
+        self.assertIn('/mnt/extra-addons', conf_legacy)
+        # Dockerfile bakes custom modules to the non-VOLUME /opt/tenant-addons
+        df = inst._render_template('Dockerfile.tenant.jinja', {
+            'base_image': 'b', 'pip_packages': False, 'has_addons': True})
+        self.assertIn('/opt/tenant-addons', df)
+        self.assertNotIn(':/mnt/extra-addons', df)
+
+    def test_rollback_requires_successful_build_with_image(self):
+        inst = self._instance('rbk', self.env['saas.server'].sudo().create(
+            {'name': 'rbk-srv', 'registry_host': '127.0.0.1:5000'}))
+        bad = self.env['saas.build'].sudo().create(
+            {'instance_id': inst.id, 'source': 'redeploy', 'state': 'failed'})
+        from odoo.exceptions import UserError
+        with self.assertRaises(UserError):
+            inst.rollback_image(bad)
