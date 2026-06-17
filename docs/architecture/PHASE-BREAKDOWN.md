@@ -134,8 +134,11 @@ backup/restore test. Only then do we touch the god-model.
 ## PHASE 2 — Storage to spec: object-storage filestore + container registry  *(needs: Phase 1)*
 
 ### 2.1 Object-storage-first filestore (JuiceFS)
-- [ ] **2.1.1** Pick object store: MinIO (dev) + R2/B2 (prod); create a bucket + credentials.
-- [ ] **2.1.2** Initialize JuiceFS with metadata on the meta PostgreSQL; mount on a dev host with local cache.
+- [x] **2.1.1** MinIO (dev) standing up via repo-tracked idempotent script `saas_core/docker/provision-object-storage.sh`;
+      bucket `saas-filestore`, creds in `/etc/saas/object-storage.env`. (prod = R2/B2, same JuiceFS steps.)
+- [x] **2.1.2** JuiceFS volume `saasfs` formatted (metadata in PostgreSQL `juicefs_meta`, data in MinIO), mounted at
+      `/mnt/jfs` via systemd (`jfs-mount.service`, local NVMe cache). Verified on 165.245.245.196: POSIX round-trip
+      (md5 match) + 2 MB write confirmed landing as MinIO objects (`mc du` = 2.0 MiB / 7 objects).
 - [ ] **2.1.3** Point a NEW tenant's filestore at the JuiceFS mount; verify attachments read/write.
 - [ ] **2.1.4** DataService routine to migrate one tenant's filestore local → object store.
 - [ ] **2.1.5** Measure page-load latency with cache warm/cold; confirm acceptable. *Done when:* no
