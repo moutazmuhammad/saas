@@ -214,6 +214,9 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 1 | 1.2 implemented `SshDockerDriver` (start/stop/restart/exec/logs/endpoint/health) + `_compute_driver`/`_compute_handle` on instance | ✅ | additive; not yet routing call sites |
 | 2026-06-17 | 1 | **Verified `SshDockerDriver` against LIVE rt1** (health/exec/logs + real stop→start) | ✅ | real-infra proof |
 | 2026-06-17 | 1 | Unit baseline GREEN on clean DB `saas_ci` (54/54). NB: `saas_dev` now dirty w/ real-test data | ✅ | use saas_ci for unit tests |
+| 2026-06-17 | 1 | 1.3 routed `_do_stop`/`_do_restart` → driver (2 of ~140 sites); removed inline `docker stop`/`restart` | ✅ | UserError semantics kept |
+| 2026-06-17 | 1 | Added `test_compute_driver.py` (5 tests: cmd-building + routing + error-wrap); 59/59 green on saas_ci | ✅ | unit |
+| 2026-06-17 | 1 | Real test: routed lifecycle on LIVE rt1 (running→stopped→running) | ✅ | real-infra |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

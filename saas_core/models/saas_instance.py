@@ -4699,19 +4699,15 @@ class SaasInstance(models.Model):
             )
 
     def _do_stop(self):
-        """Stop container (runs in background thread)."""
+        """Stop container (runs in background thread). Routed via ComputeDriver."""
         self.ensure_one()
-        server = self.docker_server_id
-        container_name = self._get_container_name()
-        with server._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = ssh.execute(
-                'docker stop %s' % shlex.quote(container_name),
+        try:
+            self._compute_driver().stop(self._compute_handle())
+        except Exception as e:
+            raise UserError(
+                _("Failed to stop container '%s':\n%s")
+                % (self._get_container_name(), e)
             )
-            if exit_code != 0:
-                raise UserError(
-                    _("Failed to stop container '%s':\n%s")
-                    % (container_name, stderr)
-                )
         self.state = 'stopped'
         self.pending_operation = False
         self._append_log("Instance stopped successfully.")
@@ -4738,19 +4734,15 @@ class SaasInstance(models.Model):
             )
 
     def _do_restart(self):
-        """Restart container (runs in background thread)."""
+        """Restart container (runs in background thread). Routed via ComputeDriver."""
         self.ensure_one()
-        server = self.docker_server_id
-        container_name = self._get_container_name()
-        with server._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = ssh.execute(
-                'docker restart %s' % shlex.quote(container_name),
+        try:
+            self._compute_driver().restart(self._compute_handle())
+        except Exception as e:
+            raise UserError(
+                _("Failed to restart container '%s':\n%s")
+                % (self._get_container_name(), e)
             )
-            if exit_code != 0:
-                raise UserError(
-                    _("Failed to restart container '%s':\n%s")
-                    % (container_name, stderr)
-                )
         self.state = 'running'
         self.pending_operation = False
         self._append_log("Instance restarted successfully.")
