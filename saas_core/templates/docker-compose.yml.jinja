@@ -11,6 +11,10 @@ services:
     volumes:
       - /opt/odoo-source/{{ odoo_version }}:/opt/odoo:ro
       - ./data/odoo:/var/lib/odoo
+{%- if filestore_mount %}
+      # Phase 2: filestore on object storage (JuiceFS) — keeps compute disposable
+      - {{ filestore_mount }}:/var/lib/odoo/filestore
+{%- endif %}
       - ./config:/etc/odoo
       - ./addons:/mnt/extra-addons
       - ./requirements.txt:/etc/odoo/requirements.txt:ro

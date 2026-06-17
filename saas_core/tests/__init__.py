@@ -4,3 +4,4 @@ from . import test_billing_overhaul
 from . import test_environments
 from . import test_compute_driver
 from . import test_dataservice
+from . import test_object_filestore

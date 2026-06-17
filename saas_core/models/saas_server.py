@@ -172,6 +172,15 @@ class SaasServer(models.Model):
         string='Docker Containers',
         help='Containers currently running on this server (populated via Refresh).',
     )
+    object_filestore_mount = fields.Char(
+        string='Object-Storage Filestore Mount',
+        help="Phase 2: host path of the object-storage-backed POSIX mount "
+             "(JuiceFS over MinIO/Spaces, e.g. /mnt/jfs). When set, instances "
+             "provisioned on this server place their Odoo filestore on "
+             "<mount>/<partner>/<sub>/filestore (bind-mounted into the "
+             "container) instead of local disk — making compute disposable. "
+             "Leave empty to keep filestores on local disk.",
+    )
 
     # ========== Database Server Fields ==========
     psql_port = fields.Integer(

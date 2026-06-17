@@ -139,7 +139,11 @@ backup/restore test. Only then do we touch the god-model.
 - [x] **2.1.2** JuiceFS volume `saasfs` formatted (metadata in PostgreSQL `juicefs_meta`, data in MinIO), mounted at
       `/mnt/jfs` via systemd (`jfs-mount.service`, local NVMe cache). Verified on 165.245.245.196: POSIX round-trip
       (md5 match) + 2 MB write confirmed landing as MinIO objects (`mc du` = 2.0 MiB / 7 objects).
-- [ ] **2.1.3** Point a NEW tenant's filestore at the JuiceFS mount; verify attachments read/write.
+- [x] **2.1.3** Server capability `saas.server.object_filestore_mount` (e.g. `/mnt/jfs`) → instances on that
+      host bind-mount `<mount>/<partner>/<sub>/filestore` at the container's `/var/lib/odoo/filestore`
+      (conditional compose volume + provisioning mkdir/chown). Verified on rt2: container shows the bind-mount,
+      a real `ir.attachment` round-trips through Odoo (read-back OK) and its block lands as a new MinIO object
+      (7→8); rt2 web UI still serves 200 (assets regenerate). 73/73 unit tests (+3).
 - [ ] **2.1.4** DataService routine to migrate one tenant's filestore local → object store.
 - [ ] **2.1.5** Measure page-load latency with cache warm/cold; confirm acceptable. *Done when:* no
       regression vs local for hot attachments.

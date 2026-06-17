@@ -2560,6 +2560,33 @@ class SaasInstance(models.Model):
         self.ensure_one()
         return 'odoo_%s' % self.subdomain
 
+    def _get_filestore_mount(self):
+        """Phase 2: host path of this instance's object-storage-backed filestore,
+        or '' when the server keeps filestores on local disk.
+
+        When the docker host has ``object_filestore_mount`` set (a JuiceFS mount
+        like /mnt/jfs), the instance's filestore lives at
+        ``<mount>/<partner>/<sub>/filestore`` and is bind-mounted into the
+        container at /var/lib/odoo/filestore — so destroying the container loses
+        no attachments. Same path-containment guarantees as _get_instance_path."""
+        self.ensure_one()
+        base = (self.docker_server_id.object_filestore_mount or '').strip()
+        if not base:
+            return ''
+        base = base.rstrip('/')
+        sub = self.subdomain or ''
+        if not SUBDOMAIN_RE.match(sub):
+            raise UserError(
+                _("Refusing to build filestore path: subdomain '%s' is invalid.")
+                % sub)
+        path = '%s/%s/%s/filestore' % (base, self._get_partner_code(), sub)
+        norm = os.path.normpath(path)
+        if not norm.startswith(os.path.normpath(base) + '/'):
+            raise UserError(
+                _("Refusing to build filestore path: '%s' escapes mount '%s'.")
+                % (norm, base))
+        return path
+
     # ---- Phase 1: ComputeDriver seam (additive; see docs/architecture) ----
     def _compute_handle(self):
         """Backend-agnostic handle describing this instance's compute workload."""
@@ -4020,6 +4047,7 @@ class SaasInstance(models.Model):
             'docker_mem': docker_mem,
             'docker_swap': docker_swap,
             'pip_packages': pip_packages_str,
+            'filestore_mount': self._get_filestore_mount(),
         }
         dc_content = self._render_template('docker-compose.yml.jinja', dc_context)
         ssh.write_file('%s/docker-compose.yml' % instance_path, dc_content)
@@ -4479,13 +4507,28 @@ class SaasInstance(models.Model):
                 )
             self._append_log("Directory structure created.")
 
+            # Phase 2: when this server uses an object-storage filestore, create
+            # the JuiceFS-backed dir that gets bind-mounted at the container's
+            # /var/lib/odoo/filestore (chowned to the container uid below).
+            filestore_mount = self._get_filestore_mount()
+            if filestore_mount:
+                self._append_log(
+                    "Object-storage filestore enabled → %s" % filestore_mount)
+                fs_ec, _o, fs_err = ssh.execute(
+                    'sudo mkdir -p %s' % shlex.quote(filestore_mount))
+                if fs_ec != 0:
+                    raise UserError(
+                        _("Failed to create object-storage filestore dir:\n%s")
+                        % fs_err)
+
             # Set ownership so the container user can read/write volumes.
             self._append_log("Setting permissions...")
             container_uid = self._get_container_uid(ssh)
+            extra_fs = (' %s' % shlex.quote(filestore_mount)) if filestore_mount else ''
             perms_cmd = (
-                'sudo chown -R %(uid)s:%(uid)s %(path)s/data %(path)s/config %(path)s/addons && '
-                'sudo chmod -R 777 %(path)s/data %(path)s/config %(path)s/addons'
-            ) % {'path': instance_path, 'uid': container_uid}
+                'sudo chown -R %(uid)s:%(uid)s %(path)s/data %(path)s/config %(path)s/addons%(fs)s && '
+                'sudo chmod -R 777 %(path)s/data %(path)s/config %(path)s/addons%(fs)s'
+            ) % {'path': instance_path, 'uid': container_uid, 'fs': extra_fs}
             exit_code, stdout, stderr = ssh.execute(perms_cmd)
             if exit_code != 0:
                 raise UserError(
