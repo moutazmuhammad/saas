@@ -223,6 +223,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 1 | 1.3 driver gains `service_exec` + connection-reuse; routed `_docker_exec_sql`/`_docker_exec_python` (4 more sites) | ✅ | faithful, no perf regression |
 | 2026-06-17 | 1 | 2 new unit tests (service_exec cmd + conn reuse); 65/65 on saas_ci | ✅ | unit |
 | 2026-06-17 | 1 | Real test on LIVE rt1: routed `_docker_exec_sql` (SELECT 1→1) + `_docker_exec_python` (PYEXEC_OK) | ✅ | real-infra |
+| 2026-06-17 | 1 | Driver stop/restart → raw `docker stop/restart <container>` (faithful to original; serves raw containers too) | ✅ | re-verified on rt1 |
+| 2026-06-17 | 1 | Routed `saas_docker_container` admin stop/restart actions through driver (2 more sites) | ✅ | unit + 66/66 saas_ci |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

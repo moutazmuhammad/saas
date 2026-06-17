@@ -51,7 +51,9 @@ class TestComputeDriver(TransactionCase):
                           host='1.2.3.4', http_port=8069)
 
         d.stop(h)
-        self.assertIn('cd /srv/x && docker compose stop', calls[-1])
+        self.assertIn('docker stop odoo_x', calls[-1])
+        d.restart(h)
+        self.assertIn('docker restart odoo_x', calls[-1])
         d.start(h)
         self.assertIn('docker compose up -d', calls[-1])
         d.destroy(h)
@@ -151,3 +153,16 @@ class TestComputeDriver(TransactionCase):
         # reused the open connection; never opened a new one
         server._get_ssh_connection.assert_not_called()
         self.assertIn('docker compose exec -T  odoo echo hi', conn.cmds[-1])
+
+    # -------- saas.docker.container admin actions route to the driver --------
+    def test_docker_container_actions_route_to_driver(self):
+        server = self.env['saas.server'].sudo().create({'name': 'cd-srv'})
+        cont = self.env['saas.docker.container'].sudo().create(
+            {'server_id': server.id, 'name': 'odoo_x'})
+        fake = MagicMock()
+        with patch.object(type(cont), '_driver_handle', return_value=(fake, 'H')), \
+             patch.object(type(server), 'action_refresh_containers', return_value=True):
+            cont.action_stop_container()
+            cont.action_restart_container()
+        fake.stop.assert_called_once_with('H')
+        fake.restart.assert_called_once_with('H')

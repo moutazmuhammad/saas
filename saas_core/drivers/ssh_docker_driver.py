@@ -83,23 +83,28 @@ class SshDockerDriver(ComputeDriver):
             raise RuntimeError('docker compose up failed (rc=%s): %s' % (rc, (out + err)[-500:]))
 
     def stop(self, handle: ComputeHandle) -> None:
+        # Container-level op (works for both compose-managed and raw containers,
+        # and matches the god-model's original `docker stop <container>`).
         with self._ssh() as ssh:
-            rc, out, err = self._compose(ssh, handle.instance_path, 'stop', timeout=120)
-        if rc != 0 and 'No such' not in (out + err):
-            raise RuntimeError('docker compose stop failed (rc=%s): %s' % (rc, (out + err)[-500:]))
+            rc, out, err = ssh.execute(
+                'docker stop %s' % shlex.quote(handle.container_name), timeout=120)
+        if rc != 0 and 'No such container' not in (out + err):
+            raise RuntimeError('docker stop failed (rc=%s): %s' % (rc, (out + err)[-500:]))
 
     def destroy(self, handle: ComputeHandle) -> None:
+        # Removes the compose project (network + container); needs instance_path.
         with self._ssh() as ssh:
             rc, out, err = self._compose(ssh, handle.instance_path, 'down', timeout=120)
         if rc != 0 and 'No such' not in (out + err):
             raise RuntimeError('docker compose down failed (rc=%s): %s' % (rc, (out + err)[-500:]))
 
     def restart(self, handle: ComputeHandle) -> None:
+        # Container-level op (matches the god-model's original `docker restart`).
         with self._ssh() as ssh:
-            rc, out, err = self._compose(ssh, handle.instance_path, 'restart', timeout=300)
+            rc, out, err = ssh.execute(
+                'docker restart %s' % shlex.quote(handle.container_name), timeout=300)
         if rc != 0:
-            # fall back to stop+start if `restart` isn't viable
-            self.restart_default(handle)
+            raise RuntimeError('docker restart failed (rc=%s): %s' % (rc, (out + err)[-500:]))
 
     # -- introspection / interaction ---------------------------------------
     def exec(self, handle, command, *, user=None, timeout=None) -> ExecResult:
