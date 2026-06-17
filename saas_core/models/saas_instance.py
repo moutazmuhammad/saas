@@ -2580,6 +2580,11 @@ class SaasInstance(models.Model):
         from ..drivers.ssh_docker_driver import SshDockerDriver
         return SshDockerDriver(self.docker_server_id)
 
+    def _data_service(self):
+        """Return the DataService (snapshot/materialize primitives)."""
+        from ..dataservice.service import DataService
+        return DataService(self.env)
+
     def _get_db_host(self):
         """Return the hostname/IP for odoo.conf (used inside the container).
 

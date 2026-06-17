@@ -65,3 +65,9 @@ not mocked. Provision ✅ · DB ✅ · backup ✅ · restore-with-integrity ✅.
 ## Notes
 - Per-tenant baseline (idle ~200 MiB) already informs the margin model (Phase 4) and scale math (Phase 5).
 - Object-storage creds for the backup test are temporary/disposable and are **NOT** committed to the repo.
+
+## ✅ Test 4 — DataService seam round-trip (PASS)
+Re-proved backup→restore THROUGH the new `DataService` primitives on live rt1:
+`inst._data_service().snapshot(inst)` (restic→DO Spaces, backup id=2 done) → planted marker
+`zz_ds_marker` → `materialize(snap)` (37.8s restore) → marker **gone**, res_users=5, HTTP 200.
+Confirms the seam wraps the proven logic with no behavior change.
