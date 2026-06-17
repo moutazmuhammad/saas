@@ -4901,19 +4901,15 @@ class SaasInstance(models.Model):
             )
 
     def _do_suspend(self):
-        """Suspend container (runs in background thread)."""
+        """Suspend container (runs in background thread). Routed via ComputeDriver."""
         self.ensure_one()
-        server = self.docker_server_id
-        container_name = self._get_container_name()
-        with server._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = ssh.execute(
-                'docker stop %s' % shlex.quote(container_name),
+        try:
+            self._compute_driver().stop(self._compute_handle())
+        except Exception as e:
+            raise UserError(
+                _("Failed to stop container '%s':\n%s")
+                % (self._get_container_name(), e)
             )
-            if exit_code != 0:
-                raise UserError(
-                    _("Failed to stop container '%s':\n%s")
-                    % (container_name, stderr)
-                )
         self.state = 'suspended'
         self.pending_operation = False
         self._append_log("Instance suspended successfully.")
@@ -6729,14 +6725,13 @@ class SaasInstance(models.Model):
                     )
             else:
                 self._append_log("Stopping container...")
-                exit_code, stdout, stderr = ssh.execute(
-                    'docker stop %s 2>&1' % shlex.quote(container_name)
-                )
-                if exit_code != 0 and 'No such container' not in (stdout + stderr):
+                try:
+                    self._compute_driver(connection=ssh).stop(self._compute_handle())
+                except Exception as e:
                     raise UserError(_(
                         "Failed to stop container '%s' before restore — refusing "
-                        "to drop the database while connections may still be open:\n%s\n%s"
-                    ) % (container_name, stdout, stderr))
+                        "to drop the database while connections may still be open:\n%s"
+                    ) % (container_name, e))
 
             # 2. Download backup from cloud
             self._append_log("Downloading backup...")
