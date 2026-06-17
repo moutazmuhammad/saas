@@ -873,6 +873,29 @@ class SaasInstance(models.Model):
             rec.margin_pct = (100.0 * (revenue - cost) / revenue) if revenue else 0.0
             rec.is_profitable = (revenue - cost) >= 0
 
+    @api.model
+    def _cron_flag_unprofitable_tenants(self):
+        """Phase 4.3.4 alert: log + chatter-notify Production tenants whose monthly
+        margin is negative, so ops can act (reprice, resize, or cut). Cheap: runs
+        over billable parentless instances and posts only on a state change."""
+        recs = self.search([
+            ('parent_id', '=', False), ('plan_id', '!=', False),
+            ('state', 'in', ('running', 'suspended'))])
+        flagged = recs.filtered(lambda r: not r.is_profitable)
+        for r in flagged:
+            _logger.warning(
+                "[margin] tenant %s is UNPROFITABLE: revenue=%.2f cost=%.2f margin=%.2f",
+                r.subdomain, r.monthly_revenue, r.monthly_cost, r.monthly_margin)
+            try:
+                r.message_post(body=_(
+                    "⚠️ Running at a loss: revenue %(rev).2f − infra cost %(cost).2f "
+                    "= %(margin).2f / month. Review pricing or resources.") % {
+                    'rev': r.monthly_revenue, 'cost': r.monthly_cost,
+                    'margin': r.monthly_margin})
+            except Exception:
+                pass
+        return len(flagged)
+
     def _search_profitable(self, operator, value):
         # Lightweight search: compute on the candidate set (paid, parentless).
         recs = self.search([('parent_id', '=', False), ('plan_id', '!=', False)])

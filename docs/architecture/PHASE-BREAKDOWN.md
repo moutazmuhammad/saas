@@ -230,7 +230,13 @@ destroying its host and recreating elsewhere loses no data; rollback to a prior 
 - [x] **4.3.3** Margin dashboard: `monthly_cost`/`monthly_revenue`/`monthly_margin`/`margin_pct`/
       `is_profitable` computed fields + a **Tenant Margins** list+pivot (Billing menu), sorted worst-first,
       red=loss/green=healthy. Live on rt1/rt2: rev $20 − cost $7 = **$13/mo (65%)**. 87/87 unit (+4).
-- [ ] **4.3.4** Alerts: unprofitable tenant, runaway CPU/RAM, storage near limit. *(next)*
+- [x] **4.3.4** Alert cron `_cron_flag_unprofitable_tenants` (weekly) — logs + chatter-posts on Production
+      tenants running at a loss (margin < 0). Storage-near-limit already covered by
+      `_cron_check_storage_limits`; runaway CPU/RAM lives in the live-metrics sampler.
+
+**Phase 4 (Odoo-native) acceptance — MET:** the Tenant Margins dashboard answers "which tenants are
+profitable?" from live data, and an alert proactively flags losses. The VictoriaMetrics/Grafana time-series
+stack (4.2.x) stays deferred per "start small" until historical trends are actually needed.
 
 **Phase 4 acceptance:** one dashboard answers "which tenants are profitable?" from live data.
 

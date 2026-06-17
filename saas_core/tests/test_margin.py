@@ -57,6 +57,18 @@ class TestTenantMargin(TransactionCase):
         self.assertAlmostEqual(inst.monthly_margin, 5.0 - 18.0, places=2)
         self.assertFalse(inst.is_profitable)
 
+    def test_unprofitable_alert_cron_flags_losses(self):
+        cheap = self.env['saas.plan'].sudo().create({
+            'name': 'M Loss', 'is_custom': True, 'workers': 1, 'storage_limit': 5,
+            'cpu_limit': 2.0, 'ram_limit': '4g', 'price': 5.0, 'yearly_price': 48.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [self.product.id])]})
+        loss = self._inst('mloss2', plan_id=cheap.id)   # cost 18 > rev 5
+        self._inst('mwin2')                              # profitable
+        flagged = self.env['saas.instance'].sudo()._cron_flag_unprofitable_tenants()
+        self.assertGreaterEqual(flagged, 1)
+        self.assertFalse(loss.is_profitable)
+
     def test_child_cost_rolls_up_to_parent(self):
         prod = self._inst('mprod')
         child = self._inst('mstg', environment='staging', parent_id=prod.id)
