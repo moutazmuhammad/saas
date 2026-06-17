@@ -34,9 +34,32 @@ ssh key `cp-ed25519` (ed25519) · region `fra1` · server `rt-fra1` (docker+db, 
 pinned) · version `18.0` (`odoo:18.0`) · domain `odoo.odex.sa` · product/plan `RT Hosting`/`RT Plan` ·
 partner `RT Customer` · instance `rt1` (production, running).
 
-## Next tests (in progress)
-- [ ] Create a database inside the tenant (so it's a usable Odoo, HTTP 200 on login).
-- [ ] DataService round-trip: backup (restic → DO Spaces) → destroy → restore → verify; clone + neutralize.
+## ✅ Test 2 — Database creation (PASS)
+Switched the version to the faithful `odoo-light:18.0` image (built on the host) + cloned Odoo 18.0
+source to `/opt/odoo-source/18.0`, redeployed, and ran `inst.hosting_db_create('rtdb', ...)`.
+- First call built the per-instance template (`__odoo_template_rt1`) via a one-off container, then
+  `CREATE DATABASE ... WITH TEMPLATE` → DB **`rt1_rtdb`** created.
+- Verified: container runs `odoo-light:18.0` (healthy); **HTTP 200** on `/web/login` (local + HTTPS).
+- Finding: the official `odoo:18.0` image works for an empty instance but **breaks the DB template
+  build** (`--addons-path: no such directory: /opt/odoo/odoo/addons`) — the platform requires the
+  `odoo-light` image + mounted source. Confirmed and resolved.
+
+## ✅ Test 3 — DataService backup → restore round-trip (PASS — the critical one)
+Configured DO Spaces (provider=digitalocean, bucket `odoo18saas`, region `fra1`; creds runtime-only,
+never committed) and ran the real restic full-instance backup, then restored.
+- Backup: `saas.instance.backup` id=1, **state=done**, full-instance (restic → DO Spaces).
+- Integrity method: planted a marker table `zz_marker_after_backup` AFTER the backup, then restored.
+- Restore (36s, 5 steps: stop → wipe → restic FS restore → DB via `restic dump→psql` → up → nginx):
+  - marker table **gone** (`t`→`f`) ⇒ DB genuinely replaced with the backed-up version (real restore).
+  - `res_users`=5 and company "My Company" **unchanged** ⇒ data intact.
+  - **HTTP 200** after restore ⇒ tenant serves correctly.
+
+### Phase 0 acceptance — MET (on real infrastructure)
+"A tenant can be provisioned, backed up, destroyed, and restored" — proven end-to-end on a real server,
+not mocked. Provision ✅ · DB ✅ · backup ✅ · restore-with-integrity ✅.
+
+## Next tests
+- [ ] Clone + neutralize (DataService clone primitive).
 - [ ] Resource baseline under a light, defined load (k6/Locust).
 
 ## Notes

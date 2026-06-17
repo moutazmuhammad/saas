@@ -209,6 +209,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 1 | 1.1.1 defined `ComputeDriver` interface + `ComputeSpec`/`ComputeHandle`/`ExecResult`/`HealthStatus` (drivers/base.py) | ✅ | additive, not wired in; baseline still green |
 | 2026-06-17 | RT | Stood up real test server (165.245.245.196); prepped PG/nginx/restic/docker + odoo:18.0 | ✅ | minimal footprint (root, PG→docker subnet) |
 | 2026-06-17 | RT | **Provisioned a REAL tenant via `_do_deploy` end-to-end** — container healthy, HTTPS+SSL, 303 login | ✅ | `REAL-TEST-RESULTS.md`; idle ~200MiB |
+| 2026-06-17 | RT | Real DB create (`rt1_rtdb`, odoo-light+source) — HTTP 200; found official-image breaks template build | ✅ | Test 2 |
+| 2026-06-17 | 0 | **Phase 0 ACCEPTANCE MET on real infra**: backup→restore round-trip PASS (marker gone, data intact, 200) | ✅ | Test 3 — DataService proven |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).
