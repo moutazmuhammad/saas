@@ -283,10 +283,18 @@ biggest box the levers are app-side (indexing, partitioning, archiving).
 ---
 
 ## PHASE 6 — Placement Service + KubernetesDriver  *(future; needs: Phase 1)*
-- [ ] **6.1** Formalize a `Placement` interface (host + PG tier decision); v1 wraps current `_allocate_*`.
-- [ ] **6.2** Implement `KubernetesDriver` against the Phase-1 interface; pilot a subset of tenants.
-- [ ] **6.3** Keep tenant PostgreSQL on dedicated/managed hosts — never on K8s ephemeral storage.
-- **Acceptance:** a tenant runs under either driver with no Control-Plane change.
+- [~] **6.1** Placement v1 = `saas.server.compute_driver` selects the backend; `_compute_driver()` is the
+      one-line switch. (A richer Placement that also decides PG tier remains a follow-up.)
+- [x] **6.2** `drivers/kubernetes_driver.py` — a SECOND `ComputeDriver` (kubectl over the server's SSH:
+      Deployment+Service per tenant, scale 0/1 = stop/start, delete = destroy, rollout restart, exec/logs,
+      pod-phase health with the Phase-4 `tenant_id` label). **Seam proven:** `_do_stop()` on a K8s server
+      issues `kubectl scale --replicas=0` through UNCHANGED business logic; `_compute_driver()` returns
+      Kubernetes vs SshDocker purely by server type. NOT run against a live cluster (no demand) — command/
+      manifest building unit-tested (102/102, +7). Pilot-on-real-cluster awaits Phase-5 demand.
+- [ ] **6.3** Keep tenant PostgreSQL on dedicated/managed hosts — never on K8s ephemeral storage. *(policy
+      for the pilot)*
+- **Acceptance — STRUCTURALLY MET:** a tenant runs under either driver with **zero Control-Plane change**
+      (adding K8s was a new file + a one-line driver switch). Running the pilot is a deploy-time step.
 
 ## PHASE 7 — Upgrade Flow (clone-upgrade-promote)  *(future; needs: Phase 1)*
 - [ ] **7.1** Odoo version migration as a DataService op: clone → migrate (OpenUpgrade/official) → validate on

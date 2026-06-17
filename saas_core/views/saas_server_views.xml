@@ -77,6 +77,7 @@
                             <field name="monthly_cost"/>
                         </group>
                         <group string="Phase 2 (disposable compute)">
+                            <field name="compute_driver"/>
                             <field name="object_filestore_mount"/>
                             <field name="registry_host"/>
                         </group>

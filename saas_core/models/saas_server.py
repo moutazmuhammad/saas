@@ -192,6 +192,14 @@ class SaasServer(models.Model):
         help='Reference: the real all-in monthly cost of this box (droplet + '
              'volumes + bandwidth). For sanity-checking the rate card against '
              'the sum of tenant costs.')
+    compute_driver = fields.Selection(
+        [('ssh_docker', 'Docker over SSH'), ('kubernetes', 'Kubernetes')],
+        string='Compute Driver', default='ssh_docker', required=True,
+        help='Phase 6: which ComputeDriver backend runs tenants on this server. '
+             'The Control Plane is identical for both — selecting "Kubernetes" '
+             'routes the same business logic through KubernetesDriver instead of '
+             'SshDockerDriver (proves the Phase-1 seam: a new backend is a new '
+             'file, not a rewrite).')
     registry_host = fields.Char(
         string='Container Registry Host',
         help="Phase 2.2: registry endpoint for immutable tenant images "

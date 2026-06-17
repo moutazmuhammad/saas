@@ -2895,13 +2895,20 @@ class SaasInstance(models.Model):
         )
 
     def _compute_driver(self, connection=None):
-        """Return the ComputeDriver for this instance's backend (v1: SshDockerDriver).
+        """Return the ComputeDriver for this instance's backend, selected by the
+        server's ``compute_driver`` (Phase 6). Business logic NEVER changes — it
+        only ever calls ``self._compute_driver().X()``; swapping the backend is a
+        new driver file + this one-line switch.
 
         Pass an open SSHConnection as ``connection`` to reuse it (for call sites
         already inside a ``with server._get_ssh_connection()`` block)."""
         self.ensure_one()
+        server = self.docker_server_id
+        if server.compute_driver == 'kubernetes':
+            from ..drivers.kubernetes_driver import KubernetesDriver
+            return KubernetesDriver(server, connection=connection)
         from ..drivers.ssh_docker_driver import SshDockerDriver
-        return SshDockerDriver(self.docker_server_id, connection=connection)
+        return SshDockerDriver(server, connection=connection)
 
     def _data_service(self):
         """Return the DataService (snapshot/materialize primitives)."""
