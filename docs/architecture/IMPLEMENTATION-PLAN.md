@@ -249,6 +249,7 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | SEC | Test box 165.245.245.196 found compromised (Outlaw cryptominer via exposed PG/SSH); contained in place + hardened | ✅ | `SECURITY-INCIDENT-2026-06-17.md`; rebuild recommended |
 | 2026-06-17 | 2 | 2.1.1/2.1.2: idempotent `provision-object-storage.sh` → MinIO + JuiceFS (PG metadata, systemd mount, NVMe cache); object-backing verified (POSIX round-trip + chunks in MinIO) | ✅ | filestore substrate ready |
 | 2026-06-17 | 2 | 2.1.3: `saas.server.object_filestore_mount` + conditional compose volume + provisioning mkdir/chown; rt2 attachment round-trips Odoo→JuiceFS→MinIO (7→8 objects), web 200; 73/73 unit (+3) | ✅ | prod store = DO Spaces (same JuiceFS steps) |
+| 2026-06-17 | 2 | 2.1.4: `DataService.migrate_filestore_to_object_store`; **Selenium caught asset-bundle 500s** after a bare reconfigure, migration back-filled → 0 console errors; 75/75 unit (+2) | ✅ | new tenants need no migration |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

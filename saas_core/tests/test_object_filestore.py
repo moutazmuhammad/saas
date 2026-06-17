@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from odoo.tests.common import TransactionCase, tagged
 
 
@@ -53,3 +55,35 @@ class TestObjectFilestore(TransactionCase):
             'odoo_version': '18.0', 'subdomain': 'ofrender', 'xmlrpc_port': 8069,
             'longpolling_port': 8072, 'filestore_mount': ''})
         self.assertNotIn(':/var/lib/odoo/filestore', without)
+
+    # -------- 2.1.4 DataService.migrate_filestore_to_object_store --------
+    def test_migrate_raises_without_object_mount(self):
+        inst = self._instance('ofnomnt', self.env['saas.server'].sudo().create(
+            {'name': 'of-nomnt'}))
+        with self.assertRaises(RuntimeError):
+            inst._data_service().migrate_filestore_to_object_store(inst, recreate=False)
+
+    def test_migrate_copies_local_to_object_store(self):
+        srv = self.env['saas.server'].sudo().create(
+            {'name': 'of-mig', 'object_filestore_mount': '/mnt/jfs',
+             'docker_base_path': '/home/odoo'})
+        inst = self._instance('ofmig', srv)
+
+        cmds = []
+
+        class FakeSSH:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def execute(self, cmd, timeout=None):
+                cmds.append(cmd); return (0, '', '')
+
+        with patch.object(type(srv), '_get_ssh_connection', return_value=FakeSSH()), \
+             patch.object(type(inst), '_get_container_uid', return_value='101'):
+            dst = inst._data_service().migrate_filestore_to_object_store(
+                inst, recreate=False)
+        self.assertTrue(dst.endswith('/ofmig/filestore'))
+        joined = '\n'.join(cmds)
+        # copies CONTENTS of the local filestore into the object mount + chowns
+        self.assertIn('cp -a', joined)
+        self.assertIn('/data/odoo/filestore/.', joined)
+        self.assertIn('chown -R 101:101', joined)

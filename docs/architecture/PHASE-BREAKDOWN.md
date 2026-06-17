@@ -144,7 +144,12 @@ backup/restore test. Only then do we touch the god-model.
       (conditional compose volume + provisioning mkdir/chown). Verified on rt2: container shows the bind-mount,
       a real `ir.attachment` round-trips through Odoo (read-back OK) and its block lands as a new MinIO object
       (7→8); rt2 web UI still serves 200 (assets regenerate). 73/73 unit tests (+3).
-- [ ] **2.1.4** DataService routine to migrate one tenant's filestore local → object store.
+- [x] **2.1.4** `DataService.migrate_filestore_to_object_store(instance, recreate=)` — copies the local
+      filestore onto the object mount (`cp -a`, chown to container uid). `recreate=True` = full safe flow
+      (pre-copy → stop → final copy → re-render compose → recreate); `recreate=False` = back-fill a tenant
+      already bind-mounted. Verified on rt2: caught via a **Selenium** UI test that asset bundles 500'd after
+      a bare reconfigure (empty object fs), then the migration back-filled them → **0 severe console errors**,
+      UI fully renders. NB: NEW tenants need no migration (empty fs regenerates fresh).
 - [ ] **2.1.5** Measure page-load latency with cache warm/cold; confirm acceptable. *Done when:* no
       regression vs local for hot attachments.
 - [ ] **2.1.6** Switch `clone` to reference object-store filestore (drop `cp -a`). *Done when:* clone works
