@@ -2587,6 +2587,29 @@ class SaasInstance(models.Model):
                 % (norm, base))
         return path
 
+    # ---- Phase 2.2: immutable tenant images (registry by SHA) -------------
+    def _tenant_base_image(self):
+        """Registry ref of the immutable base image this tenant builds FROM,
+        e.g. ``127.0.0.1:5000/odoo-base:18.0``. Requires the server's
+        ``registry_host``; returns '' when the host uses legacy source-mount."""
+        self.ensure_one()
+        registry = (self.docker_server_id.registry_host or '').strip().rstrip('/')
+        if not registry:
+            return ''
+        return '%s/odoo-base:%s' % (registry, self.odoo_version_id.docker_image_tag)
+
+    def _render_tenant_dockerfile(self):
+        """Render the platform-generated Dockerfile for this tenant's immutable
+        image (base + pip + custom modules). Caller assembles the matching build
+        context (requirements.txt + addons/) next to it."""
+        self.ensure_one()
+        pip_pkgs = bool((self.pip_packages or '').strip())
+        return self._render_template('Dockerfile.tenant.jinja', {
+            'base_image': self._tenant_base_image(),
+            'pip_packages': pip_pkgs,
+            'has_addons': bool(self._get_all_addons_paths()),
+        })
+
     # ---- Phase 1: ComputeDriver seam (additive; see docs/architecture) ----
     def _compute_handle(self):
         """Backend-agnostic handle describing this instance's compute workload."""

@@ -252,6 +252,8 @@ PG ops, deploy, usage, billing live in focused units.
 | 2026-06-17 | 2 | 2.1.4: `DataService.migrate_filestore_to_object_store`; **Selenium caught asset-bundle 500s** after a bare reconfigure, migration back-filled → 0 console errors; 75/75 unit (+2) | ✅ | new tenants need no migration |
 | 2026-06-17 | 2 | 2.1.5 latency: JuiceFS warm 4-5ms/file ≈ local 4ms (no hot regression); cold ~30ms vs 13ms local; rt2 474KB bundle ~0.13s HTTPS | ✅ | local NVMe cache keeps hot files fast |
 | 2026-06-17 | 2 | 2.1.6 clone via `juicefs clone` (CoW); rt2 2nd DB: files byte-identical, MinIO flat (no dup), drop cleans; 77/77 unit (+2) | ✅ | **Phase 2.1 (object-storage filestore) COMPLETE** |
+| 2026-06-17 | 2 | 2.2.1 registry (`provision-registry.sh`, registry:2 localhost+bcrypt) push/pull verified; 2.2.2 `odoo-base:18.0` built+pushed (source baked at /opt/odoo, odoo runs no-mount, 29 core+624 extra addons) | ✅ | `.dockerignore` excl .git; COPY --chown single layer |
+| 2026-06-17 | 2 | 2.2.3 `Dockerfile.tenant.jinja` + `_render_tenant_dockerfile`/`_tenant_base_image`; `saas.server.registry_host`, `saas.build.image_ref/digest`; 79/79 unit (+2) | ✅ | substrate ready; pipeline=2.2.4 next |
 
 **Local env quick reference:**
 - venv: `/home/moutaz/Documents/Work/odoo18/.env` (py3.12, all deps). Config: `odoo18/odoo.conf` (PG12 @5432, user odoo18, addons incl. custom/saas).

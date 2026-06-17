@@ -123,3 +123,23 @@ class TestObjectFilestore(TransactionCase):
         self.assertIn('cp -a', joined)
         self.assertNotIn('juicefs clone', joined)
         self.assertIn('/data/odoo/filestore/newdb', inst._hosting_filestore_path('newdb'))
+
+    # -------- 2.2: immutable tenant image — base ref + Dockerfile render -----
+    def test_tenant_base_image_ref(self):
+        srv = self.env['saas.server'].sudo().create(
+            {'name': 'reg-srv', 'registry_host': '127.0.0.1:5000'})
+        inst = self._instance('regtest', srv)
+        # uses the version's image tag from saas.odoo.version
+        ref = inst._tenant_base_image()
+        self.assertTrue(ref.startswith('127.0.0.1:5000/odoo-base:'))
+        # no registry configured -> legacy mode (empty)
+        srv2 = self.env['saas.server'].sudo().create({'name': 'noreg-srv'})
+        self.assertEqual(self._instance('noregtest', srv2)._tenant_base_image(), '')
+
+    def test_render_tenant_dockerfile(self):
+        srv = self.env['saas.server'].sudo().create(
+            {'name': 'reg-srv2', 'registry_host': '127.0.0.1:5000'})
+        inst = self._instance('dftest', srv)
+        df = inst._render_tenant_dockerfile()
+        self.assertIn('FROM 127.0.0.1:5000/odoo-base:', df)
+        self.assertIn('USER odoo', df)

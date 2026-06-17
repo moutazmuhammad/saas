@@ -162,10 +162,15 @@ backup/restore test. Only then do we touch the god-model.
       filestore. NB: the CoW skips Odoo's `checklist/` GC hard-links (rebuilt by Odoo — no data loss).
 
 ### 2.2 Container registry + immutable images
-- [ ] **2.2.1** Stand up a registry (self-hosted Distribution or managed); auth configured.
-- [ ] **2.2.2** Build + push the Odoo 18 **base image** (then 17, 16).
-- [ ] **2.2.3** Implement platform-generated **tenant Dockerfile** template (base + custom modules + pip,
-      requirements layer cached before module layer).
+- [x] **2.2.1** `provision-registry.sh` — self-hosted `registry:2`, localhost-bound (the box has an exposure
+      history), bcrypt basic auth, persistent volume. Verified: login + push/pull round-trip + catalog API.
+- [x] **2.2.2** `Dockerfile.odoo-base` + `build-base-image.sh` bake the Odoo source into `odoo-base:<ver>`
+      at `/opt/odoo` (so the hardcoded `addons_path` works unchanged + tenant images need no host mount).
+      Built/pushed `odoo-base:18.0` on the box. ONE-TIME per version (tenant builds are `FROM odoo-base`).
+      NB: a `.dockerignore` excludes `.git` (193 MB) — the COPY then takes ~42 s, not minutes.
+- [x] **2.2.3** `templates/Dockerfile.tenant.jinja` + `_render_tenant_dockerfile()` — `FROM odoo-base` then
+      pip layer (cached before) then custom-modules layer. `saas.server.registry_host` +
+      `_tenant_base_image()` select the ref; `saas.build.image_ref`/`image_digest` record the result.
 - [ ] **2.2.4** Build pipeline step: produce `tenant-18-<sha>`, push to registry, record on `saas.build`.
 - [ ] **2.2.5** **Sandbox the build worker** (ephemeral, rootless, egress-restricted, no platform creds) —
       it runs untrusted customer code. *Done when:* a malicious `requirements.txt` cannot reach secrets.

@@ -33,6 +33,14 @@ class SaasBuild(models.Model):
     date_start = fields.Datetime(string='Started', default=fields.Datetime.now)
     date_done = fields.Datetime(string='Finished')
     log = fields.Text(string='Log')
+    # Phase 2.2: the immutable image this build produced (registry image by SHA).
+    # Deploy/rollback reference image_digest (content-addressed, immutable).
+    image_ref = fields.Char(
+        string='Image', help='Tenant image tag pushed to the registry, '
+        'e.g. 127.0.0.1:5000/tenant-<sub>:<sha>.')
+    image_digest = fields.Char(
+        string='Image Digest', help='Content-addressed image digest '
+        '(registry@sha256:…) — the immutable reference deploy/rollback pin to.')
 
     @api.depends('commit_sha')
     def _compute_short(self):
