@@ -16,21 +16,16 @@ import {
   RotateCw,
   Play,
   Square,
-  Database,
   Code2,
   ScrollText,
-  Archive,
   ArrowRight,
   Terminal,
   Settings,
   FolderGit2,
   FileCode2,
-  Clock,
-  Activity,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { PerformanceHistory } from "@/components/PerformanceHistory";
 import { DeploymentHistory } from "@/components/DeploymentHistory";
 import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
@@ -48,9 +43,7 @@ import {
   type ProjectEnvironments,
   type StatusData,
 } from "@/lib/api";
-import Databases from "@/pages/portal/Databases";
 import Logs from "@/pages/portal/Logs";
-import Backups from "@/pages/portal/Backups";
 import Code from "@/pages/portal/Code";
 import SqlConsole from "@/pages/portal/SqlConsole";
 import ShellConsole from "@/pages/portal/ShellConsole";
@@ -552,7 +545,6 @@ function MainPanel({
   const [status, setStatus] = React.useState<StatusData | null>(null);
   const [pending, setPending] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
-  const [tab, setTab] = React.useState("overview");
 
   const refreshStatus = React.useCallback(async () => {
     try {
@@ -612,16 +604,8 @@ function MainPanel({
     { key: "clone", label: "Clone", icon: Copy, enabled: true, action: () => setTool("clone") },
     { key: "shell", label: "Shell", icon: Terminal, enabled: true, action: () => setTool("shell") },
     { key: "sql", label: "SQL", icon: FileCode2, enabled: true, action: () => setTool("sql") },
-    { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => setTab("logs") },
+    { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => setTool("logs") },
     { key: "merge", label: "Merge", icon: GitMerge, enabled: true, action: onMergeInto },
-  ];
-
-  const subtabs: { key: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-    { key: "overview", label: "Overview", icon: Clock },
-    { key: "metrics", label: "Metrics", icon: Activity },
-    { key: "databases", label: "Databases", icon: Database },
-    { key: "logs", label: "Logs", icon: ScrollText },
-    { key: "backups", label: "Backups", icon: Archive },
   ];
 
   return (
@@ -696,32 +680,10 @@ function MainPanel({
         </div>
       )}
 
-      {/* Sub-tab bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
-        <div className="flex flex-wrap">
-          {subtabs.map((t) => {
-            const active = tab === t.key && tool !== "sql" && tool !== "shell";
-            return (
-              <button
-                key={t.key}
-                onClick={() => {
-                  setTab(t.key);
-                  setTool("");
-                }}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors",
-                  active
-                    ? "bg-primary/10 font-medium text-foreground"
-                    : "text-muted hover:bg-border/50 hover:text-foreground",
-                )}
-              >
-                <t.icon className="size-4" />
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
-        <div className="flex items-center gap-2 pr-2">
+      {/* Action bar (Databases / Logs / Backups / Metrics / Overview live in the
+          left sidebar — the workspace stays focused on environment management) */}
+      {(url || onDelete) && (
+        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border px-3 py-2">
           {url && (
             <Button size="sm" onClick={() => window.open(url, "_blank")}>
               <ExternalLink className="size-4" />
@@ -735,7 +697,7 @@ function MainPanel({
             </Button>
           )}
         </div>
-      </div>
+      )}
 
       {/* Body — flex-fills the card so the panel stays within the viewport
           (only this area scrolls) and doesn't resize when switching tabs */}
@@ -748,27 +710,9 @@ function MainPanel({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
           <ShellConsole key={env.id} instanceId={env.id} />
         </div>
-      ) : tab === "metrics" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          {isRunning ? (
-            <PerformanceHistory key={env.id} instanceId={env.id} />
-          ) : (
-            <p className="text-sm text-muted">
-              Metrics are available while this environment is running.
-            </p>
-          )}
-        </div>
-      ) : tab === "databases" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          <Databases key={env.id} embedId={env.id} />
-        </div>
-      ) : tab === "logs" ? (
+      ) : tool === "logs" ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
           <Logs key={env.id} embedId={env.id} />
-        </div>
-      ) : tab === "backups" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          <Backups key={env.id} embedId={env.id} />
         </div>
       ) : (
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
