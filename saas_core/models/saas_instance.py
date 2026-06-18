@@ -3107,8 +3107,24 @@ class SaasInstance(models.Model):
 
         return addons_paths
 
+    # Keys a tenant must NEVER set via Extra Configuration:
+    #  - logfile / log_db / pidfile / data_dir: would write unbounded files to
+    #    disk. logfile is the key one — without it Odoo logs to stdout, which
+    #    Docker caps (json-file max-size 10m x3 = 30MB), so a tenant can't fill
+    #    the host disk with logs. log_db would bloat the database instead.
+    #  - db_* / admin_passwd / list_db: would let a tenant repoint its database
+    #    or change the master password.
+    _FORBIDDEN_EXTRA_CONFIG = {
+        'logfile', 'log_db', 'log_db_level', 'pidfile', 'data_dir',
+        'db_host', 'db_port', 'db_user', 'db_password', 'db_name',
+        'db_sslmode', 'db_template', 'admin_passwd', 'list_db', 'dbfilter',
+    }
+
     def _parse_extra_config(self):
-        """Parse the extra_config text field into a dict."""
+        """Parse the extra_config text field into a dict, dropping any key in
+        ``_FORBIDDEN_EXTRA_CONFIG`` so a tenant can never override logging,
+        data paths or DB/credentials from odoo.conf (see the constraint for the
+        user-facing rejection — this strip is the belt-and-braces guarantee)."""
         self.ensure_one()
         result = {}
         if self.extra_config:
@@ -3116,8 +3132,35 @@ class SaasInstance(models.Model):
                 line = line.strip()
                 if '=' in line and not line.startswith('#'):
                     key, _, value = line.partition('=')
-                    result[key.strip()] = value.strip()
+                    key = key.strip()
+                    if key.lower() in self._FORBIDDEN_EXTRA_CONFIG:
+                        continue
+                    result[key] = value.strip()
         return result or None
+
+    @api.constrains('extra_config')
+    def _check_extra_config(self):
+        """Reject blocked keys at save time with a clear message — so a tenant
+        knows WHY their override didn't apply (rather than it being silently
+        dropped). 'logfile' is the important one: it keeps logs on stdout
+        (Docker-capped at 30MB) instead of growing a file that fills the disk."""
+        for rec in self:
+            if not rec.extra_config:
+                continue
+            bad = []
+            for line in rec.extra_config.splitlines():
+                line = line.strip()
+                if '=' in line and not line.startswith('#'):
+                    key = line.partition('=')[0].strip().lower()
+                    if key in self._FORBIDDEN_EXTRA_CONFIG:
+                        bad.append(key)
+            if bad:
+                raise ValidationError(_(
+                    "These options can't be set in Extra Configuration: %s.\n\n"
+                    "In particular 'logfile' is blocked on purpose — your logs "
+                    "always stream to the platform (and are size-capped) so they "
+                    "can never fill your instance's disk. View them under Logs."
+                ) % ', '.join(sorted(set(bad))))
 
     def _provision_postgresql(self, create_db=True):
         """Ensure the PostgreSQL role exists, and optionally the per-instance DB.
