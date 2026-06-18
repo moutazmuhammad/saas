@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 // left menu carries the account sections only — no duplicate Projects entry.
 const NAV = [
   { to: "/my/billing", label: "Billing", icon: Receipt },
-  { to: "/my/settings", label: "Settings", icon: Settings },
+  // Account "Settings" lives in the avatar dropdown — no duplicate in the rail.
 ];
 
 type NavItem = { to: string; label: string; icon: typeof Receipt; end?: boolean; tab?: string };

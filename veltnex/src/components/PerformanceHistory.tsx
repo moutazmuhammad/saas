@@ -12,6 +12,25 @@ const RANGES: { key: string; label: string }[] = [
   { key: "14d", label: "14d" },
 ];
 
+// How often the history charts auto-refresh per window — tighter for short
+// windows so the graph visibly streams (DigitalOcean-style), looser for long
+// ones where each point covers minutes/hours anyway.
+const HISTORY_REFRESH_MS: Record<string, number> = {
+  "1h": 15000,
+  "6h": 30000,
+  "24h": 60000,
+  "7d": 120000,
+  "14d": 300000,
+};
+
+const RANGE_HOURS: Record<string, number> = {
+  "1h": 1,
+  "6h": 6,
+  "24h": 24,
+  "7d": 24 * 7,
+  "14d": 24 * 14,
+};
+
 /**
  * Odoo.sh-style per-customer performance history: CPU / RAM (% of plan) and
  * storage over a selectable window, up to the 14-day retention. Data comes from
@@ -25,31 +44,92 @@ export function PerformanceHistory({
   instanceId: number;
   accessToken?: string;
 }) {
-  const [range, setRange] = React.useState("24h");
+  const [range, setRange] = React.useState("1h");
   const [data, setData] = React.useState<MetricsHistory | null>(null);
   const [loading, setLoading] = React.useState(true);
+  // Live current reading (DigitalOcean-style): polled frequently, and the poll
+  // itself marks the instance "watched" so the background sampler keeps
+  // measuring it while this view is open.
+  const [live, setLive] = React.useState<{ cpu: number; ram: number; at: string } | null>(null);
 
+  // History: load on range change, then auto-refresh on an interval matched to
+  // the window so new points stream into the charts without a manual reload.
   React.useEffect(() => {
     let alive = true;
     setLoading(true);
-    api
-      .instanceMetricsHistory(instanceId, range, accessToken)
-      .then((d) => alive && setData(d))
-      .catch(() => alive && setData(null))
-      .finally(() => alive && setLoading(false));
+    const load = () =>
+      api
+        .instanceMetricsHistory(instanceId, range, accessToken)
+        .then((d) => alive && setData(d))
+        .catch(() => {})
+        .finally(() => alive && setLoading(false));
+    load();
+    const t = setInterval(load, HISTORY_REFRESH_MS[range] ?? 60000);
     return () => {
       alive = false;
+      clearInterval(t);
     };
   }, [instanceId, range, accessToken]);
 
+  // Live poll every 5s — keeps the instance watched + drives the live readout.
+  React.useEffect(() => {
+    let alive = true;
+    const poll = () =>
+      api
+        .instanceMetrics(instanceId, accessToken)
+        .then((d) => alive && setLive(d))
+        .catch(() => {});
+    poll();
+    const t = setInterval(poll, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [instanceId, accessToken]);
+
   const samples = data?.samples ?? [];
+  const lastSample = samples[samples.length - 1];
+  const cpuNow = live?.cpu ?? lastSample?.cpu ?? 0;
+  const ramNow = live?.ram ?? lastSample?.ram ?? 0;
+  const storagePct = lastSample?.storage_pct ?? 0;
+  const storageMb = lastSample?.storage_mb ?? 0;
+
+  // Time window for the charts: plot x by REAL time so "now" is always the
+  // right edge and sparse/old samples sit at their true position (not stretched
+  // across the width). End at now (or the latest sample, if the clock's ahead).
+  const hours = data?.hours ?? RANGE_HOURS[range] ?? 24;
+  const lastMs = lastSample ? new Date(lastSample.t).getTime() : Date.now();
+  const endMs = Math.max(Date.now(), lastMs);
+  const startMs = endMs - hours * 3600 * 1000;
+
+  // Mirror the live cards into the charts: append the current reading as the
+  // newest point (at "now") so the big graph's right edge advances every poll,
+  // exactly in step with the small cards above.
+  const chartSamples: MetricSample[] = live
+    ? [
+        ...samples,
+        {
+          t: new Date(endMs).toISOString(),
+          cpu: live.cpu,
+          ram: live.ram,
+          storage_mb: storageMb,
+          storage_pct: storagePct,
+        },
+      ]
+    : samples;
 
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Activity className="size-4 text-primary" />
-          Performance history
+          Performance
+          {live && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
+              <span className="size-1.5 rounded-full bg-success animate-pulse-soft" />
+              Live
+            </span>
+          )}
           <span className="text-xs font-normal text-muted">
             · retained {data?.retention_days ?? 14} days
           </span>
@@ -72,9 +152,16 @@ export function PerformanceHistory({
         </div>
       </div>
 
+      {/* Live readout — current CPU / Memory / Disk, refreshed every few secs. */}
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <LiveStat label="CPU" pct={cpuNow} color="#4c8dff" live={!!live} />
+        <LiveStat label="Memory" pct={ramNow} color="#a142f4" live={!!live} />
+        <LiveStat label="Disk" pct={storagePct} sub={`${storageMb.toFixed(0)} MB`} color="#12b886" />
+      </div>
+
       {loading ? (
         <div className="mt-6 h-48 animate-pulse rounded-lg bg-background" />
-      ) : samples.length < 2 ? (
+      ) : chartSamples.length < 2 ? (
         <div className="mt-6 flex h-48 flex-col items-center justify-center gap-1 text-sm text-muted">
           <Activity className="size-6 opacity-40" />
           No performance data yet for this window.
@@ -85,25 +172,29 @@ export function PerformanceHistory({
           <AreaChart
             label="CPU"
             unit="% of plan"
-            color="var(--primary)"
-            samples={samples}
+            color="#4c8dff"
+            samples={chartSamples}
             pick={(s) => s.cpu}
-            scaleMax={100}
+            startMs={startMs}
+            endMs={endMs}
           />
           <AreaChart
             label="Memory"
             unit="% of plan"
             color="#a142f4"
-            samples={samples}
+            samples={chartSamples}
             pick={(s) => s.ram}
-            scaleMax={100}
+            startMs={startMs}
+            endMs={endMs}
           />
           <AreaChart
             label="Storage"
             unit="MB"
             color="#12b886"
-            samples={samples}
+            samples={chartSamples}
             pick={(s) => s.storage_mb}
+            startMs={startMs}
+            endMs={endMs}
           />
         </div>
       )}
@@ -117,37 +208,51 @@ function AreaChart({
   color,
   samples,
   pick,
-  scaleMax,
+  startMs,
+  endMs,
 }: {
   label: string;
   unit: string;
   color: string;
   samples: MetricSample[];
   pick: (s: MetricSample) => number;
-  scaleMax?: number;
+  startMs: number;
+  endMs: number;
 }) {
   const W = 600;
   const H = 120;
   const PAD = 4;
+  const isPct = unit !== "MB";
+  const span = Math.max(1, endMs - startMs);
+  const tMs = (s: MetricSample) => new Date(s.t).getTime();
   const values = samples.map(pick);
-  const dataMax = Math.max(...values, scaleMax ?? 0, 1);
-  const max = scaleMax ? Math.max(scaleMax, dataMax) : dataMax * 1.15;
+  const dataMax = Math.max(...values, 0);
+  // Auto-scale the y-axis to the data (DigitalOcean-style) so small CPU values
+  // are actually visible — rounded up to a "nice" ceiling, never a flat line
+  // pinned to 0–100%.
+  const max = isPct ? nicePctCeil(dataMax) : Math.max(dataMax * 1.15, 1);
+  const axisLabel = (v: number) => (isPct ? `${v.toFixed(0)}%` : `${v.toFixed(0)}M`);
   const [hover, setHover] = React.useState<number | null>(null);
 
-  const x = (i: number) =>
-    samples.length > 1 ? (i / (samples.length - 1)) * (W - PAD * 2) + PAD : PAD;
+  // x is positioned by REAL time within [startMs, endMs] → "now" is the right
+  // edge and gaps in sampling read as gaps, not stretched lines.
+  const x = (ms: number) => ((ms - startMs) / span) * (W - PAD * 2) + PAD;
   const y = (v: number) => H - PAD - (Math.min(v, max) / max) * (H - PAD * 2);
 
-  const line = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-  const area = `${PAD},${H - PAD} ${line} ${(W - PAD).toFixed(1)},${H - PAD}`;
+  const pts = samples.map((s, i) => ({ px: x(tMs(s)), py: y(values[i]) }));
+  const line = pts.map((p) => `${p.px.toFixed(1)},${p.py.toFixed(1)}`).join(" ");
+  const area = pts.length
+    ? `${pts[0].px.toFixed(1)},${H - PAD} ${line} ${pts[pts.length - 1].px.toFixed(1)},${H - PAD}`
+    : "";
   const gid = `grad-${label}`;
 
   const last = values[values.length - 1] ?? 0;
-  const peak = Math.max(...values);
+  const peak = values.length ? Math.max(...values) : 0;
   const fmt = (v: number) => (unit === "MB" ? `${v.toFixed(0)} MB` : `${v.toFixed(0)}%`);
 
   const hv = hover != null ? values[hover] : null;
   const ht = hover != null ? samples[hover].t : null;
+  const ticks = [0, 1 / 3, 2 / 3, 1].map((f) => startMs + f * span);
 
   return (
     <div>
@@ -157,10 +262,17 @@ function AreaChart({
           now <span className="font-semibold tabular-nums text-foreground">{fmt(last)}</span>
           <span className="mx-1.5 opacity-40">·</span>peak{" "}
           <span className="tabular-nums">{fmt(peak)}</span>
-          <span className="ml-1 opacity-60">{unit !== "MB" ? "" : ""}</span>
         </span>
       </div>
-      <div className="relative">
+      <div className="flex gap-1.5">
+        {/* y-axis scale labels (auto-scaled so small values are readable) */}
+        <div className="flex w-8 shrink-0 flex-col justify-between py-0.5 text-right text-[9px] tabular-nums text-muted">
+          <span>{axisLabel(max)}</span>
+          <span>{axisLabel(max / 2)}</span>
+          <span>{axisLabel(0)}</span>
+        </div>
+        <div className="min-w-0 flex-1">
+        <div className="relative">
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
@@ -168,9 +280,17 @@ function AreaChart({
           onMouseLeave={() => setHover(null)}
           onMouseMove={(e) => {
             const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-            const rel = ((e.clientX - r.left) / r.width) * (W - PAD * 2);
-            const i = Math.round((rel / (W - PAD * 2)) * (samples.length - 1));
-            setHover(Math.max(0, Math.min(samples.length - 1, i)));
+            const relMs = startMs + ((e.clientX - r.left) / r.width) * span;
+            let best = 0;
+            let bestD = Infinity;
+            samples.forEach((s, i) => {
+              const d = Math.abs(tMs(s) - relMs);
+              if (d < bestD) {
+                bestD = d;
+                best = i;
+              }
+            });
+            setHover(samples.length ? best : null);
           }}
         >
           <defs>
@@ -202,8 +322,8 @@ function AreaChart({
           />
           {hover != null && (
             <line
-              x1={x(hover)}
-              x2={x(hover)}
+              x1={pts[hover].px}
+              x2={pts[hover].px}
               y1={PAD}
               y2={H - PAD}
               stroke={color}
@@ -213,18 +333,87 @@ function AreaChart({
             />
           )}
           {hover != null && (
-            <circle cx={x(hover)} cy={y(values[hover])} r="2.5" fill={color} vectorEffect="non-scaling-stroke" />
+            <circle cx={pts[hover].px} cy={pts[hover].py} r="2.5" fill={color} vectorEffect="non-scaling-stroke" />
           )}
         </svg>
         {hv != null && ht && (
           <div
             className="pointer-events-none absolute -top-1 z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-border bg-card px-2 py-1 text-[11px] shadow-lg"
-            style={{ left: `${(hover! / (samples.length - 1)) * 100}%` }}
+            style={{ left: `${((new Date(ht).getTime() - startMs) / span) * 100}%` }}
           >
             <div className="font-semibold tabular-nums">{fmt(hv)}</div>
             <div className="text-muted">{formatTime(ht)}</div>
           </div>
         )}
+      </div>
+        {/* x-axis time labels — make it obvious the right edge is "now". */}
+        <div className="mt-1 flex justify-between text-[10px] tabular-nums text-muted">
+          {ticks.map((t, i) => (
+            <span key={i}>{formatAxis(t, span)}</span>
+          ))}
+        </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Round a percentage up to a readable axis ceiling so a tiny CPU signal still
+// fills the chart with a labelled scale (e.g. 8% → 10, 39% → 50, 72% → 100).
+function nicePctCeil(v: number): number {
+  if (v <= 5) return 5;
+  if (v <= 10) return 10;
+  if (v <= 25) return 25;
+  if (v <= 50) return 50;
+  return 100;
+}
+
+// Axis tick: clock for windows ≤ 24h, date for longer ones.
+function formatAxis(ms: number, span: number): string {
+  const d = new Date(ms);
+  if (span <= 24 * 3600 * 1000) {
+    return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** A single live metric (DigitalOcean-style): big current value + a usage bar,
+ *  with a pulsing dot while the value is being polled live. */
+function LiveStat({
+  label,
+  pct,
+  sub,
+  color,
+  live,
+}: {
+  label: string;
+  pct: number;
+  sub?: string;
+  color: string;
+  live?: boolean;
+}) {
+  const width = Math.max(0, Math.min(100, pct));
+  return (
+    <div className="rounded-lg border border-border bg-background/60 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted">{label}</span>
+        {live && (
+          <span
+            title="Live"
+            className="size-1.5 rounded-full bg-success animate-pulse-soft"
+          />
+        )}
+      </div>
+      <div className="mt-1 flex items-baseline gap-0.5">
+        <span className="text-2xl font-semibold tabular-nums">{pct.toFixed(0)}</span>
+        <span className="text-sm text-muted">%</span>
+        {sub && <span className="ml-auto text-[11px] text-muted">{sub}</span>}
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${width}%`, backgroundColor: color }}
+        />
       </div>
     </div>
   );

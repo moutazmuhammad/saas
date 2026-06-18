@@ -5275,6 +5275,52 @@ class SaasInstance(models.Model):
                         "Failed to resume child environments for %s",
                         self.subdomain)
 
+    def _validate_repo_before_change(self, repo_url, branch, github_token=None):
+        """Pre-flight a repository URL + branch (with optional token) via
+        ``git ls-remote`` on the docker host, BEFORE writing the repo or
+        redeploying. A wrong URL, missing branch, or bad token is rejected with
+        a clear ``UserError`` and the running instance is left completely
+        untouched — so a bad repo can never trigger a redeploy that
+        crash-loops the customer's container.
+
+        No-op when the instance has no docker host yet (the first deploy's
+        clone step validates it there). Network/SSH hiccups are surfaced as a
+        retryable error, never as a silent pass.
+        """
+        self.ensure_one()
+        server = self.docker_server_id
+        repo_url = (repo_url or '').strip()
+        branch = (branch or 'main').strip() or 'main'
+        if not server or not repo_url:
+            return
+        # Mirror saas.instance.repo._get_clone_url: strip any userinfo, then
+        # inject the token for private HTTPS repos.
+        url = re.sub(r'^(https?://)[^@/]+@', r'\1', repo_url)
+        token = (github_token or '').strip()
+        if token and url.startswith('https://'):
+            url = 'https://x-access-token:%s@%s' % (token, url[len('https://'):])
+        cmd = 'git ls-remote --heads %s %s 2>&1' % (
+            shlex.quote(url), shlex.quote(branch))
+        try:
+            with server._get_ssh_connection() as ssh:
+                exit_code, stdout, stderr = ssh.execute(cmd, timeout=60)
+        except Exception as e:
+            raise UserError(_(
+                "Couldn't reach the repository to validate it. Please try "
+                "again.\n%s") % str(e)[-300:])
+        out = ((stdout or '') + (stderr or '')).strip()
+        if token:                      # never echo the token back to the client
+            out = out.replace(token, '***')
+        if exit_code != 0:
+            raise UserError(_(
+                "The repository could not be accessed — check the URL, the "
+                "branch, and the access token (private repos need a token).\n%s"
+            ) % out[-400:])
+        if ('refs/heads/%s' % branch) not in out:
+            raise UserError(_(
+                "Branch '%s' was not found in the repository. Check the "
+                "branch name.") % branch)
+
     def action_redeploy(self):
         """Redeploy: clone pending repos, pull cloned repos, update config/mounts,
         install pending modules, and restart the container (async)."""

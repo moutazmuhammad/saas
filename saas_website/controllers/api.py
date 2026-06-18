@@ -736,6 +736,17 @@ class SaasApi(http.Controller):
         existing = inst.repo_ids[:1]
         if not repo_url and not existing:
             return ok(instance._get_status_dict())  # nothing to do
+        # Pre-flight: confirm the repo is reachable and the branch exists BEFORE
+        # writing anything or redeploying. A bad URL / missing branch / wrong
+        # token must never trigger a redeploy that crash-loops the running
+        # instance — reject it cleanly and leave the instance untouched.
+        if repo_url:
+            eff_token = (git_token if git_token is not None
+                         else (existing.sudo().github_token if existing else None))
+            try:
+                inst._validate_repo_before_change(repo_url, repo_branch, eff_token)
+            except UserError as e:
+                return err(str(e), 'repo_unreachable')
         try:
             self._require_redeployable(instance)
             if repo_url:
@@ -799,7 +810,7 @@ class SaasApi(http.Controller):
         # Installing happens via docker exec, so the container must be up.
         if instance.state != 'running':
             return err(_("Start the instance first — packages are installed "
-                         "into the running container."), 'invalid_state')
+                         "into the running server."), 'invalid_state')
         inst = instance.sudo()
         try:
             inst.pip_packages = (pip_packages or '').strip() or False

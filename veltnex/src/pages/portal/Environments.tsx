@@ -710,8 +710,21 @@ function MainPanel({
     ? `git clone --branch ${env.branch} ${project.repo_url}`
     : "";
 
+  // Console sections (Logs/Shell/SQL) need a viewport-bounded panel with their
+  // OWN internal scroll so the tail stays on screen. Content sections (Overview/
+  // Metrics/Databases/Snapshots) flow naturally and let the PAGE scroll — so the
+  // content is never clipped under the section tabs.
+  const bounded = tab === "logs" || tab === "shell" || tab === "sql";
+
   return (
-    <Card className="flex max-h-[calc(100dvh-12rem)] flex-col overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100dvh-14.5rem)]">
+    <Card
+      className={cn(
+        "flex flex-col",
+        bounded
+          ? "max-h-[calc(100dvh-12rem)] overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100dvh-14.5rem)]"
+          : "overflow-visible",
+      )}
+    >
       {/* Header */}
       <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
@@ -789,10 +802,11 @@ function MainPanel({
           navigates away from the environment. */}
       <SectionTabBar tab={tab} setTab={setTab} />
 
-      {/* Body — flex-fills the card so the panel stays within the viewport
-          (only this area scrolls) and doesn't resize when switching tabs */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+      {/* Body — for console sections this flex-fills the bounded card (only this
+          area scrolls); for content sections it flows so the page scrolls and
+          nothing is clipped under the tabs. */}
+      <div className={cn("flex min-h-0 flex-1 flex-col", bounded && "overflow-hidden")}>
+      <div className={cn("min-h-0 flex-1 p-5", bounded && "overflow-y-auto")}>
         {pendingPay ? (
           <AlertBanner
             variant="warning"
