@@ -624,6 +624,21 @@ class SaasApi(http.Controller):
                   if instance.usage_last_updated else '',
         })
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/metrics/history',
+                type='json', auth='public')
+    def instance_metrics_history(self, instance_id, access_token=None, range=None):
+        """Odoo.sh-style performance HISTORY for the customer's own instance:
+        a downsampled CPU/RAM/storage time-series over the requested window
+        (default 24h, up to the 14-day retention). Tenant-isolated via
+        ``self._instance`` (only the authenticated owner's instance resolves)."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        ranges = {'1h': 1, '6h': 6, '24h': 24, '7d': 24 * 7, '14d': 24 * 14}
+        hours = ranges.get(range or '24h', 24)
+        return ok(instance.sudo()._get_metric_series(hours=hours))
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/action',
                 type='json', auth='public')
     def instance_action(self, instance_id, action=None, access_token=None):

@@ -45,6 +45,7 @@ Key capabilities:
         'data/saas_trial_expiry_cron.xml',
         'data/saas_recurring_billing_cron.xml',
         'data/saas_margin_alert_cron.xml',
+        'data/saas_metrics_cron.xml',
         'data/saas_pending_provision_cron.xml',
         'data/saas_addon_data.xml',
         'data/saas_region_data.xml',

@@ -416,6 +416,23 @@ export interface StatusData {
   provisioning_log?: string;
 }
 
+export interface MetricSample {
+  t: string;
+  cpu: number;
+  ram: number;
+  storage_mb: number;
+  storage_pct: number;
+}
+
+export interface MetricsHistory {
+  instance: string;
+  hours: number;
+  bucket_seconds: number;
+  retention_days: number;
+  plan: { cpu_limit: number; ram_limit: string; storage_limit_gb: number };
+  samples: MetricSample[];
+}
+
 export interface DbOperationStatus {
   id: number;
   operation: "create" | "duplicate" | "drop" | "upgrade";
@@ -535,6 +552,11 @@ export const api = {
     rpc<{ cpu: number; ram: number; at: string }>(
       `/saas/api/v1/instances/${id}/metrics`,
       accessToken ? { access_token: accessToken } : {},
+    ),
+  instanceMetricsHistory: (id: number, range: string, accessToken?: string) =>
+    rpc<MetricsHistory>(
+      `/saas/api/v1/instances/${id}/metrics/history`,
+      { range, ...(accessToken ? { access_token: accessToken } : {}) },
     ),
   instanceAction: (id: number, action: string) =>
     rpc<StatusData>(`/saas/api/v1/instances/${id}/action`, { action }),

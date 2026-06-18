@@ -4276,6 +4276,101 @@ class SaasInstance(models.Model):
                 "SELECT pg_advisory_unlock(%s)", [_LIVE_METRICS_LOCK_KEY],
             )
 
+    # ===== Per-customer metrics history (Odoo.sh-style, 14-day retention) =====
+    @api.model
+    def _cron_record_metrics(self):
+        """Persist a performance sample for every running tenant (CPU/RAM/storage)
+        into ``saas.instance.metric`` for the customer dashboard.
+
+        Cheap + cost-scaling: ONE `docker stats` per host (reuses
+        ``_sample_live_metrics_for_host``, which refreshes cpu/ram via the
+        ComputeDriver), regardless of how many people are looking. Runs on a
+        steady 5-minute cron so history exists even when nobody is watching live.
+        Storage uses the latest value from the 10-min usage refresh (slow-moving).
+        """
+        instances = self.search([
+            ('state', '=', 'running'), ('docker_server_id', '!=', False)])
+        if not instances:
+            return 0
+        by_host = {}
+        for inst in instances:
+            by_host.setdefault(inst.docker_server_id, self.browse())
+            by_host[inst.docker_server_id] |= inst
+        now = fields.Datetime.now()
+        Metric = self.env['saas.instance.metric'].sudo()
+        rows = []
+        for server, insts in by_host.items():
+            try:
+                insts._sample_live_metrics_for_host(server.sudo())
+            except Exception:
+                _logger.warning("metrics: host-batch sample failed on %s", server.id)
+                continue
+            for inst in insts:
+                rows.append({
+                    'instance_id': inst.id, 'ts': now,
+                    'cpu_pct': inst.cpu_usage_pct or 0.0,
+                    'ram_pct': inst.ram_usage_pct or 0.0,
+                    'storage_mb': round((inst.total_storage_bytes or 0.0) / (1024 ** 2), 2),
+                    'storage_pct': inst.storage_usage_pct or 0.0,
+                })
+        if rows:
+            Metric.create(rows)
+            self.env.cr.commit()
+        return len(rows)
+
+    @api.model
+    def _cron_prune_metrics(self):
+        """Enforce the retention window: drop samples older than 14 days."""
+        from .saas_instance_metric import METRIC_RETENTION_DAYS
+        self.env.cr.execute(
+            "DELETE FROM saas_instance_metric WHERE ts < (now() at time zone 'UTC') "
+            "- (%s || ' days')::interval", [METRIC_RETENTION_DAYS])
+        return self.env.cr.rowcount
+
+    def _get_metric_series(self, hours=24, max_points=240):
+        """Return a downsampled metric series for THIS instance over the last
+        ``hours`` hours, averaged into ≤ ``max_points`` time buckets (so a 14-day
+        payload stays small). Shape: {'samples':[{t,cpu,ram,storage,storage_pct}], …}.
+        Tenant isolation is the caller's job (only call for an owned instance)."""
+        self.ensure_one()
+        from .saas_instance_metric import METRIC_RETENTION_DAYS
+        hours = max(1, min(int(hours or 24), METRIC_RETENTION_DAYS * 24))
+        bucket_s = max(60, int(hours * 3600 / max(1, max_points)))
+        self.env.cr.execute(
+            """
+            SELECT to_timestamp(floor(extract(epoch from ts) / %(b)s) * %(b)s) AT TIME ZONE 'UTC' AS bucket,
+                   round(avg(cpu_pct)::numeric, 1)     AS cpu,
+                   round(avg(ram_pct)::numeric, 1)     AS ram,
+                   round(avg(storage_mb)::numeric, 2)  AS storage_mb,
+                   round(avg(storage_pct)::numeric, 1) AS storage_pct
+            FROM saas_instance_metric
+            WHERE instance_id = %(iid)s
+              AND ts >= (now() at time zone 'UTC') - (%(h)s || ' hours')::interval
+            GROUP BY bucket ORDER BY bucket
+            """,
+            {'b': bucket_s, 'iid': self.id, 'h': hours},
+        )
+        samples = [{
+            't': row[0].isoformat() + 'Z',
+            'cpu': float(row[1] or 0.0),
+            'ram': float(row[2] or 0.0),
+            'storage_mb': float(row[3] or 0.0),
+            'storage_pct': float(row[4] or 0.0),
+        } for row in self.env.cr.fetchall()]
+        plan = self.plan_id
+        return {
+            'instance': self.subdomain,
+            'hours': hours,
+            'bucket_seconds': bucket_s,
+            'retention_days': METRIC_RETENTION_DAYS,
+            'plan': {
+                'cpu_limit': plan.cpu_limit if plan else 0,
+                'ram_limit': plan.ram_limit if plan else '',
+                'storage_limit_gb': plan.storage_limit if plan else 0,
+            },
+            'samples': samples,
+        }
+
     @staticmethod
     def _parse_mem_value(mem_str):
         """Parse docker stats memory value like '152.4MiB' or '1.5GiB' into bytes."""

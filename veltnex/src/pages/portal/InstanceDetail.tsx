@@ -26,6 +26,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { AlertBanner } from "@/components/AlertBanner";
 import { InfoCard } from "@/components/InfoCard";
 import { HelpHint } from "@/components/HelpHint";
+import { PerformanceHistory } from "@/components/PerformanceHistory";
 import { EmptyState } from "@/components/EmptyState";
 import { BillingPanel } from "@/components/BillingPanel";
 import { Spinner } from "@/components/Spinner";
@@ -398,6 +399,10 @@ export default function InstanceDetail() {
         <UsageCard icon={Cpu} label="CPU" helpAnchor="cpu-usage" value={live?.cpu ?? instance.usage.cpu} active={isRunning} live={isRunning && !!live} history={cpuHist} />
         <UsageCard icon={MemoryStick} label="Memory" helpAnchor="ram-usage" value={live?.ram ?? instance.usage.ram} active={isRunning} live={isRunning && !!live} history={ramHist} />
         <UsageCard icon={HardDrive} label="Storage" helpAnchor="storage-usage" value={instance.usage.storage} active />
+      </div>
+
+      <div className="mt-4">
+        <PerformanceHistory instanceId={instanceId} accessToken={params.get("access_token") || undefined} />
       </div>
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
