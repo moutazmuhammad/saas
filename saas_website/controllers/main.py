@@ -1331,6 +1331,20 @@ class SaasWebsite(http.Controller):
         if not subdomain:
             return {'available': False, 'message': ''}
 
+        # Throttle so the availability oracle can't be scraped to enumerate
+        # every taken subdomain (and, when signed in, owned cancelled ones).
+        # Keyed by client IP, honouring the nginx reverse proxy.
+        req = request.httprequest
+        xff = req.headers.get('X-Forwarded-For', '')
+        client_ip = (xff.split(',')[0].strip() if xff
+                     else (req.remote_addr or '-'))
+        allowed, _retry = request.env['saas.rate.limit'].sudo()._hit(
+            'check_subdomain', client_ip, 40, 60)
+        if not allowed:
+            return {'available': False,
+                    'message': _("Too many checks — please slow down and try "
+                                 "again in a minute.")}
+
         if not SUBDOMAIN_RE.match(subdomain):
             return {
                 'available': False,

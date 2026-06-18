@@ -17,6 +17,17 @@ class SaasRegistration(http.Controller):
     #  Helpers
     # ------------------------------------------------------------------
 
+    def _throttled(self, scope, limit, window_seconds, key=None):
+        """True if this client has exceeded ``limit`` hits for ``scope`` in
+        the window. Keyed by client IP (honouring the nginx proxy) + key."""
+        req = request.httprequest
+        xff = req.headers.get('X-Forwarded-For', '')
+        ip = (xff.split(',')[0].strip() if xff else (req.remote_addr or '-'))
+        full_key = '%s|%s' % (ip, key) if key else ip
+        allowed, _retry = request.env['saas.rate.limit'].sudo()._hit(
+            scope, full_key, limit, window_seconds)
+        return not allowed
+
     def _registration_context(self, form_values=None, error=None,
                                otp_sent=False):
         """Build common template context for the registration page."""
@@ -72,32 +83,20 @@ class SaasRegistration(http.Controller):
         if password != confirm:
             return _("Passwords do not match.")
 
-        # Check email not already registered
-        existing_user = request.env['res.users'].sudo().search([
-            ('login', '=', email),
-        ], limit=1)
-        if existing_user:
-            return _(
-                "An account with this email already exists. "
-                "Please log in instead."
-            )
-
-        # Check email uniqueness across partners
-        existing_partner = request.env['res.partner'].sudo().search([
-            ('email', '=ilike', email),
-        ], limit=1)
-        if existing_partner:
-            return _(
-                "This email address is already registered. "
-                "Please log in or use a different email."
-            )
-
-        # Check phone uniqueness
-        existing_phone = request.env['res.partner'].sudo().search([
-            ('phone', '=', phone),
-        ], limit=1)
-        if existing_phone:
-            return _("This phone number is already registered to another account.")
+        # Uniqueness is enforced, but the message must NOT reveal WHICH
+        # identifier already exists (account enumeration): a single generic
+        # line covers email (user or partner) and phone alike.
+        generic_dup = _(
+            "We can't create an account with these details. If you already "
+            "have one, please log in instead."
+        )
+        if request.env['res.users'].sudo().search_count([('login', '=', email)]):
+            return generic_dup
+        if request.env['res.partner'].sudo().search_count([
+                ('email', '=ilike', email)]):
+            return generic_dup
+        if request.env['res.partner'].sudo().search_count([('phone', '=', phone)]):
+            return generic_dup
 
         # Validate phone matches the selected country
         if country_id:
@@ -165,6 +164,18 @@ class SaasRegistration(http.Controller):
             )
 
         # POST: validate fields then send OTP
+        phone = post.get('phone', '').strip()
+        # Throttle OTP sending (SMS-bomb / probing): by IP and by target phone.
+        if (self._throttled('register_start', 10, 600)
+                or self._throttled('otp_send', 4, 600, key=phone)):
+            return request.render(
+                'saas_website.registration_form',
+                self._registration_context(
+                    form_values=post,
+                    error=_("Too many attempts. Please wait a few minutes and "
+                            "try again."),
+                ),
+            )
         error = self._validate_registration_fields(post)
         if error:
             return request.render(
@@ -173,10 +184,9 @@ class SaasRegistration(http.Controller):
             )
 
         # Send phone OTP
-        phone = post.get('phone', '').strip()
         OTP = request.env['saas.registration.otp'].sudo()
         try:
-            phone_otp = OTP._generate_and_send_phone(phone)
+            OTP._generate_and_send_phone(phone)
         except Exception:
             _logger.exception("Failed to send OTP to %s", phone)
             return request.render(
@@ -189,8 +199,6 @@ class SaasRegistration(http.Controller):
             )
 
         ctx = self._registration_context(form_values=post, otp_sent=True)
-        # TODO: REMOVE before production — shows OTP on page for testing
-        ctx['debug_phone_otp'] = phone_otp.code
         return request.render('saas_website.registration_form', ctx)
 
     # ------------------------------------------------------------------
@@ -209,6 +217,18 @@ class SaasRegistration(http.Controller):
                 self._registration_context(
                     form_values=post, otp_sent=True,
                     error=_("Please enter the verification code."),
+                ),
+            )
+
+        # A 6-digit code is 1M combinations — throttle so it can't be walked
+        # within the validity window.
+        if self._throttled('otp_verify', 10, 600, key=phone):
+            return request.render(
+                'saas_website.registration_form',
+                self._registration_context(
+                    form_values=post, otp_sent=True,
+                    error=_("Too many attempts. Please wait a few minutes and "
+                            "try again."),
                 ),
             )
 

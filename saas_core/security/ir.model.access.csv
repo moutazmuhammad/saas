@@ -52,3 +52,4 @@ access_saas_instance_container_user,saas.instance.container user,model_saas_inst
 access_saas_instance_container_manager,saas.instance.container manager,model_saas_instance_container,saas_core.group_saas_manager,1,1,1,1
 access_saas_instance_metric_user,saas.instance.metric user,model_saas_instance_metric,saas_core.group_saas_user,1,0,0,0
 access_saas_instance_metric_manager,saas.instance.metric manager,model_saas_instance_metric,saas_core.group_saas_manager,1,1,1,1
+access_saas_rate_limit_manager,saas.rate.limit manager,model_saas_rate_limit,saas_core.group_saas_manager,1,1,1,1

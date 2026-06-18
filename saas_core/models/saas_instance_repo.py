@@ -1,9 +1,11 @@
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import secrets
 import shlex
+import socket
 from urllib.parse import urlparse, urlunparse
 
 import requests as http_requests
@@ -14,6 +16,69 @@ from odoo.exceptions import UserError
 from ..utils import run_in_background
 
 _logger = logging.getLogger(__name__)
+
+
+def _extract_git_host(url):
+    """Return the hostname from a clone URL, supporting both
+    ``https://host/owner/repo`` and SCP-style ``git@host:owner/repo``."""
+    if not url:
+        return ''
+    url = url.strip()
+    if url.startswith('git@'):
+        # git@host:owner/repo(.git)
+        rest = url[len('git@'):]
+        return rest.split(':', 1)[0].split('/', 1)[0].strip()
+    return (urlparse(url).hostname or '').strip()
+
+
+def assert_safe_git_url(url):
+    """Reject user-supplied Git URLs that point at the platform's own
+    infrastructure (SSRF). The server clones from / calls the API of these
+    hosts, so a URL resolving to loopback, link-local (incl. the cloud
+    metadata endpoint 169.254.169.254), private, or otherwise non-public
+    space must never be accepted.
+
+    Raises ``UserError`` when the host is missing or resolves to a
+    non-public address. Validated at the moment of use (not just on input)
+    so DNS-rebinding can't slip an internal address past an earlier check.
+    """
+    host = _extract_git_host(url)
+    if not host:
+        raise UserError(_("The repository URL is missing a valid host."))
+
+    # Resolve every A/AAAA record — a hostname can map to several IPs, and a
+    # single public-looking one must not mask an internal one.
+    addrs = set()
+    try:
+        ip = ipaddress.ip_address(host)
+        addrs.add(ip)
+    except ValueError:
+        try:
+            for fam, _t, _p, _c, sockaddr in socket.getaddrinfo(
+                    host, None, proto=socket.IPPROTO_TCP):
+                addrs.add(ipaddress.ip_address(sockaddr[0]))
+        except (socket.gaierror, UnicodeError, ValueError):
+            raise UserError(_(
+                "We couldn't resolve the repository host '%s'. Check the URL."
+            ) % host)
+
+    if not addrs:
+        raise UserError(_(
+            "We couldn't resolve the repository host '%s'. Check the URL."
+        ) % host)
+
+    for ip in addrs:
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+                or (ip.version == 6 and ip.ipv4_mapped is not None
+                    and (ip.ipv4_mapped.is_private
+                         or ip.ipv4_mapped.is_loopback
+                         or ip.ipv4_mapped.is_link_local))):
+            raise UserError(_(
+                "For security, the repository host must be a public server. "
+                "'%s' points to an internal or reserved address and can't be "
+                "used."
+            ) % host)
 
 
 class SaasInstanceRepo(models.Model):
@@ -183,6 +248,7 @@ class SaasInstanceRepo(models.Model):
     def _get_clone_url(self):
         """Return the clone URL, injecting token if needed for private repos."""
         self.ensure_one()
+        assert_safe_git_url(self.repo_url)
         url = self._strip_userinfo(self.repo_url)
         token = self.sudo().github_token
         if token and url.startswith('https://'):
@@ -456,7 +522,9 @@ class SaasInstanceRepo(models.Model):
             return 'https://gitlab.com/api/v4'
         if 'bitbucket.org' in url:
             return 'https://api.bitbucket.org/2.0'
-        # Self-hosted: extract base from repo URL
+        # Self-hosted (e.g. Gitea): the host comes straight from the customer's
+        # URL and we're about to call its API — guard against SSRF first.
+        assert_safe_git_url(self.repo_url)
         parsed = urlparse(self.repo_url)
         return '%s://%s' % (parsed.scheme or 'https', parsed.hostname)
 

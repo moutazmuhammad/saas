@@ -19,6 +19,7 @@ billing, plan changes, and payment all stay on the existing QWeb routes
 …). The SPA hands off to those with a normal navigation when money is
 involved.
 """
+import hmac
 import logging
 import re
 
@@ -78,23 +79,58 @@ class SaasApi(http.Controller):
         user = self._user()
         return user.partner_id if user else None
 
-    def _instance(self, instance_id, access_token=None):
-        """Authorized sudo recordset for an instance the caller may see.
+    def _instance(self, instance_id, access_token=None, write=False):
+        """Authorized sudo recordset for an instance the caller may act on.
 
-        Mirrors the portal's ``_document_check_access`` semantics: a
-        logged-in owner (record rules) or anyone holding the instance's
-        access token. Raises AccessError/MissingError on failure.
+        The ``access_token`` is a SHARE credential: it grants READ-ONLY
+        visibility (status, metrics, builds) to anyone holding the link, and
+        nothing more. Every state-changing or destructive operation must be
+        performed by the authenticated owner (record rules) — pass
+        ``write=True`` so the token is ignored and ownership is enforced.
+        Raises AccessError/MissingError on failure.
         """
         Instance = request.env['saas.instance']
         instance = Instance.browse(int(instance_id))
         if not instance.exists():
             raise MissingError(_("Instance not found."))
-        if access_token and instance.sudo().access_token == access_token:
+        # Constant-time compare so the token can't be recovered by timing.
+        if (not write and access_token
+                and hmac.compare_digest(
+                    instance.sudo().access_token or '', access_token)):
             return instance.sudo()
         # Record-rule check: will raise AccessError if not the owner.
         instance.check_access_rights('read')
         instance.check_access_rule('read')
         return instance.sudo()
+
+    # ------------------------------------------------------------------
+    #  Abuse protection (brute-force / enumeration / OTP-guessing)
+    # ------------------------------------------------------------------
+
+    def _client_ip(self):
+        """Best-effort client IP, honouring the reverse proxy (nginx sets
+        X-Forwarded-For). The left-most XFF entry is the original client."""
+        req = request.httprequest
+        xff = req.headers.get('X-Forwarded-For', '')
+        if xff:
+            return xff.split(',')[0].strip()
+        return req.remote_addr or '-'
+
+    def _rate_limit(self, scope, limit, window_seconds, key=None):
+        """Register one hit for this client and return an ``err`` envelope if
+        the limit is exceeded, else ``None``. Keyed by ``scope`` + the client
+        IP (plus an optional extra ``key``, e.g. the target phone/login)."""
+        ip = self._client_ip()
+        full_key = '%s|%s' % (ip, key) if key else ip
+        allowed, retry_after = request.env['saas.rate.limit'].sudo()._hit(
+            scope, full_key, limit, window_seconds)
+        if allowed:
+            return None
+        mins = max(1, round(retry_after / 60))
+        return err(
+            _("Too many attempts. Please wait about %d minute(s) and try "
+              "again.") % mins,
+            'rate_limited')
 
     # ==================================================================
     #  Session / account
@@ -111,6 +147,12 @@ class SaasApi(http.Controller):
     def login(self, login=None, password=None, **kw):
         if not login or not password:
             return err(_("Email and password are required."), 'invalid')
+        # Throttle brute-force: by IP, and (tighter) per targeted account.
+        limited = (self._rate_limit('login', 15, 300)
+                   or self._rate_limit('login_acct', 7, 300,
+                                       key=(login or '').strip().lower()))
+        if limited:
+            return limited
         try:
             request.session.authenticate(
                 request.db,
@@ -150,26 +192,36 @@ class SaasApi(http.Controller):
             return _("City is required.")
         if len(password) < 8:
             return _("Password must be at least 8 characters.")
+        # Uniqueness is enforced, but the message must NOT reveal which
+        # identifier already exists (account enumeration): one generic line
+        # for email (user OR partner) and one for phone.
         Users = request.env['res.users'].sudo()
-        if Users.search([('login', '=', email)], limit=1):
-            return _("An account with this email already exists. Please sign in.")
         Partner = request.env['res.partner'].sudo()
-        if Partner.search([('email', '=ilike', email)], limit=1):
-            return _("This email address is already registered.")
-        if Partner.search([('phone', '=', phone)], limit=1):
-            return _("This phone number is already registered.")
+        if (Users.search_count([('login', '=', email)])
+                or Partner.search_count([('email', '=ilike', email)])):
+            return _("We can't create an account with these details. If you "
+                     "already have one, please sign in instead.")
+        if Partner.search_count([('phone', '=', phone)]):
+            return _("We can't create an account with these details. If you "
+                     "already have one, please sign in instead.")
         return None
 
     @http.route('/saas/api/v1/auth/register/start', type='json', auth='public')
     def register_start(self, **p):
         if not request.env.user._is_public():
             return err(_("You're already signed in."), 'already_authenticated')
+        # Throttle OTP sending: by IP and by target phone (SMS-bomb / probing).
+        phone = (p.get('phone') or '').strip()
+        limited = (self._rate_limit('register_start', 10, 600)
+                   or self._rate_limit('otp_send', 4, 600, key=phone))
+        if limited:
+            return limited
         error = self._validate_registration(p)
         if error:
             return err(error, 'invalid')
         try:
-            otp = request.env['saas.registration.otp'].sudo()._generate_and_send_phone(
-                p.get('phone').strip()
+            request.env['saas.registration.otp'].sudo()._generate_and_send_phone(
+                phone
             )
         except Exception:
             _logger.exception("Failed to send registration OTP")
@@ -177,21 +229,22 @@ class SaasApi(http.Controller):
                 _("We couldn't send your verification code. Please try again."),
                 'otp_send_failed',
             )
-        # TODO: REMOVE before production — exposes the OTP to the client
-        # for testing (mirrors registration.py's `debug_phone_otp`).
-        return ok({'otp_sent': True, 'debug_otp': otp.code})
+        return ok({'otp_sent': True})
 
     @http.route('/saas/api/v1/auth/register/resend', type='json', auth='public')
     def register_resend(self, phone=None, **kw):
         phone = (phone or '').strip()
         if not phone:
             return err(_("Phone number is required."), 'invalid')
+        limited = (self._rate_limit('register_resend', 10, 600)
+                   or self._rate_limit('otp_send', 4, 600, key=phone))
+        if limited:
+            return limited
         try:
-            otp = request.env['saas.registration.otp'].sudo()._generate_and_send_phone(phone)
+            request.env['saas.registration.otp'].sudo()._generate_and_send_phone(phone)
         except Exception:
             return err(_("Couldn't resend the code. Please try again."), 'otp_send_failed')
-        # TODO: REMOVE before production — exposes the OTP for testing.
-        return ok({'otp_sent': True, 'debug_otp': otp.code})
+        return ok({'otp_sent': True})
 
     @http.route('/saas/api/v1/auth/register/verify', type='json', auth='public')
     def register_verify(self, **p):
@@ -199,6 +252,11 @@ class SaasApi(http.Controller):
         code = (p.get('otp') or '').strip()
         if not code:
             return err(_("Please enter the verification code."), 'invalid')
+        # A 6-digit code is 1M combinations — without this an attacker could
+        # walk the whole space inside the 10-minute validity window.
+        limited = self._rate_limit('otp_verify', 10, 600, key=phone)
+        if limited:
+            return limited
         OTP = request.env['saas.registration.otp'].sudo()
         if not OTP._verify(phone, code, 'phone'):
             return err(
@@ -458,7 +516,7 @@ class SaasApi(http.Controller):
 
     @http.route('/saas/api/v1/check-subdomain', type='json', auth='public')
     def check_subdomain(self, subdomain='', domain_id=0):
-        # Delegate to the canonical implementation.
+        # Delegate to the canonical implementation (which throttles itself).
         return ok(SaasWebsite().check_subdomain(subdomain=subdomain, domain_id=domain_id))
 
     def _public_plan_config(self, cfg):
@@ -680,7 +738,7 @@ class SaasApi(http.Controller):
                 type='json', auth='public')
     def instance_action(self, instance_id, action=None, access_token=None):
         try:
-            instance = self._instance(instance_id, access_token)
+            instance = self._instance(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         handlers = {
@@ -716,7 +774,7 @@ class SaasApi(http.Controller):
         redeploy. Empty repo_url disconnects (unlinks) the repo. Reuses
         action_redeploy (clone pending repos, re-render config, restart)."""
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         # The repository + token are configured ONCE per PROJECT (on the
@@ -732,6 +790,15 @@ class SaasApi(http.Controller):
                              or repo_url.startswith('git@')):
             return err(_("Repository URL must start with https:// or git@."),
                        'invalid')
+        # SSRF guard: block URLs that resolve to internal/reserved hosts before
+        # any clone / API call is made against them.
+        if repo_url:
+            from odoo.addons.saas_core.models.saas_instance_repo import (
+                assert_safe_git_url)
+            try:
+                assert_safe_git_url(repo_url)
+            except UserError as e:
+                return err(str(e), 'invalid')
         inst = instance.sudo()
         existing = inst.repo_ids[:1]
         if not repo_url and not existing:
@@ -804,7 +871,7 @@ class SaasApi(http.Controller):
         SPA sends the full list, so removing a package drops it from the
         list (uninstalled on the forced reinstall of the remaining set)."""
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         # Installing happens via docker exec, so the container must be up.
@@ -834,8 +901,8 @@ class SaasApi(http.Controller):
     #  Portal: hosting databases
     # ==================================================================
 
-    def _hosting(self, instance_id, access_token=None):
-        instance = self._instance(instance_id, access_token)
+    def _hosting(self, instance_id, access_token=None, write=False):
+        instance = self._instance(instance_id, access_token, write=write)
         if not instance.is_hosting:
             raise AccessError(_("Database management is only available for hosting."))
         return instance
@@ -908,7 +975,7 @@ class SaasApi(http.Controller):
         """Odoo.sh-style read-only SQL console. ``db`` selects which of
         the instance's databases to run against (multi-DB aware)."""
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -931,7 +998,7 @@ class SaasApi(http.Controller):
     def db_create(self, instance_id, name=None, login=None, password=None,
                   access_token=None, **kw):
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -951,7 +1018,7 @@ class SaasApi(http.Controller):
         """Duplicate an existing database into a new name. Runs async
         (same in-flight tracking as create) and returns the new DB name."""
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -971,7 +1038,7 @@ class SaasApi(http.Controller):
         the browser uploads the local backup straight to the bucket
         (bypassing Odoo — no timeout, large files OK)."""
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -1000,7 +1067,7 @@ class SaasApi(http.Controller):
         The archive is validated (real, intact Odoo backup) on the host
         BEFORE the database is touched, so a bad file changes nothing."""
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         backup = request.env['saas.instance.backup'].sudo().browse(
@@ -1023,7 +1090,7 @@ class SaasApi(http.Controller):
                 type='json', auth='public')
     def db_drop(self, instance_id, name=None, access_token=None, **kw):
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -1042,7 +1109,7 @@ class SaasApi(http.Controller):
         Runs async (same in-flight tracking as create/duplicate) and
         returns the op id so the client can poll its result/report."""
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -1084,7 +1151,7 @@ class SaasApi(http.Controller):
         hosting and managed-services instances (snapshots are the one
         app-level add-on a service gets)."""
         try:
-            instance = self._instance(instance_id, access_token)
+            instance = self._instance(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -1107,7 +1174,7 @@ class SaasApi(http.Controller):
         the invoice (and, if the instance was never deployed, the instance
         too). Mandatory invoices can't be cancelled here."""
         try:
-            instance = self._instance(instance_id, access_token)
+            instance = self._instance(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         invoice = instance._get_cancellable_unpaid_invoice()
@@ -1129,7 +1196,7 @@ class SaasApi(http.Controller):
     def db_backup(self, instance_id, name=None, format=None,
                   access_token=None, **kw):
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -1152,8 +1219,11 @@ class SaasApi(http.Controller):
                 type='json', auth='public')
     def db_reset_password(self, instance_id, name=None, new_password=None,
                           login=None, access_token=None, **kw):
+        limited = self._rate_limit('db_reset_pw', 10, 600, key=str(instance_id))
+        if limited:
+            return limited
         try:
-            instance = self._hosting(instance_id, access_token)
+            instance = self._hosting(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         if not new_password or len(new_password) < 6:
@@ -1195,7 +1265,7 @@ class SaasApi(http.Controller):
                 type='json', auth='public')
     def backup_create(self, instance_id, access_token=None, **kw):
         try:
-            instance = self._instance(instance_id, access_token)
+            instance = self._instance(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -1218,7 +1288,7 @@ class SaasApi(http.Controller):
         background; the instance flips to ``provisioning`` and the UI
         polls its status."""
         try:
-            instance = self._instance(instance_id, access_token)
+            instance = self._instance(instance_id, access_token, write=True)
         except (AccessError, MissingError):
             return err(_("Instance not found."), 'not_found')
         try:
@@ -1601,7 +1671,6 @@ class SaasApi(http.Controller):
             'state_label': dict(
                 inst._fields['state'].selection
             ).get(inst.state, inst.state),
-            'access_token': inst.access_token,
             'is_production': inst.environment == 'production',
             'pending_payment': inst.state == 'pending_payment',
             'pending_invoice_id': inst.env_pending_invoice_id.id or False,
@@ -1634,7 +1703,6 @@ class SaasApi(http.Controller):
             'is_hosting': instance.is_hosting,
             'is_trial': instance.is_trial,
             'usage': self._usage(instance),
-            'access_token': instance.access_token,
             # Odoo.sh-style environments.
             'environment': instance.environment,
             'environment_label': dict(

@@ -2341,6 +2341,18 @@ class SaasInstance(models.Model):
                     remaining, origin='environment_removal',
                     reason=_('Unused time for removed %s server %s') % (
                         self.environment, self.name or self.subdomain))
+            # Release the recurring slot. Renewal bills the project's purchased
+            # SLOTS (``staging_slots``/``dev_slots``), not live children — so
+            # without this the customer keeps paying for the removed server on
+            # every renewal forever. Floor at 0 (never go negative).
+            slot_field = ('staging_slots' if self.environment == 'staging'
+                          else 'dev_slots')
+            anchor.sudo().write({
+                slot_field: max(0, (anchor[slot_field] or 0) - 1)})
+            anchor._append_log(
+                "Released one %s slot after removing server '%s' "
+                "(renewal will no longer bill it)."
+                % (self.environment, self.name or self.subdomain))
         if delete_branch and repo and branch:
             repo._delete_branch_on_provider(branch)
         self.action_cancel()
@@ -5363,6 +5375,10 @@ class SaasInstance(models.Model):
         branch = (branch or 'main').strip() or 'main'
         if not server or not repo_url:
             return
+        # SSRF guard: we're about to `git ls-remote` this URL from the docker
+        # host, which can reach internal services — reject non-public hosts.
+        from .saas_instance_repo import assert_safe_git_url
+        assert_safe_git_url(repo_url)
         # Mirror saas.instance.repo._get_clone_url: strip any userinfo, then
         # inject the token for private HTTPS repos.
         url = re.sub(r'^(https?://)[^@/]+@', r'\1', repo_url)
@@ -5975,6 +5991,14 @@ class SaasInstance(models.Model):
         instance_path = self._get_instance_path()
         Backup = self.env['saas.instance.backup'].sudo()
 
+        # 0. Settle the money FIRST, then commit it, so the customer's wallet
+        # credit can never be stranded behind a flaky infrastructure teardown.
+        # Voiding the abandoned unpaid invoices refunds any reserved credit
+        # idempotently; committing it here makes it durable even if a later
+        # teardown step raises and the surrounding transaction is rolled back.
+        self._void_unpaid_invoices_refund_credit()
+        self.env.cr.commit()
+
         # 1. Record the snapshots that existed BEFORE this cancellation.
         # Every one of them is going away — we never keep a "most
         # recent existing" one. The retained slot is reserved for the
@@ -6059,53 +6083,72 @@ class SaasInstance(models.Model):
                     % (repo.name, e)
                 )
 
-        # 3. Tear down infrastructure (tolerant of partial state)
-        with server._get_ssh_connection() as ssh:
-            # Stop + purge container/network/volumes if they exist (best-effort)
-            try:
-                self._compute_driver(connection=ssh).destroy(
-                    self._compute_handle(), purge=True)
-            except Exception as e:
-                self._append_log(
-                    "docker compose down: %s (may not exist yet)" % e
-                )
+        # 3. Tear down infrastructure (tolerant of partial state). The money
+        # has already been settled and committed above, so a teardown failure
+        # (e.g. the host is unreachable) must NEVER abort the cancellation and
+        # bounce the instance back to life — that's what would strand credit.
+        # We flag any leftover infra for the reactivate flow / ops to reap and
+        # carry on to finalise the cancel.
+        try:
+            with server._get_ssh_connection() as ssh:
+                # Stop + purge container/network/volumes if they exist (best-effort)
+                try:
+                    self._compute_driver(connection=ssh).destroy(
+                        self._compute_handle(), purge=True)
+                except Exception as e:
+                    self._append_log(
+                        "docker compose down: %s (may not exist yet)" % e
+                    )
 
-            # Remove instance directory if it exists
-            exit_code, stdout, stderr = ssh.execute(
-                'sudo rm -rf %s' % shlex.quote(instance_path),
+                # Remove instance directory if it exists
+                exit_code, stdout, stderr = ssh.execute(
+                    'sudo rm -rf %s' % shlex.quote(instance_path),
+                )
+                if exit_code != 0:
+                    self._append_log(
+                        "WARNING: Failed to remove directory: %s" % stderr
+                    )
+                    _logger.warning(
+                        "Failed to remove instance dir %s: %s",
+                        instance_path, stderr,
+                    )
+
+                # Remove Nginx config and SSL certificate (if configured).
+                # Track failures so the reactivate flow retries — leaving
+                # a vhost behind is harmless on a stopped container, but
+                # it'd cause a conflict if the customer reactivates with
+                # a different topology.
+                try:
+                    proxy_server = self.domain_id.proxy_server_id
+                    if proxy_server and proxy_server != self.docker_server_id:
+                        with proxy_server._get_ssh_connection() as proxy_ssh:
+                            self._remove_nginx(proxy_ssh)
+                    else:
+                        self._remove_nginx(ssh)
+                except Exception:
+                    _logger.exception(
+                        "Nginx cleanup failed during cancellation of %s",
+                        self.subdomain,
+                    )
+                    self.nginx_cleanup_pending = True
+                    self._append_log(
+                        "Couldn't fully remove the web proxy config — "
+                        "we'll retry automatically the next time you "
+                        "reactivate."
+                    )
+        except Exception:
+            _logger.exception(
+                "Could not reach the host to tear down infrastructure during "
+                "cancellation of %s — finalising the cancel anyway; leftover "
+                "container/files/proxy flagged for cleanup.", self.subdomain,
             )
-            if exit_code != 0:
-                self._append_log(
-                    "WARNING: Failed to remove directory: %s" % stderr
-                )
-                _logger.warning(
-                    "Failed to remove instance dir %s: %s",
-                    instance_path, stderr,
-                )
-
-            # Remove Nginx config and SSL certificate (if configured).
-            # Track failures so the reactivate flow retries — leaving
-            # a vhost behind is harmless on a stopped container, but
-            # it'd cause a conflict if the customer reactivates with
-            # a different topology.
-            try:
-                proxy_server = self.domain_id.proxy_server_id
-                if proxy_server and proxy_server != self.docker_server_id:
-                    with proxy_server._get_ssh_connection() as proxy_ssh:
-                        self._remove_nginx(proxy_ssh)
-                else:
-                    self._remove_nginx(ssh)
-            except Exception:
-                _logger.exception(
-                    "Nginx cleanup failed during cancellation of %s",
-                    self.subdomain,
-                )
-                self.nginx_cleanup_pending = True
-                self._append_log(
-                    "Couldn't fully remove the web proxy config — "
-                    "we'll retry automatically the next time you "
-                    "reactivate."
-                )
+            self.nginx_cleanup_pending = True
+            self.pg_cleanup_pending = True
+            self._append_log(
+                "Couldn't reach the server to fully tear down infrastructure. "
+                "Your subscription is cancelled and billing has stopped — any "
+                "leftover resources will be reaped automatically."
+            )
 
         # Drop database and role (safe if they don't exist). On
         # failure we set a flag the reactivate flow will retry — and
@@ -6218,10 +6261,10 @@ class SaasInstance(models.Model):
                 'error_message': False,
             })
 
-        # Return any wallet credit reserved on now-abandoned unpaid invoices
-        # before finalising the cancellation (so it's never stranded).
-        self._void_unpaid_invoices_refund_credit()
-
+        # Wallet credit on abandoned unpaid invoices was already refunded and
+        # committed at the very top of this method (step 0), so it can't be
+        # stranded by a teardown failure. A second call here would be a no-op
+        # (the invoices are already cancelled) — left out intentionally.
         self.state = 'cancelled'
         self.pending_operation = False
         # Snapshot subscription ends with the instance. Without this
