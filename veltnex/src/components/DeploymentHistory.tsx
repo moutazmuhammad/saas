@@ -9,6 +9,7 @@ import {
   GitMerge,
   RotateCw,
   ChevronDown,
+  ExternalLink,
 } from "lucide-react";
 import { api, type Build } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -87,13 +88,13 @@ export function DeploymentHistory({
               const expandable = failed && !!b.log;
               return (
                 <li key={b.id}>
-                  <button
-                    type="button"
-                    disabled={!expandable}
+                  <div
+                    role={expandable ? "button" : undefined}
+                    tabIndex={expandable ? 0 : undefined}
                     onClick={() => expandable && setOpen(open === b.id ? null : b.id)}
                     className={cn(
                       "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors",
-                      expandable && "hover:bg-foreground/[0.03]",
+                      expandable && "cursor-pointer hover:bg-foreground/[0.03]",
                     )}
                   >
                     {/* status */}
@@ -131,7 +132,22 @@ export function DeploymentHistory({
                             <GitBranch className="size-3" /> {b.branch}
                           </span>
                         )}
-                        {b.commit && <span className="font-mono">{b.commit}</span>}
+                        {b.commit &&
+                          (b.commit_url ? (
+                            <a
+                              href={b.commit_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="View commit on GitHub"
+                              className="inline-flex items-center gap-1 font-mono text-primary underline-offset-2 hover:underline"
+                            >
+                              {b.commit}
+                              <ExternalLink className="size-3" />
+                            </a>
+                          ) : (
+                            <span className="font-mono">{b.commit}</span>
+                          ))}
                         {b.author && <span>by {b.author}</span>}
                         {b.at && <span>{formatDateTime(b.at)}</span>}
                         {b.duration_s != null && <span>· {dur(b.duration_s)}</span>}
@@ -145,7 +161,7 @@ export function DeploymentHistory({
                         )}
                       />
                     )}
-                  </button>
+                  </div>
                   {/* failure reason */}
                   {expandable && open === b.id && (
                     <div className="border-t border-border bg-background/60 px-4 py-3">

@@ -444,6 +444,7 @@ export interface Build {
   at: string;
   duration_s: number | null;
   log: string;
+  commit_url: string;
 }
 
 export interface DbOperationStatus {

@@ -667,6 +667,9 @@ class SaasApi(http.Controller):
                 'author': b.author or '',
                 'at': fields.Datetime.to_string(b.date_start) if b.date_start else '',
                 'duration_s': dur,
+                # Browser link to the commit on GitHub/GitLab (empty if unknown).
+                'commit_url': (b.repo_id._web_commit_url(b.commit_sha)
+                               if b.repo_id and b.commit_sha else ''),
                 # The deploy log tail — so the customer can see WHY a build
                 # failed, not just that it did.
                 'log': (b.log or '')[-6000:] if b.state == 'failed' else '',

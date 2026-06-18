@@ -167,6 +167,19 @@ class SaasInstanceRepo(models.Model):
             return urlunparse(parsed)
         return url
 
+    def _web_commit_url(self, sha):
+        """Browser URL for ``sha`` on the repo's host (GitHub/GitLab/Gitea use
+        ``/commit/<sha>``). Returns '' when we can't build a clean https URL."""
+        self.ensure_one()
+        if not sha:
+            return ''
+        url = self._strip_userinfo(self.repo_url or '')
+        if not url or not url.startswith('https://'):
+            return ''
+        if url.endswith('.git'):
+            url = url[:-4]
+        return '%s/commit/%s' % (url.rstrip('/'), sha)
+
     def _get_clone_url(self):
         """Return the clone URL, injecting token if needed for private repos."""
         self.ensure_one()
