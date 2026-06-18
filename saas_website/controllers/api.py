@@ -1461,6 +1461,7 @@ class SaasApi(http.Controller):
             lambda c: c.state not in ('cancelled', 'cancelled_by_client')
         ).sorted('id')
         repo = prod.repo_ids[:1]
+        prod_plan = prod.plan_id
         return ok({
             'project_id': prod.id,
             'project_name': prod.project_name or prod.subdomain or prod.name,
@@ -1472,6 +1473,26 @@ class SaasApi(http.Controller):
             'has_repo': bool(repo),
             'repo_url': repo.repo_url or '' if repo else '',
             'environments': [self._serialize_env_child(c) for c in children],
+            # Scaling: the Production server's current compute/storage (so the
+            # workspace can offer a "Scale resources" CTA) and how many of the
+            # purchased Staging/Development slots are in use (so it can offer
+            # "add another" up to the entitlement, or buy an extra slot beyond).
+            'production_plan': {
+                'plan_name': prod_plan.name or '',
+                'workers': prod_plan.workers or 0,
+                'storage_gb': int(prod_plan.storage_limit or 0),
+                'is_trial': prod.is_trial,
+            },
+            'slots': {
+                'staging': {
+                    'used': prod._env_used_for('staging'),
+                    'total': prod._env_slots_for('staging'),
+                },
+                'development': {
+                    'used': prod._env_used_for('development'),
+                    'total': prod._env_slots_for('development'),
+                },
+            },
         })
 
     @http.route('/saas/api/v1/instances/<int:instance_id>/environments/create',

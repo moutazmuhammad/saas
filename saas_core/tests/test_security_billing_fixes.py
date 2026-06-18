@@ -212,3 +212,24 @@ class TestApiSecurityHttp(HttpCase):
         self.assertEqual(write.get('code'), 'not_found')
         # And the token must no longer be echoed back in the read payload.
         self.assertNotIn('access_token', read.get('data', {}))
+
+    def test_environments_payload_exposes_scaling(self):
+        # The workspace needs the Production server's resources + slot usage to
+        # offer "Scale resources" and "add test environment" CTAs.
+        prod = self.env['saas.instance'].sudo().create({
+            'subdomain': 'httpscale', 'domain_id': self.domain.id,
+            'partner_id': self.partner.id, 'saas_product_id': self.product.id,
+            'plan_id': self.plan.id, 'billing_period': 'monthly',
+            'environment': 'production', 'region_id': False, 'state': 'running',
+            'is_hosting': True, 'staging_slots': 2})
+        token = prod._portal_ensure_token()
+        res = self._call('/saas/api/v1/instances/%s/environments' % prod.id,
+                         {'access_token': token})
+        self.assertTrue(res.get('ok'), res)
+        data = res['data']
+        self.assertEqual(data['production_plan']['workers'], self.plan.workers)
+        self.assertEqual(data['production_plan']['storage_gb'],
+                         int(self.plan.storage_limit))
+        self.assertFalse(data['production_plan']['is_trial'])
+        self.assertEqual(data['slots']['staging']['total'], 2)
+        self.assertEqual(data['slots']['staging']['used'], 0)

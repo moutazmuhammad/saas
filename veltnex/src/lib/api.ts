@@ -321,6 +321,18 @@ export interface ProjectEnvironments {
   has_repo: boolean;
   repo_url: string;
   environments: EnvChild[];
+  /** Production server's current resources — for the "Scale resources" CTA. */
+  production_plan: {
+    plan_name: string;
+    workers: number;
+    storage_gb: number;
+    is_trial: boolean;
+  };
+  /** Purchased vs in-use Staging/Development slots. */
+  slots: {
+    staging: { used: number; total: number };
+    development: { used: number; total: number };
+  };
 }
 
 export interface ProjectPriceResult extends PriceResult {

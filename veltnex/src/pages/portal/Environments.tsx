@@ -28,6 +28,9 @@ import {
   TerminalSquare,
   TableProperties,
   Archive,
+  Cpu,
+  HardDrive,
+  ArrowUpCircle,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -355,6 +358,8 @@ export default function Environments() {
             project={data}
             tab={tab}
             setTab={setTab}
+            canAdd={canCreate}
+            onAddEnv={(t) => setCreateType(t)}
             onDelete={selected.is_production ? undefined : () => setDeleteTarget(selected)}
             onMergeInto={() => {
               // Open merge dialog choosing this env as the target.
@@ -443,6 +448,109 @@ function repoShort(url: string) {
 function repoName(url: string) {
   const m = repoWeb(url).match(/[^/]+\/[^/]+$/);
   return m ? m[0] : repoShort(url);
+}
+
+/* ─────────────────── Scale card (production only) ─────────────────── */
+/* Lets the customer scale the Production server's compute/storage (bridges to
+ * the existing, billing-correct change-plan flow) and add more Staging/
+ * Development servers to test on before deploying to Production. Slot usage is
+ * shown so they know what's free within their entitlement vs. an extra buy. */
+function ScaleCard({
+  project,
+  canAdd,
+  onAddEnv,
+}: {
+  project: ProjectEnvironments;
+  canAdd: boolean;
+  onAddEnv: (t: "staging" | "development") => void;
+}) {
+  const plan = project.production_plan;
+  const goScale = () => {
+    window.location.href = `/my/instances/${project.production.id}/${
+      plan.is_trial ? "upgrade" : "change-plan"
+    }`;
+  };
+
+  const SlotRow = ({
+    type,
+    label,
+    icon: Icon,
+  }: {
+    type: "staging" | "development";
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }) => {
+    const s = project.slots[type];
+    const withinEntitlement = s.used < s.total;
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Icon className="size-4" />
+          </span>
+          <div>
+            <p className="text-sm font-medium">{label}</p>
+            <p className="text-xs text-muted">
+              {s.used} of {s.total} {s.total === 1 ? "server" : "servers"} in use
+            </p>
+          </div>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={!canAdd}
+          title={canAdd ? undefined : "Connect a repository first"}
+          onClick={() => onAddEnv(type)}
+        >
+          <Plus className="size-4" />
+          {withinEntitlement ? "Add" : "Add (+1 slot)"}
+        </Button>
+      </div>
+    );
+  };
+
+  return (
+    <Card className="mb-4 p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="font-semibold">Production resources</h2>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+            <span className="inline-flex items-center gap-1">
+              <Cpu className="size-3.5" /> {plan.workers} workers
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <HardDrive className="size-3.5" /> {plan.storage_gb} GB storage
+            </span>
+            {plan.plan_name && <span>· {plan.plan_name}</span>}
+            <span>· billed {project.billing_cycle}</span>
+          </p>
+        </div>
+        <Button variant="secondary" className="shrink-0" onClick={goScale}>
+          <ArrowUpCircle className="size-4" />
+          {plan.is_trial ? "Upgrade plan" : "Scale resources"}
+        </Button>
+      </div>
+
+      <div className="mt-4 border-t border-border pt-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+          Test environments
+        </p>
+        <p className="mt-0.5 text-xs text-muted">
+          Spin up Staging/Development servers to test changes before they reach
+          Production.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <SlotRow type="staging" label="Staging" icon={FlaskConical} />
+          <SlotRow type="development" label="Development" icon={Rocket} />
+        </div>
+        {!canAdd && (
+          <p className="mt-2 text-xs text-muted">
+            Connect a Git repository (Code tab) to add test environments.
+          </p>
+        )}
+      </div>
+    </Card>
+  );
 }
 
 /* ─────────────────── Repository card (Odoo.sh-style) ─────────────────── */
@@ -650,6 +758,8 @@ function MainPanel({
   project,
   tab,
   setTab,
+  canAdd,
+  onAddEnv,
   onDelete,
   onMergeInto,
   onChanged,
@@ -658,6 +768,8 @@ function MainPanel({
   project: ProjectEnvironments;
   tab: SectionTab;
   setTab: (t: SectionTab) => void;
+  canAdd: boolean;
+  onAddEnv: (t: "staging" | "development") => void;
   onDelete?: () => void;
   onMergeInto: () => void;
   onChanged: () => void;
@@ -820,6 +932,14 @@ function MainPanel({
           />
         ) : tab === "overview" ? (
           <>
+            {env.is_production && (
+              <ScaleCard
+                project={project}
+                canAdd={canAdd}
+                onAddEnv={onAddEnv}
+              />
+            )}
+
             {project.repo_url && (
               <RepoCard repoUrl={project.repo_url} branch={env.branch} cloneCmd={cloneCmd} />
             )}
