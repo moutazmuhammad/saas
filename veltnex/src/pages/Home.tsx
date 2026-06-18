@@ -211,6 +211,23 @@ export default function Home() {
           <p className="mt-4 text-sm text-muted">
             No credit card required · Cancel anytime
           </p>
+
+          {/* Capability strip — the full offering, scannable above the fold */}
+          <div className="mx-auto mt-12 flex max-w-3xl flex-wrap items-center justify-center gap-x-7 gap-y-3 text-sm text-muted">
+            {[
+              "Any Odoo 13 → 19",
+              "Git-based deploys",
+              "Staging & dev environments",
+              "Automated backups",
+              "Live metrics & logs",
+              "One-click scaling",
+            ].map((c) => (
+              <span key={c} className="inline-flex items-center gap-2">
+                <CheckCircle2 className="size-4 text-primary" />
+                {c}
+              </span>
+            ))}
+          </div>
         </div>
       </section>
 

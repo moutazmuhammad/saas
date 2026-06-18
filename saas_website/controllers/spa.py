@@ -37,9 +37,11 @@ _logger = logging.getLogger(__name__)
 _INDEX_PATH = os.path.join(
     os.path.dirname(__file__), '..', 'static', 'spa', 'index.html',
 )
-# Cache the shell HTML in-process; cleared implicitly on worker restart
-# (i.e. on every module upgrade / redeploy).
-_INDEX_CACHE = {'html': None}
+# Cache the shell HTML in-process, keyed by the file's mtime — so a fresh SPA
+# build (new hashed bundle in index.html) is picked up automatically, without a
+# server restart. Belt-and-braces vs. the old "cleared only on worker restart"
+# behaviour, which made redeploys silently serve a stale shell.
+_INDEX_CACHE = {'html': None, 'mtime': None}
 
 
 def spa_shell():
@@ -54,12 +56,17 @@ def spa_shell():
     If the app hasn't been built yet, return a clear, friendly message
     instead of a 500 so a fresh checkout doesn't look broken.
     """
+    try:
+        mtime = os.path.getmtime(_INDEX_PATH)
+    except OSError:
+        mtime = None
     html = _INDEX_CACHE['html']
-    if html is None:
+    if html is None or mtime != _INDEX_CACHE['mtime']:
         try:
             with open(_INDEX_PATH, 'r', encoding='utf-8') as fh:
                 html = fh.read()
             _INDEX_CACHE['html'] = html
+            _INDEX_CACHE['mtime'] = mtime
         except FileNotFoundError:
             _logger.warning("VELTNEX SPA not built — %s missing", _INDEX_PATH)
             return request.make_response(
