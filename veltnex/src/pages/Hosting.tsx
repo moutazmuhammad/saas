@@ -138,7 +138,6 @@ export default function Hosting() {
   const [repoUrl, setRepoUrl] = React.useState("");
   const [repoBranch, setRepoBranch] = React.useState("main");
   const [gitToken, setGitToken] = React.useState("");
-  const [pipPackages, setPipPackages] = React.useState("");
   const [ordering, setOrdering] = React.useState(false);
   const [orderError, setOrderError] = React.useState<string | null>(null);
 
@@ -291,7 +290,6 @@ export default function Hosting() {
       f.repo_branch = repoBranch.trim() || "main";
       if (gitToken.trim()) f.git_token = gitToken.trim();
     }
-    if (pipPackages.trim()) f.pip_packages = pipPackages.trim();
     return f;
   };
 
@@ -713,7 +711,7 @@ export default function Hosting() {
                   </p>
                 )}
 
-                {/* Git config + Python packages */}
+                {/* Git config */}
                 <div className="mt-5">
                   <span className="inline-flex items-center gap-1.5">
                     <button
@@ -721,9 +719,9 @@ export default function Hosting() {
                       onClick={() => setShowGit((v) => !v)}
                       className="text-sm font-medium text-primary underline-offset-2 hover:underline"
                     >
-                      {showGit ? "− Hide repository & packages" : "+ Connect a Git repository / Python packages (optional)"}
+                      {showGit ? "− Hide repository" : "+ Connect a Git repository (optional)"}
                     </button>
-                    <FieldHint text="Optional: your custom Odoo addons repository and Python packages. Needed only to create Staging/Development environments — you can add it later." />
+                    <FieldHint text="Optional: your custom Odoo addons repository. Needed only to create Staging/Development environments — you can add it later." />
                   </span>
                   {showGit && (
                     <div className="mt-3 space-y-3 rounded-lg border border-border p-3">
@@ -747,13 +745,6 @@ export default function Hosting() {
                           className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
                         />
                       </div>
-                      <textarea
-                        value={pipPackages}
-                        onChange={(e) => setPipPackages(e.target.value)}
-                        placeholder="Python packages, one per line (optional)"
-                        rows={2}
-                        className="w-full resize-none rounded-lg border border-border bg-card px-3 py-2 font-mono text-xs outline-none ring-primary/40 focus:ring-1"
-                      />
                       <p className="text-xs text-muted">
                         A repo is only needed to create Staging/Development environments — you can add it later.
                       </p>
