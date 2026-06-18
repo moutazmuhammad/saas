@@ -33,7 +33,6 @@ import { ActionButton } from "@/components/ActionButton";
 import { AlertBanner } from "@/components/AlertBanner";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Spinner } from "@/components/Spinner";
-import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 import {
@@ -149,7 +148,6 @@ export default function Environments() {
   if (error) {
     return (
       <div className="animate-fade-in">
-        <PortalBreadcrumb items={[{ label: "Projects", to: "/my/instances" }, { label: "Project" }]} />
         <AlertBanner className="mt-6" variant="danger" title="Project" description={error} />
       </div>
     );
@@ -167,14 +165,7 @@ export default function Environments() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb
-        items={[
-          { label: "Projects", to: "/my/instances" },
-          { label: data.project_name },
-        ]}
-      />
-
-      <div className="mt-2 flex flex-col gap-5 lg:flex-row">
+      <div className="flex flex-col gap-5 lg:flex-row">
         {/* ───────── Left sidebar: branches (sticky per-project bar) ───── */}
         <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-64 lg:shrink-0 lg:self-start lg:overflow-y-auto">
           <div className="rounded-xl border border-border bg-card/40">

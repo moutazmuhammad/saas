@@ -12,7 +12,6 @@ import { EmptyState } from "@/components/EmptyState";
 import { InfoCard } from "@/components/InfoCard";
 import { HelpHint } from "@/components/HelpHint";
 import { Spinner } from "@/components/Spinner";
-import { PortalBreadcrumb, envCrumbs } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiBackup, type ApiInstance } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/format";
@@ -91,7 +90,6 @@ export default function Backups({ embedId }: { embedId?: number } = {}) {
 
   return (
     <div className="animate-fade-in">
-      {!embedded && <PortalBreadcrumb items={envCrumbs(instance, "Snapshots", id)} />}
 
       <div>
         <h1 className="text-2xl font-bold tracking-tight">

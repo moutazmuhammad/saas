@@ -8,7 +8,6 @@ import {
   MemoryStick,
   HardDrive,
   ExternalLink,
-  Globe,
   ServerCrash,
   CreditCard,
   ArrowUpCircle,
@@ -19,16 +18,13 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ActionButton";
-import { StatusBadge } from "@/components/StatusBadge";
 import { AlertBanner } from "@/components/AlertBanner";
 import { InfoCard } from "@/components/InfoCard";
 import { HelpHint } from "@/components/HelpHint";
 import { PerformanceHistory } from "@/components/PerformanceHistory";
-import { CopyButton } from "@/components/CopyButton";
 import { EmptyState } from "@/components/EmptyState";
 import { BillingPanel } from "@/components/BillingPanel";
 import { Spinner } from "@/components/Spinner";
-import { PortalBreadcrumb } from "@/components/layout/PortalLayout";
 import { useInstances } from "@/context/InstancesContext";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiInstance } from "@/lib/api";
@@ -199,57 +195,9 @@ export default function InstanceDetail() {
 
   return (
     <div className="animate-fade-in">
-      <PortalBreadcrumb
-        items={
-          instance.parent_id && instance.environment !== "production"
-            ? [
-                { label: "Projects", to: "/my/instances" },
-                { label: "Environments", to: `/my/instances/${instance.parent_id}/environments?env=${instance.id}` },
-                { label: instance.name },
-              ]
-            : [{ label: "Instances", to: "/my/instances" }, { label: instance.name }]
-        }
-      />
-
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">{instance.name}</h1>
-            <StatusBadge status={instance.state} label={instance.state_label} />
-            {instance.is_hosting && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5 text-xs text-muted">
-                {instance.environment_label}
-                <span className="text-border">·</span>
-                <GitBranch className="size-3" />
-                {instance.branch}
-              </span>
-            )}
-          </div>
-          <div className="mt-1.5 flex items-center gap-1">
-            {instance.url ? (
-              <a
-                href={instance.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 font-mono text-sm text-muted transition-colors hover:text-primary"
-              >
-                <Globe className="size-3.5" />
-                {instance.domain}
-                <ExternalLink className="size-3" />
-              </a>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 font-mono text-sm text-muted">
-                <Globe className="size-3.5" />
-                {instance.domain}
-              </span>
-            )}
-            {instance.domain && (
-              <CopyButton value={instance.url || `https://${instance.domain}`} label="Copy URL" />
-            )}
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
+      {/* Identity (name/status/url) lives in the shared InstanceLayout header.
+          Here we keep only the lifecycle actions, right-aligned. */}
+      <div className="mb-6 flex flex-wrap justify-end gap-2">
           {isRunning ? (
             <>
               <ActionButton
@@ -284,7 +232,6 @@ export default function InstanceDetail() {
               Start
             </ActionButton>
           )}
-        </div>
       </div>
 
       {isBusy && (

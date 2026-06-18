@@ -10,7 +10,6 @@ import { EmptyState } from "@/components/EmptyState";
 import { Spinner } from "@/components/Spinner";
 import { Dialog } from "@/components/ui/dialog";
 import { HelpHint } from "@/components/HelpHint";
-import { PortalBreadcrumb, envCrumbs } from "@/components/layout/PortalLayout";
 import { useToast } from "@/context/ToastContext";
 import { api, ApiError, type ApiInstance } from "@/lib/api";
 
@@ -64,7 +63,6 @@ export default function Code({ embedId }: { embedId?: number } = {}) {
 
   return (
     <div className="animate-fade-in">
-      {!embedded && <PortalBreadcrumb items={envCrumbs(instance, "Code & packages", id)} />}
 
       {!embedded && (
         <div>

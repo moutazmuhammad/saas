@@ -18,6 +18,7 @@ import NotFound from "./pages/NotFound";
 
 import Instances from "./pages/portal/Instances";
 import InstanceDetail from "./pages/portal/InstanceDetail";
+import InstanceLayout from "./components/layout/InstanceLayout";
 import Databases from "./pages/portal/Databases";
 import Environments from "./pages/portal/Environments";
 import Code from "./pages/portal/Code";
@@ -72,15 +73,19 @@ export default function App() {
           <Route index element={<Navigate to="/my/instances" replace />} />
           <Route path="home" element={<Navigate to="/my/instances" replace />} />
           <Route path="instances" element={<Instances />} />
-          <Route path="instances/:id" element={<InstanceDetail />} />
-          <Route path="instances/:id/metrics" element={<Metrics />} />
-          <Route path="instances/:id/environments" element={<Environments />} />
-          <Route path="instances/:id/databases" element={<Databases />} />
-          <Route path="instances/:id/code" element={<Code />} />
-          <Route path="instances/:id/shell" element={<ShellPage />} />
-          <Route path="instances/:id/sql" element={<SqlPage />} />
-          <Route path="instances/:id/logs" element={<Logs />} />
-          <Route path="instances/:id/backups" element={<Backups />} />
+          {/* One cohesive instance page: a persistent header (InstanceLayout)
+              with the section content swapping in place below it. */}
+          <Route path="instances/:id" element={<InstanceLayout />}>
+            <Route index element={<InstanceDetail />} />
+            <Route path="metrics" element={<Metrics />} />
+            <Route path="environments" element={<Environments />} />
+            <Route path="databases" element={<Databases />} />
+            <Route path="code" element={<Code />} />
+            <Route path="shell" element={<ShellPage />} />
+            <Route path="sql" element={<SqlPage />} />
+            <Route path="logs" element={<Logs />} />
+            <Route path="backups" element={<Backups />} />
+          </Route>
           <Route path="billing" element={<Invoices />} />
           <Route path="billing/:id" element={<InvoiceDetail />} />
           <Route path="settings" element={<Settings />} />

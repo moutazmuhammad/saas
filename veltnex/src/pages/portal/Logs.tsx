@@ -4,7 +4,6 @@ import { Play, Pause, Trash2, ArrowDownToLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AlertBanner } from "@/components/AlertBanner";
 import { StatusBadge } from "@/components/StatusBadge";
-import { PortalBreadcrumb, envCrumbs } from "@/components/layout/PortalLayout";
 import { api, logStreamUrl, type ApiInstance } from "@/lib/api";
 import { cn, makeId } from "@/lib/utils";
 
@@ -102,7 +101,6 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
 
   return (
     <div className={cn("animate-fade-in", embedded && "flex h-full min-h-0 flex-col")}>
-      {!embedded && <PortalBreadcrumb items={envCrumbs(instance, "Logs", id)} />}
 
       <div className="flex shrink-0 flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
