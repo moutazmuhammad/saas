@@ -143,15 +143,44 @@ class ResPartner(models.Model):
                 ) % p.phone)
             seen[p.phone] = p.id
 
+    def _saas_commercial(self):
+        """The commercial (top-level company) partner that OWNS trial + paid
+        state. Trial eligibility is per commercial entity, NOT per contact —
+        otherwise a company could farm one free trial per child contact (and
+        keep getting trials after paying). Mirrors how the wallet is shared
+        across a commercial entity. Falls back to self for a stand-alone
+        individual.
+        """
+        self.ensure_one()
+        return self.commercial_partner_id or self
+
+    def _saas_trial_used(self, hosting=False):
+        """True if this commercial entity has already consumed its free trial
+        of the given type (checked across all its contacts)."""
+        self.ensure_one()
+        commercial = self._saas_commercial()
+        return bool(commercial.saas_hosting_trial_used if hosting
+                    else commercial.saas_trial_used)
+
+    def _saas_mark_trial_used(self, hosting=False, end_date=None):
+        """Record the free trial as consumed on the commercial entity."""
+        self.ensure_one()
+        commercial = self._saas_commercial()
+        flag = 'saas_hosting_trial_used' if hosting else 'saas_trial_used'
+        if not commercial[flag]:
+            vals = {flag: True}
+            if end_date:
+                vals['saas_trial_end_date'] = end_date
+            commercial.write(vals)
+
     def _saas_has_paid_instance(self, hosting=False):
-        """True if this partner already owns a paid (non-trial, non-cancelled)
-        instance of the given type. Used to disqualify the partner from the
-        free trial: once they pay for a server, the server is paid and the
-        trial no longer applies.
+        """True if this commercial entity already owns a paid (non-trial,
+        non-cancelled) instance of the given type — across ALL its contacts.
+        Once they pay for a server, the free trial no longer applies.
         """
         self.ensure_one()
         return bool(self.env['saas.instance'].sudo().search_count([
-            ('partner_id', '=', self.id),
+            ('partner_id', 'child_of', self._saas_commercial().id),
             ('is_trial', '=', False),
             ('is_hosting', '=', bool(hosting)),
             ('state', 'not in', ('cancelled', 'cancelled_by_client')),

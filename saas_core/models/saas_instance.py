@@ -1173,8 +1173,11 @@ class SaasInstance(models.Model):
     def _check_one_trial_per_client(self):
         for rec in self:
             if rec.is_trial and rec.partner_id:
+                # One trial per COMMERCIAL entity (across all its contacts),
+                # not per contact — see res.partner._saas_commercial.
+                commercial = rec.partner_id._saas_commercial()
                 existing = self.search([
-                    ('partner_id', '=', rec.partner_id.id),
+                    ('partner_id', 'child_of', commercial.id),
                     ('is_trial', '=', True),
                     ('id', '!=', rec.id),
                     ('state', 'not in', ('cancelled', 'cancelled_by_client')),
@@ -1183,7 +1186,7 @@ class SaasInstance(models.Model):
                     raise ValidationError(
                         _("Client '%s' already has a free trial instance (%s). "
                           "Only one trial is allowed per client.")
-                        % (rec.partner_id.name, existing.subdomain)
+                        % (commercial.name, existing.subdomain)
                     )
 
     @api.constrains('subdomain')
@@ -1242,13 +1245,17 @@ class SaasInstance(models.Model):
                     is_hosting_trial = product.is_hosting
 
                 trial_field = 'saas_hosting_trial_used' if is_hosting_trial else 'saas_trial_used'
+                # Lock + read the trial flag on the COMMERCIAL entity (company),
+                # not the ordering contact — so child contacts can't each get a
+                # fresh trial. (trial_field is a fixed column name, not input.)
+                partner = self.env['res.partner'].browse(vals['partner_id'])
+                commercial = partner.commercial_partner_id or partner
                 self.env.cr.execute(
                     "SELECT %s FROM res_partner "
                     "WHERE id = %%s FOR UPDATE" % trial_field,
-                    (vals['partner_id'],),
+                    (commercial.id,),
                 )
                 row = self.env.cr.fetchone()
-                partner = self.env['res.partner'].browse(vals['partner_id'])
                 trial_type = 'hosting' if is_hosting_trial else 'service'
                 if row and row[0]:
                     raise ValidationError(
@@ -1371,24 +1378,15 @@ class SaasInstance(models.Model):
         return super().unlink()
 
     def _sync_partner_trial(self):
-        """Mark the partner as having used their trial (one per type: service / hosting)."""
+        """Mark the trial as used on the COMMERCIAL entity (one per type:
+        service / hosting) so it can't be farmed across child contacts."""
         self.ensure_one()
-        partner = self.partner_id
         trial_days = int(self.env['ir.config_parameter'].sudo().get_param(
             'saas_master.trial_days', '14',
         ))
-        if self.is_hosting:
-            if not partner.saas_hosting_trial_used:
-                partner.write({
-                    'saas_hosting_trial_used': True,
-                    'saas_trial_end_date': fields.Date.today() + datetime.timedelta(days=trial_days),
-                })
-        else:
-            if not partner.saas_trial_used:
-                partner.write({
-                    'saas_trial_used': True,
-                    'saas_trial_end_date': fields.Date.today() + datetime.timedelta(days=trial_days),
-                })
+        end_date = fields.Date.today() + datetime.timedelta(days=trial_days)
+        self.partner_id._saas_mark_trial_used(
+            hosting=self.is_hosting, end_date=end_date)
 
     # ========== Computed ==========
     @api.depends('subdomain', 'domain_id.name')
@@ -3456,6 +3454,10 @@ class SaasInstance(models.Model):
             )
         server._get_ssh_ip()
 
+    # Advisory-lock namespace for server allocation (distinct from the port
+    # allocator's 0x5AA5_0001) — serializes concurrent allocations per region.
+    _ALLOC_LOCK_NAMESPACE = 0x5AA5_0002
+
     def _allocate_servers(self):
         """Auto-allocate Docker and DB servers using a multi-level strategy.
 
@@ -3489,6 +3491,23 @@ class SaasInstance(models.Model):
             # Region the instance must stay within (co-location). Legacy
             # instances have no region -> no constraint (today's behaviour).
             region = self.region_id
+
+            # Serialize allocation per region: without this, two concurrent
+            # deploys both read the same least-loaded host (capacity is only
+            # committed once an instance flips to provisioning/running) and both
+            # pick it -> overcommit past max_instances/cpu/ram. The xact lock is
+            # held until COMMIT, by which point THIS instance is assigned and
+            # marked provisioning, so the next allocator counts it. (max_*=0
+            # still means "unlimited" by design — the lock only makes a
+            # CONFIGURED limit race-safe.)
+            self.env.cr.execute(
+                "SELECT pg_advisory_xact_lock(%s, %s)",
+                (self._ALLOC_LOCK_NAMESPACE, region.id if region else 0),
+            )
+            # Drop any cached capacity computed before the lock — a concurrent
+            # allocator may have just committed an instance onto a candidate.
+            Server.invalidate_model(
+                ['instance_count', 'allocated_cpu', 'allocated_ram_gb'])
 
             # Level 1 — Ideal allocation (respect capacity)
             if mode == 'strict':
@@ -3915,6 +3934,28 @@ class SaasInstance(models.Model):
     # the partial side-effects on the remote server make "resume" unsafe.
     _RECOVERABLE_OPERATIONS = ('deploy', 'redeploy', 'restart', 'start', 'restore')
 
+    # Per-instance advisory-lock namespace for long background operations
+    # (deploy). A live op holds pg_advisory_lock(NS, id) on its own connection
+    # for its whole duration; the stuck-recovery cron probes it to avoid
+    # re-queueing an operation that is genuinely still running.
+    _OP_LOCK_NAMESPACE = 0x5AA5_0003
+
+    def _operation_is_alive(self):
+        """True if a live background operation currently holds this instance's
+        operation advisory lock. We pg_try_advisory_lock: if we acquire it, no
+        live op holds it (release + report dead); if we can't, an op is alive."""
+        self.ensure_one()
+        self.env.cr.execute(
+            "SELECT pg_try_advisory_lock(%s, %s)",
+            (self._OP_LOCK_NAMESPACE, self.id))
+        acquired = self.env.cr.fetchone()[0]
+        if acquired:
+            self.env.cr.execute(
+                "SELECT pg_advisory_unlock(%s, %s)",
+                (self._OP_LOCK_NAMESPACE, self.id))
+            return False
+        return True
+
     def _cron_recover_stuck_provisioning(self):
         """Cron: recover instances stuck in ``provisioning`` after a restart.
 
@@ -3950,6 +3991,15 @@ class SaasInstance(models.Model):
             return
         for instance in stuck:
             try:
+                # Liveness gate: a long deploy is ONE transaction, so its
+                # write_date stays frozen and it looks "stuck" — but it holds
+                # the operation advisory lock. If a live op holds it, leave it
+                # alone (re-queueing here is the double-deploy bug).
+                if instance._operation_is_alive():
+                    _logger.info(
+                        "[recover] %s still holds its operation lock — alive, "
+                        "skipping", instance.subdomain)
+                    continue
                 op = instance.pending_operation
                 # Restore health gate: between the 8-min and 90-min marks, only
                 # recover if the container is actually UP (restore done/dead).
@@ -4971,6 +5021,26 @@ class SaasInstance(models.Model):
             _logger.exception("Failed to record build for %s", self.subdomain)
 
     def _do_deploy(self):
+        """Deploy, holding a per-instance advisory lock for the whole run.
+
+        The deploy is a single long transaction, so its ``write_date`` is frozen
+        and the stuck-recovery cron would otherwise see it as "stuck" and
+        re-queue a SECOND deploy onto the same host/ports/DB (the double-deploy
+        race). Holding the operation lock lets the cron detect a live deploy via
+        ``_operation_is_alive``. Released in ``finally`` (and by Postgres if the
+        process dies, since it's a session lock on this thread's connection)."""
+        self.ensure_one()
+        self.env.cr.execute(
+            "SELECT pg_advisory_lock(%s, %s)",
+            (self._OP_LOCK_NAMESPACE, self.id))
+        try:
+            return self._do_deploy_locked()
+        finally:
+            self.env.cr.execute(
+                "SELECT pg_advisory_unlock(%s, %s)",
+                (self._OP_LOCK_NAMESPACE, self.id))
+
+    def _do_deploy_locked(self):
         """Internal deploy logic for a single record."""
         self.ensure_one()
 
@@ -8128,7 +8198,34 @@ class SaasInstance(models.Model):
                     'last_error_date': fields.Datetime.now(),
                 })
                 action = 'stopped_crashloop'
-            elif status in ('exited', 'dead', 'not_found'):
+            elif status == 'not_found':
+                # The container is GONE. driver.start() is `docker compose up -d`,
+                # which recreates it from the on-host compose files. If those are
+                # ALSO gone (host wiped / reprovisioned / failed migration),
+                # compose-up fails — escalate to a full redeploy that re-renders
+                # the configs and rebuilds it, instead of failing every cycle.
+                _logger.warning(
+                    "[reconcile] %s container missing — recreating", self.subdomain)
+                self._append_log("Container not found — auto-recreating.")
+                try:
+                    driver.start(handle)            # compose up -d → recreate
+                    action = 'recreated'
+                except Exception as e:
+                    _logger.warning(
+                        "[reconcile] %s compose-up failed (%s) — full redeploy",
+                        self.subdomain, str(e)[-200:])
+                    self._append_log(
+                        "Compose files missing — triggering a full redeploy to "
+                        "rebuild the server from scratch.")
+                    try:
+                        self.action_redeploy()      # re-render configs + up (async)
+                        action = 'recreating'
+                    except Exception:
+                        _logger.exception(
+                            "[reconcile] redeploy escalation failed for %s",
+                            self.subdomain)
+                        action = 'recreate_failed'
+            elif status in ('exited', 'dead'):
                 # Genuine one-off down → bring it back (health-gated by start()).
                 _logger.warning(
                     "[reconcile] %s is %s — restarting", self.subdomain, status)

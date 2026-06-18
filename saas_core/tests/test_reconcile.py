@@ -59,8 +59,11 @@ class TestReconcile(TransactionCase):
     def test_reconcile_recreates_missing_container(self):
         inst = self._inst('rgone', 'running')
         fake, action = self._reconcile_with_health(inst, 'not_found')
+        # not_found → `compose up -d` (driver.start) recreates from compose;
+        # the action is reported as 'recreated' (escalates to redeploy only if
+        # compose-up fails — see test_critical_fixes.test_b5_*).
         fake.start.assert_called_once_with('H')
-        self.assertEqual(action, 'started')
+        self.assertEqual(action, 'recreated')
 
     def test_reconcile_noop_when_already_running(self):
         inst = self._inst('rok', 'running')

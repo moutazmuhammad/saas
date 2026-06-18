@@ -55,8 +55,7 @@ class SaasWebsite(http.Controller):
         if request.env.user._is_public():
             return True, trial_days
         partner = request.env.user.partner_id.sudo()
-        used_flag = 'saas_hosting_trial_used' if hosting else 'saas_trial_used'
-        if partner[used_flag]:
+        if partner._saas_trial_used(hosting=hosting):
             return False, trial_days
         if partner._saas_has_paid_instance(hosting=hosting):
             return False, trial_days
@@ -211,7 +210,7 @@ class SaasWebsite(http.Controller):
         # --- Trial: one per client, and not after a paid instance ---
         if is_trial:
             partner_sudo = partner.sudo()
-            if partner_sudo.saas_trial_used:
+            if partner_sudo._saas_trial_used(hosting=False):
                 return self.service_configure(
                     product_id, plan_id,
                     error=_("You have already used your free trial."),
@@ -1213,7 +1212,7 @@ class SaasWebsite(http.Controller):
         # Hosting trial: one per client, and not after a paid hosting instance
         if is_trial:
             partner_sudo = partner.sudo()
-            if partner_sudo.saas_hosting_trial_used:
+            if partner_sudo._saas_trial_used(hosting=True):
                 return request.redirect(err_redirect % ('You+have+already+used+your+free+hosting+trial'))
             if partner_sudo._saas_has_paid_instance(hosting=True):
                 return request.redirect(err_redirect % (

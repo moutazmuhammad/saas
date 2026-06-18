@@ -10,3 +10,4 @@ from . import test_reconcile
 from . import test_kubernetes_driver
 from . import test_metrics
 from . import test_repo_validation
+from . import test_critical_fixes
