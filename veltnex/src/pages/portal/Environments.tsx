@@ -16,13 +16,12 @@ import {
   RotateCw,
   Play,
   Square,
-  Code2,
   ScrollText,
   ArrowRight,
   Terminal,
-  Settings,
   FolderGit2,
   FileCode2,
+  Github,
   LayoutDashboard,
   Activity,
   Database,
@@ -70,20 +69,39 @@ const STAGE_ICON = {
 } as const;
 
 // In-page section tabs: every tool for the selected environment swaps in place
-// inside the workspace (no navigation away from the Environments page). "Code &
-// packages" is project-wide (bound to Production); the rest are per-environment.
-const SECTION_TABS = [
+// inside the workspace (no navigation away from the Environments page).
+// "Code & packages" (key "code") is intentionally NOT in the visible tab bar —
+// it's project-wide and reached via the sidebar "Project settings" button (the
+// same Code panel), so a duplicate tab would be redundant. It's still a valid
+// tab value so that button and any ?tab=code deep-link keep working.
+type SectionTab =
+  | "overview"
+  | "metrics"
+  | "databases"
+  | "code"
+  | "shell"
+  | "sql"
+  | "logs"
+  | "snapshots";
+const SECTION_TABS: { key: SectionTab; label: string; icon: typeof Activity }[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "metrics", label: "Metrics", icon: Activity },
   { key: "databases", label: "Databases", icon: Database },
-  { key: "code", label: "Code & packages", icon: Code2 },
   { key: "shell", label: "Shell", icon: TerminalSquare },
   { key: "sql", label: "SQL", icon: TableProperties },
   { key: "logs", label: "Logs", icon: ScrollText },
   { key: "snapshots", label: "Snapshots", icon: Archive },
-] as const;
-type SectionTab = (typeof SECTION_TABS)[number]["key"];
-const SECTION_KEYS = SECTION_TABS.map((t) => t.key) as readonly string[];
+];
+const SECTION_KEYS: readonly string[] = [
+  "overview",
+  "metrics",
+  "databases",
+  "code",
+  "shell",
+  "sql",
+  "logs",
+  "snapshots",
+];
 function asTab(v: string | null): SectionTab {
   return v && SECTION_KEYS.includes(v) ? (v as SectionTab) : "overview";
 }
@@ -245,7 +263,7 @@ export default function Environments() {
     <div className="animate-fade-in">
       <div className="flex flex-col gap-5 lg:flex-row">
         {/* ───────── Left sidebar: branches (sticky per-project bar) ───── */}
-        <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-12.5rem)] lg:w-64 lg:shrink-0 lg:self-start lg:overflow-y-auto">
+        <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-14.5rem)] lg:w-64 lg:shrink-0 lg:self-start lg:overflow-y-auto">
           <div className="rounded-xl border border-border bg-card/40">
             <div className="border-b border-border p-3">
               <div className="relative">
@@ -305,24 +323,8 @@ export default function Environments() {
                   dragHandlers={dragHandlers}
                 />
               </SidebarSection>
-
-              {/* Project-wide settings (Code/repo + packages) — not per env.
-                  Opens the Code & packages section in place. */}
-              <div className="mt-3 border-t border-border pt-2">
-                <button
-                  type="button"
-                  onClick={() => setTab("code")}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
-                    tab === "code"
-                      ? "bg-primary/10 font-medium text-primary"
-                      : "text-foreground/80 hover:bg-foreground/[0.06]",
-                  )}
-                >
-                  <Settings className="size-4 shrink-0" />
-                  Project settings
-                </button>
-              </div>
+              {/* Project settings (Code/repo + packages) lives in the left rail
+                  now — reached via ?tab=code, so it's not duplicated here. */}
             </div>
           </div>
         </aside>
@@ -435,6 +437,76 @@ export default function Environments() {
 
 function repoShort(url: string) {
   return url.replace(/^https?:\/\//, "").replace(/\.git$/, "");
+}
+
+// "owner/repo" pulled from any clone-URL form (https or git@).
+function repoName(url: string) {
+  const m = repoWeb(url).match(/[^/]+\/[^/]+$/);
+  return m ? m[0] : repoShort(url);
+}
+
+/* ─────────────────── Repository card (Odoo.sh-style) ─────────────────── */
+// The connected GitHub repo: its name (linked), the branch, a one-click
+// `git clone` with copy, and a button straight to the repo.
+function RepoCard({
+  repoUrl,
+  branch,
+  cloneCmd,
+}: {
+  repoUrl: string;
+  branch: string;
+  cloneCmd: string;
+}) {
+  const [copied, setCopied] = React.useState(false);
+  const web = repoWeb(repoUrl);
+  const copy = () => {
+    navigator.clipboard?.writeText(cloneCmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="mb-5 rounded-xl border border-border bg-card/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.06] text-foreground">
+            <Github className="size-5" />
+          </span>
+          <div className="min-w-0">
+            <a
+              href={web}
+              target="_blank"
+              rel="noreferrer"
+              className="block truncate font-semibold hover:text-primary"
+            >
+              {repoName(repoUrl)}
+            </a>
+            <p className="flex items-center gap-1.5 font-mono text-xs text-muted">
+              <GitBranch className="size-3" />
+              {branch}
+            </p>
+          </div>
+        </div>
+        <Button variant="secondary" size="sm" onClick={() => window.open(web, "_blank", "noopener,noreferrer")}>
+          <FolderGit2 className="size-4" />
+          Open repository
+        </Button>
+      </div>
+
+      {/* git clone command + copy */}
+      <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-background/60 px-3 py-2">
+        <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">{cloneCmd}</code>
+        <button
+          type="button"
+          onClick={copy}
+          title="Copy clone command"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
+        >
+          {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /* ───────────────────────── Sidebar ───────────────────────── */
@@ -637,11 +709,9 @@ function MainPanel({
   const cloneCmd = project.repo_url
     ? `git clone --branch ${env.branch} ${project.repo_url}`
     : "";
-  const [showClone, setShowClone] = React.useState(false);
-  const [copied, setCopied] = React.useState(false);
 
   return (
-    <Card className="flex max-h-[calc(100dvh-9.5rem)] flex-col overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100dvh-12.5rem)]">
+    <Card className="flex max-h-[calc(100dvh-12rem)] flex-col overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100dvh-14.5rem)]">
       {/* Header */}
       <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
@@ -705,16 +775,6 @@ function MainPanel({
               Stop
             </ActionButton>
           )}
-          {cloneCmd && (
-            <Button
-              size="sm"
-              variant={showClone ? "default" : "secondary"}
-              onClick={() => setShowClone((s) => !s)}
-            >
-              <Copy className="size-4" />
-              Clone
-            </Button>
-          )}
           {onDelete && (
             <Button size="sm" variant="danger" onClick={onDelete}>
               <Trash2 className="size-4" />
@@ -723,25 +783,6 @@ function MainPanel({
           )}
         </div>
       </div>
-
-      {/* Clone command bar (shown when the Clone button is toggled) */}
-      {showClone && cloneCmd && (
-        <div className="flex items-center gap-2 border-b border-border bg-background/40 px-5 py-2.5">
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard?.writeText(cloneCmd);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
-          >
-            {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">{cloneCmd}</code>
-        </div>
-      )}
 
       {/* Section tabs — every tool (Metrics / Databases / Code / Shell / SQL /
           Logs / Snapshots) swaps in place below, so the workspace never
@@ -766,25 +807,12 @@ function MainPanel({
         ) : tab === "overview" ? (
           <>
             {project.repo_url && (
-              <div className="flex justify-end">
-                <Button variant="secondary" onClick={() => window.open(repoWeb(project.repo_url), "_blank")}>
-                  <FolderGit2 className="size-4" />
-                  Open repository
-                </Button>
-              </div>
-            )}
-
-            {/* Metrics — per environment (Production, Staging AND Development) */}
-            {status?.usage && isRunning && (
-              <div className="mt-4 grid grid-cols-3 gap-3">
-                <Metric label="CPU" value={`${status.usage.cpu}%`} />
-                <Metric label="RAM" value={`${status.usage.ram}%`} />
-                <Metric label="Disk" value={`${status.usage.storage}%`} />
-              </div>
+              <RepoCard repoUrl={project.repo_url} branch={env.branch} cloneCmd={cloneCmd} />
             )}
 
             {/* Deployment history — Odoo.sh-style build timeline with per-build
-                status and the failure reason for any failed deploy. */}
+                status and the failure reason for any failed deploy.
+                (Live CPU/RAM/Disk live in the Metrics tab, not the Overview.) */}
             <DeploymentHistory instanceId={env.id} />
           </>
         ) : tab === "metrics" ? (
@@ -818,15 +846,6 @@ function repoWeb(url: string) {
     u = "https://" + u.slice(4).split(":")[0] + "/" + (path || "");
   }
   return u.replace(/\.git$/, "");
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-card/40 p-3 text-center">
-      <p className="text-lg font-semibold">{value}</p>
-      <p className="text-xs text-muted">{label}</p>
-    </div>
-  );
 }
 
 /* ───────────────────────── Dialogs ───────────────────────── */

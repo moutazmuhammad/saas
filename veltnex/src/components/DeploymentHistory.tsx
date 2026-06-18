@@ -81,7 +81,8 @@ export function DeploymentHistory({
           </div>
         ) : (
           <ul className="divide-y divide-border">
-            {builds.map((b) => {
+            {/* Keep the timeline focused: only the 10 most recent deployments. */}
+            {builds.slice(0, 10).map((b) => {
               const Icon = SOURCE_ICON[b.source] ?? Rocket;
               const failed = b.state === "failed";
               const running = b.state === "running";

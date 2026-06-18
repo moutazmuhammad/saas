@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Play, Pause, Trash2, ArrowDownToLine } from "lucide-react";
+import { Play, Pause, Trash2, ArrowDownToLine, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AlertBanner } from "@/components/AlertBanner";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -106,7 +106,7 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Logs</h1>
           <p className="mt-1 text-sm text-muted">
-            Live container stream{instance ? ` · ${instance.name}` : ""}
+            Live log stream{instance ? ` · ${instance.name}` : ""}
           </p>
         </div>
         {logsAvailable && (
@@ -114,6 +114,17 @@ export default function Logs({ embedId }: { embedId?: number } = {}) {
             <Button variant="secondary" size="sm" onClick={() => setPaused((p) => !p)}>
               {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
               {paused ? "Resume" : "Pause"}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              title="Open the logs in a new browser tab"
+              onClick={() =>
+                window.open(`/my/instances/${id}/logs`, "_blank", "noopener,noreferrer")
+              }
+            >
+              <ArrowUpRight className="size-4" />
+              New tab
             </Button>
             <Button
               variant="secondary"

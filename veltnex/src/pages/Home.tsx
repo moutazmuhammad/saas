@@ -644,7 +644,7 @@ export default function Home() {
               </span>
               <h3 className="mt-5 text-lg font-semibold">Provision in seconds</h3>
               <p className="mt-2 text-sm text-muted">
-                Production-ready Odoo with one click. Container, database,
+                Production-ready Odoo with one click. Server, database,
                 proxy — all wired up.
               </p>
               <div className="mt-5 rounded-lg border border-border bg-background/60 p-3">
@@ -665,7 +665,7 @@ export default function Home() {
               </span>
               <h3 className="mt-5 text-lg font-semibold">Stable by design</h3>
               <p className="mt-2 text-sm text-muted">
-                Isolated containers, automatic failover, zero-downtime
+                Isolated environments, automatic failover, zero-downtime
                 upgrades keep you online.
               </p>
               <div className="mt-5 flex flex-wrap gap-2">

@@ -1,5 +1,5 @@
-import { Outlet, useParams, useLocation } from "react-router-dom";
-import { GitBranch, Globe, ExternalLink, ArrowUpRight } from "lucide-react";
+import { Outlet, useParams, Link } from "react-router-dom";
+import { GitBranch, Globe, ExternalLink, ArrowLeft } from "lucide-react";
 import { useInstances } from "@/context/InstancesContext";
 import { StatusBadge } from "@/components/StatusBadge";
 import { CopyButton } from "@/components/CopyButton";
@@ -17,7 +17,6 @@ export default function InstanceLayout() {
   const instanceId = Number(id);
   const { getInstance, loading } = useInstances();
   const inst = getInstance(instanceId);
-  const location = useLocation();
 
   // Cache still loading and we don't have this one yet → spinner. If it's loaded
   // but absent (guest/token deep-link, or not in the list) we still render the
@@ -33,6 +32,15 @@ export default function InstanceLayout() {
 
   return (
     <div>
+      {/* Back to the projects list — a way out of any project, every section. */}
+      <Link
+        to="/my/instances"
+        className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-foreground"
+      >
+        <ArrowLeft className="size-4" />
+        All projects
+      </Link>
+
       {inst && (
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
@@ -82,20 +90,6 @@ export default function InstanceLayout() {
                 Open app
               </Button>
             )}
-            <Button
-              variant="secondary"
-              title="Open this section in a new browser tab"
-              onClick={() =>
-                window.open(
-                  window.location.origin + location.pathname + location.search,
-                  "_blank",
-                  "noopener,noreferrer",
-                )
-              }
-            >
-              <ArrowUpRight className="size-4" />
-              New tab
-            </Button>
           </div>
         </div>
       )}

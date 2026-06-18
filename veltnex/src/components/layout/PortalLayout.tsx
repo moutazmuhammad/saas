@@ -13,13 +13,8 @@ import {
   HelpCircle,
   LayoutDashboard,
   Activity,
-  Database,
-  Code2,
-  ScrollText,
   Archive,
   Layers,
-  TerminalSquare,
-  TableProperties,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -49,15 +44,12 @@ function instanceSections(id: number, isHosting: boolean): NavItem[] {
   const base = `/my/instances/${id}`;
   if (isHosting) {
     const env = `${base}/environments`;
+    // Metrics / Databases / Shell / SQL / Logs / Snapshots are tabs inside the
+    // Environments workspace itself — so the rail only carries the workspace
+    // entry (Overview) and the project-wide Project settings.
     return [
       { to: env, label: "Overview", icon: Layers, tab: "overview" },
-      { to: `${env}?tab=metrics`, label: "Metrics", icon: Activity, tab: "metrics" },
-      { to: `${env}?tab=databases`, label: "Databases", icon: Database, tab: "databases" },
-      { to: `${env}?tab=code`, label: "Code & packages", icon: Code2, tab: "code" },
-      { to: `${env}?tab=shell`, label: "Shell", icon: TerminalSquare, tab: "shell" },
-      { to: `${env}?tab=sql`, label: "SQL", icon: TableProperties, tab: "sql" },
-      { to: `${env}?tab=logs`, label: "Logs", icon: ScrollText, tab: "logs" },
-      { to: `${env}?tab=snapshots`, label: "Snapshots", icon: Archive, tab: "snapshots" },
+      { to: `${env}?tab=code`, label: "Project settings", icon: Settings, tab: "code" },
     ];
   }
   return [

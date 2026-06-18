@@ -278,7 +278,7 @@ function RequirementsInfo({ instance }: { instance: ApiInstance }) {
       <ul className="mt-4 space-y-2 text-sm text-muted">
         <li className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
-          Validated on a throwaway container first — a broken dependency never reaches your instance.
+          Validated on a throwaway environment first — a broken dependency never reaches your instance.
         </li>
         <li className="flex items-start gap-2">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
