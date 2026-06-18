@@ -26,6 +26,7 @@ import {
   FolderGit2,
   FileCode2,
   Clock,
+  Activity,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -617,6 +618,7 @@ function MainPanel({
 
   const subtabs: { key: string; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { key: "overview", label: "Overview", icon: Clock },
+    { key: "metrics", label: "Metrics", icon: Activity },
     { key: "databases", label: "Databases", icon: Database },
     { key: "logs", label: "Logs", icon: ScrollText },
     { key: "backups", label: "Backups", icon: Archive },
@@ -746,6 +748,16 @@ function MainPanel({
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
           <ShellConsole key={env.id} instanceId={env.id} />
         </div>
+      ) : tab === "metrics" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          {isRunning ? (
+            <PerformanceHistory key={env.id} instanceId={env.id} />
+          ) : (
+            <p className="text-sm text-muted">
+              Metrics are available while this environment is running.
+            </p>
+          )}
+        </div>
       ) : tab === "databases" ? (
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           <Databases key={env.id} embedId={env.id} />
@@ -825,11 +837,6 @@ function MainPanel({
                 <Metric label="CPU" value={`${status.usage.cpu}%`} />
                 <Metric label="RAM" value={`${status.usage.ram}%`} />
                 <Metric label="Disk" value={`${status.usage.storage}%`} />
-              </div>
-            )}
-            {isRunning && (
-              <div className="mt-4">
-                <PerformanceHistory instanceId={env.id} />
               </div>
             )}
 
