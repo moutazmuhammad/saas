@@ -43,10 +43,7 @@ import {
   type ProjectEnvironments,
   type StatusData,
 } from "@/lib/api";
-import Logs from "@/pages/portal/Logs";
 import Code from "@/pages/portal/Code";
-import SqlConsole from "@/pages/portal/SqlConsole";
-import ShellConsole from "@/pages/portal/ShellConsole";
 
 const TRANSIENT = new Set([
   "pending_payment",
@@ -544,7 +541,6 @@ function MainPanel({
   const toast = useToast();
   const [status, setStatus] = React.useState<StatusData | null>(null);
   const [pending, setPending] = React.useState<string | null>(null);
-  const [copied, setCopied] = React.useState(false);
 
   const refreshStatus = React.useCallback(async () => {
     try {
@@ -581,32 +577,10 @@ function MainPanel({
     }
   };
 
-  const cloneCmd = project.repo_url
-    ? `git clone --branch ${env.branch} ${project.repo_url}`
-    : "";
   const url = status?.url || env.url;
   const isRunning = liveState === "running";
   const isStopped = liveState === "stopped";
   const pendingPay = env.pending_payment && env.pending_invoice_id;
-
-  // Top toolbar strip (Odoo.sh: Clone / Shell / SQL / Logs / Fork / Merge /
-  // Submodule). We light up what the platform supports and disable the rest
-  // with an honest "needs backend agent" hint rather than faking them.
-  const [tool, setTool] = React.useState("clone");
-  const toolStrip: {
-    key: string;
-    label: string;
-    icon: React.ComponentType<{ className?: string }>;
-    enabled: boolean;
-    action?: () => void;
-    soon?: string;
-  }[] = [
-    { key: "clone", label: "Clone", icon: Copy, enabled: true, action: () => setTool("clone") },
-    { key: "shell", label: "Shell", icon: Terminal, enabled: true, action: () => setTool("shell") },
-    { key: "sql", label: "SQL", icon: FileCode2, enabled: true, action: () => setTool("sql") },
-    { key: "logs", label: "Logs", icon: ScrollText, enabled: true, action: () => setTool("logs") },
-    { key: "merge", label: "Merge", icon: GitMerge, enabled: true, action: onMergeInto },
-  ];
 
   return (
     <Card className="flex max-h-[calc(100vh-9.5rem)] flex-col overflow-hidden lg:sticky lg:top-20">
@@ -636,56 +610,46 @@ function MainPanel({
           </p>
         </div>
 
-        {/* Toolbar strip */}
-        <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-card/60 p-1">
-          {toolStrip.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              disabled={!t.enabled}
-              title={t.soon}
-              onClick={t.action}
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-                t.key === "clone" && tool === "clone"
-                  ? "bg-primary/15 text-foreground"
-                  : t.enabled
-                    ? "text-muted hover:bg-border/50 hover:text-foreground"
-                    : "cursor-not-allowed text-muted/40",
-              )}
+        {/* Actions — Re-deploy / Start / Stop / Open app / Delete on one line.
+            Databases / Logs / Backups / Metrics / Shell / SQL live only in the
+            left sidebar; the workspace stays focused on environment management. */}
+        <div className="flex flex-wrap items-center gap-2">
+          {isRunning && (
+            <ActionButton
+              icon={RotateCw}
+              loading={pending === "restart"}
+              loadingText="Re-deploying…"
+              disabled={!!pending}
+              onClick={() => run("restart", "Re-deploying")}
             >
-              <t.icon className="size-3.5" />
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Clone command bar (when Clone tool is active) */}
-      {tool === "clone" && cloneCmd && (
-        <div className="flex items-center gap-2 border-b border-border bg-background/40 px-5 py-2.5">
-          <button
-            type="button"
-            onClick={() => {
-              navigator.clipboard?.writeText(cloneCmd);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            }}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
-          >
-            {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-          <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">{cloneCmd}</code>
-        </div>
-      )}
-
-      {/* Action bar (Databases / Logs / Backups / Metrics / Overview live in the
-          left sidebar — the workspace stays focused on environment management) */}
-      {(url || onDelete) && (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border px-3 py-2">
+              Re-deploy
+            </ActionButton>
+          )}
+          {isStopped && (
+            <ActionButton
+              icon={Play}
+              loading={pending === "start"}
+              loadingText="Starting…"
+              disabled={!!pending}
+              onClick={() => run("start", "Starting")}
+            >
+              Start
+            </ActionButton>
+          )}
+          {isRunning && (
+            <ActionButton
+              variant="secondary"
+              icon={Square}
+              loading={pending === "stop"}
+              loadingText="Stopping…"
+              disabled={!!pending}
+              onClick={() => run("stop", "Stopping")}
+            >
+              Stop
+            </ActionButton>
+          )}
           {url && (
-            <Button size="sm" onClick={() => window.open(url, "_blank")}>
+            <Button size="sm" variant="secondary" onClick={() => window.open(url, "_blank")}>
               <ExternalLink className="size-4" />
               Open app
             </Button>
@@ -697,24 +661,11 @@ function MainPanel({
             </Button>
           )}
         </div>
-      )}
+      </div>
 
       {/* Body — flex-fills the card so the panel stays within the viewport
           (only this area scrolls) and doesn't resize when switching tabs */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {tool === "sql" ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
-          <SqlConsole key={env.id} instanceId={env.id} />
-        </div>
-      ) : tool === "shell" ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
-          <ShellConsole key={env.id} instanceId={env.id} />
-        </div>
-      ) : tool === "logs" ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-5">
-          <Logs key={env.id} embedId={env.id} />
-        </div>
-      ) : (
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
         {pendingPay ? (
           <AlertBanner
@@ -729,51 +680,14 @@ function MainPanel({
           />
         ) : (
           <>
-            {/* Action row */}
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap gap-2">
-                {isRunning && (
-                  <ActionButton
-                    icon={RotateCw}
-                    loading={pending === "restart"}
-                    loadingText="Re-deploying…"
-                    disabled={!!pending}
-                    onClick={() => run("restart", "Re-deploying")}
-                  >
-                    Re-deploy
-                  </ActionButton>
-                )}
-                {isRunning && (
-                  <ActionButton
-                    variant="secondary"
-                    icon={Square}
-                    loading={pending === "stop"}
-                    loadingText="Stopping…"
-                    disabled={!!pending}
-                    onClick={() => run("stop", "Stopping")}
-                  >
-                    Stop
-                  </ActionButton>
-                )}
-                {isStopped && (
-                  <ActionButton
-                    icon={Play}
-                    loading={pending === "start"}
-                    loadingText="Starting…"
-                    disabled={!!pending}
-                    onClick={() => run("start", "Starting")}
-                  >
-                    Start
-                  </ActionButton>
-                )}
-              </div>
-              {project.repo_url && (
+            {project.repo_url && (
+              <div className="flex justify-end">
                 <Button variant="secondary" onClick={() => window.open(repoWeb(project.repo_url), "_blank")}>
                   <FolderGit2 className="size-4" />
                   Open repository
                 </Button>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Metrics — per environment (Production, Staging AND Development) */}
             {status?.usage && isRunning && (
@@ -790,7 +704,6 @@ function MainPanel({
           </>
         )}
       </div>
-      )}
       </div>
     </Card>
   );

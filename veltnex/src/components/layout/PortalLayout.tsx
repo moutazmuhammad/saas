@@ -129,12 +129,9 @@ export function PortalLayout() {
     setMobileNav(false);
   }, [pathname]);
 
-  // Auto-expand the rail when entering an instance so its sections are
-  // discoverable (GCP Console keeps the resource nav open); collapse back on
-  // the account/global pages.
-  React.useEffect(() => {
-    setNavCollapsed(instId == null);
-  }, [instId]);
+  // The rail stays collapsed by default (icons only, with hover tooltips); the
+  // user expands it on demand via the hamburger. We no longer auto-expand on
+  // entering an instance.
 
   // Global ⌘K / Ctrl+K opens the command palette.
   React.useEffect(() => {
@@ -188,17 +185,6 @@ export function PortalLayout() {
       {/* INSTANCE CONTEXT: every section of the current project, one click away */}
       {inst && instId != null && (
         <>
-          <button
-            onClick={() => { setMobileNav(false); navigate("/my/instances"); }}
-            title="All projects"
-            className={cn(
-              "mb-1 flex items-center gap-2 py-2 text-xs font-medium text-muted transition-colors hover:text-foreground",
-              collapsed ? "mx-2 justify-center" : "pl-5 pr-4",
-            )}
-          >
-            <ChevronLeft className="size-4 shrink-0" />
-            {!collapsed && <span>All projects</span>}
-          </button>
           {!collapsed && (
             <div className="mb-1 truncate px-6 pb-1 text-sm font-semibold text-foreground">
               {inst.name}
