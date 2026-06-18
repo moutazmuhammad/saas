@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { PerformanceHistory } from "@/components/PerformanceHistory";
 import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ActionButton";
@@ -817,12 +818,17 @@ function MainPanel({
               )}
             </div>
 
-            {/* Metrics */}
+            {/* Metrics — per environment (Production, Staging AND Development) */}
             {status?.usage && isRunning && (
               <div className="mt-4 grid grid-cols-3 gap-3">
                 <Metric label="CPU" value={`${status.usage.cpu}%`} />
                 <Metric label="RAM" value={`${status.usage.ram}%`} />
                 <Metric label="Disk" value={`${status.usage.storage}%`} />
+              </div>
+            )}
+            {isRunning && (
+              <div className="mt-4">
+                <PerformanceHistory instanceId={env.id} />
               </div>
             )}
 

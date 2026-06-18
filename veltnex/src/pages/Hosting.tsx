@@ -545,9 +545,10 @@ export default function Hosting() {
                   </p>
                 )}
 
-                {tiers && tiers.length > 0 && !customize ? (
+                {tiers && tiers.length > 0 ? (
                   <>
-                    <div className="grid gap-6 md:grid-cols-3">
+                    {/* Standard (static) plans AND a Custom card, side by side */}
+                    <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
                       {tiers.map((t) => {
                         const amount = config.cycle === "yearly" ? t.yearly : t.monthly;
                         const per = config.cycle === "yearly" ? "/yr" : "/mo";
@@ -568,19 +569,49 @@ export default function Hosting() {
                               <li className="flex items-center gap-2"><Users className="size-4 text-primary" /> Recommended for {recommendedUsers(t.workers, usersPerWorkerMin, usersPerWorkerMax)} users</li>
                               <li className="flex items-center gap-2"><HardDrive className="size-4 text-primary" /> {formatBytes(t.storage)} storage</li>
                             </ul>
-                            <Button className="mt-6 w-full" size="lg" variant={t.recommended ? "default" : "secondary"} onClick={() => selectTier(t.workers, t.storage)}>
+                            <Button className="mt-6 w-full" size="lg" variant={t.recommended ? "default" : "secondary"} onClick={() => { setCustomize(false); selectTier(t.workers, t.storage); }}>
                               Choose {t.name} <ArrowRight />
                             </Button>
                           </Card>
                         );
                       })}
+                      {/* Custom plan card — sits right next to the standard tiers */}
+                      <Card className={cn("relative flex flex-col border-dashed p-6 transition-shadow", customize && "ring-2 ring-primary")}>
+                        <span className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <SlidersHorizontal className="size-5" />
+                        </span>
+                        <h3 className="mt-3 text-lg font-semibold">Custom</h3>
+                        <p className="mt-3 text-sm text-muted">Build a plan with the exact workers and storage you need.</p>
+                        <ul className="mt-5 space-y-2 text-sm text-muted">
+                          <li className="flex items-center gap-2"><Cpu className="size-4 text-primary" /> Choose your workers</li>
+                          <li className="flex items-center gap-2"><HardDrive className="size-4 text-primary" /> Choose your storage</li>
+                          <li className="flex items-center gap-2"><Check className="size-4 text-primary" /> Pay only for what you pick</li>
+                        </ul>
+                        <Button className="mt-6 w-full" size="lg" variant={customize ? "default" : "secondary"} onClick={() => setCustomize(true)}>
+                          <SlidersHorizontal className="size-4" /> Build custom
+                        </Button>
+                      </Card>
                     </div>
-                    <div className="flex flex-col items-center gap-3 border-t border-border pt-8">
-                      <p className="text-sm text-muted">Need a different size? Build one with the exact workers and storage you want.</p>
-                      <Button variant="secondary" size="lg" onClick={() => setCustomize(true)}>
-                        <SlidersHorizontal className="size-4" /> Build a custom plan
-                      </Button>
-                    </div>
+                    {/* Reveal the slider in place when the Custom card is chosen */}
+                    {customize && (
+                      <div className="mx-auto mt-8 max-w-5xl space-y-4 border-t border-border pt-8">
+                        <h3 className="text-center text-base font-semibold">Build your custom plan</h3>
+                        <PlanBuilder
+                          config={config}
+                          onChange={setConfig}
+                          limits={limits}
+                          price={price}
+                          currency={price?.currency || meta?.hosting_config.currency}
+                          usersPerWorkerMin={usersPerWorkerMin}
+                          usersPerWorkerMax={usersPerWorkerMax}
+                          footer={
+                            <Button className="w-full" size="lg" onClick={() => setStep(2)}>
+                              Continue <ArrowRight />
+                            </Button>
+                          }
+                        />
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="mx-auto max-w-5xl space-y-6">
@@ -598,13 +629,6 @@ export default function Hosting() {
                         </Button>
                       }
                     />
-                    {tiers && tiers.length > 0 && (
-                      <p className="text-center text-sm text-muted">
-                        <button onClick={() => setCustomize(false)} className="font-medium text-primary underline-offset-2 hover:underline">
-                          ← Back to standard plans
-                        </button>
-                      </p>
-                    )}
                   </div>
                 )}
               </div>
@@ -662,11 +686,11 @@ export default function Hosting() {
                       className="h-10 w-full rounded-lg border border-border bg-card px-3 font-mono text-sm outline-none ring-primary/40 focus:ring-1"
                     />
                   </div>
-                  {(meta?.domains?.length ?? 0) > 1 && (
+                  {(meta?.domains?.length ?? 0) >= 1 && (
                     <div className="space-y-1">
                       <label className="flex items-center gap-1.5 text-sm font-medium">
-                        Base domain
-                        <FieldHint text="The domain your instance lives under. Your full address becomes subdomain.basedomain." />
+                        Domain
+                        <FieldHint text="The domain your instance lives under. Your full address becomes subdomain.domain — pick the one you want." />
                       </label>
                       <select
                         value={domainId ?? ""}

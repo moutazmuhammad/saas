@@ -1,12 +1,9 @@
 import * as React from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Play,
   Square,
   RotateCw,
-  Database,
-  ScrollText,
-  Archive,
   Cpu,
   MemoryStick,
   HardDrive,
@@ -17,7 +14,7 @@ import {
   ArrowUpCircle,
   Clock,
 } from "lucide-react";
-import { GitBranch, Boxes } from "lucide-react";
+import { GitBranch } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -199,22 +196,6 @@ export default function InstanceDetail() {
       setCancelling(false);
     }
   };
-
-  // Managed services expose ONLY snapshots (view + restore). Hosting (self-
-  // managed) gets the full toolset: databases, code, logs, snapshots.
-  const subnav = instance.is_hosting
-    ? [
-        // Environments (Production project + Staging/Dev) — only the
-        // Production server manages the project's environments.
-        ...(instance.environment === "production"
-          ? [{ to: `/my/instances/${id}/environments`, label: "Environments", icon: Boxes }]
-          : []),
-        { to: `/my/instances/${id}/databases`, label: "Databases", icon: Database },
-        { to: `/my/instances/${id}/code`, label: "Code & packages", icon: GitBranch },
-        { to: `/my/instances/${id}/logs`, label: "Logs", icon: ScrollText },
-        { to: `/my/instances/${id}/backups`, label: "Snapshots", icon: Archive },
-      ]
-    : [{ to: `/my/instances/${id}/backups`, label: "Snapshots", icon: Archive }];
 
   return (
     <div className="animate-fade-in">
@@ -449,23 +430,6 @@ export default function InstanceDetail() {
       </Card>
 
       {!instance.is_trial && <BillingPanel instance={instance} onChange={load} />}
-
-      <h2 className="mt-10 text-lg font-semibold">Manage</h2>
-      <div className="mt-4 grid gap-4 sm:grid-cols-3">
-        {subnav.map((s) => (
-          <Link key={s.to} to={s.to}>
-            <Card className="group flex items-center gap-4 p-5 transition-all hover:-translate-y-0.5 hover:border-primary/40">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-primary/15 text-primary">
-                <s.icon className="size-5" />
-              </span>
-              <div>
-                <p className="font-medium">{s.label}</p>
-                <p className="text-xs text-muted">{s.label === "Logs" ? "Live stream" : "Manage"}</p>
-              </div>
-            </Card>
-          </Link>
-        ))}
-      </div>
 
       <Dialog
         open={confirmCancel}
