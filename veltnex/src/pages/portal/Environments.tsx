@@ -23,6 +23,12 @@ import {
   Settings,
   FolderGit2,
   FileCode2,
+  LayoutDashboard,
+  Activity,
+  Database,
+  TerminalSquare,
+  TableProperties,
+  Archive,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,6 +49,12 @@ import {
   type StatusData,
 } from "@/lib/api";
 import Code from "@/pages/portal/Code";
+import Metrics from "@/pages/portal/Metrics";
+import Databases from "@/pages/portal/Databases";
+import Logs from "@/pages/portal/Logs";
+import Backups from "@/pages/portal/Backups";
+import ShellPage from "@/pages/portal/ShellPage";
+import SqlPage from "@/pages/portal/SqlPage";
 
 const TRANSIENT = new Set([
   "pending_payment",
@@ -56,6 +68,57 @@ const STAGE_ICON = {
   staging: FlaskConical,
   development: Rocket,
 } as const;
+
+// In-page section tabs: every tool for the selected environment swaps in place
+// inside the workspace (no navigation away from the Environments page). "Code &
+// packages" is project-wide (bound to Production); the rest are per-environment.
+const SECTION_TABS = [
+  { key: "overview", label: "Overview", icon: LayoutDashboard },
+  { key: "metrics", label: "Metrics", icon: Activity },
+  { key: "databases", label: "Databases", icon: Database },
+  { key: "code", label: "Code & packages", icon: Code2 },
+  { key: "shell", label: "Shell", icon: TerminalSquare },
+  { key: "sql", label: "SQL", icon: TableProperties },
+  { key: "logs", label: "Logs", icon: ScrollText },
+  { key: "snapshots", label: "Snapshots", icon: Archive },
+] as const;
+type SectionTab = (typeof SECTION_TABS)[number]["key"];
+const SECTION_KEYS = SECTION_TABS.map((t) => t.key) as readonly string[];
+function asTab(v: string | null): SectionTab {
+  return v && SECTION_KEYS.includes(v) ? (v as SectionTab) : "overview";
+}
+
+function SectionTabBar({
+  tab,
+  setTab,
+}: {
+  tab: SectionTab;
+  setTab: (t: SectionTab) => void;
+}) {
+  return (
+    <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-3">
+      {SECTION_TABS.map((t) => {
+        const active = tab === t.key;
+        return (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={cn(
+              "flex shrink-0 items-center gap-1.5 border-b-2 px-3 py-2.5 text-sm transition-colors",
+              active
+                ? "border-primary font-medium text-primary"
+                : "border-transparent text-muted hover:text-foreground",
+            )}
+          >
+            <t.icon className="size-4" />
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function dotClass(state: string) {
   if (state === "running") return "bg-success";
@@ -76,15 +139,30 @@ export default function Environments() {
   const [error, setError] = React.useState<string | null>(null);
   const [selectedId, setSelectedId] = React.useState<number | null>(envParam);
   const [filter, setFilter] = React.useState("");
-  // Main panel mode: an environment, or the project-wide settings (Code).
-  const [view, setView] = React.useState<"env" | "settings">("env");
+  // Active in-page section (Overview / Metrics / … ) — the source of truth is
+  // the ?tab= URL param so the rail, command palette and deep-links all land on
+  // the right section without a page navigation.
+  const tab = asTab(searchParams.get("tab"));
+  const setTab = React.useCallback(
+    (t: SectionTab) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (t === "overview") next.delete("tab");
+          else next.set("tab", t);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   // Select an environment AND reflect it in the URL (?env=) so the workspace
   // is deep-linkable / shareable and the command palette can target it.
   const selectEnv = React.useCallback(
     (envId: number) => {
       setSelectedId(envId);
-      setView("env");
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -228,14 +306,15 @@ export default function Environments() {
                 />
               </SidebarSection>
 
-              {/* Project-wide settings (Code/repo + packages) — not per env. */}
+              {/* Project-wide settings (Code/repo + packages) — not per env.
+                  Opens the Code & packages section in place. */}
               <div className="mt-3 border-t border-border pt-2">
                 <button
                   type="button"
-                  onClick={() => setView("settings")}
+                  onClick={() => setTab("code")}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors",
-                    view === "settings"
+                    tab === "code"
                       ? "bg-primary/10 font-medium text-primary"
                       : "text-foreground/80 hover:bg-foreground/[0.06]",
                   )}
@@ -261,31 +340,29 @@ export default function Environments() {
                   <p className="text-xs text-muted">Staging and Development servers run on branches of your repo.</p>
                 </div>
               </div>
-              <Button className="shrink-0" onClick={() => setView("settings")}>
+              <Button className="shrink-0" onClick={() => setTab("code")}>
                 <GitBranch className="size-4" />
                 Connect
               </Button>
             </Card>
           )}
 
-          {view === "settings" ? (
-            <ProjectSettingsPanel project={data} />
-          ) : (
-            <MainPanel
-              key={selected.id}
-              env={selected}
-              project={data}
-              onDelete={selected.is_production ? undefined : () => setDeleteTarget(selected)}
-              onMergeInto={() => {
-                // Open merge dialog choosing this env as the target.
-                const others = allEnvs.filter((e) => e.id !== selected.id);
-                if (others.length) setMergePrompt({ source: others[0], target: selected });
-              }}
-              onChanged={load}
-            />
-          )}
+          <MainPanel
+            key={selected.id}
+            env={selected}
+            project={data}
+            tab={tab}
+            setTab={setTab}
+            onDelete={selected.is_production ? undefined : () => setDeleteTarget(selected)}
+            onMergeInto={() => {
+              // Open merge dialog choosing this env as the target.
+              const others = allEnvs.filter((e) => e.id !== selected.id);
+              if (others.length) setMergePrompt({ source: others[0], target: selected });
+            }}
+            onChanged={load}
+          />
 
-          {view === "env" && canCreate && allEnvs.length > 1 && (
+          {tab === "overview" && canCreate && allEnvs.length > 1 && (
             <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
               <GitMerge className="size-3.5" />
               Tip: drag a branch onto another in the sidebar to merge it and redeploy.
@@ -494,36 +571,21 @@ function BranchItem({
   );
 }
 
-/* ────────────────── Project settings (Code = project-wide) ────────────────── */
-
-function ProjectSettingsPanel({ project }: { project: ProjectEnvironments }) {
-  return (
-    <Card className="overflow-hidden">
-      <div className="border-b border-border p-5">
-        <h1 className="text-xl font-bold tracking-tight">Project settings</h1>
-        <p className="mt-1 text-sm text-muted">
-          The Git repository, access token, and Python packages apply to the
-          whole project — Staging and Development environments inherit them.
-        </p>
-      </div>
-      <div className="px-5 pb-5">
-        <Code embedId={project.production.id} />
-      </div>
-    </Card>
-  );
-}
-
 /* ───────────────────────── Main panel ───────────────────────── */
 
 function MainPanel({
   env,
   project,
+  tab,
+  setTab,
   onDelete,
   onMergeInto,
   onChanged,
 }: {
   env: EnvChild;
   project: ProjectEnvironments;
+  tab: SectionTab;
+  setTab: (t: SectionTab) => void;
   onDelete?: () => void;
   onMergeInto: () => void;
   onChanged: () => void;
@@ -681,6 +743,11 @@ function MainPanel({
         </div>
       )}
 
+      {/* Section tabs — every tool (Metrics / Databases / Code / Shell / SQL /
+          Logs / Snapshots) swaps in place below, so the workspace never
+          navigates away from the environment. */}
+      <SectionTabBar tab={tab} setTab={setTab} />
+
       {/* Body — flex-fills the card so the panel stays within the viewport
           (only this area scrolls) and doesn't resize when switching tabs */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -696,7 +763,7 @@ function MainPanel({
               </Button>
             }
           />
-        ) : (
+        ) : tab === "overview" ? (
           <>
             {project.repo_url && (
               <div className="flex justify-end">
@@ -720,7 +787,23 @@ function MainPanel({
                 status and the failure reason for any failed deploy. */}
             <DeploymentHistory instanceId={env.id} />
           </>
-        )}
+        ) : tab === "metrics" ? (
+          <Metrics embedId={env.id} />
+        ) : tab === "databases" ? (
+          <Databases embedId={env.id} />
+        ) : tab === "code" ? (
+          // Code & packages is project-wide (bound to Production), inherited by
+          // Staging/Development — so it always targets the Production instance.
+          <Code embedId={project.production.id} />
+        ) : tab === "shell" ? (
+          <ShellPage embedId={env.id} />
+        ) : tab === "sql" ? (
+          <SqlPage embedId={env.id} />
+        ) : tab === "logs" ? (
+          <Logs embedId={env.id} />
+        ) : tab === "snapshots" ? (
+          <Backups embedId={env.id} />
+        ) : null}
       </div>
       </div>
     </Card>

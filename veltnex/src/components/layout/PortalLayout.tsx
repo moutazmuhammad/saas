@@ -38,25 +38,33 @@ const NAV = [
   { to: "/my/settings", label: "Settings", icon: Settings },
 ];
 
-type NavItem = { to: string; label: string; icon: typeof Receipt; end?: boolean };
+type NavItem = { to: string; label: string; icon: typeof Receipt; end?: boolean; tab?: string };
 
 // GCP-Console-style resource nav: when viewing an instance, the left rail shows
 // every section of THAT instance so the whole project is one click away.
-// Hosting projects get the full toolset; managed Services get the read-only set.
+// For HOSTING projects every section is a tab of the one Environments workspace
+// (it never navigates away — the section swaps in place via ?tab=). Managed
+// Services keep the classic standalone read-only set.
 function instanceSections(id: number, isHosting: boolean): NavItem[] {
   const base = `/my/instances/${id}`;
-  const items: (NavItem | false)[] = [
+  if (isHosting) {
+    const env = `${base}/environments`;
+    return [
+      { to: env, label: "Overview", icon: Layers, tab: "overview" },
+      { to: `${env}?tab=metrics`, label: "Metrics", icon: Activity, tab: "metrics" },
+      { to: `${env}?tab=databases`, label: "Databases", icon: Database, tab: "databases" },
+      { to: `${env}?tab=code`, label: "Code & packages", icon: Code2, tab: "code" },
+      { to: `${env}?tab=shell`, label: "Shell", icon: TerminalSquare, tab: "shell" },
+      { to: `${env}?tab=sql`, label: "SQL", icon: TableProperties, tab: "sql" },
+      { to: `${env}?tab=logs`, label: "Logs", icon: ScrollText, tab: "logs" },
+      { to: `${env}?tab=snapshots`, label: "Snapshots", icon: Archive, tab: "snapshots" },
+    ];
+  }
+  return [
     { to: base, label: "Overview", icon: LayoutDashboard, end: true },
     { to: `${base}/metrics`, label: "Metrics", icon: Activity },
-    isHosting && { to: `${base}/databases`, label: "Databases", icon: Database },
-    isHosting && { to: `${base}/environments`, label: "Environments", icon: Layers },
-    isHosting && { to: `${base}/code`, label: "Code & packages", icon: Code2 },
-    isHosting && { to: `${base}/shell`, label: "Shell", icon: TerminalSquare },
-    isHosting && { to: `${base}/sql`, label: "SQL", icon: TableProperties },
-    isHosting && { to: `${base}/logs`, label: "Logs", icon: ScrollText },
     { to: `${base}/backups`, label: "Snapshots", icon: Archive },
   ];
-  return items.filter(Boolean) as NavItem[];
 }
 
 /** Small dropdown helper: button + panel that closes on outside-click / esc. */
@@ -113,7 +121,7 @@ export function PortalLayout() {
   const { getInstance } = useInstances();
   const toast = useToast();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [paletteOpen, setPaletteOpen] = React.useState(false);
   // Left nav is an icon rail by default; it expands on hover (or when pinned
   // open via the hamburger). `hovered` drives the auto open/close.
@@ -179,8 +187,15 @@ export function PortalLayout() {
     </button>
   );
 
-  const isActive = (item: NavItem) =>
-    item.end ? pathname === item.to : pathname.startsWith(item.to);
+  const isActive = (item: NavItem) => {
+    // Hosting sections are tabs of the Environments workspace: same path, the
+    // active one is decided by the ?tab= query (default = overview).
+    if (item.tab !== undefined) {
+      const cur = new URLSearchParams(search).get("tab") || "overview";
+      return /\/environments$/.test(pathname) && cur === item.tab;
+    }
+    return item.end ? pathname === item.to : pathname.startsWith(item.to);
+  };
 
   const NavList = ({ collapsed }: { collapsed: boolean }) => (
     <nav className="flex flex-col gap-0.5 py-2 pr-2">

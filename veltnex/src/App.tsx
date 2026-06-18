@@ -1,5 +1,7 @@
-import { Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useParams } from "react-router-dom";
 import * as React from "react";
+import { useInstances } from "./context/InstancesContext";
+import { Spinner } from "./components/Spinner";
 import { PublicLayout } from "./components/layout/PublicLayout";
 import { PortalLayout } from "./components/layout/PortalLayout";
 import { ProtectedRoute } from "./components/layout/ProtectedRoute";
@@ -46,6 +48,24 @@ function RequireSection({
   return <>{children}</>;
 }
 
+// The instance landing page. Hosting projects open straight into the
+// Environments workspace (the section tools live there as in-place tabs);
+// managed Services keep the classic Overview.
+function InstanceHome() {
+  const { id = "" } = useParams();
+  const { getInstance, loading } = useInstances();
+  const inst = getInstance(Number(id));
+  if (!inst && loading) {
+    return (
+      <div className="mt-20 flex justify-center">
+        <Spinner size="lg" label="Loading…" />
+      </div>
+    );
+  }
+  if (inst?.is_hosting) return <Navigate to="environments" replace />;
+  return <InstanceDetail />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -76,7 +96,7 @@ export default function App() {
           {/* One cohesive instance page: a persistent header (InstanceLayout)
               with the section content swapping in place below it. */}
           <Route path="instances/:id" element={<InstanceLayout />}>
-            <Route index element={<InstanceDetail />} />
+            <Route index element={<InstanceHome />} />
             <Route path="metrics" element={<Metrics />} />
             <Route path="environments" element={<Environments />} />
             <Route path="databases" element={<Databases />} />
