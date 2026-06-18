@@ -84,10 +84,11 @@ export function DataTable<T>({
                   style={{ width: c.width }}
                   onClick={() => toggleSort(c)}
                   className={cn(
-                    "px-4 py-3 font-medium",
+                    "px-4 py-3 font-medium transition-colors",
                     c.align === "right" && "text-right",
                     c.align === "center" && "text-center",
                     c.sortValue && "cursor-pointer select-none hover:text-foreground",
+                    c.sortValue && sortKey === c.key && "text-foreground",
                     hideClass(c),
                     c.className,
                   )}
@@ -126,7 +127,7 @@ export function DataTable<T>({
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                   className={cn(
                     "transition-colors",
-                    onRowClick && "cursor-pointer hover:bg-foreground/[0.03]",
+                    onRowClick && "cursor-pointer hover:bg-primary/[0.05]",
                   )}
                 >
                   {columns.map((c) => (

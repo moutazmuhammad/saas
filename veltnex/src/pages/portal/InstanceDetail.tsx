@@ -27,6 +27,7 @@ import { AlertBanner } from "@/components/AlertBanner";
 import { InfoCard } from "@/components/InfoCard";
 import { HelpHint } from "@/components/HelpHint";
 import { PerformanceHistory } from "@/components/PerformanceHistory";
+import { CopyButton } from "@/components/CopyButton";
 import { EmptyState } from "@/components/EmptyState";
 import { BillingPanel } from "@/components/BillingPanel";
 import { Spinner } from "@/components/Spinner";
@@ -243,23 +244,28 @@ export default function InstanceDetail() {
               </span>
             )}
           </div>
-          {instance.url ? (
-            <a
-              href={instance.url}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-1.5 inline-flex items-center gap-1.5 font-mono text-sm text-muted transition-colors hover:text-primary"
-            >
-              <Globe className="size-3.5" />
-              {instance.domain}
-              <ExternalLink className="size-3" />
-            </a>
-          ) : (
-            <span className="mt-1.5 inline-flex items-center gap-1.5 font-mono text-sm text-muted">
-              <Globe className="size-3.5" />
-              {instance.domain}
-            </span>
-          )}
+          <div className="mt-1.5 flex items-center gap-1">
+            {instance.url ? (
+              <a
+                href={instance.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 font-mono text-sm text-muted transition-colors hover:text-primary"
+              >
+                <Globe className="size-3.5" />
+                {instance.domain}
+                <ExternalLink className="size-3" />
+              </a>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 font-mono text-sm text-muted">
+                <Globe className="size-3.5" />
+                {instance.domain}
+              </span>
+            )}
+            {instance.domain && (
+              <CopyButton value={instance.url || `https://${instance.domain}`} label="Copy URL" />
+            )}
+          </div>
         </div>
 
         <div className="flex flex-wrap gap-2">
