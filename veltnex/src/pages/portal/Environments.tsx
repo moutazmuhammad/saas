@@ -245,7 +245,7 @@ export default function Environments() {
     <div className="animate-fade-in">
       <div className="flex flex-col gap-5 lg:flex-row">
         {/* ───────── Left sidebar: branches (sticky per-project bar) ───── */}
-        <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-64 lg:shrink-0 lg:self-start lg:overflow-y-auto">
+        <aside className="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-12.5rem)] lg:w-64 lg:shrink-0 lg:self-start lg:overflow-y-auto">
           <div className="rounded-xl border border-border bg-card/40">
             <div className="border-b border-border p-3">
               <div className="relative">
@@ -641,7 +641,7 @@ function MainPanel({
   const [copied, setCopied] = React.useState(false);
 
   return (
-    <Card className="flex max-h-[calc(100vh-9.5rem)] flex-col overflow-hidden lg:sticky lg:top-20">
+    <Card className="flex max-h-[calc(100dvh-9.5rem)] flex-col overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100dvh-12.5rem)]">
       {/* Header */}
       <div className="flex flex-col gap-4 border-b border-border p-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
