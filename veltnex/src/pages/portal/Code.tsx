@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { GitBranch, Package, Plus, X, Unplug, Boxes } from "lucide-react";
+import { GitBranch, Package, Plus, X, Unplug, Boxes, CheckCircle2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -73,8 +73,9 @@ export default function Code({ embedId }: { embedId?: number } = {}) {
             <HelpHint anchor="repo" className="ml-1.5" />
           </h1>
           <p className="mt-1 text-sm text-muted">
-            Connect your Git modules and manage Python packages. Applying a change pulls your
-            code and restarts the instance (brief downtime).
+            Connect your Git modules. Python dependencies come from your
+            repository's <code>requirements.txt</code>. Applying a change pulls
+            your code and restarts the instance (brief downtime).
           </p>
         </div>
       )}
@@ -89,7 +90,7 @@ export default function Code({ embedId }: { embedId?: number } = {}) {
       )}
 
       <RepoSection instance={instance} disabled={!canDeploy} onDeployed={() => navigate(`/my/instances/${id}`)} />
-      <PackagesSection instance={instance} disabled={!canDeploy} reload={load} />
+      <RequirementsInfo instance={instance} />
     </div>
   );
 }
@@ -247,49 +248,16 @@ function RepoSection({
   );
 }
 
-function PackagesSection({
-  instance,
-  disabled,
-  reload,
-}: {
-  instance: ApiInstance;
-  disabled: boolean;
-  reload: () => Promise<void> | void;
-}) {
-  const toast = useToast();
-  const initial = React.useMemo(() => parsePkgs(instance.pip_packages), [instance.pip_packages]);
-  const [pkgs, setPkgs] = React.useState<string[]>(initial);
-  const [draft, setDraft] = React.useState("");
-  const [saving, setSaving] = React.useState(false);
-  const [installError, setInstallError] = React.useState<string>(instance.pip_install_error || "");
-
-  const dirty = pkgs.join("\n") !== initial.join("\n");
-
-  const add = () => {
-    const v = draft.trim();
-    if (!v) return;
-    if (!pkgs.includes(v)) setPkgs([...pkgs, v]);
-    setDraft("");
-  };
-  const remove = (p: string) => setPkgs(pkgs.filter((x) => x !== p));
-
-  const apply = async () => {
-    setSaving(true);
-    setInstallError("");
-    try {
-      await api.setPackages(instance.id, pkgs.join("\n"));
-      toast.success("Packages installed", "Your packages were installed and the instance restarted.");
-      await reload();
-    } catch (e) {
-      // pip_failed carries the install output — show it inline, not just a toast.
-      const msg = e instanceof ApiError ? e.message : "Please try again.";
-      setInstallError(msg);
-      toast.error("Package install failed", "See the details below.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
+/** Python dependencies are no longer a manual list — they come from the
+ *  repository's requirements.txt, validated before every deploy. This card
+ *  just explains the mechanism and points to where failures are reported. */
+function RequirementsInfo({ instance }: { instance: ApiInstance }) {
+  const historyHref =
+    instance.environment === "production"
+      ? `/my/instances/${instance.id}/environments`
+      : instance.parent_id
+        ? `/my/instances/${instance.parent_id}/environments?env=${instance.id}`
+        : `/my/instances/${instance.id}/environments`;
   return (
     <Card className="mt-6 p-5">
       <div className="flex items-center gap-3">
@@ -297,65 +265,36 @@ function PackagesSection({
           <Package className="size-4" />
         </span>
         <div>
-          <h2 className="font-semibold">Python packages</h2>
-          <p className="text-xs text-muted">Extra pip packages your modules need. Remove any to uninstall it.</p>
+          <h2 className="font-semibold">Python dependencies</h2>
+          <p className="text-xs text-muted">
+            Managed from your repository's <code className="font-mono">requirements.txt</code> — no manual list.
+          </p>
         </div>
       </div>
 
-      {installError && (
-        <div className="mt-4">
-          <AlertBanner
-            variant="danger"
-            title="Package install failed"
-            description={
-              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-background/60 p-3 font-mono text-xs">
-                {installError}
-              </pre>
-            }
-            onDismiss={() => setInstallError("")}
-          />
-        </div>
-      )}
-
-      <div className="mt-5 flex gap-2">
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add())}
-          placeholder="e.g. requests or pandas==2.2.0"
-        />
-        <Button variant="secondary" onClick={add} disabled={!draft.trim()}>
-          <Plus className="size-4" /> Add
-        </Button>
-      </div>
-
-      {pkgs.length === 0 ? (
-        <div className="mt-4 flex items-center gap-2 rounded-lg border border-dashed border-border p-4 text-sm text-muted">
-          <Boxes className="size-4" /> No extra packages.
-        </div>
-      ) : (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {pkgs.map((p) => (
-            <span key={p} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 font-mono text-xs">
-              {p}
-              <button
-                onClick={() => remove(p)}
-                className="text-muted transition-colors hover:text-danger"
-                aria-label={`Remove ${p}`}
-              >
-                <X className="size-3.5" />
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div className="mt-5 flex items-center justify-between gap-3">
-        <p className="text-xs text-muted">{dirty ? "Unsaved changes" : "Up to date"}</p>
-        <ActionButton loading={saving} loadingText="Deploying…" disabled={disabled || !dirty} onClick={apply}>
-          Apply &amp; redeploy
-        </ActionButton>
-      </div>
+      <p className="mt-4 text-sm text-muted">
+        Add a <code className="rounded bg-foreground/[0.06] px-1 py-0.5 font-mono text-xs">requirements.txt</code> to the
+        root of your connected branch. On every deploy we install it in an
+        isolated check <strong className="text-foreground">before</strong> touching your live instance.
+      </p>
+      <ul className="mt-4 space-y-2 text-sm text-muted">
+        <li className="flex items-start gap-2">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+          Validated on a throwaway container first — a broken dependency never reaches your instance.
+        </li>
+        <li className="flex items-start gap-2">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+          If it fails, your code is <strong className="text-foreground">not</strong> deployed and your instance keeps running.
+        </li>
+        <li className="flex items-start gap-2">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
+          The deployment status — and the exact pip error — appear in{" "}
+          <a href={historyHref} className="font-medium text-primary underline-offset-2 hover:underline">
+            Deployment history
+          </a>
+          .
+        </li>
+      </ul>
     </Card>
   );
 }

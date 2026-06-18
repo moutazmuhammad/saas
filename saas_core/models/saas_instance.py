@@ -4458,11 +4458,13 @@ class SaasInstance(models.Model):
         docker_mem = self.override_docker_mem.strip() if self.override_docker_mem else auto_mem
         docker_swap = self.override_docker_swap.strip() if self.override_docker_swap else docker_mem
 
-        # Parse pip packages for hosting instances (deduplicated, lowercase)
-        pip_packages_str = ''
-        if self.pip_packages:
+        # Requirements come from the connected repo(s)' requirements.txt — the
+        # branch is the source of truth. Legacy fallback: the manual pip_packages
+        # field, ONLY when no repo ships a requirements.txt.
+        req_text = self._collect_repo_requirements(ssh)
+        if not req_text.strip() and self.pip_packages:
             seen = set()
-            pkgs = []
+            unique_pkgs = []
             for p in self.pip_packages.splitlines():
                 p = p.strip()
                 if not p or p.startswith('#'):
@@ -4470,9 +4472,9 @@ class SaasInstance(models.Model):
                 key = p.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip()
                 if key not in seen:
                     seen.add(key)
-                    pkgs.append(p)
-            if pkgs:
-                pip_packages_str = ' '.join(pkgs)
+                    unique_pkgs.append(p)
+            req_text = ('\n'.join(unique_pkgs) + '\n') if unique_pkgs else ''
+        has_requirements = bool(req_text.strip())
 
         dc_context = {
             'odoo_image': self.odoo_version_id.docker_image,
@@ -4485,7 +4487,7 @@ class SaasInstance(models.Model):
             'docker_cpu': docker_cpu,
             'docker_mem': docker_mem,
             'docker_swap': docker_swap,
-            'pip_packages': pip_packages_str,
+            'pip_packages': has_requirements,
             'filestore_mount': self._get_filestore_mount(),
             # Phase 2.2: immutable image deploy (everything baked → no
             # source/addons/pip mounts). Empty = legacy source-mount mode.
@@ -4495,20 +4497,10 @@ class SaasInstance(models.Model):
         ssh.write_file('%s/docker-compose.yml' % instance_path, dc_content)
         self._append_log("docker-compose.yml written.")
 
-        # Write deduplicated requirements.txt (backup-safe copy on disk)
-        if self.pip_packages:
-            seen = set()
-            unique_pkgs = []
-            for p in self.pip_packages.splitlines():
-                p = p.strip()
-                if not p or p.startswith('#'):
-                    continue
-                key = p.lower().split('=')[0].split('<')[0].split('>')[0].split('!')[0].split('[')[0].strip()
-                if key not in seen:
-                    seen.add(key)
-                    unique_pkgs.append(p)
-            ssh.write_file('%s/requirements.txt' % instance_path, '\n'.join(unique_pkgs) + '\n')
-            # Write the pip install script
+        # Write requirements.txt (+ the pip entrypoint script) from the
+        # repo-resolved requirements above.
+        if has_requirements:
+            ssh.write_file('%s/requirements.txt' % instance_path, req_text)
             pip_script = self._render_template('pip_install.sh', {})
             ssh.write_file('%s/pip_install.sh' % instance_path, pip_script)
             ssh.execute('chmod +x %s/pip_install.sh' % instance_path)
@@ -5268,6 +5260,44 @@ class SaasInstance(models.Model):
                 thread_name='saas_redeploy_%s' % rec.subdomain,
             )
 
+    def _collect_repo_requirements(self, ssh):
+        """Combined ``requirements.txt`` content from the connected repos, read
+        live from the docker host. This — not a manual field — is the source of
+        the instance's Python dependencies. Returns '' if no repo ships one."""
+        self.ensure_one()
+        blocks = []
+        for repo in self.repo_ids.filtered(lambda r: r.state == 'cloned'):
+            req_path = '%s/requirements.txt' % repo._get_remote_repo_path()
+            _code, out, _err = ssh.execute(
+                'if [ -f %s ]; then cat %s; fi'
+                % (shlex.quote(req_path), shlex.quote(req_path)))
+            if out and out.strip():
+                blocks.append('# from %s (%s)\n%s'
+                              % (repo.name, repo.branch or '', out.strip()))
+        return ('\n'.join(blocks) + '\n') if blocks else ''
+
+    def _validate_requirements(self, ssh, content):
+        """Dry-run ``pip install`` of ``content`` in a throwaway container of
+        this instance's Odoo image — so a broken requirements.txt is caught
+        BEFORE the live container is recreated. Returns (ok: bool, log: str)."""
+        self.ensure_one()
+        if not (content or '').strip():
+            return True, ''
+        image = self.odoo_version_id._get_docker_image()
+        instance_path = self._get_instance_path()
+        val_path = '%s/.req_validate.txt' % instance_path
+        ssh.write_file(val_path, content)
+        cmd = (
+            'docker run --rm -v %s:/tmp/req.txt:ro --entrypoint sh %s -c %s 2>&1'
+            % (shlex.quote(val_path), shlex.quote(image),
+               shlex.quote('python3 -m pip install --dry-run --no-input '
+                           '--break-system-packages --disable-pip-version-check '
+                           '-r /tmp/req.txt'))
+        )
+        code, out, err = ssh.execute(cmd, timeout=420)
+        ssh.execute('rm -f %s' % shlex.quote(val_path))
+        return code == 0, ((out or '') + (err or '')).strip()
+
     def _do_redeploy(self):
         """Internal redeploy logic for a single record."""
         self.ensure_one()
@@ -5311,6 +5341,27 @@ class SaasInstance(models.Model):
 
             # Pull product repos
             self._pull_product_repos(ssh)
+
+            # Validate the repo's requirements.txt in a THROWAWAY container
+            # before we touch the running one — a broken dependency must never
+            # take the customer's instance down. On failure: record a failed
+            # build (shown in Deployment history with the pip error) and abort,
+            # leaving the container untouched on its previous working state.
+            req_content = self._collect_repo_requirements(ssh)
+            if req_content.strip():
+                self._append_log("Validating requirements.txt from your repository...")
+                ok, vlog = self._validate_requirements(ssh, req_content)
+                if not ok:
+                    self._record_build(
+                        'redeploy', 'failed',
+                        commit_message='requirements.txt failed to install',
+                        log=vlog)
+                    raise UserError(_(
+                        "Deployment aborted: your requirements.txt could not be "
+                        "installed, so your code was NOT deployed and your "
+                        "instance is unchanged. See Deployment history for the "
+                        "full error.\n\n%s") % (vlog[-1500:] or 'pip install failed'))
+                self._append_log("requirements.txt validated successfully.")
 
             # Update docker-compose.yml and odoo.conf with current mounts
             self._append_log("Updating configuration...")
