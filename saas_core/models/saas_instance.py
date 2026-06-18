@@ -5298,6 +5298,33 @@ class SaasInstance(models.Model):
         ssh.execute('rm -f %s' % shlex.quote(val_path))
         return code == 0, ((out or '') + (err or '')).strip()
 
+    def _wait_until_healthy(self, ssh, timeout=180):
+        """Boot check: after a (re)deploy, wait until Odoo actually ANSWERS
+        inside the new container — not merely that the container exists. We
+        actively probe ``/web/login`` via ``docker exec`` (faster than the 30s
+        healthcheck interval) and bail out early if the container has exited.
+        Returns ``(ok: bool, logs: str)`` — ``logs`` is the container log tail
+        on failure, so the customer sees WHY it didn't boot."""
+        self.ensure_one()
+        container = self._get_container_name()
+        qn = shlex.quote(container)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            _c, out, _e = ssh.execute(
+                "docker inspect -f '{{.State.Status}}' %s 2>/dev/null" % qn)
+            status = (out or '').strip()
+            if status in ('exited', 'dead'):
+                break  # crashed on boot — stop waiting
+            if status == 'running':
+                pc, _po, _pe = ssh.execute(
+                    "docker exec %s curl -sf -o /dev/null --max-time 5 "
+                    "http://localhost:8069/web/login" % qn)
+                if pc == 0:
+                    return True, ''
+            time.sleep(5)
+        _c, logs, _e = ssh.execute("docker logs --tail 200 %s 2>&1" % qn)
+        return False, (logs or '').strip()[-6000:]
+
     def _do_redeploy(self):
         """Internal redeploy logic for a single record."""
         self.ensure_one()
@@ -5313,6 +5340,9 @@ class SaasInstance(models.Model):
         with server._get_ssh_connection() as ssh:
             # Pull all cloned instance repos
             cloned_repos = self.repo_ids.filtered(lambda r: r.state == 'cloned')
+            # Capture each repo's currently-deployed commit so a boot-check
+            # failure can roll the code back to this exact working state.
+            prev_shas = {}
             for repo in cloned_repos:
                 repo_path = repo._get_remote_repo_path()
                 clone_url = repo._get_clone_url()
@@ -5320,6 +5350,10 @@ class SaasInstance(models.Model):
                     'cd %s && git remote set-url origin %s'
                     % (shlex.quote(repo_path), shlex.quote(clone_url))
                 )
+                _c, _sha, _e = ssh.execute(
+                    'cd %s && git rev-parse HEAD 2>/dev/null' % shlex.quote(repo_path))
+                if _sha.strip():
+                    prev_shas[repo.id] = _sha.strip()
                 self._append_log("Pulling %s..." % repo.name)
                 pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
                     shlex.quote(repo_path), shlex.quote(repo.branch),
@@ -5381,6 +5415,42 @@ class SaasInstance(models.Model):
                     % (self._get_container_name(), e)
                 )
             self._append_log("Container restarted successfully.")
+
+            # Boot check — only treat the deploy as good once Odoo actually
+            # ANSWERS. If the new code crashes on boot, roll the repos back to
+            # their previously-deployed commits, restart, record a FAILED build
+            # with the boot log, and abort — the customer ends up running again
+            # on the last working version instead of a dead instance.
+            self._append_log("Waiting for Odoo to boot...")
+            booted, boot_logs = self._wait_until_healthy(ssh)
+            if not booted:
+                self._append_log(
+                    "New code failed to boot — rolling back to the last "
+                    "working version...")
+                for repo in cloned_repos:
+                    sha = prev_shas.get(repo.id)
+                    if sha:
+                        ssh.execute('cd %s && git reset --hard %s' % (
+                            shlex.quote(repo._get_remote_repo_path()),
+                            shlex.quote(sha)))
+                self._render_and_write_configs(ssh)
+                try:
+                    driver.destroy(handle)
+                    driver.start(handle)
+                except Exception:
+                    pass
+                self._wait_until_healthy(ssh, timeout=180)  # best-effort restore
+                self._record_build(
+                    'redeploy', 'failed',
+                    commit_message='Deploy rolled back — new code failed to boot',
+                    log=boot_logs)
+                raise UserError(_(
+                    "Deployment failed: your new code did not boot, so it was "
+                    "rolled back to the last working version. Your instance is "
+                    "running again on the previous code. See Deployment history "
+                    "for the boot log.\n\n%s")
+                    % (boot_logs[-1500:] or 'Odoo did not become healthy in time'))
+            self._append_log("Odoo booted healthy.")
 
         # Ensure webhooks are registered for any new or updated repos
         self._ensure_webhooks_registered()
