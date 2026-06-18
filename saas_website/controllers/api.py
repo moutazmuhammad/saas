@@ -639,6 +639,40 @@ class SaasApi(http.Controller):
         hours = ranges.get(range or '24h', 24)
         return ok(instance.sudo()._get_metric_series(hours=hours))
 
+    @http.route('/saas/api/v1/instances/<int:instance_id>/builds',
+                type='json', auth='public')
+    def instance_builds(self, instance_id, access_token=None, limit=30):
+        """Odoo.sh-style deployment history for the customer's own instance:
+        the chronological list of builds/deploys (initial / push / redeploy /
+        merge), each with its commit, author, branch, status and timing."""
+        try:
+            instance = self._instance(instance_id, access_token)
+        except (AccessError, MissingError):
+            return err(_("Instance not found."), 'not_found')
+        builds = request.env['saas.build'].sudo().search(
+            [('instance_id', '=', instance.id)], order='id desc',
+            limit=min(int(limit or 30), 100))
+        out = []
+        for b in builds:
+            dur = None
+            if b.date_start and b.date_done:
+                dur = int((b.date_done - b.date_start).total_seconds())
+            out.append({
+                'id': b.id,
+                'source': b.source,            # initial | push | redeploy | merge
+                'state': b.state,              # running | success | failed
+                'branch': b.branch or '',
+                'commit': b.commit_short or '',
+                'commit_message': b.commit_message or '',
+                'author': b.author or '',
+                'at': fields.Datetime.to_string(b.date_start) if b.date_start else '',
+                'duration_s': dur,
+                # The deploy log tail — so the customer can see WHY a build
+                # failed, not just that it did.
+                'log': (b.log or '')[-6000:] if b.state == 'failed' else '',
+            })
+        return ok(out)
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/action',
                 type='json', auth='public')
     def instance_action(self, instance_id, action=None, access_token=None):

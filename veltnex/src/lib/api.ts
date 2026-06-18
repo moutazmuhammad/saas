@@ -433,6 +433,19 @@ export interface MetricsHistory {
   samples: MetricSample[];
 }
 
+export interface Build {
+  id: number;
+  source: "initial" | "push" | "redeploy" | "merge";
+  state: "running" | "success" | "failed";
+  branch: string;
+  commit: string;
+  commit_message: string;
+  author: string;
+  at: string;
+  duration_s: number | null;
+  log: string;
+}
+
 export interface DbOperationStatus {
   id: number;
   operation: "create" | "duplicate" | "drop" | "upgrade";
@@ -557,6 +570,11 @@ export const api = {
     rpc<MetricsHistory>(
       `/saas/api/v1/instances/${id}/metrics/history`,
       { range, ...(accessToken ? { access_token: accessToken } : {}) },
+    ),
+  instanceBuilds: (id: number, accessToken?: string) =>
+    rpc<Build[]>(
+      `/saas/api/v1/instances/${id}/builds`,
+      accessToken ? { access_token: accessToken } : {},
     ),
   instanceAction: (id: number, action: string) =>
     rpc<StatusData>(`/saas/api/v1/instances/${id}/action`, { action }),

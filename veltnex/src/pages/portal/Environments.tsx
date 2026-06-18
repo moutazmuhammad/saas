@@ -30,6 +30,7 @@ import {
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PerformanceHistory } from "@/components/PerformanceHistory";
+import { DeploymentHistory } from "@/components/DeploymentHistory";
 import { Input, Label } from "@/components/ui/input";
 import { Dialog } from "@/components/ui/dialog";
 import { ActionButton } from "@/components/ActionButton";
@@ -832,25 +833,9 @@ function MainPanel({
               </div>
             )}
 
-            {/* Current deployment */}
-            <div className="mt-6">
-              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">Deployment</p>
-              <div className="rounded-lg border border-border p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-medium">Current deployment</span>
-                  <StatusBadge status={liveState} />
-                </div>
-                <div className="mt-2 flex items-center gap-1.5 font-mono text-xs text-muted">
-                  <GitBranch className="size-3" />
-                  {env.branch}
-                </div>
-                {status?.provisioning_log && (
-                  <pre className="mt-3 max-h-72 overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-[11px] leading-relaxed text-muted">
-                    {status.provisioning_log.trimEnd()}
-                  </pre>
-                )}
-              </div>
-            </div>
+            {/* Deployment history — Odoo.sh-style build timeline with per-build
+                status and the failure reason for any failed deploy. */}
+            <DeploymentHistory instanceId={env.id} />
           </>
         )}
       </div>
