@@ -5298,15 +5298,36 @@ class SaasInstance(models.Model):
         ssh.execute('rm -f %s' % shlex.quote(val_path))
         return code == 0, ((out or '') + (err or '')).strip()
 
-    def _wait_until_healthy(self, ssh, timeout=180):
+    def _allocate_ephemeral_ports(self, ssh):
+        """Find two consecutive free TCP ports on the docker host for a
+        transient green container (not the live pair). Returns (http, chat)."""
+        self.ensure_one()
+        _c, out, _e = ssh.execute(
+            "ss -tlnH 2>/dev/null | awk '{print $4}' | sed 's/.*://' | sort -u")
+        used = set((out or '').split())
+        for p in range(34001, 34999, 2):
+            if (str(p) not in used and str(p + 1) not in used
+                    and p not in (self.xmlrpc_port, self.longpolling_port)):
+                return p, p + 1
+        raise UserError(_("No free ports available for a zero-downtime deploy."))
+
+    def _flip_nginx(self, ssh, http_port, longpolling_port):
+        """Point the nginx vhost at ``http_port``/``longpolling_port`` and
+        gracefully reload (``systemctl reload`` — no dropped connections). The
+        atomic traffic switch between the blue and green containers."""
+        self.ensure_one()
+        self._refresh_nginx_config(
+            ssh, http_port=http_port, longpolling_port=longpolling_port)
+
+    def _wait_until_healthy(self, ssh, timeout=180, container=None):
         """Boot check: after a (re)deploy, wait until Odoo actually ANSWERS
-        inside the new container — not merely that the container exists. We
+        inside the container — not merely that the container exists. We
         actively probe ``/web/login`` via ``docker exec`` (faster than the 30s
         healthcheck interval) and bail out early if the container has exited.
         Returns ``(ok: bool, logs: str)`` — ``logs`` is the container log tail
         on failure, so the customer sees WHY it didn't boot."""
         self.ensure_one()
-        container = self._get_container_name()
+        container = container or self._get_container_name()
         qn = shlex.quote(container)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -5397,60 +5418,137 @@ class SaasInstance(models.Model):
                         "full error.\n\n%s") % (vlog[-1500:] or 'pip install failed'))
                 self._append_log("requirements.txt validated successfully.")
 
-            # Update docker-compose.yml and odoo.conf with current mounts
+            # Update docker-compose.yml and odoo.conf with the new code/mounts.
             self._append_log("Updating configuration...")
             self._render_and_write_configs(ssh)
             self._append_log("Configuration updated.")
 
-            # Restart the container (down + up to pick up volume changes)
-            self._append_log("Restarting container...")
             driver = self._compute_driver(connection=ssh)
             handle = self._compute_handle()
-            try:
-                driver.destroy(handle)
-                driver.start(handle)
-            except Exception as e:
-                raise UserError(
-                    _("Failed to restart container '%s':\n%s")
-                    % (self._get_container_name(), e)
-                )
-            self._append_log("Container restarted successfully.")
+            blue = self._get_container_name()
 
-            # Boot check — only treat the deploy as good once Odoo actually
-            # ANSWERS. If the new code crashes on boot, roll the repos back to
-            # their previously-deployed commits, restart, record a FAILED build
-            # with the boot log, and abort — the customer ends up running again
-            # on the last working version instead of a dead instance.
-            self._append_log("Waiting for Odoo to boot...")
-            booted, boot_logs = self._wait_until_healthy(ssh)
-            if not booted:
-                self._append_log(
-                    "New code failed to boot — rolling back to the last "
-                    "working version...")
-                for repo in cloned_repos:
-                    sha = prev_shas.get(repo.id)
-                    if sha:
-                        ssh.execute('cd %s && git reset --hard %s' % (
-                            shlex.quote(repo._get_remote_repo_path()),
-                            shlex.quote(sha)))
-                self._render_and_write_configs(ssh)
+            # Zero-downtime (blue/green) applies to source-mount instances whose
+            # nginx lives on the same host (a remote proxy / immutable image use
+            # the in-place recreate path below).
+            proxy = self.domain_id.proxy_server_id
+            zero_downtime = (
+                not (self.deploy_image or '').strip()
+                and (not proxy or proxy == self.docker_server_id))
+
+            if zero_downtime:
+                green = '%s_green' % blue
+                green_file = '%s/docker-compose.green.yml' % instance_path
+                green_proj = '%s_green' % self.subdomain
+
+                def _green_down():
+                    ssh.execute('cd %s && docker compose -f %s -p %s down 2>&1' % (
+                        shlex.quote(instance_path), shlex.quote(green_file),
+                        shlex.quote(green_proj)))
+                    ssh.execute('rm -f %s' % shlex.quote(green_file))
+
+                # 1. Stand up GREEN beside the live (blue) container on temp
+                #    ports, running the NEW code, sharing the same DB+filestore.
+                gp_http, gp_chat = self._allocate_ephemeral_ports(ssh)
+                _c, canon, _e = ssh.execute(
+                    'cat %s/docker-compose.yml' % shlex.quote(instance_path))
+                green_compose = (
+                    canon
+                    .replace('container_name: %s' % blue,
+                             'container_name: %s' % green)
+                    .replace(':%d:8069' % self.xmlrpc_port, ':%d:8069' % gp_http)
+                    .replace(':%d:8072' % self.longpolling_port,
+                             ':%d:8072' % gp_chat))
+                ssh.write_file(green_file, green_compose)
+                self._append_log("Starting new version alongside the live one (zero-downtime)...")
+                ssh.execute(
+                    'cd %s && docker compose -f %s -p %s up -d 2>&1' % (
+                        shlex.quote(instance_path), shlex.quote(green_file),
+                        shlex.quote(green_proj)), timeout=420)
+
+                # 2. Boot-check green. If it never answers, tear it down — the
+                #    live container never moved, so the customer sees nothing.
+                self._append_log("Waiting for the new version to boot...")
+                ok, boot_logs = self._wait_until_healthy(ssh, container=green)
+                if not ok:
+                    _green_down()
+                    self._record_build(
+                        'redeploy', 'failed',
+                        commit_message='New code failed to boot — kept the running version (zero downtime)',
+                        log=boot_logs)
+                    raise UserError(_(
+                        "Deployment failed: your new code did not boot. Your "
+                        "instance kept serving the previous version the entire "
+                        "time (zero downtime). See Deployment history for the "
+                        "boot log.\n\n%s")
+                        % (boot_logs[-1500:] or 'Odoo did not become healthy'))
+
+                # 3. Graceful nginx flip to green, then promote: recreate the
+                #    canonical container on the new code (its brief reboot is
+                #    masked by green still serving), flip back, retire green.
+                self._append_log("New version healthy — switching traffic over...")
+                self._flip_nginx(ssh, gp_http, gp_chat)
                 try:
                     driver.destroy(handle)
                     driver.start(handle)
-                except Exception:
-                    pass
-                self._wait_until_healthy(ssh, timeout=180)  # best-effort restore
-                self._record_build(
-                    'redeploy', 'failed',
-                    commit_message='Deploy rolled back — new code failed to boot',
-                    log=boot_logs)
-                raise UserError(_(
-                    "Deployment failed: your new code did not boot, so it was "
-                    "rolled back to the last working version. Your instance is "
-                    "running again on the previous code. See Deployment history "
-                    "for the boot log.\n\n%s")
-                    % (boot_logs[-1500:] or 'Odoo did not become healthy in time'))
-            self._append_log("Odoo booted healthy.")
+                except Exception as e:
+                    self._flip_nginx(ssh, self.xmlrpc_port, self.longpolling_port)
+                    _green_down()
+                    raise UserError(_("Failed to recreate container '%s':\n%s") % (blue, e))
+                canon_ok, canon_logs = self._wait_until_healthy(ssh)
+                if not canon_ok:
+                    # Extremely rare — green proved this exact code boots. Keep
+                    # traffic on green and flag the main container for ops.
+                    self._record_build(
+                        'redeploy', 'failed',
+                        commit_message='Promotion failed — serving from standby, needs attention',
+                        log=canon_logs)
+                    raise UserError(_(
+                        "Your new code is live (served from a standby container) "
+                        "but the main container did not come back up. Support "
+                        "has been notified.\n\n%s") % (canon_logs[-1500:]))
+                self._flip_nginx(ssh, self.xmlrpc_port, self.longpolling_port)
+                _green_down()
+                self._append_log("Deploy complete — zero downtime.")
+            else:
+                # Fallback (remote proxy / immutable image): in-place recreate
+                # with a boot check + git rollback to the last working commit.
+                self._append_log("Restarting container...")
+                try:
+                    driver.destroy(handle)
+                    driver.start(handle)
+                except Exception as e:
+                    raise UserError(
+                        _("Failed to restart container '%s':\n%s") % (blue, e))
+                self._append_log("Waiting for Odoo to boot...")
+                booted, boot_logs = self._wait_until_healthy(ssh)
+                if not booted:
+                    self._append_log(
+                        "New code failed to boot — rolling back to the last "
+                        "working version...")
+                    for repo in cloned_repos:
+                        sha = prev_shas.get(repo.id)
+                        if sha:
+                            ssh.execute('cd %s && git reset --hard %s' % (
+                                shlex.quote(repo._get_remote_repo_path()),
+                                shlex.quote(sha)))
+                    self._render_and_write_configs(ssh)
+                    try:
+                        driver.destroy(handle)
+                        driver.start(handle)
+                    except Exception:
+                        pass
+                    self._wait_until_healthy(ssh, timeout=180)
+                    self._record_build(
+                        'redeploy', 'failed',
+                        commit_message='Deploy rolled back — new code failed to boot',
+                        log=boot_logs)
+                    raise UserError(_(
+                        "Deployment failed: your new code did not boot, so it "
+                        "was rolled back to the last working version. Your "
+                        "instance is running again on the previous code. See "
+                        "Deployment history for the boot log.\n\n%s")
+                        % (boot_logs[-1500:] or 'Odoo did not become healthy in time'))
+                self._append_log("Odoo booted healthy.")
 
         # Ensure webhooks are registered for any new or updated repos
         self._ensure_webhooks_registered()
@@ -7809,13 +7907,18 @@ class SaasInstance(models.Model):
                 except Exception:
                     pass
 
-    def _refresh_nginx_config(self, ssh, backend_ip=None):
+    def _refresh_nginx_config(self, ssh, backend_ip=None,
+                             http_port=None, longpolling_port=None):
         """Re-render the nginx vhost and reload — no certbot step.
 
         Used by the restore flow to apply any topology / port / plan
         change captured on the saas.instance record without paying the
         ~10–60 s cost of certbot (the cert is already there from the
         initial deploy and certbot is its own slow round trip).
+
+        ``http_port``/``longpolling_port`` override the instance's stored
+        ports — the blue/green deploy uses this to flip traffic to a
+        transient green container without mutating the record.
         """
         self.ensure_one()
         domain = self.name
@@ -7825,8 +7928,8 @@ class SaasInstance(models.Model):
         nginx_context = {
             'subdomain': self.subdomain,
             'subdomainchat': '%s-chat' % self.subdomain,
-            'http_port': self.xmlrpc_port,
-            'longpolling_port': self.longpolling_port,
+            'http_port': http_port or self.xmlrpc_port,
+            'longpolling_port': longpolling_port or self.longpolling_port,
             'domain': domain,
         }
         if backend_ip:
