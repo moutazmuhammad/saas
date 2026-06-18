@@ -222,6 +222,21 @@ class SaasPortalSpa(SaasPortal):
     def portal_instance_logs(self, instance_id, access_token=None, **kw):
         return spa_shell()
 
+    @http.route('/my/instances/<int:instance_id>/metrics',
+                type='http', auth='public', website=True)
+    def portal_instance_metrics(self, instance_id, access_token=None, **kw):
+        return spa_shell()
+
+    @http.route('/my/instances/<int:instance_id>/shell',
+                type='http', auth='public', website=True)
+    def portal_instance_shell(self, instance_id, access_token=None, **kw):
+        return spa_shell()
+
+    @http.route('/my/instances/<int:instance_id>/sql',
+                type='http', auth='public', website=True)
+    def portal_instance_sql(self, instance_id, access_token=None, **kw):
+        return spa_shell()
+
     @http.route('/my/instances/<int:instance_id>/environments',
                 type='http', auth='public', website=True)
     def portal_instance_environments(self, instance_id, access_token=None,

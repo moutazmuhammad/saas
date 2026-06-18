@@ -8,8 +8,18 @@ import {
   LifeBuoy,
   LayoutGrid,
   ChevronRight,
+  ChevronLeft,
   Menu,
   HelpCircle,
+  LayoutDashboard,
+  Activity,
+  Database,
+  Code2,
+  ScrollText,
+  Archive,
+  Layers,
+  TerminalSquare,
+  TableProperties,
 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -17,6 +27,7 @@ import { CommandPalette } from "@/components/CommandPalette";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { ProjectSwitcher } from "@/components/ProjectSwitcher";
 import { useAuth } from "@/context/AuthContext";
+import { useInstances } from "@/context/InstancesContext";
 import { useToast } from "@/context/ToastContext";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +37,27 @@ const NAV = [
   { to: "/my/billing", label: "Billing", icon: Receipt },
   { to: "/my/settings", label: "Settings", icon: Settings },
 ];
+
+type NavItem = { to: string; label: string; icon: typeof Receipt; end?: boolean };
+
+// GCP-Console-style resource nav: when viewing an instance, the left rail shows
+// every section of THAT instance so the whole project is one click away.
+// Hosting projects get the full toolset; managed Services get the read-only set.
+function instanceSections(id: number, isHosting: boolean): NavItem[] {
+  const base = `/my/instances/${id}`;
+  const items: (NavItem | false)[] = [
+    { to: base, label: "Overview", icon: LayoutDashboard, end: true },
+    { to: `${base}/metrics`, label: "Metrics", icon: Activity },
+    isHosting && { to: `${base}/databases`, label: "Databases", icon: Database },
+    isHosting && { to: `${base}/environments`, label: "Environments", icon: Layers },
+    isHosting && { to: `${base}/code`, label: "Code & packages", icon: Code2 },
+    isHosting && { to: `${base}/shell`, label: "Shell", icon: TerminalSquare },
+    isHosting && { to: `${base}/sql`, label: "SQL", icon: TableProperties },
+    isHosting && { to: `${base}/logs`, label: "Logs", icon: ScrollText },
+    { to: `${base}/backups`, label: "Snapshots", icon: Archive },
+  ];
+  return items.filter(Boolean) as NavItem[];
+}
 
 /** Small dropdown helper: button + panel that closes on outside-click / esc. */
 function Dropdown({
@@ -78,6 +110,7 @@ function Dropdown({
 
 export function PortalLayout() {
   const { user, logout } = useAuth();
+  const { getInstance } = useInstances();
   const toast = useToast();
   const navigate = useNavigate();
   const { pathname } = useLocation();
@@ -86,10 +119,22 @@ export function PortalLayout() {
   const [navCollapsed, setNavCollapsed] = React.useState(true);
   const [mobileNav, setMobileNav] = React.useState(false);
 
+  // Which instance (if any) are we inside? Drives the contextual left rail.
+  const instMatch = pathname.match(/^\/my\/instances\/(\d+)/);
+  const instId = instMatch ? Number(instMatch[1]) : null;
+  const inst = instId ? getInstance(instId) : undefined;
+
   React.useEffect(() => {
     window.scrollTo({ top: 0 });
     setMobileNav(false);
   }, [pathname]);
+
+  // Auto-expand the rail when entering an instance so its sections are
+  // discoverable (GCP Console keeps the resource nav open); collapse back on
+  // the account/global pages.
+  React.useEffect(() => {
+    setNavCollapsed(instId == null);
+  }, [instId]);
 
   // Global ⌘K / Ctrl+K opens the command palette.
   React.useEffect(() => {
@@ -109,28 +154,67 @@ export function PortalLayout() {
     navigate("/");
   };
 
+  const NavRow = ({
+    item,
+    collapsed,
+    active,
+  }: {
+    item: NavItem;
+    collapsed: boolean;
+    active: boolean;
+  }) => (
+    <button
+      key={item.to}
+      title={item.label}
+      onClick={() => { setMobileNav(false); navigate(item.to); }}
+      className={cn(
+        "flex items-center gap-4 rounded-r-full py-2.5 text-sm transition-colors",
+        collapsed ? "mx-2 justify-center rounded-lg px-0" : "pl-6 pr-4",
+        active
+          ? "bg-primary/10 font-medium text-primary"
+          : "text-foreground/80 hover:bg-foreground/[0.06]",
+      )}
+    >
+      <item.icon className="size-5 shrink-0" />
+      {!collapsed && <span className="truncate">{item.label}</span>}
+    </button>
+  );
+
+  const isActive = (item: NavItem) =>
+    item.end ? pathname === item.to : pathname.startsWith(item.to);
+
   const NavList = ({ collapsed }: { collapsed: boolean }) => (
     <nav className="flex flex-col gap-0.5 py-2 pr-2">
-      {NAV.map((item) => {
-        const active = pathname.startsWith(item.to);
-        return (
+      {/* INSTANCE CONTEXT: every section of the current project, one click away */}
+      {inst && instId != null && (
+        <>
           <button
-            key={item.to}
-            title={item.label}
-            onClick={() => { setMobileNav(false); navigate(item.to); }}
+            onClick={() => { setMobileNav(false); navigate("/my/instances"); }}
+            title="All projects"
             className={cn(
-              "flex items-center gap-4 rounded-r-full py-2.5 text-sm transition-colors",
-              collapsed ? "mx-2 justify-center rounded-lg px-0" : "pl-6 pr-4",
-              active
-                ? "bg-primary/10 font-medium text-primary"
-                : "text-foreground/80 hover:bg-foreground/[0.06]",
+              "mb-1 flex items-center gap-2 py-2 text-xs font-medium text-muted transition-colors hover:text-foreground",
+              collapsed ? "mx-2 justify-center" : "pl-5 pr-4",
             )}
           >
-            <item.icon className="size-5 shrink-0" />
-            {!collapsed && <span>{item.label}</span>}
+            <ChevronLeft className="size-4 shrink-0" />
+            {!collapsed && <span>All projects</span>}
           </button>
-        );
-      })}
+          {!collapsed && (
+            <div className="mb-1 truncate px-6 pb-1 text-sm font-semibold text-foreground">
+              {inst.name}
+            </div>
+          )}
+          {instanceSections(instId, inst.is_hosting).map((item) => (
+            <NavRow key={item.to} item={item} collapsed={collapsed} active={isActive(item)} />
+          ))}
+          <div className="mx-3 my-2 border-t border-border" />
+        </>
+      )}
+
+      {/* GLOBAL / account sections */}
+      {NAV.map((item) => (
+        <NavRow key={item.to} item={item} collapsed={collapsed} active={pathname.startsWith(item.to)} />
+      ))}
       <div className="mx-3 my-2 border-t border-border" />
       <button
         title="Help & support"

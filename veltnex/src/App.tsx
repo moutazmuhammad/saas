@@ -23,6 +23,9 @@ import Environments from "./pages/portal/Environments";
 import Code from "./pages/portal/Code";
 import Logs from "./pages/portal/Logs";
 import Backups from "./pages/portal/Backups";
+import Metrics from "./pages/portal/Metrics";
+import ShellPage from "./pages/portal/ShellPage";
+import SqlPage from "./pages/portal/SqlPage";
 import Invoices from "./pages/portal/Invoices";
 import InvoiceDetail from "./pages/portal/InvoiceDetail";
 import Settings from "./pages/portal/Settings";
@@ -70,9 +73,12 @@ export default function App() {
           <Route path="home" element={<Navigate to="/my/instances" replace />} />
           <Route path="instances" element={<Instances />} />
           <Route path="instances/:id" element={<InstanceDetail />} />
+          <Route path="instances/:id/metrics" element={<Metrics />} />
           <Route path="instances/:id/environments" element={<Environments />} />
           <Route path="instances/:id/databases" element={<Databases />} />
           <Route path="instances/:id/code" element={<Code />} />
+          <Route path="instances/:id/shell" element={<ShellPage />} />
+          <Route path="instances/:id/sql" element={<SqlPage />} />
           <Route path="instances/:id/logs" element={<Logs />} />
           <Route path="instances/:id/backups" element={<Backups />} />
           <Route path="billing" element={<Invoices />} />
