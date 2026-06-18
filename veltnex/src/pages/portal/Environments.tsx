@@ -572,6 +572,11 @@ function MainPanel({
   const isRunning = liveState === "running";
   const isStopped = liveState === "stopped";
   const pendingPay = env.pending_payment && env.pending_invoice_id;
+  const cloneCmd = project.repo_url
+    ? `git clone --branch ${env.branch} ${project.repo_url}`
+    : "";
+  const [showClone, setShowClone] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
 
   return (
     <Card className="flex max-h-[calc(100vh-9.5rem)] flex-col overflow-hidden lg:sticky lg:top-20">
@@ -601,9 +606,8 @@ function MainPanel({
           </p>
         </div>
 
-        {/* Actions — Re-deploy / Start / Stop / Open app / Delete on one line.
-            Databases / Logs / Backups / Metrics / Shell / SQL live only in the
-            left sidebar; the workspace stays focused on environment management. */}
+        {/* Actions — Re-deploy / Start / Stop / Clone / Delete on one line.
+            (Open app lives in the persistent instance header above.) */}
         <div className="flex flex-wrap items-center gap-2">
           {isRunning && (
             <ActionButton
@@ -639,10 +643,14 @@ function MainPanel({
               Stop
             </ActionButton>
           )}
-          {url && (
-            <Button size="sm" variant="secondary" onClick={() => window.open(url, "_blank")}>
-              <ExternalLink className="size-4" />
-              Open app
+          {cloneCmd && (
+            <Button
+              size="sm"
+              variant={showClone ? "default" : "secondary"}
+              onClick={() => setShowClone((s) => !s)}
+            >
+              <Copy className="size-4" />
+              Clone
             </Button>
           )}
           {onDelete && (
@@ -653,6 +661,25 @@ function MainPanel({
           )}
         </div>
       </div>
+
+      {/* Clone command bar (shown when the Clone button is toggled) */}
+      {showClone && cloneCmd && (
+        <div className="flex items-center gap-2 border-b border-border bg-background/40 px-5 py-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard?.writeText(cloneCmd);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
+          >
+            {copied ? <Check className="size-3.5 text-success" /> : <Copy className="size-3.5" />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">{cloneCmd}</code>
+        </div>
+      )}
 
       {/* Body — flex-fills the card so the panel stays within the viewport
           (only this area scrolls) and doesn't resize when switching tabs */}

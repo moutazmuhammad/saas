@@ -1,5 +1,5 @@
-import { Outlet, useParams } from "react-router-dom";
-import { GitBranch, Globe, ExternalLink } from "lucide-react";
+import { Outlet, useParams, useLocation } from "react-router-dom";
+import { GitBranch, Globe, ExternalLink, ArrowUpRight } from "lucide-react";
 import { useInstances } from "@/context/InstancesContext";
 import { StatusBadge } from "@/components/StatusBadge";
 import { CopyButton } from "@/components/CopyButton";
@@ -17,6 +17,7 @@ export default function InstanceLayout() {
   const instanceId = Number(id);
   const { getInstance, loading } = useInstances();
   const inst = getInstance(instanceId);
+  const location = useLocation();
 
   // Cache still loading and we don't have this one yet → spinner. If it's loaded
   // but absent (guest/token deep-link, or not in the list) we still render the
@@ -71,8 +72,8 @@ export default function InstanceLayout() {
             </div>
           </div>
 
-          {inst.url && (
-            <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
+            {inst.url && (
               <Button
                 variant="secondary"
                 onClick={() => window.open(inst.url!, "_blank", "noopener,noreferrer")}
@@ -80,8 +81,22 @@ export default function InstanceLayout() {
                 <ExternalLink className="size-4" />
                 Open app
               </Button>
-            </div>
-          )}
+            )}
+            <Button
+              variant="secondary"
+              title="Open this section in a new browser tab"
+              onClick={() =>
+                window.open(
+                  window.location.origin + location.pathname + location.search,
+                  "_blank",
+                  "noopener,noreferrer",
+                )
+              }
+            >
+              <ArrowUpRight className="size-4" />
+              New tab
+            </Button>
+          </div>
         </div>
       )}
 

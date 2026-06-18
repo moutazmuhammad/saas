@@ -115,8 +115,10 @@ export function PortalLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [paletteOpen, setPaletteOpen] = React.useState(false);
-  // Left nav is collapsed (icon rail) by default — opens via the hamburger.
+  // Left nav is an icon rail by default; it expands on hover (or when pinned
+  // open via the hamburger). `hovered` drives the auto open/close.
   const [navCollapsed, setNavCollapsed] = React.useState(true);
+  const [hovered, setHovered] = React.useState(false);
   const [mobileNav, setMobileNav] = React.useState(false);
 
   // Which instance (if any) are we inside? Drives the contextual left rail.
@@ -313,14 +315,23 @@ export function PortalLayout() {
       </header>
 
       <div className="flex">
-        {/* Desktop left nav (collapsible to an icon rail) */}
+        {/* Desktop left nav — an icon rail that expands on hover as an overlay
+            (no content reflow), or stays open when pinned via the hamburger.
+            The aside reserves the collapsed width in flow; the inner panel
+            floats wider over the content when expanded. */}
         <aside
-          className={cn(
-            "sticky top-16 hidden h-[calc(100vh-4rem)] shrink-0 overflow-y-auto border-r border-border bg-card transition-[width] lg:block",
-            navCollapsed ? "w-16" : "w-64",
-          )}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+          className="sticky top-16 z-30 hidden h-[calc(100vh-4rem)] w-16 shrink-0 lg:block"
         >
-          <NavList collapsed={navCollapsed} />
+          <div
+            className={cn(
+              "absolute inset-y-0 left-0 overflow-y-auto overflow-x-hidden border-r border-border bg-card transition-[width] duration-200",
+              hovered || !navCollapsed ? "w-64 shadow-2xl" : "w-16",
+            )}
+          >
+            <NavList collapsed={!(hovered || !navCollapsed)} />
+          </div>
         </aside>
 
         <main className="min-w-0 flex-1">
