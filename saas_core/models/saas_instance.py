@@ -3880,34 +3880,46 @@ class SaasInstance(models.Model):
         auto-reverted — doing so would mark a half-deleted instance as
         "running" again. They are routed to ``failed`` for manual review.
 
-        Thresholds: ``restore`` ops keep a wide window (90 min) because a
-        large snapshot restore is the slowest legitimate path and
-        re-queuing it mid-flight creates duplicate containers. Everything
-        else uses a tighter 15-min cutoff so a stuck instance self-heals
-        quickly instead of leaving the customer staring at "Provisioning"
-        — recovery of these ops just reverts state (or retries a deploy),
-        so an over-eager recovery is cheap, while a fresh provision still
-        completes well within 15 min.
+        Thresholds: non-restore ops use a tight 15-min cutoff so a stuck
+        instance self-heals quickly. For ``restore`` we HEALTH-GATE recovery:
+        a real restore is brief and keeps the container DOWN during its
+        destructive phase, so once a restore has been stuck past a short
+        window (8 min) AND the container is back UP and healthy, the restore
+        has finished or its thread died — safe to recover in minutes instead
+        of making the customer stare at "Provisioning". If the container is
+        still DOWN we hold off until a 90-min hard backstop, because a genuinely
+        slow restore (large snapshot) legitimately has the container down and
+        recovering early could clobber it.
         """
         now = fields.Datetime.now()
         normal_cutoff = now - datetime.timedelta(minutes=15)
-        restore_cutoff = now - datetime.timedelta(minutes=90)
+        restore_health_cutoff = now - datetime.timedelta(minutes=8)
+        restore_hard_cutoff = now - datetime.timedelta(minutes=90)
         stuck = self.search([
             ('state', '=', 'provisioning'),
             '|',
             '&', ('pending_operation', '=', 'restore'),
-                 ('write_date', '<', restore_cutoff),
+                 ('write_date', '<', restore_health_cutoff),
             '&', ('pending_operation', '!=', 'restore'),
                  ('write_date', '<', normal_cutoff),
         ])
         if not stuck:
             return
-        _logger.info(
-            "Cron: recovering %d instance(s) stuck in provisioning.", len(stuck),
-        )
         for instance in stuck:
             try:
                 op = instance.pending_operation
+                # Restore health gate: between the 8-min and 90-min marks, only
+                # recover if the container is actually UP (restore done/dead).
+                # A live restore keeps it down, so a down container = still
+                # running → wait for the hard backstop.
+                if op == 'restore' and (instance.write_date or now) >= restore_hard_cutoff:
+                    try:
+                        healthy = instance._compute_driver().health(
+                            instance._compute_handle()).running
+                    except Exception:
+                        healthy = False
+                    if not healthy:
+                        continue
                 prev_state = instance.pre_provisioning_state or 'failed'
                 if op and op not in self._RECOVERABLE_OPERATIONS:
                     instance._append_log(
