@@ -31,6 +31,7 @@ import {
   Cpu,
   HardDrive,
   ArrowUpCircle,
+  Minus,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -301,8 +302,7 @@ export default function Environments() {
 
               <SidebarSection
                 title="Staging"
-                onAdd={canCreate ? () => setCreateType("staging") : undefined}
-                addTitle={canCreate ? undefined : "Connect a repository first"}
+                onAdd={() => setCreateType("staging")}
               >
                 <BranchList
                   envs={staging}
@@ -315,8 +315,7 @@ export default function Environments() {
 
               <SidebarSection
                 title="Development"
-                onAdd={canCreate ? () => setCreateType("development") : undefined}
-                addTitle={canCreate ? undefined : "Connect a repository first"}
+                onAdd={() => setCreateType("development")}
               >
                 <BranchList
                   envs={development}
@@ -334,31 +333,12 @@ export default function Environments() {
 
         {/* ───────── Main panel: selected environment ───────── */}
         <div className="min-w-0 flex-1">
-          {!canCreate && (
-            <Card className="mb-4 flex flex-col gap-3 border-info/40 bg-info/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-info/10 text-info">
-                  <Link2 className="size-4" />
-                </span>
-                <div>
-                  <p className="text-sm font-medium">Connect a Git repository to add environments</p>
-                  <p className="text-xs text-muted">Staging and Development servers run on branches of your repo.</p>
-                </div>
-              </div>
-              <Button className="shrink-0" onClick={() => setTab("code")}>
-                <GitBranch className="size-4" />
-                Connect
-              </Button>
-            </Card>
-          )}
-
           <MainPanel
             key={selected.id}
             env={selected}
             project={data}
             tab={tab}
             setTab={setTab}
-            canAdd={canCreate}
             onAddEnv={(t) => setCreateType(t)}
             onDelete={selected.is_production ? undefined : () => setDeleteTarget(selected)}
             onMergeInto={() => {
@@ -450,25 +430,61 @@ function repoName(url: string) {
   return m ? m[0] : repoShort(url);
 }
 
-/* ─────────────────── Scale card (production only) ─────────────────── */
-/* Lets the customer scale the Production server's compute/storage (bridges to
- * the existing, billing-correct change-plan flow) and add more Staging/
- * Development servers to test on before deploying to Production. Slot usage is
- * shown so they know what's free within their entitlement vs. an extra buy. */
+/* ─────────────────── Scale card (project settings) ─────────────────── */
+/* Two things the customer manages here:
+ *  1. Production compute/storage — bridges to the billing-correct change-plan.
+ *  2. Reserved Staging/Development capacity — he RESERVES (pays for) a number
+ *     of slots (no Git repo needed), then within that count creates/deletes
+ *     servers freely during the cycle at no extra charge. Creating a server
+ *     needs a repo; he can't create beyond the reserved count without
+ *     reserving more. Releasing a free slot stops the charge (prorated). */
 function ScaleCard({
   project,
-  canAdd,
   onAddEnv,
+  onChanged,
 }: {
   project: ProjectEnvironments;
-  canAdd: boolean;
   onAddEnv: (t: "staging" | "development") => void;
+  onChanged: () => void;
 }) {
+  const toast = useToast();
   const plan = project.production_plan;
+  const hasRepo = project.has_repo;
+  const [busy, setBusy] = React.useState<string | null>(null);
   const goScale = () => {
     window.location.href = `/my/instances/${project.production.id}/${
       plan.is_trial ? "upgrade" : "change-plan"
     }`;
+  };
+
+  const reserve = async (type: "staging" | "development") => {
+    setBusy(`reserve-${type}`);
+    try {
+      const res = await api.environmentReserve(project.production.id, type);
+      if (!res.auto_provisioned && res.checkout_url) {
+        window.location.href = res.checkout_url;
+        return;
+      }
+      toast.success("Slot reserved", "You can now create a server in it.");
+      onChanged();
+    } catch (e) {
+      toast.error("Couldn't reserve", e instanceof ApiError ? e.message : "Please try again.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const release = async (type: "staging" | "development") => {
+    setBusy(`release-${type}`);
+    try {
+      await api.environmentRelease(project.production.id, type);
+      toast.success("Slot released", "The unused time was credited to your wallet.");
+      onChanged();
+    } catch (e) {
+      toast.error("Couldn't release", e instanceof ApiError ? e.message : "Please try again.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   const SlotRow = ({
@@ -481,9 +497,9 @@ function ScaleCard({
     icon: React.ComponentType<{ className?: string }>;
   }) => {
     const s = project.slots[type];
-    const withinEntitlement = s.used < s.total;
+    const hasFreeSlot = s.used < s.total;
     return (
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+      <div className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Icon className="size-4" />
@@ -491,20 +507,50 @@ function ScaleCard({
           <div>
             <p className="text-sm font-medium">{label}</p>
             <p className="text-xs text-muted">
-              {s.used} of {s.total} {s.total === 1 ? "server" : "servers"} in use
+              {s.used} of {s.total} reserved {s.total === 1 ? "server" : "servers"} in use
             </p>
           </div>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={!canAdd}
-          title={canAdd ? undefined : "Connect a repository first"}
-          onClick={() => onAddEnv(type)}
-        >
-          <Plus className="size-4" />
-          {withinEntitlement ? "Add" : "Add (+1 slot)"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {s.total > s.used && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy !== null}
+              onClick={() => release(type)}
+              title="Give up a free reserved slot (prorated refund)"
+            >
+              <Minus className="size-4" />
+              Release
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={busy !== null}
+            onClick={() => reserve(type)}
+            title="Reserve one more slot (paid, no repository needed)"
+          >
+            <Plus className="size-4" />
+            Reserve
+          </Button>
+          {/* Create a server within the reserved slots — needs a repo. */}
+          <Button
+            size="sm"
+            disabled={!hasFreeSlot || !hasRepo}
+            onClick={() => onAddEnv(type)}
+            title={
+              !hasFreeSlot
+                ? "All reserved slots are in use — reserve one more"
+                : !hasRepo
+                  ? "Connect a Git repository below to create a server"
+                  : undefined
+            }
+          >
+            <Server className="size-4" />
+            Add server
+          </Button>
+        </div>
       </div>
     );
   };
@@ -536,16 +582,18 @@ function ScaleCard({
           Test environments
         </p>
         <p className="mt-0.5 text-xs text-muted">
-          Spin up Staging/Development servers to test changes before they reach
-          Production.
+          Reserve Staging/Development capacity (paid per cycle). Within your
+          reserved count you can create and delete servers freely — recreating
+          one never costs extra.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <SlotRow type="staging" label="Staging" icon={FlaskConical} />
           <SlotRow type="development" label="Development" icon={Rocket} />
         </div>
-        {!canAdd && (
+        {!hasRepo && (
           <p className="mt-2 text-xs text-muted">
-            Connect a Git repository (Code tab) to add test environments.
+            Reserving a slot needs no repository, but creating a server does —
+            connect one below to start deploying.
           </p>
         )}
       </div>
@@ -758,7 +806,6 @@ function MainPanel({
   project,
   tab,
   setTab,
-  canAdd,
   onAddEnv,
   onDelete,
   onMergeInto,
@@ -768,7 +815,6 @@ function MainPanel({
   project: ProjectEnvironments;
   tab: SectionTab;
   setTab: (t: SectionTab) => void;
-  canAdd: boolean;
   onAddEnv: (t: "staging" | "development") => void;
   onDelete?: () => void;
   onMergeInto: () => void;
@@ -863,9 +909,19 @@ function MainPanel({
           </p>
         </div>
 
-        {/* Actions — Re-deploy / Start / Stop / Clone / Delete on one line.
-            (Open app lives in the persistent instance header above.) */}
+        {/* Actions — Open app / Re-deploy / Start / Stop / Delete on one line.
+            Open app is per-server: it points at THIS environment's URL. */}
         <div className="flex flex-wrap items-center gap-2">
+          {isRunning && url && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+            >
+              <ExternalLink className="size-4" />
+              Open app
+            </Button>
+          )}
           {isRunning && (
             <ActionButton
               icon={RotateCw}
@@ -932,14 +988,6 @@ function MainPanel({
           />
         ) : tab === "overview" ? (
           <>
-            {env.is_production && (
-              <ScaleCard
-                project={project}
-                canAdd={canAdd}
-                onAddEnv={onAddEnv}
-              />
-            )}
-
             {project.repo_url && (
               <RepoCard repoUrl={project.repo_url} branch={env.branch} cloneCmd={cloneCmd} />
             )}
@@ -954,9 +1002,13 @@ function MainPanel({
         ) : tab === "databases" ? (
           <Databases embedId={env.id} />
         ) : tab === "code" ? (
-          // Code & packages is project-wide (bound to Production), inherited by
-          // Staging/Development — so it always targets the Production instance.
-          <Code embedId={project.production.id} />
+          // Project settings: scale Production resources / test environments,
+          // plus the Code & packages (repo) panel. Both are project-wide (bound
+          // to Production) and inherited by Staging/Development.
+          <>
+            <ScaleCard project={project} onAddEnv={onAddEnv} onChanged={onChanged} />
+            <Code embedId={project.production.id} />
+          </>
         ) : tab === "shell" ? (
           <ShellPage embedId={env.id} />
         ) : tab === "sql" ? (

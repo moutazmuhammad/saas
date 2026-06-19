@@ -712,6 +712,23 @@ class SaasInstance(models.Model):
         help='On a Staging/Development child bought beyond the purchased '
              'slots: once its activation invoice settles it adds a recurring '
              'slot to the project. Cleared on activation.')
+    # --- Mid-cycle slot RESERVATION (buy capacity without a server) -------
+    # The customer reserves N Staging/Development slots (paid, no repo needed,
+    # no server created). Within the reserved count he then creates/deletes
+    # servers freely — deleting frees a slot for reuse, it never refunds or
+    # lowers the count. These hold a reservation purchase until its invoice
+    # is paid, at which point the slots are granted (mirrors storage blocks).
+    reserved_staging_pending = fields.Integer(
+        string='Pending Reserved Staging Slots', copy=False, default=0,
+        help='Staging slots to grant once the reservation invoice is paid.')
+    reserved_dev_pending = fields.Integer(
+        string='Pending Reserved Development Slots', copy=False, default=0,
+        help='Development slots to grant once the reservation invoice is paid.')
+    slot_reservation_pending_invoice_id = fields.Many2one(
+        'account.move', string='Slot Reservation Invoice', copy=False,
+        ondelete='set null',
+        help='The prorated invoice for a mid-cycle slot reservation. The slots '
+             'are granted once it is paid; cleared then.')
     project_name = fields.Char(
         string='Project Name', copy=False,
         help='Customer-facing project name chosen at checkout. Falls back to '
@@ -2108,12 +2125,14 @@ class SaasInstance(models.Model):
         if not self.is_hosting:
             raise UserError(_(
                 "Environments are only available for hosting subscriptions."))
-        # Odoo.sh parity: a project must have a Git repository connected to its
-        # Production server before any Staging/Development branch can exist.
+        # Creating (spinning up) a server needs a Git repository — it runs on a
+        # branch. Reserving/paying for slots does NOT (that's a separate action
+        # that only grows the entitlement). So this gate guards CREATION only.
         if not self.repo_ids:
             raise UserError(_(
                 "Connect a Git repository to your Production server before "
-                "creating Staging or Development environments."))
+                "creating a Staging or Development server. You can still "
+                "reserve slots without one."))
         if env_type not in ('staging', 'development'):
             raise UserError(_("Unknown environment type '%s'.") % env_type)
         name = (name or '').strip()
@@ -2241,43 +2260,58 @@ class SaasInstance(models.Model):
         if env_type not in ('staging', 'development'):
             raise UserError(_("Unknown environment type."))
 
-        # Within the purchased slots → free to create (the slot is already
-        # paid, upfront + on renewal). Only when the customer presses "+"
-        # beyond what they bought do we charge for an extra slot.
+        # Creating is FREE and capped at the reserved count: the customer
+        # already paid for the slots when he reserved them, and within the
+        # cycle he may delete + recreate servers up to that count at no extra
+        # charge. To go beyond it he must reserve (buy) more slots first.
         used = self._env_used_for(env_type)
         slots = self._env_slots_for(env_type)
-        if used < slots:
-            child = self._create_env_child(env_type, name=name, branch=branch)
-            child._activate_pending_environment()
-            self._append_log(
-                "Environment '%s' created within purchased %s slots "
-                "(%d/%d used)." % (
-                    child.subdomain, env_type, used + 1, slots))
-            return {
-                'child_id': child.id,
-                'auto_provisioned': True,
-                'free': True,
-            }
-
-        # Beyond the entitlement → buy an extra slot (prorated). On payment
-        # the slot is added to the project (``env_is_extra_slot`` marker).
+        if used >= slots:
+            label = dict(self._fields['environment'].selection).get(
+                env_type, env_type)
+            raise UserError(_(
+                "You've used all %d reserved %s server(s). Reserve another "
+                "slot to create more.") % (slots, label))
+        # ``_create_env_child`` enforces the Git-repo requirement (a server
+        # runs on a branch).
         child = self._create_env_child(env_type, name=name, branch=branch)
-        child.env_is_extra_slot = True
+        child._activate_pending_environment()
+        self._append_log(
+            "Environment '%s' created within reserved %s slots (%d/%d used)."
+            % (child.subdomain, env_type, used + 1, slots))
+        return {'child_id': child.id, 'auto_provisioned': True, 'free': True}
+
+    def action_reserve_environment_slots(self, env_type, qty=1):
+        """Reserve (buy) ``qty`` Staging/Development slots on the project — paid
+        capacity, NO Git repo required and NO server created. Prorated for the
+        remainder of the cycle; on payment the slots are granted and the
+        customer can create/delete servers within them freely. Mirrors
+        ``action_purchase_storage_block``."""
+        self.ensure_one()
+        if self.environment != 'production':
+            raise UserError(_(
+                "Reserve environment slots from the Production server."))
+        if self.is_trial:
+            raise UserError(_(
+                "Upgrade to a paid plan before reserving environment slots."))
+        if env_type not in ('staging', 'development'):
+            raise UserError(_("Unknown environment type."))
+        qty = max(1, int(qty or 1))
         period = self.billing_period or 'monthly'
-        full = self._env_server_price(period)
+        full = self._env_server_price(period) * qty
         charge = full
         if self.next_invoice_date and self.last_invoice_date:
             total_days = (self.next_invoice_date - self.last_invoice_date).days
             left = (self.next_invoice_date - fields.Date.today()).days
             if total_days > 0 and 0 < left < total_days:
                 charge = round(full * left / total_days, 2)
-        labels = dict(self._fields['environment'].selection)
+        label = dict(self._fields['environment'].selection).get(
+            env_type, env_type)
         pricelist = self.partner_id.property_product_pricelist
         order_lines = [(0, 0, {
             'product_id': self._get_billing_product().id,
-            'name': _('Add %s server — %s [branch: %s] (prorated)') % (
-                labels.get(env_type, env_type), child.name or child.subdomain,
-                child._env_branch() or '—'),
+            'name': _('Reserve %d %s slot(s) — %s (prorated)') % (
+                qty, label, self.name or self.subdomain),
             'product_uom_qty': 1,
             'price_unit': charge,
         })]
@@ -2286,7 +2320,7 @@ class SaasInstance(models.Model):
             order_lines.append(wallet_line)
         order_vals = {
             'partner_id': self.partner_id.id,
-            'origin': ORIGIN_ENVIRONMENT % (child.name or child.subdomain),
+            'origin': ORIGIN_ENVIRONMENT % ('%d %s slot(s)' % (qty, label)),
             'order_line': order_lines,
         }
         if pricelist:
@@ -2296,35 +2330,88 @@ class SaasInstance(models.Model):
         invoice = order._create_invoices()
         invoice.action_post()
         self._wallet_settle_consumption(invoice, wallet_amount)
-        child.write({
-            'sale_order_id': order.id,
-            'env_pending_invoice_id': invoice.id,
-            'state': 'pending_payment',
+        field = ('reserved_staging_pending' if env_type == 'staging'
+                 else 'reserved_dev_pending')
+        self.write({
+            field: (self[field] or 0) + qty,
+            'slot_reservation_pending_invoice_id': invoice.id,
         })
         self._append_log(
-            "Environment '%s' requested — activation invoice %s (%.2f)."
-            % (child.subdomain, invoice.name, charge))
-        # One-click: wallet covered the charge → provision now.
+            "Reserve %d %s slot(s) — invoice %s (%.2f)."
+            % (qty, label, invoice.name, charge))
         if invoice.amount_total <= 0:
-            child._activate_pending_environment()
-            return {'child_id': child.id, 'auto_provisioned': True}
-        # Else try the saved card; the account.move paid hook provisions when
-        # the charge settles (now or asynchronously).
+            self._activate_reserved_slots()
+            return {'auto_provisioned': True, 'reserved': qty}
         if self._auto_renew_method() and self._try_auto_charge_invoice(
                 invoice, kind='subscription'):
-            return {'child_id': child.id, 'auto_provisioned': True}
+            return {'auto_provisioned': True, 'reserved': qty}
         return {
-            'child_id': child.id,
             'auto_provisioned': False,
             'invoice_id': invoice.id,
-            'checkout_url': '/my/instances/%s/checkout' % child.id,
+            'checkout_url': '/my/instances/%s/checkout' % self.id,
         }
 
+    def _activate_reserved_slots(self):
+        """Grant the pending reserved slots after their invoice is paid."""
+        self.ensure_one()
+        staging = max(0, self.reserved_staging_pending or 0)
+        dev = max(0, self.reserved_dev_pending or 0)
+        if not (staging or dev):
+            return
+        self.write({
+            'staging_slots': (self.staging_slots or 0) + staging,
+            'dev_slots': (self.dev_slots or 0) + dev,
+            'reserved_staging_pending': 0,
+            'reserved_dev_pending': 0,
+            'slot_reservation_pending_invoice_id': False,
+        })
+        self._append_log(
+            "Reserved slots granted: %d staging, %d development." % (staging, dev))
+        self.message_post(body=_(
+            "Environment slots reserved — create servers within them anytime."))
+
+    def action_release_environment_slots(self, env_type, qty=1):
+        """Release (give up) ``qty`` reserved Staging/Development slots, lowering
+        the recurring charge. Only FREE slots (reserved minus in-use) can be
+        released — delete a server first to free its slot. The unused portion of
+        the current cycle is credited back to the wallet."""
+        self.ensure_one()
+        if self.environment != 'production':
+            raise UserError(_(
+                "Release environment slots from the Production server."))
+        if env_type not in ('staging', 'development'):
+            raise UserError(_("Unknown environment type."))
+        qty = max(1, int(qty or 1))
+        slots = self._env_slots_for(env_type)
+        used = self._env_used_for(env_type)
+        free = slots - used
+        if qty > free:
+            label = dict(self._fields['environment'].selection).get(
+                env_type, env_type)
+            raise UserError(_(
+                "Only %d free %s slot(s) can be released (the rest are in use). "
+                "Delete a server first to free its slot.") % (free, label))
+        field = ('staging_slots' if env_type == 'staging' else 'dev_slots')
+        self.write({field: max(0, (self[field] or 0) - qty)})
+        # Credit back the unused portion of the cycle for each released slot.
+        remaining, _d, _t = self._proration_credit(
+            self._env_server_price() * qty)
+        if remaining > 0:
+            self._grant_wallet_credit(
+                remaining, origin='environment_slot_release',
+                reason=_('Released %d %s slot(s)') % (qty, env_type))
+        self._append_log(
+            "Released %d %s slot(s) (now %d reserved)."
+            % (qty, env_type, self[field]))
+        return {'released': qty, 'slots': self[field]}
+
     def action_delete_environment(self, delete_branch=False):
-        """Remove a Staging/Development server: credit the unused portion of
-        the project cycle to the wallet, optionally delete the linked Git
-        branch, then tear down the infrastructure. Production can't be removed
-        this way (cancel the subscription instead)."""
+        """Remove a Staging/Development server, FREEING its reserved slot for
+        reuse. Deleting is free and does NOT refund or lower the reserved
+        count: the customer paid for the slot capacity for the cycle and may
+        recreate a server in it at no extra charge (to stop paying he releases
+        the slot via ``action_release_environment_slots``). Production can't be
+        removed this way (cancel the subscription instead)."""
         self.ensure_one()
         if self.environment == 'production':
             raise UserError(_(
@@ -2332,29 +2419,11 @@ class SaasInstance(models.Model):
                 "cancel the subscription instead."))
         branch = self._env_branch()
         repo = self.repo_ids[:1]
-        anchor = self.parent_id
-        if anchor and self.state not in ('cancelled', 'cancelled_by_client'):
-            remaining, _d, _t = anchor._proration_credit(
-                self._env_server_price())
-            if remaining > 0:
-                anchor._grant_wallet_credit(
-                    remaining, origin='environment_removal',
-                    reason=_('Unused time for removed %s server %s') % (
-                        self.environment, self.name or self.subdomain))
-            # Release the recurring slot. Renewal bills the project's purchased
-            # SLOTS (``staging_slots``/``dev_slots``), not live children — so
-            # without this the customer keeps paying for the removed server on
-            # every renewal forever. Floor at 0 (never go negative).
-            slot_field = ('staging_slots' if self.environment == 'staging'
-                          else 'dev_slots')
-            anchor.sudo().write({
-                slot_field: max(0, (anchor[slot_field] or 0) - 1)})
-            anchor._append_log(
-                "Released one %s slot after removing server '%s' "
-                "(renewal will no longer bill it)."
-                % (self.environment, self.name or self.subdomain))
         if delete_branch and repo and branch:
             repo._delete_branch_on_provider(branch)
+        # Just tear down the server. The slot stays reserved (still billed,
+        # still usable) — ``_env_used_for`` drops by one once cancelled, so the
+        # customer can immediately create another server within the same slot.
         self.action_cancel()
         return True
 

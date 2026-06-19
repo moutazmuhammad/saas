@@ -1522,6 +1522,56 @@ class SaasApi(http.Controller):
                        'error')
         return ok(result)
 
+    def _project_anchor(self, instance_id):
+        """Return the owned Production anchor for ``instance_id`` (or its
+        parent), or ``(None, err_envelope)``."""
+        partner = self._partner()
+        if not partner:
+            return None, err(_("Please sign in."), 'auth_required')
+        instance = request.env['saas.instance'].sudo().browse(instance_id)
+        if not instance.exists() or instance.partner_id != partner:
+            return None, err(_("Project not found."), 'not_found')
+        prod = instance if instance.environment == 'production' \
+            else instance.parent_id
+        if not prod:
+            return None, err(_("Environments are managed from the Production "
+                               "server."), 'invalid')
+        return prod, None
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/environments/reserve',
+                type='json', auth='public')
+    def environment_reserve(self, instance_id, type=None, qty=1):
+        """Reserve (buy) Staging/Development slots — paid capacity, no repo and
+        no server created. Returns ``auto_provisioned`` or a ``checkout_url``."""
+        prod, error = self._project_anchor(instance_id)
+        if error:
+            return error
+        try:
+            result = prod.action_reserve_environment_slots(type, qty=int(qty or 1))
+        except (UserError, ValidationError) as e:
+            return err(str(e), 'error')
+        except Exception:
+            _logger.exception("Slot reserve failed for %s", instance_id)
+            return err(_("Couldn't reserve the slot. Please try again."), 'error')
+        return ok(result)
+
+    @http.route('/saas/api/v1/instances/<int:instance_id>/environments/release',
+                type='json', auth='public')
+    def environment_release(self, instance_id, type=None, qty=1):
+        """Release free (unused) Staging/Development slots, crediting the unused
+        time back to the wallet and lowering the recurring charge."""
+        prod, error = self._project_anchor(instance_id)
+        if error:
+            return error
+        try:
+            result = prod.action_release_environment_slots(type, qty=int(qty or 1))
+        except (UserError, ValidationError) as e:
+            return err(str(e), 'error')
+        except Exception:
+            _logger.exception("Slot release failed for %s", instance_id)
+            return err(_("Couldn't release the slot. Please try again."), 'error')
+        return ok(result)
+
     @http.route('/saas/api/v1/instances/<int:instance_id>/environments/'
                 '<int:child_id>/delete', type='json', auth='public')
     def environment_delete(self, instance_id, child_id, delete_branch=False):

@@ -115,35 +115,76 @@ class TestEnvSlotBilling(TransactionCase):
             'next_invoice_date': today + timedelta(days=15),
             'last_invoice_date': today - timedelta(days=15)})
 
-    def test_delete_environment_releases_slot(self):
-        prod = self._mk_prod('secslot')
-        prod.write({'staging_slots': 2})
-        child = self.env['saas.instance'].sudo().create({
-            'subdomain': 'secslot-stg', 'domain_id': self.domain.id,
+    def _add_repo(self, prod):
+        return self.env['saas.instance.repo'].sudo().create({
+            'instance_id': prod.id, 'repo_url': 'https://github.com/x/y.git',
+            'branch': 'main'})
+
+    def _mk_child(self, prod, sub):
+        return self.env['saas.instance'].sudo().create({
+            'subdomain': sub, 'domain_id': self.domain.id,
             'partner_id': self.partner.id, 'saas_product_id': self.product.id,
             'plan_id': self.plan.id, 'billing_period': 'monthly',
             'environment': 'staging', 'parent_id': prod.id,
             'region_id': False, 'state': 'running'})
-        # Renewal bills 2 staging slots before deletion.
+
+    def test_delete_keeps_reserved_slot(self):
+        # Deleting a server frees the slot for REUSE — the reserved count and
+        # the recurring charge are unchanged (he paid for the capacity).
+        prod = self._mk_prod('secslot')
+        prod.write({'staging_slots': 2})
+        child = self._mk_child(prod, 'secslot-stg')
+        self.assertEqual(prod._env_used_for('staging'), 1)
         self.assertEqual(len(prod._environment_order_lines('monthly')), 2)
         child.action_delete_environment(delete_branch=False)
         prod.invalidate_recordset(['staging_slots'])
-        # Slot released → renewal now bills 1, not 2 (no perpetual charge).
-        self.assertEqual(prod.staging_slots, 1)
-        self.assertEqual(len(prod._environment_order_lines('monthly')), 1)
+        # Slot count unchanged; usage freed so another can be created.
+        self.assertEqual(prod.staging_slots, 2)
+        self.assertEqual(prod._env_used_for('staging'), 0)
+        self.assertEqual(len(prod._environment_order_lines('monthly')), 2)
 
-    def test_delete_slot_floors_at_zero(self):
-        prod = self._mk_prod('secfloor')
-        prod.write({'staging_slots': 0})
-        child = self.env['saas.instance'].sudo().create({
-            'subdomain': 'secfloor-stg', 'domain_id': self.domain.id,
-            'partner_id': self.partner.id, 'saas_product_id': self.product.id,
-            'plan_id': self.plan.id, 'billing_period': 'monthly',
-            'environment': 'staging', 'parent_id': prod.id,
-            'region_id': False, 'state': 'running'})
-        child.action_delete_environment(delete_branch=False)
+    def test_create_requires_repo(self):
+        prod = self._mk_prod('secrepo')
+        prod.write({'staging_slots': 1})
+        with self.assertRaises(UserError):
+            prod.action_create_environment('staging', name='s1')
+
+    def test_create_capped_at_reserved_count(self):
+        # One slot, already used by a live child → creating another must be
+        # refused (reserve more first). (We seed the child directly because the
+        # real create path starts a background deploy that commits.)
+        prod = self._mk_prod('seccap')
+        self._add_repo(prod)
+        prod.write({'staging_slots': 1})
+        self._mk_child(prod, 'seccap-stg')  # used = 1 = slots
+        with self.assertRaises(UserError):
+            prod.action_create_environment('staging', name='s2')
+
+    def test_activate_reserved_slots_grants(self):
+        prod = self._mk_prod('secgrant')
+        prod.write({'reserved_staging_pending': 2, 'staging_slots': 0})
+        prod._activate_reserved_slots()
+        prod.invalidate_recordset(['staging_slots', 'reserved_staging_pending'])
+        self.assertEqual(prod.staging_slots, 2)
+        self.assertEqual(prod.reserved_staging_pending, 0)
+
+    def test_release_free_slot_refunds(self):
+        prod = self._mk_prod('secrel')
+        prod.write({'staging_slots': 2})
+        wallet = prod._wallet(create=True)
+        before = wallet.balance
+        prod.action_release_environment_slots('staging', qty=1)
         prod.invalidate_recordset(['staging_slots'])
-        self.assertEqual(prod.staging_slots, 0)
+        wallet = prod._wallet(create=True)
+        self.assertEqual(prod.staging_slots, 1)
+        self.assertGreater(wallet.balance, before)
+
+    def test_release_blocked_when_slot_in_use(self):
+        prod = self._mk_prod('secrelblock')
+        prod.write({'staging_slots': 1})
+        self._mk_child(prod, 'secrelblock-stg')  # uses the only slot
+        with self.assertRaises(UserError):
+            prod.action_release_environment_slots('staging', qty=1)
 
 
 @tagged('post_install', '-at_install')

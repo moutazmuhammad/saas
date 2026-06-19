@@ -694,6 +694,26 @@ export const api = {
       name: name || undefined,
       branch: branch || undefined,
     }),
+  environmentReserve: (
+    id: number,
+    type: "staging" | "development",
+    qty = 1,
+  ) =>
+    rpc<{
+      auto_provisioned: boolean;
+      reserved?: number;
+      invoice_id?: number;
+      checkout_url?: string;
+    }>(`/saas/api/v1/instances/${id}/environments/reserve`, { type, qty }),
+  environmentRelease: (
+    id: number,
+    type: "staging" | "development",
+    qty = 1,
+  ) =>
+    rpc<{ released: number; slots: number }>(
+      `/saas/api/v1/instances/${id}/environments/release`,
+      { type, qty },
+    ),
   environmentDelete: (id: number, childId: number, deleteBranch: boolean) =>
     rpc<{ deleted: boolean }>(
       `/saas/api/v1/instances/${id}/environments/${childId}/delete`,

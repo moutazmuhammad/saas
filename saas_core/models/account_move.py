@@ -130,6 +130,21 @@ class AccountMove(models.Model):
                 instance.storage_block_pending_invoice_id)
             instance._activate_pending_storage_blocks()
 
+        # --- Handle Staging/Development slot RESERVATIONS (capacity buy) ---
+        # The customer reserved more env slots (no server created); grant them
+        # now that the prorated reservation invoice is paid.
+        slot_reservers = self.env['saas.instance'].search([
+            ('slot_reservation_pending_invoice_id', 'in', paid_invoices.ids),
+        ])
+        for prod in slot_reservers:
+            _logger.info(
+                "SaaS project %s: slot reservation invoice %s paid — granting "
+                "slots.", prod.subdomain,
+                prod.slot_reservation_pending_invoice_id.name)
+            prod._capture_payment_token_from_invoice(
+                prod.slot_reservation_pending_invoice_id)
+            prod._activate_reserved_slots()
+
         # --- Handle Staging/Development environment activation (Odoo.sh) ---
         # The customer clicked "Create staging/dev server"; we created the
         # child record + a prorated activation invoice. Now that it's paid,

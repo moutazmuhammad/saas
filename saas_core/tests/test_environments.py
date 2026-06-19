@@ -173,23 +173,18 @@ class TestEnvironments(TransactionCase):
         with self.assertRaises(Exception):
             prod.action_create_environment('development', name='feature-x')
 
-    def test_env_create_allowed_with_repo(self):
+    def test_env_create_needs_a_reserved_slot(self):
+        # Creating is capped at the reserved count: with a repo but 0 reserved
+        # slots, the "+" must refuse and tell the customer to reserve first.
         prod = self._mk_prod('pgate2', due=date.today() + timedelta(days=20),
                              last=date.today() - timedelta(days=10))
-        # A non-provider URL: branch creation is skipped/no-op (no network),
-        # but the repo presence is what the gate checks.
         self.env['saas.instance.repo'].sudo().create({
             'instance_id': prod.id, 'repo_url': 'https://example.com/o/r.git',
             'branch': 'main',
         })
-        res = prod.action_create_environment('staging', name='stg1')
-        self.assertTrue(res.get('child_id'))
-        child = self.env['saas.instance'].sudo().browse(res['child_id'])
-        self.assertEqual(child.environment, 'staging')
-        self.assertEqual(child.parent_id, prod)
-        # No saved card / wallet → routed to checkout, not auto-provisioned.
-        self.assertFalse(res.get('auto_provisioned'))
-        self.assertEqual(child.state, 'pending_payment')
+        prod.write({'staging_slots': 0})
+        with self.assertRaises(Exception):
+            prod.action_create_environment('staging', name='stg1')
 
     # ----------------------------------------------------------------- merge
     def test_merge_self_rejected(self):
@@ -216,15 +211,21 @@ class TestEnvironments(TransactionCase):
             prod.action_merge_environment(child.id)
 
     # --------------------------------------------------------------- deletion
-    def test_delete_environment_credits_wallet(self):
+    def test_delete_environment_frees_slot_without_refund(self):
+        # Deleting a server frees its reserved slot for reuse but does NOT
+        # refund or lower the reserved count — the customer paid for the
+        # capacity and can recreate within the cycle for free.
         today = date.today()
         prod = self._mk_prod('pdel', due=today + timedelta(days=15),
                              last=today - timedelta(days=15))
+        prod.write({'staging_slots': 1})
         child = self._mk_child(prod, 'staging', sub='pdel-stg')
         wallet = prod._wallet(create=True)
         before = wallet.balance
         child.action_delete_environment(delete_branch=False)
+        prod.invalidate_recordset(['staging_slots'])
         wallet = prod._wallet(create=True)
-        # ~half the per-server price (15 of 30 days remaining) credited back.
-        self.assertGreater(wallet.balance, before)
+        self.assertEqual(wallet.balance, before)         # no refund
+        self.assertEqual(prod.staging_slots, 1)          # count unchanged
+        self.assertEqual(prod._env_used_for('staging'), 0)  # slot freed
         self.assertIn(child.state, ('cancelled', 'provisioning'))
