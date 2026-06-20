@@ -339,7 +339,6 @@ export default function Environments() {
             project={data}
             tab={tab}
             setTab={setTab}
-            onAddEnv={(t) => setCreateType(t)}
             onDelete={selected.is_production ? undefined : () => setDeleteTarget(selected)}
             onMergeInto={() => {
               // Open merge dialog choosing this env as the target.
@@ -440,11 +439,9 @@ function repoName(url: string) {
  *     reserving more. Releasing a free slot stops the charge (prorated). */
 function ScaleCard({
   project,
-  onAddEnv,
   onChanged,
 }: {
   project: ProjectEnvironments;
-  onAddEnv: (t: "staging" | "development") => void;
   onChanged: () => void;
 }) {
   const toast = useToast();
@@ -497,7 +494,7 @@ function ScaleCard({
     icon: React.ComponentType<{ className?: string }>;
   }) => {
     const s = project.slots[type];
-    const hasFreeSlot = s.used < s.total;
+    const available = Math.max(0, s.total - s.used);
     return (
       <div className="flex flex-col gap-3 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
@@ -505,9 +502,14 @@ function ScaleCard({
             <Icon className="size-4" />
           </span>
           <div>
-            <p className="text-sm font-medium">{label}</p>
+            <p className="text-sm font-medium">
+              {label}
+              <span className="ml-1.5 font-normal text-muted">
+                {s.total} reserved
+              </span>
+            </p>
             <p className="text-xs text-muted">
-              {s.used} of {s.total} reserved {s.total === 1 ? "server" : "servers"} in use
+              {s.used} in use · {available} available to create
             </p>
           </div>
         </div>
@@ -529,26 +531,10 @@ function ScaleCard({
             size="sm"
             disabled={busy !== null}
             onClick={() => reserve(type)}
-            title="Reserve one more slot (paid, no repository needed)"
+            title="Reserve one more server — a paid slot you can create into"
           >
             <Plus className="size-4" />
             Reserve
-          </Button>
-          {/* Create a server within the reserved slots — needs a repo. */}
-          <Button
-            size="sm"
-            disabled={!hasFreeSlot || !hasRepo}
-            onClick={() => onAddEnv(type)}
-            title={
-              !hasFreeSlot
-                ? "All reserved slots are in use — reserve one more"
-                : !hasRepo
-                  ? "Connect a Git repository below to create a server"
-                  : undefined
-            }
-          >
-            <Server className="size-4" />
-            Add server
           </Button>
         </div>
       </div>
@@ -582,9 +568,9 @@ function ScaleCard({
           Test environments
         </p>
         <p className="mt-0.5 text-xs text-muted">
-          Reserve Staging/Development capacity (paid per cycle). Within your
-          reserved count you can create and delete servers freely — recreating
-          one never costs extra.
+          Reserve Staging/Development servers — each reserved server is paid per
+          cycle. Create them (and delete/recreate freely within your reserved
+          count) from the <span className="font-medium">+</span> in the sidebar.
         </p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <SlotRow type="staging" label="Staging" icon={FlaskConical} />
@@ -592,8 +578,8 @@ function ScaleCard({
         </div>
         {!hasRepo && (
           <p className="mt-2 text-xs text-muted">
-            Reserving a slot needs no repository, but creating a server does —
-            connect one below to start deploying.
+            Reserving needs no repository; creating a server does — connect one
+            below first.
           </p>
         )}
       </div>
@@ -806,7 +792,6 @@ function MainPanel({
   project,
   tab,
   setTab,
-  onAddEnv,
   onDelete,
   onMergeInto,
   onChanged,
@@ -815,7 +800,6 @@ function MainPanel({
   project: ProjectEnvironments;
   tab: SectionTab;
   setTab: (t: SectionTab) => void;
-  onAddEnv: (t: "staging" | "development") => void;
   onDelete?: () => void;
   onMergeInto: () => void;
   onChanged: () => void;
@@ -1006,7 +990,7 @@ function MainPanel({
           // plus the Code & packages (repo) panel. Both are project-wide (bound
           // to Production) and inherited by Staging/Development.
           <>
-            <ScaleCard project={project} onAddEnv={onAddEnv} onChanged={onChanged} />
+            <ScaleCard project={project} onChanged={onChanged} />
             <Code embedId={project.production.id} />
           </>
         ) : tab === "shell" ? (
