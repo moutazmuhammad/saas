@@ -505,6 +505,21 @@ class SaasPortal(CustomerPortal):
                     invoice = inv
                     break
 
+        # Mid-cycle add-on purchases (env slot reservation, storage block) hang
+        # their prorated invoice on a dedicated field, NOT the main sale order —
+        # so the generic checkout must look there too, otherwise the page finds
+        # nothing and bounces back (the "Reserve doesn't work" symptom).
+        if not invoice:
+            for pend in (
+                instance_sudo.slot_reservation_pending_invoice_id,
+                instance_sudo.storage_block_pending_invoice_id,
+            ):
+                if (pend and pend.state == 'posted'
+                        and pend.payment_state not in ('paid', 'in_payment')
+                        and pend.amount_residual > 0):
+                    invoice = pend
+                    break
+
         if not invoice:
             # No unpaid invoice — nothing to pay, go to instance page
             return request.redirect('/my/instances/%s' % instance_id)
