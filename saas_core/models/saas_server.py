@@ -1,9 +1,13 @@
+import logging
 import re
+import socket
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
 from ..utils import SSHConnection
+
+_logger = logging.getLogger(__name__)
 
 _DB_NAME_RE = re.compile(r'^[a-z0-9-]+$')
 
@@ -223,6 +227,84 @@ class SaasServer(models.Model):
         help='TCP port on which the PostgreSQL service listens.',
     )
 
+    # ========== Health / Reachability ==========
+    # A server whose SSH port can't be reached is a dead host: allocating a
+    # tenant to it strands the deploy (SSH times out) and the customer's
+    # project sits in "pending provision" until the 24h escalation. We probe
+    # reachability and exclude unreachable hosts from allocation + capacity so
+    # a customer is NEVER placed on a host we already know is down.
+    health_state = fields.Selection(
+        [('unknown', 'Unknown'),
+         ('ok', 'Reachable'),
+         ('unreachable', 'Unreachable')],
+        string='Health', default='unknown', required=True, tracking=True,
+        help='Reachability of this server\'s SSH port, refreshed by the health '
+             'cron and at allocation time. Unreachable hosts are skipped when '
+             'placing new instances.',
+    )
+    last_health_check = fields.Datetime(string='Last Health Check', readonly=True)
+    last_health_error = fields.Char(string='Last Health Error', readonly=True)
+
+    # TCP-connect timeout for the reachability probe (seconds). Short on
+    # purpose: it runs synchronously during allocation.
+    _HEALTH_PROBE_TIMEOUT = 4
+
+    def _probe_reachable(self, timeout=None):
+        """Fast TCP-connect probe to the server's SSH endpoint.
+
+        Returns ``(ok: bool, error: str)``. A plain TCP connect (no SSH
+        handshake / auth) is enough to catch the failure that strands a
+        customer deploy: a host that is down, a wrong / placeholder IP
+        (e.g. an RFC-5737 ``203.0.113.x`` test address), a closed port, or
+        a dropped/filtered route. Cheap enough to run inline at allocation.
+        """
+        self.ensure_one()
+        try:
+            ip = self._get_ssh_ip()
+        except Exception as e:  # missing/invalid IP config == unreachable
+            return False, str(e)
+        port = self.ssh_port or 22
+        try:
+            with socket.create_connection(
+                (ip, port), timeout=timeout or self._HEALTH_PROBE_TIMEOUT):
+                return True, ''
+        except OSError as e:
+            return False, '%s:%s — %s' % (ip, port, e)
+
+    def _update_health(self, ok, error=''):
+        """Persist a probe result, logging on any state transition."""
+        self.ensure_one()
+        new_state = 'ok' if ok else 'unreachable'
+        if self.health_state != new_state:
+            _logger.warning(
+                "Server %s health %s -> %s%s",
+                self.name, self.health_state, new_state,
+                (' (%s)' % error) if error else '',
+            )
+        self.write({
+            'health_state': new_state,
+            'last_health_check': fields.Datetime.now(),
+            'last_health_error': (error or '')[:500] if not ok else False,
+        })
+
+    @api.model
+    def _cron_health_check(self):
+        """Refresh reachability for every infra server (docker / db / proxy).
+
+        Keeps ``health_state`` current so allocation and region capacity can
+        cheaply exclude dead hosts without probing on the hot path."""
+        servers = self.search([
+            '|', '|',
+            ('is_docker_host', '=', True),
+            ('is_db_server', '=', True),
+            ('is_proxy_server', '=', True),
+        ])
+        for server in servers:
+            ok, err = server._probe_reachable()
+            server._update_health(ok, err)
+            # Commit per server so one slow probe can't lose the rest.
+            self.env.cr.commit()
+
     # ========== Capacity ==========
 
     @api.depends('is_docker_host')
@@ -404,13 +486,17 @@ class SaasServer(models.Model):
         When *raise_on_failure* is True, raises ValidationError instead of
         returning None (used by strict provisioning mode). When *region*
         is set, only hosts in that region are considered (co-location)."""
+        # Exclude hosts already known to be unreachable (last health cron) so
+        # we never even consider a dead box for a new customer.
         candidates = self.search(
-            [('is_docker_host', '=', True)] + self._region_match_domain(region)
+            [('is_docker_host', '=', True),
+             ('health_state', '!=', 'unreachable')]
+            + self._region_match_domain(region)
         )
         if not candidates:
             if raise_on_failure:
                 raise ValidationError(
-                    _("No Docker host servers are configured.")
+                    _("No reachable Docker host servers are available.")
                 )
             return None
 
@@ -424,7 +510,21 @@ class SaasServer(models.Model):
                 )
             return None
 
-        return min(eligible, key=lambda s: s.instance_count)
+        # Least-loaded first, then LIVE-probe so a customer is never placed on
+        # a host that has gone down since the last health cron. A candidate
+        # that fails the probe is marked unreachable and skipped — the deploy
+        # falls over to the next healthy host instead of stranding the order.
+        for server in eligible.sorted(key=lambda s: s.instance_count):
+            ok, err = server._probe_reachable()
+            server._update_health(ok, err)
+            if ok:
+                return server
+        if raise_on_failure:
+            raise ValidationError(
+                _("No reachable Docker host could be allocated — every "
+                  "candidate failed a connectivity check.")
+            )
+        return None
 
     @api.model
     def _allocate_overcommit_server(self, plan=None, region=None):
@@ -439,10 +539,18 @@ class SaasServer(models.Model):
         candidates = self.search([
             ('is_docker_host', '=', True),
             ('allow_overcommit', '=', True),
+            ('health_state', '!=', 'unreachable'),
         ] + self._region_match_domain(region))
         if not candidates:
             return None
-        return min(candidates, key=lambda s: s.instance_count)
+        # Live-probe (least-loaded first) so overcommit can't strand a deploy
+        # on a dead host either.
+        for server in candidates.sorted(key=lambda s: s.instance_count):
+            ok, err = server._probe_reachable()
+            server._update_health(ok, err)
+            if ok:
+                return server
+        return None
 
     # ========== SSH Methods ==========
 

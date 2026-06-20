@@ -23,7 +23,7 @@ import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const OTP_LENGTH = 6;
-const RESEND_SECONDS = 45;
+const RESEND_SECONDS = 120;
 
 interface Form {
   name: string;

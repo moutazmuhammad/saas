@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ServiceIcon } from "@/components/ServiceIcon";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { api, type ApiService, type TrialInfo } from "@/lib/api";
+import { api, type ApiService } from "@/lib/api";
 import { useSections } from "@/lib/useSections";
 
 // Lazy-loaded so three.js (~210KB gzipped) lives in its own chunk and
@@ -48,7 +48,7 @@ const HOW_IT_WORKS = [
     icon: Sparkles,
     title: "Sign up",
     description:
-      "Create your account in under a minute. Start a 14-day trial — no credit card needed.",
+      "Create your account in under a minute — no credit card needed to explore the console.",
   },
   {
     step: "02",
@@ -122,15 +122,10 @@ export default function Home() {
   const navigate = useNavigate();
   const sections = useSections();
   const [services, setServices] = React.useState<ApiService[]>([]);
-  const [trial, setTrial] = React.useState<TrialInfo | null>(null);
 
   React.useEffect(() => {
     api.services().then(setServices).catch(() => setServices([]));
-    api.meta().then((m) => setTrial(m.trial)).catch(() => {});
   }, []);
-
-  const trialReady = !!trial?.hosting_available && (trial?.days ?? 0) > 0;
-  const trialDays = trial?.days ?? 14;
 
   return (
     <div className="animate-fade-in">
@@ -144,8 +139,8 @@ export default function Home() {
         <div className="relative mx-auto max-w-5xl px-4 pb-28 pt-4 text-center sm:px-6 lg:px-8 lg:pt-6">
           {/* Globe + overlay stack: BOTH the status pill and the H1 sit
               centered on top of the globe as a single vertical column.
-              Everything below the globe (subtitle, CTAs, trial badge)
-              follows in normal flow underneath. */}
+              Everything below the globe (subtitle, CTAs) follows in
+              normal flow underneath. */}
           <div className="relative mx-auto w-[min(600px,92vw)]">
             <div className="aspect-square [mask-image:radial-gradient(circle_at_center,black_65%,transparent_95%)]">
               <ErrorBoundary>
@@ -173,43 +168,35 @@ export default function Home() {
           </div>
 
           <p className="mx-auto mt-2 max-w-2xl text-lg text-muted sm:text-xl">
-            Enterprise-grade managed hosting for{" "}
-            <strong className="text-foreground">every Odoo version</strong>.
-            Bring your own modules from Git, scale on demand — we handle
-            backups, SSL, monitoring, and uptime.
+            One managed platform, two ways to run Odoo:{" "}
+            <strong className="text-foreground">host your own code</strong> on
+            any version, or launch a{" "}
+            <strong className="text-foreground">ready-made app</strong> that
+            ships with its database already set up. Pick a path to see how it
+            works.
           </p>
 
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            {trialReady ? (
-              <Button size="lg" onClick={() => { window.location.href = "/hosting/configure?is_trial=1"; }}>
-                Start your {trialDays}-day free trial
-                <ArrowRight />
-              </Button>
-            ) : sections.hosting ? (
+            {sections.hosting && (
               <Button size="lg" onClick={() => navigate("/hosting")}>
-                Host Your Project
+                Explore Hosting
                 <ArrowRight />
-              </Button>
-            ) : sections.services ? (
-              <Button size="lg" onClick={() => navigate("/services")}>
-                Ready-Made Services
-                <ArrowRight />
-              </Button>
-            ) : null}
-            {trialReady && sections.hosting && (
-              <Button size="lg" variant="secondary" onClick={() => navigate("/hosting")}>
-                Explore hosting
               </Button>
             )}
-            {!trialReady && sections.hosting && sections.services && (
-              <Button size="lg" variant="secondary" onClick={() => navigate("/services")}>
-                Ready-Made Services
+            {sections.services && (
+              <Button
+                size="lg"
+                variant={sections.hosting ? "secondary" : "default"}
+                onClick={() => navigate("/services")}
+              >
+                Explore Ready-Made Apps
+                {!sections.hosting && <ArrowRight />}
               </Button>
             )}
           </div>
 
           <p className="mt-4 text-sm text-muted">
-            No credit card required · Cancel anytime
+            No setup fees · Cancel anytime · Free trial available inside each
           </p>
 
           {/* Capability strip — the full offering, scannable above the fold */}
@@ -245,29 +232,30 @@ export default function Home() {
             pill={<SectionPill icon={Sparkles}>Two ways to launch</SectionPill>}
             title={
               <>
-                Build it your way,{" "}
-                <span className="text-muted">or take it off the shelf</span>
+                Bring your own code,{" "}
+                <span className="text-muted">or start from a ready-made app</span>
               </>
             }
-            subtitle="Choose the path that fits your team — custom-coded hosting for engineers, or pre-built Odoo solutions for instant deployment."
+            subtitle="Same managed platform, same backups, SSL and uptime — the difference is what's inside when it boots. Open either one to see the full details and start."
           />
 
           <div className="mt-14 grid gap-6 lg:grid-cols-2">
-            {/* Card 1 — Custom Hosting */}
-            <Card className="group relative overflow-hidden p-8">
+            {/* Card 1 — Custom Hosting (you bring the code; empty database) */}
+            <Card className="group relative flex flex-col overflow-hidden p-8">
               <div className="pointer-events-none absolute -right-20 -top-20 size-72 rounded-full bg-primary/15 blur-3xl transition-opacity group-hover:opacity-80" />
               <div className="relative flex h-full flex-col">
                 <span className="flex size-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
                   <Server className="size-6" />
                 </span>
-                <h3 className="mt-6 text-2xl font-semibold">
-                  Custom Odoo Hosting
-                </h3>
+                <h3 className="mt-6 text-2xl font-semibold">Hosting</h3>
+                <p className="mt-1 text-sm font-medium text-primary">
+                  You bring the code — we run it on a clean instance.
+                </p>
                 <p className="mt-3 text-muted">
-                  For teams who write their own code. Pick any Odoo version
-                  (13 → 19), connect your Git repo, install custom Python
-                  packages, and scale workers on demand. Full control over
-                  modules, dependencies, and configuration.
+                  For teams who write their own Odoo. Pick any version (13 → 19),
+                  connect your Git repo, install custom Python packages, and scale
+                  on demand. Boots as an <strong className="text-foreground">empty
+                  Odoo</strong> — you own the modules and the data.
                 </p>
                 <ul className="mt-6 space-y-2.5 text-sm">
                   {[
@@ -282,37 +270,39 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
-                <div className="mt-8 pt-4">
+                <div className="mt-8 flex items-center gap-3 pt-4">
                   <Button onClick={() => navigate("/hosting")}>
-                    Host Your Project
+                    Explore Hosting
                     <ArrowRight />
                   </Button>
                 </div>
               </div>
             </Card>
 
-            {/* Card 2 — Ready-Made Services */}
-            <Card className="group relative overflow-hidden p-8">
+            {/* Card 2 — Ready-Made Services (ready code + ready database) */}
+            <Card className="group relative flex flex-col overflow-hidden p-8">
               <div className="pointer-events-none absolute -right-20 -top-20 size-72 rounded-full bg-info/15 blur-3xl transition-opacity group-hover:opacity-80" />
               <div className="relative flex h-full flex-col">
                 <span className="flex size-12 items-center justify-center rounded-xl bg-info/15 text-info">
                   <Layers className="size-6" />
                 </span>
-                <h3 className="mt-6 text-2xl font-semibold">
-                  Ready-Made Services
-                </h3>
+                <h3 className="mt-6 text-2xl font-semibold">Ready-Made Services</h3>
+                <p className="mt-1 text-sm font-medium text-info">
+                  Ready code <em>and</em> a ready database — running on day one.
+                </p>
                 <p className="mt-3 text-muted">
-                  Pre-configured Odoo solutions, ready the moment you sign
-                  up. Skip the setup and provisioning — pick a package
-                  tailored to your industry, pay, and your instance is
-                  running with the modules you need already installed.
+                  Pre-built Odoo apps for a specific job — pharmacy management,
+                  retail, clinics and more. Sign up and your instance boots with
+                  the <strong className="text-foreground">modules and starter
+                  data already in place</strong>. Use it as-is, or tailor it to
+                  how you work.
                 </p>
                 <ul className="mt-6 space-y-2.5 text-sm">
                   {[
-                    "Curated Odoo installations, deploy in minutes",
-                    "Industry-tuned modules pre-installed",
-                    "Same backups, SSL & uptime as custom hosting",
-                    "Upgrade to a custom-hosted instance anytime",
+                    "Industry-tuned app, set up and ready to use",
+                    "Ships with its database — no blank screen",
+                    "Customize it freely whenever you want",
+                    "Same backups, SSL & uptime as hosting",
                   ].map((it) => (
                     <li key={it} className="flex items-start gap-2">
                       <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
@@ -320,12 +310,9 @@ export default function Home() {
                     </li>
                   ))}
                 </ul>
-                <div className="mt-8 pt-4">
-                  <Button
-                    variant="secondary"
-                    onClick={() => navigate("/services")}
-                  >
-                    Browse Services
+                <div className="mt-8 flex items-center gap-3 pt-4">
+                  <Button onClick={() => navigate("/services")}>
+                    Explore Ready-Made Apps
                     <ArrowRight />
                   </Button>
                 </div>
@@ -914,9 +901,7 @@ export default function Home() {
               </div>
               <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-muted">
                 {[
-                  ...(trialReady
-                    ? [`${trialDays}-day free trial`]
-                    : ["No setup fees"]),
+                  "No setup fees",
                   "Cancel anytime",
                   "Daily backups included",
                   "Free wildcard SSL",

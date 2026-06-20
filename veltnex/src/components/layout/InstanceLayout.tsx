@@ -3,15 +3,15 @@ import { GitBranch, Globe, ExternalLink, ArrowLeft } from "lucide-react";
 import { useInstances } from "@/context/InstancesContext";
 import { StatusBadge } from "@/components/StatusBadge";
 import { CopyButton } from "@/components/CopyButton";
-import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/Spinner";
 
 /** Shared layout for a single instance: a PERSISTENT header (identity + status +
- *  "Open app") that stays put while the section content below swaps in place —
+ *  the live URL) that stays put while the section content below swaps in place —
  *  so switching Overview / Metrics / Databases / Logs / … feels like tabs on one
  *  page, not a jump between separate pages. The left rail is the section nav;
- *  the header never carries tabs (no duplication). "Open app" opens the live
- *  Odoo application in a new tab. */
+ *  the header never carries tabs (no duplication). The instance URL in the header
+ *  is a link that opens the live app; per-environment "Open app" buttons live in
+ *  the Environments workspace, so the header carries no separate button. */
 export default function InstanceLayout() {
   const { id = "" } = useParams();
   const instanceId = Number(id);
@@ -78,18 +78,6 @@ export default function InstanceLayout() {
                 <CopyButton value={inst.url || `https://${inst.domain}`} label="Copy URL" />
               )}
             </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {inst.url && (
-              <Button
-                variant="secondary"
-                onClick={() => window.open(inst.url!, "_blank", "noopener,noreferrer")}
-              >
-                <ExternalLink className="size-4" />
-                Open app
-              </Button>
-            )}
           </div>
         </div>
       )}

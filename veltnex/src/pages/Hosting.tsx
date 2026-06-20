@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useSearchParams } from "react-router-dom";
 import { ArrowRight, Check, ShieldCheck, Cpu, HardDrive, Globe, Sparkles, SlidersHorizontal, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -103,6 +104,12 @@ const SPECS = [
 
 export default function Hosting() {
   const { isAuthenticated } = useAuth();
+  const [searchParams] = useSearchParams();
+  // Trial mode: the buyer arrived via the "Start free trial" CTA
+  // (/hosting?trial=1). The wizard runs the SAME funnel — name, subdomain,
+  // version, region — but skips the paid specs/pricing step and all paid
+  // add-ons, and finishes with a $0 "Start free trial" instead of payment.
+  const isTrial = searchParams.get("trial") === "1";
   const [meta, setMeta] = React.useState<Meta | null>(null);
   const [tiers, setTiers] = React.useState<ApiTier[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -122,7 +129,8 @@ export default function Hosting() {
   // Purchase wizard (Production-first):
   //   1 = choose Production specs, 2 = name the project,
   //   3 = subdomain + region + Staging/Dev counts.
-  const [step, setStep] = React.useState(1);
+  // Trials run on a fixed starter spec, so step 1 is skipped — start at 2.
+  const [step, setStep] = React.useState(isTrial ? 2 : 1);
   const [projectName, setProjectName] = React.useState("");
   // Subdomain is its own editable field (defaults from the project name).
   const [subdomain, setSubdomain] = React.useState("");
@@ -281,6 +289,10 @@ export default function Hosting() {
       dev_count: String(devCount),
       daily_backup: dailyBackup ? "1" : "0",
     };
+    // Trials carry the flag through the order (and through the register
+    // redirect for anonymous buyers). The backend uses the trial plan,
+    // skips billing, and deploys immediately — no payment step.
+    if (isTrial) f.is_trial = "1";
     if (regionId != null) f.region_id = String(regionId);
     if (domainId != null) f.domain_id = String(domainId);
     if (versionId != null) f.odoo_version_id = String(versionId);
@@ -393,12 +405,9 @@ export default function Hosting() {
               )}
             </p>
           )}
-          {meta?.trial.hosting_available && meta.trial.days > 0 && (
+          {!isTrial && meta?.trial.hosting_available && meta.trial.days > 0 && (
             <div className="mt-8 flex flex-col items-center gap-2">
-              <Button
-                size="lg"
-                onClick={() => (window.location.href = "/hosting/configure?is_trial=1")}
-              >
+              <Button size="lg" onClick={() => (window.location.href = "/hosting?trial=1")}>
                 <Sparkles className="size-4" />
                 Start your {meta.trial.days}-day free trial
               </Button>
@@ -417,13 +426,29 @@ export default function Hosting() {
           <p className="py-16 text-center text-sm text-muted">Loading plans…</p>
         ) : (
           <div className="mx-auto w-full max-w-5xl">
-            {/* Step indicator */}
+            {/* Trial badge — shown only in trial mode */}
+            {isTrial && (
+              <div className="mb-6 flex justify-center">
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-success/40 bg-success/10 px-3 py-1 text-sm font-medium text-success">
+                  <Sparkles className="size-4" />
+                  {meta?.trial.days ? `${meta.trial.days}-day free trial` : "Free trial"} — no credit card, no payment
+                </span>
+              </div>
+            )}
+
+            {/* Step indicator — trials skip the paid "Production specs" step */}
             <ol className="mb-10 flex items-center justify-center gap-1 sm:gap-3">
-              {[
-                { n: 1, label: "Production specs" },
-                { n: 2, label: "Project & code" },
-                { n: 3, label: "Region & environments" },
-              ].map((s, i, arr) => (
+              {(isTrial
+                ? [
+                    { n: 2, label: "Project & code" },
+                    { n: 3, label: "Region" },
+                  ]
+                : [
+                    { n: 1, label: "Production specs" },
+                    { n: 2, label: "Project & code" },
+                    { n: 3, label: "Region & environments" },
+                  ]
+              ).map((s, i, arr) => (
                 <li key={s.n} className="flex items-center gap-2">
                   <button
                     type="button"
@@ -440,7 +465,7 @@ export default function Hosting() {
                         step >= s.n ? "bg-primary text-primary-foreground" : "bg-card text-muted ring-1 ring-border",
                       )}
                     >
-                      {s.n}
+                      {i + 1}
                     </span>
                     <span className={cn("hidden sm:inline", step === s.n ? "font-semibold text-foreground" : "text-muted")}>
                       {s.label}
@@ -753,7 +778,9 @@ export default function Hosting() {
                 </div>
 
                 <div className="mt-6 flex items-center gap-3">
-                  <Button variant="secondary" onClick={() => setStep(1)}>← Back</Button>
+                  {!isTrial && (
+                    <Button variant="secondary" onClick={() => setStep(1)}>← Back</Button>
+                  )}
                   <Button className="flex-1" size="lg" disabled={!projectName.trim() || !subdomain} onClick={() => setStep(3)}>
                     Continue <ArrowRight />
                   </Button>
@@ -766,10 +793,13 @@ export default function Hosting() {
               <div className="grid items-start gap-6 lg:grid-cols-[1fr_20rem]">
                 {/* Left: region, support, backup & environments */}
                 <Card className="p-5">
-                  <h2 className="text-lg font-semibold">Region, support &amp; environments</h2>
+                  <h2 className="text-lg font-semibold">
+                    {isTrial ? "Region" : "Region, support & environments"}
+                  </h2>
                   <p className="mt-1 text-xs text-muted">
-                    Choose where it runs, your support level, and how many extra
-                    environments to buy.
+                    {isTrial
+                      ? "Choose where your trial instance runs. You can upgrade to a paid plan any time before it ends."
+                      : "Choose where it runs, your support level, and how many extra environments to buy."}
                   </p>
 
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -795,7 +825,7 @@ export default function Hosting() {
                         </select>
                       </div>
                     )}
-                    {(meta?.support_plans?.length ?? 0) > 1 && (
+                    {!isTrial && (meta?.support_plans?.length ?? 0) > 1 && (
                       <div className="space-y-1">
                         <label className="flex items-center gap-1.5 text-sm font-medium">
                           Support plan
@@ -816,19 +846,23 @@ export default function Hosting() {
                     )}
                   </div>
 
-                  {/* Staging / Dev counts side by side */}
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                    <Stepper label="Staging" value={stagingCount} onChange={setStagingCount}
-                      hint="A copy of your app to test changes safely before they reach Production. Runs on its own Git branch." />
-                    <Stepper label="Development" value={devCount} onChange={setDevCount}
-                      hint="A lightweight environment for building and testing new features, on its own Git branch." />
-                  </div>
-                  <p className="mt-1.5 text-xs text-muted">
-                    Create up to the number you buy for free, any time.
-                  </p>
+                  {/* Staging / Dev counts side by side — paid add-ons, not in trials */}
+                  {!isTrial && (
+                    <>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                        <Stepper label="Staging" value={stagingCount} onChange={setStagingCount}
+                          hint="A copy of your app to test changes safely before they reach Production. Runs on its own Git branch." />
+                        <Stepper label="Development" value={devCount} onChange={setDevCount}
+                          hint="A lightweight environment for building and testing new features, on its own Git branch." />
+                      </div>
+                      <p className="mt-1.5 text-xs text-muted">
+                        Create up to the number you buy for free, any time.
+                      </p>
+                    </>
+                  )}
 
                   {/* Daily backup */}
-                  {(meta?.daily_backup_price ?? 0) > 0 && (
+                  {!isTrial && (meta?.daily_backup_price ?? 0) > 0 && (
                     <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-lg border border-border p-2.5">
                       <input
                         type="checkbox"
@@ -845,30 +879,51 @@ export default function Hosting() {
                   )}
                 </Card>
 
-                {/* Right: sticky live price breakdown */}
+                {/* Right: sticky summary — live price, or "Free" for trials */}
                 <Card className="self-start p-5 lg:sticky lg:top-24">
-                  <h3 className="text-sm font-semibold">Order summary</h3>
-                  <div className="mt-3 space-y-1.5 text-sm">
-                    <div className="flex justify-between"><span className="text-muted">Production plan</span><span className="font-medium">{money(price?.total ?? 0, currency)}{perLabel}</span></div>
-                    {projectQuote && (stagingCount + devCount) > 0 && (
-                      <div className="flex justify-between"><span className="text-muted">{stagingCount + devCount} × env server</span><span className="font-medium">{money(projectQuote.env_total, currency)}{perLabel}</span></div>
-                    )}
-                    {supportLine > 0 && (
-                      <div className="flex justify-between"><span className="text-muted">Support — {selSupport?.name}</span><span className="font-medium">{money(supportLine, currency)}{perLabel}</span></div>
-                    )}
-                    {backupLine > 0 && (
-                      <div className="flex justify-between"><span className="text-muted">Daily backups</span><span className="font-medium">{money(backupLine, currency)}{perLabel}</span></div>
-                    )}
-                    <div className="flex justify-between border-t border-border pt-2 text-base font-semibold">
-                      <span>Total</span>
-                      <span>{money(grandTotal, currency)}{perLabel}</span>
+                  <h3 className="text-sm font-semibold">{isTrial ? "Your free trial" : "Order summary"}</h3>
+                  {isTrial ? (
+                    <div className="mt-3 space-y-3 text-sm">
+                      <ul className="space-y-2 text-muted">
+                        <li className="flex items-center gap-2"><Check className="size-4 text-success" /> Full Production instance</li>
+                        <li className="flex items-center gap-2"><Check className="size-4 text-success" /> Your subdomain &amp; chosen Odoo version</li>
+                        <li className="flex items-center gap-2"><Check className="size-4 text-success" /> No credit card required</li>
+                      </ul>
+                      <div className="flex items-baseline justify-between border-t border-border pt-3">
+                        <span className="font-semibold">Total today</span>
+                        <span className="text-2xl font-bold text-success">Free</span>
+                      </div>
+                      {meta?.trial.days ? (
+                        <p className="text-xs text-muted">
+                          Free for {meta.trial.days} days. Upgrade to a paid plan any time — no charge until you do.
+                        </p>
+                      ) : null}
                     </div>
-                  </div>
+                  ) : (
+                    <div className="mt-3 space-y-1.5 text-sm">
+                      <div className="flex justify-between"><span className="text-muted">Production plan</span><span className="font-medium">{money(price?.total ?? 0, currency)}{perLabel}</span></div>
+                      {projectQuote && (stagingCount + devCount) > 0 && (
+                        <div className="flex justify-between"><span className="text-muted">{stagingCount + devCount} × env server</span><span className="font-medium">{money(projectQuote.env_total, currency)}{perLabel}</span></div>
+                      )}
+                      {supportLine > 0 && (
+                        <div className="flex justify-between"><span className="text-muted">Support — {selSupport?.name}</span><span className="font-medium">{money(supportLine, currency)}{perLabel}</span></div>
+                      )}
+                      {backupLine > 0 && (
+                        <div className="flex justify-between"><span className="text-muted">Daily backups</span><span className="font-medium">{money(backupLine, currency)}{perLabel}</span></div>
+                      )}
+                      <div className="flex justify-between border-t border-border pt-2 text-base font-semibold">
+                        <span>Total</span>
+                        <span>{money(grandTotal, currency)}{perLabel}</span>
+                      </div>
+                    </div>
+                  )}
                   {orderError && (
                     <p className="mt-3 text-xs text-danger">{orderError}</p>
                   )}
                   <Button className="mt-4 w-full" size="lg" disabled={!subdomain || ordering} onClick={placeOrder}>
-                    {ordering ? "Placing order…" : "Continue to payment"} <ArrowRight />
+                    {ordering
+                      ? (isTrial ? "Starting trial…" : "Placing order…")
+                      : (isTrial ? "Start free trial" : "Continue to payment")} <ArrowRight />
                   </Button>
                   <Button variant="secondary" className="mt-2 w-full" onClick={() => setStep(2)}>← Back</Button>
                 </Card>

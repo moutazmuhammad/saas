@@ -55,6 +55,19 @@
                             <field name="psql_port" invisible="not is_db_server"/>
                         </group>
                     </group>
+                    <group string="Health">
+                        <group>
+                            <field name="health_state"
+                                   decoration-success="health_state == 'ok'"
+                                   decoration-danger="health_state == 'unreachable'"
+                                   widget="badge"/>
+                            <field name="last_health_check"/>
+                        </group>
+                        <group>
+                            <field name="last_health_error"
+                                   invisible="health_state != 'unreachable'"/>
+                        </group>
+                    </group>
                     <group string="Capacity" invisible="not is_docker_host">
                         <group>
                             <field name="max_instances"/>

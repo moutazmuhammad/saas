@@ -220,16 +220,17 @@ class SaasApi(http.Controller):
         if error:
             return err(error, 'invalid')
         try:
-            request.env['saas.registration.otp'].sudo()._generate_and_send_phone(
-                phone
-            )
+            otp = request.env['saas.registration.otp'].sudo(
+            )._generate_and_send_phone(phone)
         except Exception:
             _logger.exception("Failed to send registration OTP")
             return err(
                 _("We couldn't send your verification code. Please try again."),
                 'otp_send_failed',
             )
-        return ok({'otp_sent': True})
+        # TODO: REMOVE before production — echo the code so the SPA can show
+        # it on screen while testing (no SMS gateway configured yet).
+        return ok({'otp_sent': True, 'debug_otp': otp.code})
 
     @http.route('/saas/api/v1/auth/register/resend', type='json', auth='public')
     def register_resend(self, phone=None, **kw):
@@ -241,10 +242,12 @@ class SaasApi(http.Controller):
         if limited:
             return limited
         try:
-            request.env['saas.registration.otp'].sudo()._generate_and_send_phone(phone)
+            otp = request.env['saas.registration.otp'].sudo(
+            )._generate_and_send_phone(phone)
         except Exception:
             return err(_("Couldn't resend the code. Please try again."), 'otp_send_failed')
-        return ok({'otp_sent': True})
+        # TODO: REMOVE before production — echo the code for on-screen testing.
+        return ok({'otp_sent': True, 'debug_otp': otp.code})
 
     @http.route('/saas/api/v1/auth/register/verify', type='json', auth='public')
     def register_verify(self, **p):

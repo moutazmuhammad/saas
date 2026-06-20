@@ -136,6 +136,91 @@ On the workspace page `/my/instances/<id>/environments`:
 - Deploy: SPA rebuild + Python (api.py + model) → `git pull` + **restart**
   (no `-u` — no XML/view change this round).
 
+### 6) Local-testing aids + free-trial-through-funnel + Home redesign (local only, 2026-06-20)
+- **OTP on screen for testing**: `register_start`/`register_resend` (`api.py`)
+  echo `debug_otp` again (the SPA already had the display panel); resend
+  cooldown `Register.tsx` 45s→**120s**. ⚠️ `TODO: REMOVE before production`
+  (this is the SEC-1 blocker). Verified: API `debug_otp` == server-log code,
+  verify with resent code creates the user.
+- **Free trial now runs the normal SPA funnel** (was: trial CTA jumped to the
+  QWeb review/pay page, bypassing the wizard). `Hosting.tsx` gains **trial
+  mode** via `/hosting?trial=1`: starts at step 2, collects project
+  name/subdomain/version/region, **skips the paid specs step + all paid
+  add-ons** (support, daily backup, staging/dev), summary shows **Free**,
+  CTA "Start free trial" → `api.hostingOrder` with `is_trial=1`. Backend was
+  already trial-ready (trial plan, skip billing, deploy, redirect to instance)
+  — **frontend-only change**. Verified: trial order → `/my/instances/N` (no
+  pay), instance `is_trial=t state=provisioning $0`; paid order → `/checkout`
+  `pending_payment $21.50`.
+- **Home.tsx redesigned** as a pure two-service landing — **no trial CTAs on
+  home** (final decision): hero + two cards describe **Hosting** (you bring
+  code, empty DB) vs **Ready-Made Apps** (ready code + ready DB, e.g. pharmacy
+  mgmt, customizable); CTAs are **"Explore Hosting"** / **"Explore Ready-Made
+  Apps"** → the respective pages. One informative line only ("Free trial
+  available inside each"). Removed all trial state/badges from Home.
+- **Trial lives INSIDE the offering pages** (eligible first-timers only,
+  gated by `meta.trial.*_available`): `Hosting.tsx` hero has "Start your
+  N-day free trial" (→ `/hosting?trial=1` wizard) above the purchase wizard;
+  `ServiceDetail.tsx` hero has "Start your N-day free trial" above the plans.
+  Returning/paid users see only the purchase path.
+- `Services.tsx` listing reworded to the ready-made-apps framing.
+- Headless-Chrome verified: Home has NO trial action (only Explore buttons);
+  Hosting hero shows the trial + purchase wizard; Services listing renders the
+  new copy. (No services published in saas_dev, so ServiceDetail trial is
+  code-verified, not data-exercised locally.)
+- Services trial already flowed through its (QWeb) configure funnel ending
+  without payment — left as-is functionally.
+
+### 6b) Seeded a sample service + client-tested BOTH trials (2026-06-20)
+- Seeded a published service in `saas_dev` via odoo shell (`/tmp/seed_service.py`):
+  **Pharmacy Management** (`saas.product` id 101, `is_hosting=False`,
+  `is_published=True`, `backup_bucket_path='pharmacy/seed/snapshot.zip'`) +
+  plans: **Free Trial** (157, `is_trial_plan`, $0), **Professional** (158, $99),
+  **Business** (159, $199). Shows in `/services` + `/services/101`.
+- **Client-tested both trials end-to-end** (register via debug-OTP → order):
+  - Hosting trial → `/my/instances/153` (no checkout), inst is_hosting✓
+    is_trial✓ **$0** provisioning.
+  - Services trial → 303 `/my/instances/154` (no checkout), service✓ is_trial✓
+    **$0** provisioning.
+  - Contrast: services PAID (plan 158) → `/my/instances/155/checkout`. Hosting
+    paid earlier → `…/checkout` `$21.50`.
+- **Trial rule learned**: `_check_one_trial_per_client` (saas_instance.py:1189)
+  = **one trial total per commercial entity** (hosting OR services), plus a
+  per-type `saas_*_trial_used` create-gate. So testing both needs TWO clients.
+- ⚠️ Minor bug spotted (not fixed): a trial create that fails the
+  one-trial constraint inside `service_order`/`hosting_order` leaks a **draft
+  instance** (the caught ValidationError doesn't roll back the INSERT; left
+  instances 151/152 in `saas_dev`). Worth a savepoint around the create.
+- ⚠️ Local only (saas_dev) — **not deployed to the server** (debug_otp is a
+  prod security blocker; branch is `architecture-evolution`).
+
+### 7) Root-cause fix: never strand a client on an unreachable Docker host (2026-06-21)
+- **Problem**: a project (`ensan`) stuck in `pending_provision` — the allocator
+  had placed it on docker host `rt-default` @ `203.0.113.10` (an RFC-5737
+  placeholder IP), so every deploy SSH-timed-out and the customer waited.
+  Root cause: `_allocate_docker_server` considered ANY `is_docker_host` server
+  with no reachability check.
+- **Fix (saas_core, additive)**:
+  - `saas.server`: new `health_state` (unknown/ok/unreachable) + `last_health_check`
+    + `last_health_error`; `_probe_reachable()` (fast TCP connect to the SSH
+    endpoint) + `_update_health()`; `_cron_health_check()` (every 5 min,
+    `data/saas_server_health_cron.xml`).
+  - Allocation (`_allocate_docker_server` + `_allocate_overcommit_server`):
+    exclude `health_state=='unreachable'` AND **live-probe** the chosen
+    candidate, failing over to the next healthy host; return None if none.
+  - `saas.region.has_capacity()`: a known-unreachable docker host no longer
+    counts → the order is **refused at checkout** with a clear message instead
+    of creating a doomed project.
+  - Server form view shows the health fields (badge + last error).
+- **Tested**: `tests/test_server_health.py` (5 tests, real local sockets);
+  full suite **145/145 green** on saas_ci (no regression).
+- **Proven live on saas_dev**: health cron flagged `203.0.113.10` unreachable
+  / `165.245.245.196` ok; allocator routed to the healthy host; with only the
+  unreachable host left, a new order returned **"Service temporarily unavailable
+  in the selected region"** (fail-fast, no stranded instance).
+- ⚠️ Deploy needs `-u saas_core` (new fields/cron/view). This fix is clean and
+  prod-deployable independent of the debug_otp/branch caveats above.
+
 ## Bugs hit and their fixes (so we don't repeat them)
 - "column environment does not exist" on live → needed `-u saas_core` (module
   upgrade after adding fields).

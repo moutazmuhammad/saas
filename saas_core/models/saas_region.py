@@ -102,9 +102,16 @@ class SaasRegion(models.Model):
         self.ensure_one()
         Server = self.env['saas.server'].sudo()
         dom = Server._region_match_domain(self)
+        # A Docker host that's known-unreachable can't host an instance, so it
+        # doesn't count as capacity: if every docker host in-region is down the
+        # region reports no capacity and the order is refused at checkout with a
+        # clear message — far better than creating a project that strands in
+        # "pending provision".
         return bool(
             Server.search_count([('is_proxy_server', '=', True)] + dom)
-            and Server.search_count([('is_docker_host', '=', True)] + dom)
+            and Server.search_count(
+                [('is_docker_host', '=', True),
+                 ('health_state', '!=', 'unreachable')] + dom)
             and Server.search_count([('is_db_server', '=', True)] + dom)
         )
 

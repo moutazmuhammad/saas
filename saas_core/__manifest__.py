@@ -41,6 +41,7 @@ Key capabilities:
         'data/saas_backup_cron.xml',
         'data/saas_storage_check_cron.xml',
         'data/saas_health_check_cron.xml',
+        'data/saas_server_health_cron.xml',
         'data/saas_usage_refresh_cron.xml',
         'data/saas_trial_expiry_cron.xml',
         'data/saas_recurring_billing_cron.xml',

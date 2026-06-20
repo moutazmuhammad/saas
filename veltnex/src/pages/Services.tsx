@@ -24,12 +24,15 @@ export default function Services() {
   return (
     <div className="mx-auto max-w-7xl animate-fade-in px-4 py-16 sm:px-6 lg:px-8">
       <div>
-        <p className="text-sm font-medium text-primary">Services</p>
+        <p className="text-sm font-medium text-primary">Ready-Made Apps</p>
         <h1 className="mt-2 max-w-2xl text-4xl font-bold tracking-tight">
-          Build your stack on VELTNEX
+          Pre-built Odoo apps, running on day one
         </h1>
-        <p className="mt-4 text-muted">
-          Managed building blocks for Odoo — pick what you need today and add the rest as you grow.
+        <p className="mt-4 max-w-2xl text-muted">
+          Pick a solution tuned to your industry — pharmacy management, retail,
+          clinics and more. Each one boots with its modules and database
+          already set up, ready to use and yours to customize. Open any app to
+          see the full details and start a free trial.
         </p>
       </div>
 
