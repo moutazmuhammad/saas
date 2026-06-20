@@ -181,7 +181,7 @@ export default function Home() {
 
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             {trialReady ? (
-              <Button size="lg" onClick={() => navigate("/hosting/configure?is_trial=1")}>
+              <Button size="lg" onClick={() => { window.location.href = "/hosting/configure?is_trial=1"; }}>
                 Start your {trialDays}-day free trial
                 <ArrowRight />
               </Button>
