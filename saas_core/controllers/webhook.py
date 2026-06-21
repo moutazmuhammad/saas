@@ -29,6 +29,22 @@ class SaasWebhookController(http.Controller):
     - Same provider delivery-id is processed at most once (idempotency).
     """
 
+    # Per-repo cap on how often a single webhook secret can trigger the
+    # pipeline, so a leaked/guessed secret can't be used to fan out forced
+    # redeploys (SEC-011). Generous vs. any realistic push cadence.
+    _WEBHOOK_RATE_LIMIT = 30
+    _WEBHOOK_RATE_WINDOW = 60
+
+    def _webhook_deny(self):
+        """Uniform rejection for every authentication failure (unknown
+        secret, missing / SHA-1 / invalid signature). Returning an identical
+        response for all of them removes the 404-vs-403 oracle that let an
+        attacker tell a valid webhook secret from an invalid one — the real
+        reason is logged server-side for operators (SEC-011)."""
+        return request.make_json_response(
+            {'status': 'ignored', 'reason': 'not found'}, status=404,
+        )
+
     @http.route(
         '/saas/webhook/<string:secret>',
         type='http',
@@ -49,8 +65,21 @@ class SaasWebhookController(http.Controller):
         ], limit=1)
         if not repo:
             _logger.warning("Webhook: no matching repo for incoming secret")
+            return self._webhook_deny()
+
+        # 1b. Rate-limit per repo (keyed only after a valid secret matched, so
+        #     random probes create no state and shared provider IPs aren't
+        #     throttled across tenants). Caps deploy fan-out on a known secret.
+        allowed, retry_after = env['saas.rate.limit'].sudo()._hit(
+            'webhook', str(repo.id),
+            self._WEBHOOK_RATE_LIMIT, self._WEBHOOK_RATE_WINDOW)
+        if not allowed:
+            _logger.warning(
+                "Webhook: rate limit hit for repo %s — backing off %ss",
+                repo.name, retry_after)
             return request.make_json_response(
-                {'status': 'ignored', 'reason': 'unknown secret'}, status=404,
+                {'status': 'error', 'reason': 'rate limited'},
+                status=429, headers=[('Retry-After', str(retry_after))],
             )
 
         # 2. Read signature header. Missing signature == reject (URL secret
@@ -65,18 +94,13 @@ class SaasWebhookController(http.Controller):
                 "Webhook: SHA-1 signature received for repo %s — rejected",
                 repo.name,
             )
-            return request.make_json_response(
-                {'status': 'error', 'reason': 'sha1 signatures not accepted'},
-                status=403,
-            )
+            return self._webhook_deny()
         if not signature:
             _logger.warning(
                 "Webhook: missing signature header for repo %s — rejected",
                 repo.name,
             )
-            return request.make_json_response(
-                {'status': 'error', 'reason': 'signature required'}, status=403,
-            )
+            return self._webhook_deny()
 
         # 3. Verify signature against the raw payload BEFORE any parsing.
         payload_body = request.httprequest.get_data()
@@ -84,9 +108,7 @@ class SaasWebhookController(http.Controller):
             _logger.warning(
                 "Webhook: signature verification failed for repo %s", repo.name,
             )
-            return request.make_json_response(
-                {'status': 'error', 'reason': 'invalid signature'}, status=403,
-            )
+            return self._webhook_deny()
 
         # 4. Idempotency: drop duplicate deliveries (provider retries,
         #    deliberate replays). The handler is otherwise unauthenticated
