@@ -53,6 +53,12 @@ class SaasJob(models.Model):
         default=False,
         help='Safe to re-run if the worker dies mid-flight; such jobs are '
              'requeued by the reaper, others are failed for manual review.')
+    on_error = fields.Char(
+        help='Optional method on the target called as '
+             '`record.on_error(exception, *on_error_args)` when the job fails '
+             '(mirrors run_in_background error_method, e.g. _on_background_error '
+             'which transitions an instance to failed/pending + alerts).')
+    on_error_args_json = fields.Text(default='[]')
     attempts = fields.Integer(default=0)
     max_attempts = fields.Integer(default=3)
     run_after = fields.Datetime(default=fields.Datetime.now, index=True)
@@ -66,7 +72,8 @@ class SaasJob(models.Model):
     @api.model
     def _enqueue(self, record, method, args=(), *, idempotency_key=None,
                  channel='default', lock_key=None, max_attempts=3,
-                 idempotent=False, priority=10, eta=None, run_now=True):
+                 idempotent=False, priority=10, eta=None, run_now=True,
+                 on_error=None, on_error_args=()):
         """Persist a job and return its record. Idempotent on
         ``idempotency_key``: if a pending/running/done job already carries it,
         that job is returned and nothing new is created.
@@ -94,6 +101,8 @@ class SaasJob(models.Model):
             'idempotent': idempotent,
             'priority': priority,
             'run_after': eta or fields.Datetime.now(),
+            'on_error': on_error or False,
+            'on_error_args_json': json.dumps(list(on_error_args)),
         })
         if run_now and not eta:
             job._spawn_worker()
@@ -224,6 +233,16 @@ class SaasJob(models.Model):
         except Exception as e:
             self.env.cr.rollback()
             _logger.exception("saas.job %s (%s.%s) failed", self.id, self.model, self.method)
+            # Run the target's error handler (e.g. _on_background_error, which
+            # transitions the instance to failed/pending + alerts) before we
+            # record the job outcome — mirrors run_in_background's error_method.
+            if self.on_error and record is not None:
+                try:
+                    getattr(record, self.on_error)(
+                        e, *json.loads(self.on_error_args_json or '[]'))
+                except Exception:
+                    _logger.exception(
+                        "saas.job %s on_error handler failed", self.id)
             self._reschedule_or_fail(str(e))
         finally:
             stop.set()

@@ -5178,12 +5178,14 @@ class SaasInstance(models.Model):
                 "Deployment queued (attempt %d). Running in background..."
                 % (rec.deploy_retry_count + 1)
             )
-            run_in_background(
-                rec, '_do_deploy',
-                error_method='_on_background_error',
-                error_args=('failed',),
-                thread_name='saas_deploy_%s' % rec.subdomain,
-            )
+            # Durable queue (ARCH-004 Phase 3): runs promptly via the immediate
+            # worker but is crash-recoverable; on failure _on_background_error
+            # still drives the instance state + the existing pending/recover
+            # crons own retries (max_attempts=1 here). No secret args.
+            self.env['saas.job']._enqueue(
+                rec, '_do_deploy', channel='deploy',
+                lock_key='instance:%s' % rec.id, max_attempts=1,
+                on_error='_on_background_error', on_error_args=('failed',))
 
     def _record_build(self, source, state='success', commit_message=False,
                       log=False):
@@ -6140,12 +6142,13 @@ class SaasInstance(models.Model):
                 'instance_delete', model='saas.instance', res_id=rec.id,
                 res_name=rec.subdomain,
                 detail='Deletion queued (was %s)' % prev_state)
-            run_in_background(
-                rec, '_do_delete_instance',
-                error_method='_on_background_error',
-                error_args=(prev_state,),
-                thread_name='saas_delete_%s' % rec.subdomain,
-            )
+            # Durable queue (ARCH-004 Phase 3). Delete is non-idempotent, so the
+            # job-reaper won't auto-retry it; _on_background_error restores the
+            # prior state on failure.
+            self.env['saas.job']._enqueue(
+                rec, '_do_delete_instance', channel='deploy',
+                lock_key='instance:%s' % rec.id, max_attempts=1,
+                on_error='_on_background_error', on_error_args=(prev_state,))
         return True
 
     def _do_delete_instance(self):

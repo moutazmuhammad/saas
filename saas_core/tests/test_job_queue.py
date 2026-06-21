@@ -23,7 +23,13 @@ class TestJobQueue(TransactionCase):
         def _job_boom(rec, *a):
             raise ValueError('boom')
 
-        for name, fn in (('_job_ok', _job_ok), ('_job_boom', _job_boom)):
+        self._onerror_calls = []
+
+        def _job_onerror(rec, exc, *a):
+            self._onerror_calls.append((str(exc), list(a)))
+
+        for name, fn in (('_job_ok', _job_ok), ('_job_boom', _job_boom),
+                         ('_job_onerror', _job_onerror)):
             p = patch.object(type(self.partner), name, fn, create=True)
             p.start()
             self.addCleanup(p.stop)
@@ -89,6 +95,17 @@ class TestJobQueue(TransactionCase):
         self.assertEqual(job.state, 'failed')
         self.assertEqual(job.attempts, 1)
         self.assertIn('boom', job.error)
+
+    def test_on_error_handler_invoked_on_failure(self):
+        self._no_commit()
+        job = self.Job._enqueue(self.partner, '_job_boom', max_attempts=1,
+                                on_error='_job_onerror', on_error_args=('x',))
+        self.Job._cron_run_jobs()
+        self.assertEqual(job.state, 'failed')
+        self.assertEqual(len(self._onerror_calls), 1,
+                         "the target's on_error handler must run on failure")
+        self.assertIn('boom', self._onerror_calls[0][0])
+        self.assertEqual(self._onerror_calls[0][1], ['x'])
 
     # ---- claim gating ----
     def test_future_job_not_claimed(self):
@@ -239,3 +256,67 @@ class TestDbOpViaQueue(TransactionCase):
         job = self.Job._enqueue(op, '_run_drop', run_now=False)  # state pending
         self.assertFalse(self.Job._heartbeat_tick(job.id),
                          "a non-running job stops the beater")
+
+
+@tagged('post_install', '-at_install')
+class TestDeployViaQueue(TransactionCase):
+    """ARCH-004 Phase 3: deploy + delete run through the queue, with
+    _on_background_error wired as the job's on_error."""
+
+    def setUp(self):
+        super().setUp()
+        self.Job = self.env['saas.job']
+        self.product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1) or \
+            self.env['saas.product'].sudo().create(
+                {'name': 'DPQ Hosting', 'is_hosting': True, 'is_published': True})
+        self.plan = self.env['saas.plan'].sudo().create({
+            'name': 'DPQ Plan', 'is_custom': True, 'workers': 1, 'storage_limit': 5,
+            'cpu_limit': 1.0, 'ram_limit': '1g', 'price': 20.0, 'yearly_price': 192.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [self.product.id])]})
+        self.domain = self.env['saas.based.domain'].sudo().search([], limit=1) or \
+            self.env['saas.based.domain'].sudo().create({'name': 'dpq.example.com'})
+        self.partner = self.env['res.partner'].sudo().create({'name': 'DPQ Cust'})
+        wp = patch.object(type(self.Job), '_spawn_worker', lambda self: None)
+        wp.start()
+        self.addCleanup(wp.stop)
+
+    def _instance(self, sub, **vals):
+        base = {
+            'subdomain': sub, 'domain_id': self.domain.id,
+            'partner_id': self.partner.id, 'saas_product_id': self.product.id,
+            'plan_id': self.plan.id, 'billing_period': 'monthly',
+            'environment': 'production', 'region_id': False, 'is_hosting': True,
+        }
+        base.update(vals)
+        return self.env['saas.instance'].sudo().create(base)
+
+    def test_action_deploy_enqueues_deploy_job(self):
+        inst = self._instance('dpqdeploy', state='draft', is_trial=True)
+        Inst = type(inst)
+        with patch.object(Inst, '_allocate_servers', lambda self: True), \
+                patch.object(Inst, '_validate_deploy_fields', lambda self: None), \
+                patch.object(Inst, '_auto_assign_ports', lambda self: None):
+            inst.action_deploy()
+        job = self.Job.sudo().search([
+            ('model', '=', 'saas.instance'), ('res_id', '=', inst.id),
+            ('method', '=', '_do_deploy')], limit=1)
+        self.assertTrue(job, "deploy must enqueue a durable job")
+        self.assertEqual(job.channel, 'deploy')
+        self.assertEqual(job.lock_key, 'instance:%s' % inst.id)
+        self.assertEqual(job.on_error, '_on_background_error')
+        self.assertEqual(json.loads(job.on_error_args_json), ['failed'])
+        self.assertEqual(inst.state, 'provisioning')
+
+    def test_action_delete_enqueues_job(self):
+        inst = self._instance('dpqdel', state='running')
+        with patch.object(type(inst), '_ensure_can_ssh', lambda self: None):
+            inst.action_delete_instance()
+        job = self.Job.sudo().search([
+            ('model', '=', 'saas.instance'), ('res_id', '=', inst.id),
+            ('method', '=', '_do_delete_instance')], limit=1)
+        self.assertTrue(job, "delete must enqueue a durable job")
+        self.assertEqual(job.channel, 'deploy')
+        self.assertEqual(job.on_error, '_on_background_error')
+        self.assertEqual(json.loads(job.on_error_args_json), ['running'])
