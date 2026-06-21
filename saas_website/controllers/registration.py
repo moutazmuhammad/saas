@@ -222,7 +222,7 @@ class SaasRegistration(http.Controller):
 
         # A 6-digit code is 1M combinations — throttle so it can't be walked
         # within the validity window.
-        if self._throttled('otp_verify', 10, 600, key=phone):
+        if self._throttled('otp_verify', 6, 600, key=phone):
             return request.render(
                 'saas_website.registration_form',
                 self._registration_context(

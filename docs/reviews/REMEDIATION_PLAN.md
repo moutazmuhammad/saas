@@ -161,7 +161,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 - [ ] 🟠 SEC-007 pip/git supply chain (anchor pkg grammar, internal mirror, sandbox, scan)
 - [ ] 🟠 SEC-008 presigned TTL · [ ] 🟠 SEC-009 monitoring · [ ] 🟡 SEC-010 audit log
 - [ ] 🟡 SEC-011 webhook rate-limit + constant-time lookup · [ ] 🟡 SEC-012 container-log ownership check
-- [ ] 🟡 SEC-013 OTP window/hashing · [ ] 🟡 SEC-014 central quoted SSH command builder
+- [x] 🟡 SEC-013 OTP window/hashing — **done+tested**: OTP `code` now `EncryptedChar` (encrypted at rest via the SEC-002 key; transparent decrypt keeps the email template + verify working), `_verify` rewritten to constant-time compare, `otp_verify` window tightened 10→6/600 across all 3 sites. `TestOtpEncryption` + existing reset e2e pass · [ ] 🟡 SEC-014 central quoted SSH command builder
 - [ ] 🟡 SEC-015 narrow exception handling + telemetry · [ ] 🟡 SEC-016 granular RBAC roles
 - [ ] ⚪ SEC-017 restore-confirm UX · [ ] ⚪ SEC-018 SPA session refresh/idle · [ ] ⚪ SEC-019 CI lint: no `type='http'`+`csrf=False`
 

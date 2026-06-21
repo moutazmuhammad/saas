@@ -256,7 +256,7 @@ class SaasApi(http.Controller):
             return err(_("Please enter the verification code."), 'invalid')
         # A 6-digit code is 1M combinations — without this an attacker could
         # walk the whole space inside the 10-minute validity window.
-        limited = self._rate_limit('otp_verify', 10, 600, key=phone)
+        limited = self._rate_limit('otp_verify', 6, 600, key=phone)
         if limited:
             return limited
         OTP = request.env['saas.registration.otp'].sudo()
@@ -351,7 +351,7 @@ class SaasApi(http.Controller):
         if len(password) < 8:
             return err(_("Password must be at least 8 characters."), 'invalid')
         # Brute-force guard on the 6-digit code, keyed by target email.
-        limited = self._rate_limit('otp_verify', 10, 600, key=email)
+        limited = self._rate_limit('otp_verify', 6, 600, key=email)
         if limited:
             return limited
         OTP = request.env['saas.registration.otp'].sudo()

@@ -1,9 +1,11 @@
+import hmac
 import logging
 import random
 import string
 from datetime import timedelta
 
 from odoo import api, fields, models, _
+from odoo.addons.saas_core.fields import EncryptedChar
 
 _logger = logging.getLogger(__name__)
 
@@ -23,7 +25,11 @@ class SaasRegistrationOtp(models.Model):
         [('email', 'Email'), ('phone', 'Phone')],
         required=True,
     )
-    code = fields.Char(required=True)
+    # SEC-013: the code is encrypted at rest (reuses the SEC-002 key), so a
+    # read of the control-plane DB cannot reveal live verification codes when a
+    # saas_secret_key is configured. Reads decrypt transparently, so the email
+    # template (object.code) and _verify keep working unchanged.
+    code = EncryptedChar(required=True)
     expires_at = fields.Datetime(required=True)
     verified = fields.Boolean(default=False)
 
@@ -104,15 +110,20 @@ class SaasRegistrationOtp(models.Model):
 
     @api.model
     def _verify(self, identifier, code, channel):
-        """Verify *code* for *identifier* on *channel*. Returns True on success."""
+        """Verify *code* for *identifier* on *channel*. Returns True on success.
+
+        The stored code is encrypted (non-deterministic), so we can't match it
+        in SQL — fetch the single live record (``_generate_*`` keeps only one
+        per identifier+channel) and compare in constant time."""
         record = self.search([
             ('identifier', '=', identifier),
             ('channel', '=', channel),
-            ('code', '=', code),
             ('verified', '=', False),
             ('expires_at', '>=', fields.Datetime.now()),
         ], limit=1)
         if not record:
+            return False
+        if not hmac.compare_digest(record.code or '', code or ''):
             return False
         record.verified = True
         return True

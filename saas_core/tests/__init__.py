@@ -18,3 +18,4 @@ from . import test_nginx_vhost
 from . import test_reliability_fixes
 from . import test_secret_encryption
 from . import test_proration_unify
+from . import test_otp_encryption
