@@ -1522,11 +1522,12 @@ class SaasInstanceRepo(models.Model):
         """Clone the repository, update config, and restart the instance (async)."""
         for rec in self:
             rec.instance_id._ensure_can_ssh()
-            run_in_background(
-                rec, '_do_clone_and_restart',
-                error_method='_on_repo_background_error',
-                thread_name='saas_inst_clone_%s' % rec.id,
-            )
+            # Durable queue (ARCH-004): clone+restart is re-runnable (idempotent)
+            # and serialised per instance; no secret args (token is on the row).
+            self.env['saas.job']._enqueue(
+                rec, '_do_clone_and_restart', channel='deploy',
+                lock_key='instance:%s' % rec.instance_id.id, idempotent=True,
+                on_error='_on_repo_background_error')
 
     def _do_clone_and_restart(self):
         """Clone repo and restart instance (runs in background thread)."""
@@ -1552,11 +1553,10 @@ class SaasInstanceRepo(models.Model):
         for rec in self:
             if rec.state != 'cloned':
                 raise UserError(_("Repository must be cloned first."))
-            run_in_background(
-                rec, '_do_pull_repo',
-                error_method='_on_repo_background_error',
-                thread_name='saas_inst_pull_%s' % rec.id,
-            )
+            self.env['saas.job']._enqueue(
+                rec, '_do_pull_repo', channel='deploy',
+                lock_key='instance:%s' % rec.instance_id.id, idempotent=True,
+                on_error='_on_repo_background_error')
 
     def _do_pull_repo(self):
         """Pull repo (runs in background thread)."""

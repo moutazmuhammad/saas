@@ -371,3 +371,59 @@ class TestWebhookDeployViaQueue(TransactionCase):
         self.assertEqual(build.state, 'failed')
         self.assertEqual(len(calls), 1, "repo background-error handler must run")
         self.assertIn('boom', calls[0])
+
+
+@tagged('post_install', '-at_install')
+class TestRepoOpsViaQueue(TransactionCase):
+    """ARCH-004: repo clone/pull run through the durable queue."""
+
+    def setUp(self):
+        super().setUp()
+        self.Job = self.env['saas.job']
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1) or \
+            self.env['saas.product'].sudo().create(
+                {'name': 'RO Hosting', 'is_hosting': True, 'is_published': True})
+        plan = self.env['saas.plan'].sudo().create({
+            'name': 'RO Plan', 'is_custom': True, 'workers': 1, 'storage_limit': 5,
+            'cpu_limit': 1.0, 'ram_limit': '1g', 'price': 20.0, 'yearly_price': 192.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])]})
+        domain = self.env['saas.based.domain'].sudo().search([], limit=1) or \
+            self.env['saas.based.domain'].sudo().create({'name': 'ro.example.com'})
+        partner = self.env['res.partner'].sudo().create({'name': 'RO Cust'})
+        self.instance = self.env['saas.instance'].sudo().create({
+            'subdomain': 'roinst', 'domain_id': domain.id, 'partner_id': partner.id,
+            'saas_product_id': product.id, 'plan_id': plan.id,
+            'billing_period': 'monthly', 'environment': 'production',
+            'region_id': False, 'state': 'running', 'is_hosting': True})
+        self.repo = self.env['saas.instance.repo'].sudo().create({
+            'instance_id': self.instance.id,
+            'repo_url': 'https://github.com/acme/app.git', 'branch': 'main'})
+        wp = patch.object(type(self.Job), '_spawn_worker', lambda self: None)
+        wp.start()
+        self.addCleanup(wp.stop)
+
+    def _job_for(self, method):
+        return self.Job.sudo().search([
+            ('model', '=', 'saas.instance.repo'),
+            ('res_id', '=', self.repo.id), ('method', '=', method)], limit=1)
+
+    def test_clone_enqueues_deploy_job(self):
+        with patch.object(type(self.instance), '_ensure_can_ssh',
+                          lambda self: None):
+            self.repo.action_clone_repo()
+        job = self._job_for('_do_clone_and_restart')
+        self.assertTrue(job)
+        self.assertEqual(job.channel, 'deploy')
+        self.assertEqual(job.lock_key, 'instance:%s' % self.instance.id)
+        self.assertEqual(job.on_error, '_on_repo_background_error')
+        self.assertTrue(job.idempotent)
+
+    def test_pull_enqueues_deploy_job(self):
+        self.repo.state = 'cloned'
+        self.repo.action_pull_repo()
+        job = self._job_for('_do_pull_repo')
+        self.assertTrue(job)
+        self.assertEqual(job.channel, 'deploy')
+        self.assertEqual(job.on_error, '_on_repo_background_error')
