@@ -1,6 +1,7 @@
 import json
 from datetime import date, timedelta
 
+from odoo import fields
 from odoo.exceptions import UserError
 from odoo.tests.common import HttpCase, TransactionCase, tagged
 
@@ -273,6 +274,64 @@ class TestApiSecurityHttp(HttpCase):
         self.assertTrue(resend and resend.get('ok'), resend)
         self.assertNotIn('debug_otp', resend['data'],
                          "OTP code must NOT be returned on resend")
+
+    def _make_portal_user(self, login):
+        user = self.env['res.users'].sudo().create({
+            'name': 'Reset User', 'login': login,
+            'groups_id': [(6, 0, [self.env.ref('base.group_portal').id])]})
+        user.password = 'origpassword1'
+        return user
+
+    def test_reset_start_is_enumeration_safe(self):
+        # CX-001: the start response is identical whether or not an account
+        # exists, so it can't be used to probe which emails are registered.
+        self._make_portal_user('resetexists@example.com')
+        r1 = self._call('/saas/api/v1/auth/reset/start',
+                        {'email': 'resetexists@example.com'})
+        self.assertTrue(r1 and r1.get('ok'), r1)
+        self.assertTrue(r1['data'].get('sent'))
+        self.assertNotIn('debug_otp', r1['data'])
+        r2 = self._call('/saas/api/v1/auth/reset/start',
+                        {'email': 'noaccount-xyz@example.com'})
+        self.assertTrue(r2 and r2.get('ok'), r2)
+        self.assertEqual(set(r1['data']), set(r2['data']),
+                         "existing vs non-existing email must be indistinguishable")
+
+    def test_reset_verify_rejects_bad_inputs(self):
+        bad_email = self._call('/saas/api/v1/auth/reset/verify',
+                               {'email': 'nope', 'otp': '123456',
+                                'password': 'longenough1'})
+        self.assertEqual(bad_email.get('code'), 'invalid')
+        short_pw = self._call('/saas/api/v1/auth/reset/verify',
+                              {'email': 'x@y.com', 'otp': '123456',
+                               'password': 'short'})
+        self.assertEqual(short_pw.get('code'), 'invalid')
+        wrong_code = self._call('/saas/api/v1/auth/reset/verify',
+                                {'email': 'x@y.com', 'otp': '000000',
+                                 'password': 'longenough1'})
+        self.assertEqual(wrong_code.get('code'), 'otp_invalid')
+
+    def test_reset_verify_sets_new_password_end_to_end(self):
+        self._make_portal_user('resetok@example.com')
+        self.env['saas.registration.otp'].sudo().create({
+            'identifier': 'resetok@example.com', 'channel': 'email',
+            'code': '654321', 'verified': False,
+            'expires_at': fields.Datetime.now() + timedelta(minutes=10)})
+        res = self._call('/saas/api/v1/auth/reset/verify', {
+            'email': 'resetok@example.com', 'otp': '654321',
+            'password': 'brandnew99'})
+        self.assertTrue(res and res.get('ok'), res)
+        # Proof the password was actually changed: a fresh login with the NEW
+        # password succeeds (and the old one no longer does).
+        good = self._call('/saas/api/v1/auth/login',
+                          {'login': 'resetok@example.com',
+                           'password': 'brandnew99'})
+        self.assertTrue(good and good.get('ok'), good)
+        bad = self._call('/saas/api/v1/auth/login',
+                         {'login': 'resetok@example.com',
+                          'password': 'origpassword1'})
+        self.assertFalse(bad.get('ok'),
+                         "the old password must no longer work")
 
     def test_environments_payload_exposes_scaling(self):
         # The workspace needs the Production server's resources + slot usage to

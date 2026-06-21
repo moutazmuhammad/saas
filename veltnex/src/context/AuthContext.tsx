@@ -1,5 +1,5 @@
 import * as React from "react";
-import { api, ApiError, type ApiUser } from "@/lib/api";
+import { api, ApiError, setUnauthorizedHandler, type ApiUser } from "@/lib/api";
 
 interface RegisterForm {
   name: string;
@@ -24,6 +24,9 @@ interface AuthContextValue {
   registerStart: (form: RegisterForm) => Promise<{ otp_sent: boolean }>;
   registerResend: (phone: string) => Promise<{ otp_sent: boolean }>;
   registerVerify: (form: RegisterForm & { otp: string }) => Promise<ApiUser>;
+  // Password reset (in-SPA, email OTP). resetVerify signs the user in.
+  resetStart: (email: string) => Promise<{ sent: boolean }>;
+  resetVerify: (email: string, otp: string, password: string) => Promise<ApiUser>;
 }
 
 const AuthContext = React.createContext<AuthContextValue | null>(null);
@@ -50,6 +53,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // CX-002: any request that hits an expired session clears the user here,
+  // so the route guard sends the customer to login instead of components
+  // rendering a misleading "not found" state.
+  React.useEffect(() => {
+    setUnauthorizedHandler(() => setUser(null));
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   const login = React.useCallback(async (email: string, password: string) => {
     const me = await api.login(email, password);
@@ -81,6 +92,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
+  const resetStart = React.useCallback((email: string) => {
+    return api.resetStart(email);
+  }, []);
+
+  const resetVerify = React.useCallback(
+    async (email: string, otp: string, password: string) => {
+      const me = await api.resetVerify(email, otp, password);
+      setUser(me);
+      return me;
+    },
+    []
+  );
+
   const value = React.useMemo<AuthContextValue>(
     () => ({
       user,
@@ -92,8 +116,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       registerStart,
       registerResend,
       registerVerify,
+      resetStart,
+      resetVerify,
     }),
-    [user, loading, login, logout, refresh, registerStart, registerResend, registerVerify]
+    [user, loading, login, logout, refresh, registerStart, registerResend,
+     registerVerify, resetStart, resetVerify]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -305,6 +305,83 @@ class SaasApi(http.Controller):
             return err(_("Account creation failed. Please try again."), 'create_failed')
         return ok(self._serialize_user(self._partner()))
 
+    # ------- Password reset (email OTP, in-SPA — CX-001) --------
+
+    @http.route('/saas/api/v1/auth/reset/start', type='json', auth='public')
+    def reset_start(self, email=None, **kw):
+        """Begin an in-SPA password reset: email a one-time code.
+
+        Account-enumeration safe: the response is identical whether or not
+        an account exists; a code is sent only when a matching user does.
+        """
+        if not request.env.user._is_public():
+            return err(_("You're already signed in."), 'already_authenticated')
+        email = (email or '').strip()
+        if not email or not EMAIL_RE.match(email):
+            return err(_("Please enter a valid email address."), 'invalid')
+        limited = (self._rate_limit('reset_start', 10, 600)
+                   or self._rate_limit('otp_send', 4, 600, key=email))
+        if limited:
+            return limited
+        user = request.env['res.users'].sudo().search(
+            [('login', '=', email)], limit=1)
+        if user:
+            try:
+                request.env['saas.registration.otp'].sudo(
+                )._generate_and_send_email(email)
+            except Exception:
+                # Log for the operator but still return the neutral response
+                # so the endpoint never reveals whether the address exists.
+                _logger.exception("Failed to send password-reset OTP")
+        return ok({'sent': True})
+
+    @http.route('/saas/api/v1/auth/reset/verify', type='json', auth='public')
+    def reset_verify(self, email=None, otp=None, password=None, **kw):
+        """Complete a password reset: verify the email code, set the new
+        password, and sign the customer in."""
+        if not request.env.user._is_public():
+            return err(_("You're already signed in."), 'already_authenticated')
+        email = (email or '').strip()
+        code = (otp or '').strip()
+        password = password or ''
+        if not email or not EMAIL_RE.match(email):
+            return err(_("Please enter a valid email address."), 'invalid')
+        if not code:
+            return err(_("Please enter the verification code."), 'invalid')
+        if len(password) < 8:
+            return err(_("Password must be at least 8 characters."), 'invalid')
+        # Brute-force guard on the 6-digit code, keyed by target email.
+        limited = self._rate_limit('otp_verify', 10, 600, key=email)
+        if limited:
+            return limited
+        OTP = request.env['saas.registration.otp'].sudo()
+        if not OTP._verify(email, code, 'email'):
+            return err(
+                _("That code is invalid or expired. Please request a new one."),
+                'otp_invalid',
+            )
+        user = request.env['res.users'].sudo().search(
+            [('login', '=', email)], limit=1)
+        if not user:
+            # A verified code with no user shouldn't happen (codes are only
+            # sent to existing users) — never create one here.
+            OTP._cleanup(email)
+            return err(_("We couldn't reset that account. Please contact "
+                         "support."), 'reset_failed')
+        try:
+            user.password = password
+            OTP._cleanup(email)
+            request.env.cr.commit()
+            request.session.authenticate(
+                request.db,
+                {'login': email, 'password': password, 'type': 'password'},
+            )
+        except Exception:
+            _logger.exception("Password reset failed for %s", email)
+            return err(_("We couldn't reset your password. Please try "
+                         "again."), 'reset_failed')
+        return ok(self._serialize_user(self._partner()))
+
     # ==================================================================
     #  Public catalog + pricing
     # ==================================================================

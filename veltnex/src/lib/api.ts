@@ -17,6 +17,15 @@ export class ApiError extends Error {
 
 let rpcId = 0;
 
+// Centralized session-expiry handling (CX-002): AuthContext registers a
+// callback here so that ANY request hitting `auth_required` clears the
+// session in one place and the route guard redirects to login — components
+// must never mask it as a not-found / generic error.
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn;
+}
+
 async function rpc<T = unknown>(
   path: string,
   params: Record<string, unknown> = {}
@@ -52,6 +61,7 @@ async function rpc<T = unknown>(
     const data = payload.error.data || {};
     const name: string = data.name || "";
     if (name.includes("SessionExpired") || name.includes("AccessDenied")) {
+      onUnauthorized?.();
       throw new ApiError("Your session has expired. Please sign in again.", "auth_required");
     }
     throw new ApiError(
@@ -63,7 +73,10 @@ async function rpc<T = unknown>(
   const result = payload.result;
   if (result && typeof result === "object" && "ok" in result) {
     if (!result.ok) {
-      throw new ApiError(result.error || "Request failed.", result.code || "error");
+      const code = result.code || "error";
+      // Backend can also signal expiry via the envelope (err(..., 'auth_required')).
+      if (code === "auth_required") onUnauthorized?.();
+      throw new ApiError(result.error || "Request failed.", code);
     }
     return result.data as T;
   }
@@ -501,6 +514,11 @@ export const api = {
     rpc<{ otp_sent: boolean }>("/saas/api/v1/auth/register/resend", { phone }),
   registerVerify: (form: Record<string, unknown>) =>
     rpc<ApiUser>("/saas/api/v1/auth/register/verify", form),
+  // Password reset (in-SPA, email OTP). `start` is account-enumeration safe.
+  resetStart: (email: string) =>
+    rpc<{ sent: boolean }>("/saas/api/v1/auth/reset/start", { email }),
+  resetVerify: (email: string, otp: string, password: string) =>
+    rpc<ApiUser>("/saas/api/v1/auth/reset/verify", { email, otp, password }),
 
   // public
   meta: () => rpc<Meta>("/saas/api/v1/meta"),

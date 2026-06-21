@@ -15,6 +15,7 @@ import Docs from "./pages/Docs";
 import DocArticle from "./pages/DocArticle";
 import Help from "./pages/Help";
 import Login from "./pages/Login";
+import ForgotPassword from "./pages/ForgotPassword";
 import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
 
@@ -82,6 +83,7 @@ export default function App() {
         <Route path="/docs/:slug" element={<DocArticle />} />
         <Route path="/help" element={<Help />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
       </Route>
 
       {/* Authenticated portal. /my, /my/instances/* and /my/billing/*
