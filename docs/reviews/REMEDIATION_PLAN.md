@@ -99,7 +99,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 
 ### Audit / data exposure
 - [ ] 🟡 **SEC-010** Immutable, write-once internal audit log (actor/action/target/result/ts).
-- [ ] 🟠 **SEC-008** Reduce presigned-URL TTL to minutes; per-download auth; log downloads.
+- [~] 🟠 **SEC-008** Reduce presigned-URL TTL to minutes — **done + tested** (TTL part): `PRESIGNED_URL_EXPIRY` cut from 7 days → 15 min; the `backups` API now re-mints fresh short links per list (`_refresh_download_url`) so the client never holds a stale long-lived URL. Server-side restore uses bucket creds, unaffected. `TestBackupUrlTtl` guards the TTL stays in minutes. *(per-download auth + download audit-log still TODO — pair with SEC-010.)*
 
 ---
 

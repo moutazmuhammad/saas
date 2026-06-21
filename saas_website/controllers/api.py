@@ -1334,6 +1334,10 @@ class SaasApi(http.Controller):
         backups = instance.backup_ids.filtered(
             lambda b: b.state in ('done', 'running')
         ).sorted('create_date', reverse=True)[:30]
+        # Mint a fresh, short-lived presigned link per list (SEC-008): the URL
+        # TTL is minutes, so the client must always receive a current one
+        # rather than a stale long-lived link.
+        backups.sudo()._refresh_download_url()
         return ok({
             'backups': [self._serialize_backup(b) for b in backups],
             'ready': True,

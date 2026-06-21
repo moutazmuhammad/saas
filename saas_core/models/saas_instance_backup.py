@@ -10,7 +10,11 @@ from odoo.exceptions import UserError
 _logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_BACKUPS = 7
-PRESIGNED_URL_EXPIRY = 7 * 24 * 3600
+# Presigned download links are bearer authority over a full tenant backup, so
+# they live for minutes, not days (SEC-008). The link is re-minted lazily by
+# _refresh_download_url whenever the customer lists/opens backups, so a short
+# TTL costs nothing but slams the data-exfiltration window shut.
+PRESIGNED_URL_EXPIRY = 15 * 60
 # On-demand backups are transient: the customer clicks "Download", we
 # build + upload to the bucket, hand back a presigned URL the browser
 # downloads from directly, and then the object is reaped — it is NOT

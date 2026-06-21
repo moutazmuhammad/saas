@@ -27,6 +27,22 @@ class TestInstanceIndexes(TransactionCase):
 
 
 @tagged('post_install', '-at_install')
+class TestBackupUrlTtl(TransactionCase):
+    """SEC-008: presigned backup download links are short-lived (minutes), so
+    a leaked link is not a week-long data-exfiltration window."""
+
+    def test_presigned_ttl_is_minutes_not_days(self):
+        from odoo.addons.saas_core.models import saas_instance_backup as mod
+        # Must be minutes, comfortably under an hour — never back to 7 days.
+        self.assertLessEqual(
+            mod.PRESIGNED_URL_EXPIRY, 3600,
+            "presigned backup URL TTL must stay in the minutes range (SEC-008)")
+        self.assertGreater(
+            mod.PRESIGNED_URL_EXPIRY, 0,
+            "TTL must be positive so links can still be issued")
+
+
+@tagged('post_install', '-at_install')
 class TestCronBatching(TransactionCase):
     """PERF-003: the sweep crons bound their search() with a per-run limit so
     a large fleet/backlog can't be pulled into one cron transaction."""
