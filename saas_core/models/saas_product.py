@@ -4,6 +4,8 @@ import logging
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
+from ..fields import EncryptedChar
+
 _logger = logging.getLogger(__name__)
 
 
@@ -248,7 +250,7 @@ class SaasProductRepo(models.Model):
         default='main',
         required=True,
     )
-    github_token = fields.Char(
+    github_token = EncryptedChar(
         string='GitHub Token',
         help='Personal access token for private repositories. '
              'Leave empty for public repos.',

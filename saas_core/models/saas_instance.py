@@ -17,6 +17,7 @@ from odoo import api, fields, models, _
 from odoo.exceptions import UserError, ValidationError
 
 from ..utils import run_in_background
+from ..fields import EncryptedChar
 from .saas_instance_backup import DEFAULT_MAX_BACKUPS
 
 _logger = logging.getLogger(__name__)
@@ -322,7 +323,7 @@ class SaasInstance(models.Model):
     )
 
     # ========== Credentials ==========
-    admin_password = fields.Char(
+    admin_password = EncryptedChar(
         string='Admin Master Password',
         readonly=True,
         groups='saas_core.group_saas_manager',
@@ -335,7 +336,7 @@ class SaasInstance(models.Model):
         groups='saas_core.group_saas_manager',
         help='PostgreSQL role name created for this instance.',
     )
-    db_password = fields.Char(
+    db_password = EncryptedChar(
         string='Database Password',
         readonly=True,
         groups='saas_core.group_saas_manager',
@@ -438,7 +439,7 @@ class SaasInstance(models.Model):
              'lose the next-invoice anchor) — it is paused, not '
              'cancelled.',
     )
-    restic_password = fields.Char(
+    restic_password = EncryptedChar(
         string='Restic Repository Password',
         readonly=True,
         groups='saas_core.group_saas_manager',
@@ -1206,6 +1207,44 @@ class SaasInstance(models.Model):
             )
 
     _sql_constraints = []
+
+    @api.model
+    def _saas_reencrypt_secrets(self):
+        """Re-store every plaintext secret so it gets encrypted with the
+        currently-configured ``saas_secret_key`` (SEC-002).
+
+        Run ONCE after setting the key (e.g. from the shell:
+        ``env['saas.instance']._saas_reencrypt_secrets()``). Idempotent and
+        safe to re-run. Reading a field yields plaintext (legacy or decrypted)
+        and writing it back triggers column-level encryption.
+        """
+        from .. import crypto
+        if not crypto.is_enabled():
+            raise UserError(_(
+                "No valid saas_secret_key is configured. Add one to odoo.conf "
+                "(or the SAAS_SECRET_KEY env var) before re-encrypting."))
+        counts = {}
+        instances = self.sudo().search([])
+        n = 0
+        for rec in instances:
+            vals = {f: rec[f] for f in
+                    ('admin_password', 'db_password', 'restic_password')
+                    if rec[f]}
+            if vals:
+                rec.write(vals)
+                n += 1
+        counts['instances'] = n
+        for model in ('saas.instance.repo', 'saas.product'):
+            Model = self.env[model].sudo()
+            mn = 0
+            for rec in Model.search([('github_token', '!=', False)]):
+                if rec.github_token:
+                    rec.github_token = rec.github_token
+                    mn += 1
+            counts[model] = mn
+        self.env.cr.commit()
+        _logger.info("SEC-002 re-encrypted secrets: %s", counts)
+        return counts
 
     @api.constrains('is_trial', 'partner_id')
     def _check_one_trial_per_client(self):
