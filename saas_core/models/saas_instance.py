@@ -6504,6 +6504,10 @@ class SaasInstance(models.Model):
         """
         error_msg = str(exception)
         self._append_log("OPERATION FAILED: %s" % error_msg)
+        self.env['saas.alert']._notify(
+            'operation_failed',
+            '%s on %s failed' % (self.pending_operation or 'operation', self.subdomain),
+            level='error', detail=error_msg)
         self.last_error = error_msg
         self.last_error_date = fields.Datetime.now()
         self.pre_provisioning_state = False

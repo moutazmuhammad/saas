@@ -281,6 +281,14 @@ class SaasServer(models.Model):
                 self.name, self.health_state, new_state,
                 (' (%s)' % error) if error else '',
             )
+            # Page operators when a host goes down (SEC-009). Recovery (-> ok)
+            # is a warning so the alert thread closes itself.
+            self.env['saas.alert']._notify(
+                'server_health',
+                'Server %s health %s -> %s' % (self.name, self.health_state, new_state),
+                level='error' if not ok else 'warning',
+                detail=error or None,
+            )
         self.write({
             'health_state': new_state,
             'last_health_check': fields.Datetime.now(),

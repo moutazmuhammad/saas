@@ -25,3 +25,4 @@ from . import saas_instance_container
 from . import saas_instance_metric
 from . import saas_rate_limit
 from . import saas_audit_log
+from . import saas_alert
