@@ -88,7 +88,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 - [ ] 🟠 **BIZ-002** Add `pending_plan_effective_date`; re-price add-ons on plan change; tests for prorated up/down incl. add-ons.
 - [ ] 🟠 **BIZ-003** Define + test trial-to-paid conversion proration.
 - [ ] 🟡 **BIZ-009** Enforce unique (instance, billing-period) invoice guard; idempotent generation.
-- [ ] 🟡 **BILL-V2-001** Unify proration to one helper (remove undocumented `-2`) so portal quote == invoice.
+- [x] 🟡 **BILL-V2-001** Unify proration to one helper (remove undocumented `-2`) so portal quote == invoice — **done + tested**: both portal display sites (`portal.py:570,648`) now call the authoritative `instance._proration_credit(old_price)` instead of duplicating the math with `-2`. `TestProrationUnify` asserts full-remaining-days (no -2) + safe on missing dates.
 - [ ] 🟡 **BILL-V2-002** Decide & codify yearly minimum-floor policy (`minimum_monthly*12` vs discounted).
 - [ ] 🟡 **BILL-V2-003 / BILL-V2-004** Size wallet consumption from confirmed, tax-aware invoice total within same txn.
 

@@ -17,3 +17,4 @@ from . import test_db_operation_reaper
 from . import test_nginx_vhost
 from . import test_reliability_fixes
 from . import test_secret_encryption
+from . import test_proration_unify

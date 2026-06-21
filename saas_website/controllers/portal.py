@@ -565,12 +565,11 @@ class SaasPortal(CustomerPortal):
             old_period = instance_sudo.billing_period or 'monthly'
             old_price = instance_sudo.plan_id._get_price_for_period(old_period)
             original_plan_name = instance_sudo.plan_id.name
-            if instance_sudo.next_invoice_date and instance_sudo.last_invoice_date:
-                total_days = (instance_sudo.next_invoice_date - instance_sudo.last_invoice_date).days
-                remaining_days = (instance_sudo.next_invoice_date - fields.Date.today()).days - 2
-                if total_days > 0 and remaining_days > 0:
-                    proration_credit = (old_price / total_days) * remaining_days
-                    proration_remaining_days = remaining_days
+            # Use the authoritative backend proration so the displayed quote
+            # matches the invoice the customer is actually charged
+            # (BILL-V2-001 — no undocumented "-2").
+            proration_credit, proration_remaining_days, _td = \
+                instance_sudo._proration_credit(old_price)
 
         values = self._prepare_portal_layout_values()
         values.update({
@@ -637,17 +636,13 @@ class SaasPortal(CustomerPortal):
         current_workers = current_plan.workers if current_plan else 2
         current_storage = int(current_plan.storage_limit) if current_plan else 5
 
-        # Proration info for display
-        today = fields.Date.today()
+        # Proration info for display — via the authoritative backend helper so
+        # the quote matches the invoice (BILL-V2-001, no "-2").
         old_period = instance_sudo.billing_period or 'monthly'
         old_price = current_plan._get_price_for_period(old_period) if current_plan else 0
-        remaining_value = 0.0
-        remaining_days = 0
-        if instance_sudo.next_invoice_date and instance_sudo.last_invoice_date:
-            total_days = (instance_sudo.next_invoice_date - instance_sudo.last_invoice_date).days
-            remaining_days = (instance_sudo.next_invoice_date - today).days - 2
-            if total_days > 0 and remaining_days > 0:
-                remaining_value = (old_price / total_days) * remaining_days
+        remaining_value, remaining_days, _td = (
+            instance_sudo._proration_credit(old_price) if current_plan
+            else (0.0, 0, 0))
 
         values = self._prepare_portal_layout_values()
         values.update({
