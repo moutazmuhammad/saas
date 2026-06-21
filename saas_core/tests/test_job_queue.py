@@ -167,3 +167,75 @@ class TestBackupViaQueue(TransactionCase):
         self.assertEqual(job.channel, 'backup')
         self.assertEqual(job.lock_key, 'instance:%s' % self.instance.id)
         self.assertEqual(job.state, 'pending')
+
+
+@tagged('post_install', '-at_install')
+class TestDbOpViaQueue(TransactionCase):
+    """ARCH-004 Phase 2: DB operations run through the queue; the job heartbeat
+    also keeps the db.operation's heartbeat fresh."""
+
+    def setUp(self):
+        super().setUp()
+        self.Job = self.env['saas.job']
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1) or \
+            self.env['saas.product'].sudo().create(
+                {'name': 'DQ Hosting', 'is_hosting': True, 'is_published': True})
+        plan = self.env['saas.plan'].sudo().create({
+            'name': 'DQ Plan', 'is_custom': True, 'workers': 1, 'storage_limit': 5,
+            'cpu_limit': 1.0, 'ram_limit': '1g', 'price': 20.0, 'yearly_price': 192.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])]})
+        domain = self.env['saas.based.domain'].sudo().search([], limit=1) or \
+            self.env['saas.based.domain'].sudo().create({'name': 'dq.example.com'})
+        partner = self.env['res.partner'].sudo().create({'name': 'DQ Cust'})
+        self.instance = self.env['saas.instance'].sudo().create({
+            'subdomain': 'dqinst', 'domain_id': domain.id, 'partner_id': partner.id,
+            'saas_product_id': product.id, 'plan_id': plan.id,
+            'billing_period': 'monthly', 'environment': 'production',
+            'region_id': False, 'state': 'running', 'is_hosting': True})
+        wp = patch.object(type(self.Job), '_spawn_worker', lambda self: None)
+        wp.start()
+        self.addCleanup(wp.stop)
+
+    def test_drop_async_enqueues_dbop_job(self):
+        # We're testing the enqueue, not the (SSH/readiness) op guard.
+        with patch.object(type(self.instance), '_ensure_hosting_for_db_ops',
+                          lambda self: None):
+            op = self.instance.hosting_db_drop_async('mydb')
+        self.assertEqual(op.state, 'running')
+        job = self.Job.sudo().search([
+            ('model', '=', 'saas.instance.db.operation'),
+            ('res_id', '=', op.id)], limit=1)
+        self.assertTrue(job, "db drop must enqueue a durable job")
+        self.assertEqual(job.method, '_run_drop')
+        self.assertEqual(job.channel, 'dbop')
+        self.assertEqual(job.lock_key, 'instance:%s' % self.instance.id)
+        self.assertFalse(job.idempotent)
+
+    def test_heartbeat_tick_keeps_dbop_fresh(self):
+        op = self.env['saas.instance.db.operation'].sudo().create({
+            'instance_id': self.instance.id, 'db_name': 'd', 'operation': 'drop'})
+        op.last_heartbeat = fields.Datetime.now() - timedelta(minutes=10)
+        job = self.Job._enqueue(op, '_run_drop', channel='dbop', run_now=False)
+        job.state = 'running'
+        self.assertTrue(self.Job._heartbeat_tick(job.id))
+        self.assertTrue(job.last_heartbeat)
+        self.assertGreater(op.last_heartbeat,
+                           fields.Datetime.now() - timedelta(minutes=1),
+                           "the db.operation heartbeat must be refreshed too")
+
+    def test_heartbeat_tick_target_without_field_is_safe(self):
+        backup = self.env['saas.instance.backup'].sudo().create({
+            'instance_id': self.instance.id, 'name': 'b', 'state': 'running'})
+        job = self.Job._enqueue(backup, '_run_portal_backup', run_now=False)
+        job.state = 'running'
+        self.assertTrue(self.Job._heartbeat_tick(job.id))  # must not raise
+        self.assertTrue(job.last_heartbeat)
+
+    def test_heartbeat_tick_stops_when_not_running(self):
+        op = self.env['saas.instance.db.operation'].sudo().create({
+            'instance_id': self.instance.id, 'db_name': 'd2', 'operation': 'drop'})
+        job = self.Job._enqueue(op, '_run_drop', run_now=False)  # state pending
+        self.assertFalse(self.Job._heartbeat_tick(job.id),
+                         "a non-running job stops the beater")

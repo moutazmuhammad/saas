@@ -31,6 +31,8 @@ class SaasJob(models.Model):
     _RUN_BATCH = 50
     # A running job whose heartbeat is older than this is presumed dead.
     _HEARTBEAT_STALE_MIN = 15
+    # How often the in-flight worker stamps the heartbeat (job + target).
+    _HEARTBEAT_TICK_SEC = 30
     # Retry back-off: BASE * 2**(attempts-1) minutes, capped, + jitter.
     _BACKOFF_BASE_MIN = 1
     _BACKOFF_CAP_MIN = 60
@@ -198,6 +200,14 @@ class SaasJob(models.Model):
         if self.res_id and (record is None or not record.exists()):
             self._finish_failed("Target %s,%s no longer exists." % (self.model, self.res_id))
             return
+        # Heartbeat the job (and any heartbeat-bearing target, e.g. a
+        # db.operation) while the work runs, so neither reaper fails a live
+        # long-running job.
+        stop = threading.Event()
+        beater = threading.Thread(
+            target=self._heartbeat_loop, args=(self.id, self.env.cr.dbname, stop),
+            name='saas_job_hb_%s' % self.id, daemon=True)
+        beater.start()
         try:
             args = json.loads(self.args_json or '[]')
             result = getattr(record, self.method)(*args)
@@ -215,6 +225,44 @@ class SaasJob(models.Model):
             self.env.cr.rollback()
             _logger.exception("saas.job %s (%s.%s) failed", self.id, self.model, self.method)
             self._reschedule_or_fail(str(e))
+        finally:
+            stop.set()
+            beater.join(timeout=5)
+
+    def _heartbeat_loop(self, job_id, dbname, stop):
+        """Stamp the job's heartbeat (and a heartbeat-bearing target's) every
+        ``_HEARTBEAT_TICK_SEC`` until the work ends. Own cursor per tick."""
+        import odoo
+        from odoo import api as odoo_api, SUPERUSER_ID
+        while not stop.wait(self._HEARTBEAT_TICK_SEC):
+            try:
+                reg = odoo.modules.registry.Registry(dbname)
+                with reg.cursor() as cr:
+                    env = odoo_api.Environment(cr, SUPERUSER_ID, {})
+                    if not env['saas.job']._heartbeat_tick(job_id):
+                        break
+                    cr.commit()
+            except Exception:
+                _logger.debug("saas.job %s heartbeat tick failed", job_id, exc_info=True)
+
+    @api.model
+    def _heartbeat_tick(self, job_id):
+        """Stamp ``last_heartbeat`` on the job and, if the target record carries
+        a ``last_heartbeat`` Datetime, on it too. Returns False once the job is
+        no longer running (signals the beater to stop)."""
+        job = self.browse(job_id)
+        if not job.exists() or job.state != 'running':
+            return False
+        now = fields.Datetime.now()
+        job.last_heartbeat = now
+        target_model = self.env[job.model] if job.model else None
+        if (job.res_id and target_model is not None
+                and 'last_heartbeat' in target_model._fields
+                and target_model._fields['last_heartbeat'].type == 'datetime'):
+            rec = target_model.browse(job.res_id)
+            if rec.exists():
+                rec.last_heartbeat = now
+        return True
 
     def _backoff_run_after(self):
         mins = min(self._BACKOFF_BASE_MIN * (2 ** max(0, self.attempts - 1)),

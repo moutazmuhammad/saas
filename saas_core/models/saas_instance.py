@@ -11192,11 +11192,9 @@ class SaasInstance(models.Model):
             'operation': 'upgrade',
             'module_name': module_norm,
         })
-        run_in_background(
-            op, '_run_upgrade',
-            thread_name='saas_db_upgrade_%s_%s' % (full_name, module_norm),
-            heartbeat_field='last_heartbeat',
-        )
+        self.env['saas.job']._enqueue(
+            op, '_run_upgrade', channel='dbop',
+            lock_key='instance:%s' % self.id, idempotent=False, max_attempts=1)
         return op
 
     def _parse_upgrade_modules(self, modules):
@@ -11355,11 +11353,9 @@ class SaasInstance(models.Model):
             'operation': 'upgrade',
             'module_name': ' '.join(mod_list),
         })
-        run_in_background(
-            op, '_run_upgrade_live',
-            thread_name='saas_db_upgmod_%s' % full_name,
-            heartbeat_field='last_heartbeat',
-        )
+        self.env['saas.job']._enqueue(
+            op, '_run_upgrade_live', channel='dbop',
+            lock_key='instance:%s' % self.id, idempotent=False, max_attempts=1)
         return op
 
     def hosting_db_restore_prepare_upload(self, name):
@@ -11456,12 +11452,9 @@ class SaasInstance(models.Model):
             'db_name': backup.db_name,
             'operation': 'restore',
         })
-        run_in_background(
-            op, '_run_restore',
-            method_args=(backup.id,),
-            thread_name='saas_db_restore_%s' % backup.db_name,
-            heartbeat_field='last_heartbeat',
-        )
+        self.env['saas.job']._enqueue(
+            op, '_run_restore', args=(backup.id,), channel='dbop',
+            lock_key='instance:%s' % self.id, idempotent=False, max_attempts=1)
         return op
 
     def hosting_db_reset_admin_password(self, name, new_password,
@@ -12092,6 +12085,11 @@ class SaasInstance(models.Model):
             'db_name': full_name,
             'operation': 'create',
         })
+        # NOT routed through saas.job (ARCH-004): create carries the new DB's
+        # login/password as args, and the queue PERSISTS args to the job row —
+        # which would store those secrets in the DB (SEC-002). run_in_background
+        # passes them in memory only. Create is non-idempotent (no auto-retry),
+        # so it gains nothing from the durable queue anyway.
         run_in_background(
             op, '_run_create',
             method_args=(
@@ -12127,11 +12125,9 @@ class SaasInstance(models.Model):
             'source_db': source_full,
             'operation': 'duplicate',
         })
-        run_in_background(
-            op, '_run_duplicate',
-            thread_name='saas_db_dup_%s' % new_full,
-            heartbeat_field='last_heartbeat',
-        )
+        self.env['saas.job']._enqueue(
+            op, '_run_duplicate', channel='dbop',
+            lock_key='instance:%s' % self.id, idempotent=False, max_attempts=1)
         return op
 
     def hosting_db_drop_async(self, name):
@@ -12157,11 +12153,9 @@ class SaasInstance(models.Model):
             'db_name': full_name,
             'operation': 'drop',
         })
-        run_in_background(
-            op, '_run_drop',
-            thread_name='saas_db_drop_%s' % full_name,
-            heartbeat_field='last_heartbeat',
-        )
+        self.env['saas.job']._enqueue(
+            op, '_run_drop', channel='dbop',
+            lock_key='instance:%s' % self.id, idempotent=False, max_attempts=1)
         return op
 
     def _DEPRECATED_hosting_db_duplicate_dockerexec(self, source, new_name):
