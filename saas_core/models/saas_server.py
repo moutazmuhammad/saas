@@ -628,7 +628,8 @@ class SaasServer(models.Model):
         # `private_key_file` / `expected_host_key_fingerprint`. The
         # cleartext key never leaves this module.
         keypair = self.sudo().ssh_key_pair_id
-        if not keypair or not keypair.private_key_file:
+        key_b64 = keypair._private_key_b64() if keypair else False
+        if not keypair or not key_b64:
             raise ValidationError(
                 _("SSH key pair with a private key file is required on server '%s'.")
                 % self.name
@@ -638,7 +639,7 @@ class SaasServer(models.Model):
             host=ssh_ip,
             port=self.ssh_port or 22,
             user=self.ssh_user or 'root',
-            private_key_b64=keypair.private_key_file,
+            private_key_b64=key_b64,
             key_type=keypair.type or 'rsa',
             expected_host_key=self.sudo().expected_host_key_fingerprint or None,
         )
@@ -680,7 +681,7 @@ class SaasServer(models.Model):
         """Open a web-based SSH terminal to this server."""
         self.ensure_one()
         self._get_ssh_ip()
-        if not self.ssh_key_pair_id or not self.ssh_key_pair_id.private_key_file:
+        if not self.ssh_key_pair_id or not self.ssh_key_pair_id._private_key_b64():
             raise ValidationError(
                 _("SSH key pair with a private key file is required on server '%s'.")
                 % self.name

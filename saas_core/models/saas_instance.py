@@ -3588,7 +3588,7 @@ class SaasInstance(models.Model):
         if not self.docker_server_id:
             raise ValidationError(_("No Docker server configured."))
         server = self.docker_server_id
-        if not server.ssh_key_pair_id or not server.ssh_key_pair_id.private_key_file:
+        if not server.ssh_key_pair_id or not server.ssh_key_pair_id._private_key_b64():
             raise ValidationError(
                 _("SSH key pair with private key is required on server '%s'.")
                 % server.name
@@ -3840,7 +3840,7 @@ class SaasInstance(models.Model):
         if not self.odoo_version_id or not self.odoo_version_id.docker_image_tag:
             errors.append(_("Docker image tag is not set on the selected Odoo version."))
         server = self.docker_server_id
-        if server and (not server.ssh_key_pair_id or not server.ssh_key_pair_id.private_key_file):
+        if server and (not server.ssh_key_pair_id or not server.ssh_key_pair_id._private_key_b64()):
             errors.append(_("Docker server SSH key pair with private key is required."))
         if server:
             if server.ssh_connect_using == 'private_ip' and not server.private_ip_v4:
@@ -3848,7 +3848,7 @@ class SaasInstance(models.Model):
             elif server.ssh_connect_using == 'public_ip' and not server.ip_v4:
                 errors.append(_("Docker server Public IP address is required."))
         psql = self.db_server_id
-        if psql and (not psql.ssh_key_pair_id or not psql.ssh_key_pair_id.private_key_file):
+        if psql and (not psql.ssh_key_pair_id or not psql.ssh_key_pair_id._private_key_b64()):
             errors.append(_("Database server SSH key pair with private key is required."))
         if psql:
             if psql.ssh_connect_using == 'private_ip' and not psql.private_ip_v4:
