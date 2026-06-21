@@ -39,7 +39,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 - [ ] 🟠 **SEC-009** Stand up error monitoring (Sentry) + alerting on auth failures, cron failures, server-health.
 
 ### Build / process
-- [ ] 🟠 **ARCH-007** Add CI gate: run Odoo test suite + `tsc`/lint on every PR; block merge on failure.
+- [~] 🟠 **ARCH-007** Add CI gate: run Odoo test suite + `tsc`/lint on every PR; block merge on failure. — **workflow added** (`.github/workflows/ci.yml`): job `spa` (`npm ci` + `npm run build` = tsc --noEmit + vite) and job `odoo-tests` (postgres service → clone Odoo 18 → install `saas_core,saas_website` → full `--test-enable` suite → assert "0 failed, 0 error"). Validated locally: full suite 0/155, `npm ci` exit 0, YAML parses, assertion logic correct on green+red logs. **Branch-protection "required check" must still be enabled in repo settings** (admin) to actually block merges.
 
 ### Destructive-flow safety (V1 + V2 overlap)
 - [x] 🟡 **UX-012** Typed confirmation on DB-drop — **verified already implemented** (`Databases.tsx DeleteDatabaseDialog`: `confirmText===dbName`, danger button disabled until exact match).
