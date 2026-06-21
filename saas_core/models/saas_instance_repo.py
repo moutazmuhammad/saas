@@ -1294,6 +1294,26 @@ class SaasInstanceRepo(models.Model):
     # Lock to prevent concurrent deploys on the same instance
     _deploy_locks = {}
 
+    def _run_webhook_deploy(self, build_id):
+        """Queue job (ARCH-004 Phase 4): pull + restart for a webhook push and
+        mark the build success. Raises on failure → the job's on_error
+        (_on_webhook_deploy_error) marks the build failed + handles the repo."""
+        self.ensure_one()
+        self._do_webhook_pull_and_restart()
+        build = self.env['saas.build'].browse(build_id)
+        if build.exists():
+            log_tail = (self.instance_id.provisioning_log or '')[-8000:]
+            build._mark('success', log_tail)
+
+    def _on_webhook_deploy_error(self, exception, build_id):
+        """on_error handler for the webhook-deploy job: fail the build, then run
+        the standard repo background-error handling."""
+        self.ensure_one()
+        build = self.env['saas.build'].browse(build_id)
+        if build.exists():
+            build._mark('failed', str(exception))
+        self._on_repo_background_error(exception)
+
     def _do_webhook_pull_and_restart(self):
         """Pull repo and restart instance (runs in background thread).
 

@@ -1,6 +1,5 @@
 import json
 import logging
-import threading
 
 from odoo import http, SUPERUSER_ID, api, fields
 from odoo.http import request
@@ -166,77 +165,32 @@ class SaasWebhookController(http.Controller):
                 {'status': 'ignored', 'reason': 'branch mismatch'},
             )
 
-        # 8. Trigger async pull + restart in a separate thread with its own
-        #    cursor. The per-repo lock inside _do_webhook_pull_and_restart
-        #    serialises concurrent pushes to the same repo on this worker.
-        dbname = request.cr.dbname
-        repo_id = repo.id
-        instance_id = instance.id
-        # Commit metadata for the build/History timeline (computed here while
-        # we still have the parsed payload).
+        # 8. Open the build record (visible as "Building…") and enqueue the
+        #    pull+restart on the durable queue (ARCH-004 Phase 4) — survives a
+        #    worker crash (reaper) and records failures (alert/audit), replacing
+        #    the old fire-and-forget daemon thread. The per-instance lock_key
+        #    serialises concurrent pushes to the same instance.
         commit = self._extract_commit(payload)
         build_branch = ref.rsplit('/', 1)[-1] if ref else (repo.branch or '')
         _logger.info(
             "Webhook: triggering auto-deploy for %s on instance %s (ref=%s)",
             repo.name, instance.name, ref,
         )
-
-        def _do_deploy():
-            import odoo
-            db_registry = odoo.modules.registry.Registry(dbname)
-            build_id = None
-            with db_registry.cursor() as new_cr:
-                new_env = api.Environment(new_cr, SUPERUSER_ID, {})
-                rec = new_env['saas.instance.repo'].browse(repo_id)
-                # Open a build record (committed up-front so it's visible as
-                # "Building…" while the pull + restart runs).
-                try:
-                    build = new_env['saas.build'].create({
-                        'instance_id': instance_id,
-                        'repo_id': repo_id,
-                        'branch': build_branch,
-                        'commit_sha': commit['sha'],
-                        'commit_message': commit['message'],
-                        'author': commit['author'],
-                        'source': 'push',
-                        'state': 'running',
-                    })
-                    build_id = build.id
-                    new_cr.commit()
-                except Exception:
-                    _logger.exception("Webhook: couldn't open build record")
-                try:
-                    rec._do_webhook_pull_and_restart()
-                    if build_id:
-                        log_tail = (rec.instance_id.provisioning_log or '')[-8000:]
-                        new_env['saas.build'].browse(build_id)._mark('success', log_tail)
-                    new_cr.commit()
-                except Exception as e:
-                    new_cr.rollback()
-                    _logger.exception(
-                        "Webhook auto-deploy failed for repo #%s: %s",
-                        repo_id, e,
-                    )
-                    try:
-                        with db_registry.cursor() as err_cr:
-                            err_env = api.Environment(err_cr, SUPERUSER_ID, {})
-                            if build_id:
-                                err_env['saas.build'].browse(build_id)._mark(
-                                    'failed', str(e))
-                            err_rec = err_env['saas.instance.repo'].browse(repo_id)
-                            err_rec._on_repo_background_error(e)
-                            err_cr.commit()
-                    except Exception:
-                        _logger.exception(
-                            "Error handler also failed for repo #%s", repo_id,
-                        )
-
-        t = threading.Thread(
-            target=_do_deploy,
-            name='saas_webhook_%s' % repo_id,
-            daemon=True,
-        )
-        t.start()
+        build = env['saas.build'].create({
+            'instance_id': instance.id,
+            'repo_id': repo.id,
+            'branch': build_branch,
+            'commit_sha': commit['sha'],
+            'commit_message': commit['message'],
+            'author': commit['author'],
+            'source': 'push',
+            'state': 'running',
+        })
+        env['saas.job']._enqueue(
+            repo, '_run_webhook_deploy', args=(build.id,),
+            channel='deploy', lock_key='instance:%s' % instance.id,
+            idempotent=True,
+            on_error='_on_webhook_deploy_error', on_error_args=(build.id,))
 
         return request.make_json_response({
             'status': 'ok',

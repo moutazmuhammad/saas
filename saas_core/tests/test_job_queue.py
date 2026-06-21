@@ -320,3 +320,54 @@ class TestDeployViaQueue(TransactionCase):
         self.assertEqual(job.channel, 'deploy')
         self.assertEqual(job.on_error, '_on_background_error')
         self.assertEqual(json.loads(job.on_error_args_json), ['running'])
+
+
+@tagged('post_install', '-at_install')
+class TestWebhookDeployViaQueue(TransactionCase):
+    """ARCH-004 Phase 4: webhook auto-deploy runs through the queue; its
+    success/error wrappers drive the build record + repo error handling."""
+
+    def setUp(self):
+        super().setUp()
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1) or \
+            self.env['saas.product'].sudo().create(
+                {'name': 'WD Hosting', 'is_hosting': True, 'is_published': True})
+        plan = self.env['saas.plan'].sudo().create({
+            'name': 'WD Plan', 'is_custom': True, 'workers': 1, 'storage_limit': 5,
+            'cpu_limit': 1.0, 'ram_limit': '1g', 'price': 20.0, 'yearly_price': 192.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])]})
+        domain = self.env['saas.based.domain'].sudo().search([], limit=1) or \
+            self.env['saas.based.domain'].sudo().create({'name': 'wd.example.com'})
+        partner = self.env['res.partner'].sudo().create({'name': 'WD Cust'})
+        self.instance = self.env['saas.instance'].sudo().create({
+            'subdomain': 'wdinst', 'domain_id': domain.id, 'partner_id': partner.id,
+            'saas_product_id': product.id, 'plan_id': plan.id,
+            'billing_period': 'monthly', 'environment': 'production',
+            'region_id': False, 'state': 'running', 'is_hosting': True})
+        self.repo = self.env['saas.instance.repo'].sudo().create({
+            'instance_id': self.instance.id,
+            'repo_url': 'https://github.com/acme/app.git', 'branch': 'main'})
+
+    def _build(self):
+        return self.env['saas.build'].sudo().create({
+            'instance_id': self.instance.id, 'repo_id': self.repo.id,
+            'branch': 'main', 'source': 'push', 'state': 'running'})
+
+    def test_run_webhook_deploy_marks_build_success(self):
+        build = self._build()
+        with patch.object(type(self.repo), '_do_webhook_pull_and_restart',
+                          lambda self: None):
+            self.repo._run_webhook_deploy(build.id)
+        self.assertEqual(build.state, 'success')
+
+    def test_on_webhook_deploy_error_fails_build_and_handles_repo(self):
+        build = self._build()
+        calls = []
+        with patch.object(type(self.repo), '_on_repo_background_error',
+                          lambda self, e: calls.append(str(e))):
+            self.repo._on_webhook_deploy_error(ValueError('boom'), build.id)
+        self.assertEqual(build.state, 'failed')
+        self.assertEqual(len(calls), 1, "repo background-error handler must run")
+        self.assertIn('boom', calls[0])
