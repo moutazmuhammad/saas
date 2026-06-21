@@ -82,8 +82,8 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 - [ ] 🟡 **PERF-008 / UX-006** SPA polling: exponential backoff + jitter; pause on hidden tab; stop on auth_required.
 
 ### Provisioning lifecycle (V2)
-- [ ] 🟡 **PROV-003** Overcommit requires `health_state == 'ok'`; on probe failure → `pending_provision`, not hard fail.
-- [ ] 🟡 **PROV-004** Capacity-aware retry sweep on capacity/health change; shorten hard-fail; email "queued for capacity".
+- [x] 🟡 **PROV-003** Overcommit requires healthy host; pending fallback — **verified already-handled** (code evolved past the audit): both `_allocate_docker_server` and `_allocate_overcommit_server` exclude `unreachable` AND **live-probe every candidate**, returning only a healthy one; flexible mode's level-3 falls back to `_mark_as_pending()` (not a hard fail). No change needed.
+- [x] 🟡 **PROV-004** Capacity-aware retry sweep on capacity/health change — **done + tested**: new `pending_retry_now` flag bypasses the retry-cron back-off; `_saas_flag_pending_for_retry()` sets it, hooked into `saas.server` create (new docker host), `write` (docker-host/overcommit enabled), and `_update_health` recovery → queued deploys retry on the next tick instead of waiting hours. `TestPendingRetry` (flag targets only pending; new host + health-recovery flag; cron bypasses back-off when flagged, skips otherwise) — full suite 0/194.
 
 ### Billing correctness (V1 + V2)
 - [ ] 🟠 **BIZ-004** Explicit dunning state machine (retry→grace→suspend→delete) with customer-visible status; handle invalid token.

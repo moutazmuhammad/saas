@@ -271,6 +271,26 @@ class SaasServer(models.Model):
         except OSError as e:
             return False, '%s:%s — %s' % (ip, port, e)
 
+    @api.model_create_multi
+    def create(self, vals_list):
+        servers = super().create(vals_list)
+        # New compute capacity -> let queued deploys retry immediately (PROV-004).
+        if any(s.is_docker_host for s in servers):
+            self.env['saas.instance']._saas_flag_pending_for_retry()
+        return servers
+
+    def write(self, vals):
+        # Detect newly-enabled capacity (docker host / overcommit) to retry
+        # queued deploys without waiting out their back-off (PROV-004).
+        adds_capacity = (
+            (vals.get('is_docker_host') and not all(self.mapped('is_docker_host')))
+            or (vals.get('allow_overcommit') and not all(self.mapped('allow_overcommit')))
+        )
+        res = super().write(vals)
+        if adds_capacity:
+            self.env['saas.instance']._saas_flag_pending_for_retry()
+        return res
+
     def _update_health(self, ok, error=''):
         """Persist a probe result, logging on any state transition."""
         self.ensure_one()
@@ -289,6 +309,10 @@ class SaasServer(models.Model):
                 level='error' if not ok else 'warning',
                 detail=error or None,
             )
+            # A host coming back healthy is new capacity — retry queued
+            # deploys immediately instead of waiting out their back-off (PROV-004).
+            if ok and self.is_docker_host:
+                self.env['saas.instance']._saas_flag_pending_for_retry()
         self.write({
             'health_state': new_state,
             'last_health_check': fields.Datetime.now(),

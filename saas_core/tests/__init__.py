@@ -27,3 +27,4 @@ from . import test_audit_log
 from . import test_alerting
 from . import test_repo_clone_tls
 from . import test_invoice_idempotency
+from . import test_pending_retry

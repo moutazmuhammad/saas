@@ -286,6 +286,14 @@ class SaasInstance(models.Model):
         help='Number of times the retry cron has attempted to deploy '
              'this pending instance. Drives exponential back-off.',
     )
+    pending_retry_now = fields.Boolean(
+        string='Retry Now',
+        default=False,
+        copy=False,
+        help='Set when server capacity/health changes so the retry cron skips '
+             'the exponential back-off and re-attempts this pending instance '
+             'on its next tick (PROV-004), instead of waiting hours.',
+    )
     pre_provisioning_state = fields.Char(
         string='Pre-Provisioning State',
         readonly=True,
@@ -4032,6 +4040,10 @@ class SaasInstance(models.Model):
         for instance in pending:
             since = instance.pending_provision_since
             attempts = instance.pending_provision_attempts or 0
+            # Capacity/health just changed -> retry immediately, skipping the
+            # back-off window (PROV-004). The flag is consumed in the retry
+            # write below (so a rollback re-arms it for the next tick).
+            force = instance.pending_retry_now
             # Hard cap: give up + flag for operator attention.
             if since and now - since > max_wait:
                 instance.write({
@@ -4061,13 +4073,14 @@ class SaasInstance(models.Model):
                 120,
             )
             last_attempt = instance.write_date or since
-            if last_attempt and (
+            if not force and last_attempt and (
                 now - last_attempt < datetime.timedelta(minutes=backoff_min)
             ):
                 continue
             try:
                 instance.write({
                     'pending_provision_attempts': attempts + 1,
+                    'pending_retry_now': False,
                 })
                 instance.action_deploy()
                 self.env.cr.commit()
@@ -4084,6 +4097,23 @@ class SaasInstance(models.Model):
                 "failed (of %d pending).",
                 retried, escalated, len(pending),
             )
+
+    @api.model
+    def _saas_flag_pending_for_retry(self):
+        """Mark every pending-provision instance for an immediate retry on the
+        next cron tick, bypassing the back-off (PROV-004). Called when server
+        capacity/health changes so a queued deploy doesn't wait hours for its
+        next back-off slot once capacity exists. Returns the count flagged."""
+        pending = self.sudo().search([
+            ('state', '=', 'pending_provision'),
+            ('pending_retry_now', '=', False),
+        ])
+        if pending:
+            pending.write({'pending_retry_now': True})
+            _logger.info(
+                "Flagged %d pending-provision instance(s) for immediate retry "
+                "after a capacity/health change.", len(pending))
+        return len(pending)
 
     # Operations that can be safely re-run if interrupted. Anything else
     # (delete, cancel, suspend) must go to a manual-review state because
