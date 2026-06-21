@@ -3,11 +3,54 @@ import hashlib
 import io
 import logging
 import os
+import random
+import socket
 import threading
+import time
 
 import paramiko
 
 _logger = logging.getLogger(__name__)
+
+# ---- SSH connect resilience (ARCH-010) ----
+# Transient network blips shouldn't fail a whole provisioning op, and a dead
+# host shouldn't tie up workers retry-after-retry. We retry only the CONNECT
+# (idempotent) with bounded backoff+jitter, and quarantine a host with a
+# simple per-process circuit breaker after repeated connect failures.
+_SSH_CONNECT_ATTEMPTS = 3
+_SSH_CONNECT_BACKOFF = 1.0          # base seconds: 1s, 2s (+jitter)
+_SSH_CB_THRESHOLD = 3               # consecutive connect failures to open
+_SSH_CB_COOLDOWN = 60               # seconds a host stays quarantined
+_ssh_circuit = {}                   # host -> {'fails': int, 'open_until': monotonic}
+_ssh_circuit_lock = threading.Lock()
+
+
+def _ssh_circuit_check(host):
+    """Raise fast if *host* is currently quarantined (open circuit)."""
+    with _ssh_circuit_lock:
+        st = _ssh_circuit.get(host)
+        if st and st['open_until'] > time.monotonic():
+            raise paramiko.SSHException(
+                "SSH circuit open for %s: host quarantined after repeated "
+                "connect failures; will retry after cooldown." % host
+            )
+
+
+def _ssh_circuit_record(host, ok):
+    """Record a connect outcome; open the circuit after enough failures."""
+    with _ssh_circuit_lock:
+        if ok:
+            _ssh_circuit.pop(host, None)
+            return
+        st = _ssh_circuit.setdefault(host, {'fails': 0, 'open_until': 0.0})
+        st['fails'] += 1
+        if st['fails'] >= _SSH_CB_THRESHOLD:
+            st['open_until'] = time.monotonic() + _SSH_CB_COOLDOWN
+            _logger.warning(
+                "SSH circuit OPENED for %s after %d consecutive connect "
+                "failures; quarantined for %ds.",
+                host, st['fails'], _SSH_CB_COOLDOWN,
+            )
 
 
 def _host_key_sha256(key):
@@ -205,15 +248,48 @@ class SSHConnection:
                 self.host,
             )
             self._client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        self._client.connect(
-            hostname=self.host,
-            port=self.port,
-            username=self.user,
-            pkey=pkey,
-            timeout=SSH_CONNECT_TIMEOUT,
-            look_for_keys=False,
-            allow_agent=False,
-        )
+        self._connect_with_retry(pkey)
+
+    def _connect_with_retry(self, pkey):
+        """Open the TCP/SSH connection, retrying transient failures with
+        bounded backoff and honouring the per-host circuit breaker.
+
+        Only the connect is retried — it is idempotent. Auth and host-key
+        failures are permanent and raise immediately without tripping the
+        breaker (the host is up; the credentials/pin are wrong).
+        """
+        _ssh_circuit_check(self.host)
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                self._client.connect(
+                    hostname=self.host,
+                    port=self.port,
+                    username=self.user,
+                    pkey=pkey,
+                    timeout=SSH_CONNECT_TIMEOUT,
+                    look_for_keys=False,
+                    allow_agent=False,
+                )
+                _ssh_circuit_record(self.host, ok=True)
+                return
+            except paramiko.AuthenticationException:
+                # Permanent: bad credentials, not a flaky host.
+                raise
+            except (socket.timeout, OSError,
+                    paramiko.ssh_exception.NoValidConnectionsError) as exc:
+                if attempt >= _SSH_CONNECT_ATTEMPTS:
+                    _ssh_circuit_record(self.host, ok=False)
+                    raise
+                delay = (_SSH_CONNECT_BACKOFF * (2 ** (attempt - 1))
+                         + random.uniform(0, _SSH_CONNECT_BACKOFF))
+                _logger.warning(
+                    "SSH connect to %s failed (attempt %d/%d): %s — retrying "
+                    "in %.1fs.", self.host, attempt, _SSH_CONNECT_ATTEMPTS,
+                    exc, delay,
+                )
+                time.sleep(delay)
 
     def _load_private_key_bytes(self, key_bytes):
         """Parse a private key from raw bytes (never touches the filesystem)."""

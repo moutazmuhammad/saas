@@ -68,14 +68,14 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 - [ ] 🟠 **ARCH-004 / PERF-002** Introduce durable job queue (OCA `queue_job`/Celery/DB-table) with retries, idempotency, client-pollable operation status.
 - [ ] 🟠 **ARCH-008** Idempotent partial-failure teardown on every deploy failure branch.
 - [ ] 🟠 **ARCH-009 / PERF-011 / SCALE-002** Shorten advisory-lock critical section; release port lock before nginx/certbot; rely on unique index.
-- [ ] 🟠 **ARCH-010** SSH retries w/ backoff + soft/hard per-command timeouts + host circuit breaker.
+- [x] 🟠 **ARCH-010** SSH retries w/ backoff + host circuit breaker — **done + tested**: `utils.SSHConnection._connect_with_retry` retries only the (idempotent) connect with exp backoff+jitter (3 attempts), a per-host circuit breaker quarantines a host after repeated connect failures (fast-fail for a cooldown), and auth/host-key errors are never retried / never trip the breaker. Command execution is **not** retried (commands may be non-idempotent). `TestSshResilience` (3 tests) passes. *(per-command soft/hard timeout split left as a follow-up; connect timeout already enforced.)*
 
 ### Scale / perf
 - [ ] 🟠 **PERF-001** Parallelize backups (bounded pool) with per-job timeout + lag metric.
 - [ ] 🟠 **PERF-003** Batch/paginate unbounded crons (retry-pending, recover-stuck, storage-limits).
 - [ ] 🟠 **PERF-004** Parallelize per-host metrics sampling with a hard per-run deadline.
 - [ ] 🟠 **PERF-005** Stream `pg_dump` directly to object storage (no `/tmp` staging).
-- [ ] 🟡 **PERF-007** Add indexes: `(state)`, `(docker_server_id,state)`, `(partner_id)`, `(plan_id,state)`.
+- [x] 🟡 **PERF-007** Add indexes: `(state)`, `(docker_server_id,state)`, `(partner_id)`, `(plan_id,state)` — **done + tested**: created idempotently in `saas.instance.init()`; `TestInstanceIndexes` asserts all four exist after install.
 - [ ] 🟡 **PERF-006** Single grouped query for dashboard invoices (kill N+1).
 - [ ] 🟡 **PERF-008 / UX-006** SPA polling: exponential backoff + jitter; pause on hidden tab; stop on auth_required.
 

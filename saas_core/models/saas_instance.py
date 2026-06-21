@@ -1190,6 +1190,21 @@ class SaasInstance(models.Model):
                       AND %s IS NOT NULL AND %s > 0;
             """ % (idx, idx, idx, col, col, col))
 
+        # ---------- Secondary indexes for hot filter columns (PERF-007) ----
+        # The cron sweeps and portal listings filter heavily on these; without
+        # indexes Postgres seq-scans, and latency grows with the table. Plain
+        # btree, created idempotently so re-running init() is a no-op.
+        for name, cols in (
+            ('saas_instance_state_idx', 'state'),
+            ('saas_instance_docker_state_idx', 'docker_server_id, state'),
+            ('saas_instance_partner_idx', 'partner_id'),
+            ('saas_instance_plan_state_idx', 'plan_id, state'),
+        ):
+            cr.execute(
+                "CREATE INDEX IF NOT EXISTS %s ON saas_instance (%s)"
+                % (name, cols)
+            )
+
     _sql_constraints = []
 
     @api.constrains('is_trial', 'partner_id')
