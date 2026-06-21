@@ -11,6 +11,15 @@ services:
     container_name: odoo_{{ subdomain }}
     restart: unless-stopped
     stop_grace_period: 30s
+    # Tenant-isolation hardening (SEC-003): the workload already runs as the
+    # non-root `odoo` user (UID 100), so it needs no Linux capabilities; drop
+    # them all and forbid privilege escalation (setuid) to shrink the
+    # container-breakout surface on shared hosts. Docker's default seccomp
+    # profile stays in effect.
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
     ports:
       - "{{ host_ip | default('127.0.0.1') }}:{{ xmlrpc_port }}:8069"
       - "{{ host_ip | default('127.0.0.1') }}:{{ longpolling_port }}:8072"

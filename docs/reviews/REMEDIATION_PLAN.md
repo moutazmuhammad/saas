@@ -60,7 +60,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 ## 2. Short Term (1 month)
 
 ### Tenant runtime hardening
-- [ ] 🔴 **SEC-003** Non-root tenant containers; `cap_drop: [ALL]`, `no-new-privileges`, seccomp/AppArmor, read-only rootfs where possible.
+- [x] 🔴 **SEC-003** Non-root tenant containers + cap drop / no-new-privileges — **done + tested**. Non-root was already in place (tenant Dockerfile ends `USER odoo`; official image runs uid 100 — verified `docker exec odoo_rt2 id` = uid=100). Added `cap_drop: [ALL]` + `security_opt: ["no-new-privileges:true"]` to `docker-compose.yml.jinja` (Docker's default seccomp stays on). Validated on the real image (`docker run --cap-drop ALL --security-opt no-new-privileges … → uid=100`, runs fine). `TestContainerHardening` asserts the rendered compose. *(read-only rootfs left out — Odoo writes outside its volumes; higher risk, separate task.)*
 - [ ] 🟠 **SEC-004** Remove `CREATEDB` from tenant roles (provision DBs from control plane); add per-role connection/disk quotas.
 - [ ] 🟠 **SEC-005** Split host-shell from manager group into an audited, JIT-elevated, host-scoped role; stream commands to immutable log.
 

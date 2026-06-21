@@ -22,3 +22,4 @@ from . import test_otp_encryption
 from . import test_webhook_security
 from . import test_pg_teardown
 from . import test_ssh_key_encryption
+from . import test_container_hardening
