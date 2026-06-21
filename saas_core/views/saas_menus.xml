@@ -52,6 +52,11 @@
               parent="saas_master_menu_billing"
               action="saas_payment_attempt_action"
               sequence="30"/>
+    <menuitem id="saas_master_menu_margins"
+              name="Tenant Margins"
+              parent="saas_master_menu_billing"
+              action="action_saas_tenant_margins"
+              sequence="35"/>
 
     <!-- Configuration -->
     <menuitem id="saas_master_menu_configuration"

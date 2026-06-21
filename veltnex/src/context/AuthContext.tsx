@@ -20,11 +20,9 @@ interface AuthContextValue {
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   // phone-OTP registration (mirrors the Odoo saas.registration.otp flow).
-  // Both resolve with `{ otp_sent, debug_otp? }` — `debug_otp` is a
-  // TODO-remove testing aid the backend includes so the code can be
-  // shown on screen.
-  registerStart: (form: RegisterForm) => Promise<{ otp_sent: boolean; debug_otp?: string }>;
-  registerResend: (phone: string) => Promise<{ otp_sent: boolean; debug_otp?: string }>;
+  // The code is delivered out-of-band (SMS) and never returned to the client.
+  registerStart: (form: RegisterForm) => Promise<{ otp_sent: boolean }>;
+  registerResend: (phone: string) => Promise<{ otp_sent: boolean }>;
   registerVerify: (form: RegisterForm & { otp: string }) => Promise<ApiUser>;
 }
 

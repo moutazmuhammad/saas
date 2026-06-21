@@ -228,9 +228,9 @@ class SaasApi(http.Controller):
                 _("We couldn't send your verification code. Please try again."),
                 'otp_send_failed',
             )
-        # TODO: REMOVE before production — echo the code so the SPA can show
-        # it on screen while testing (no SMS gateway configured yet).
-        return ok({'otp_sent': True, 'debug_otp': otp.code})
+        # The verification code is delivered out-of-band (SMS / server log);
+        # it must never be returned to the client.
+        return ok({'otp_sent': True})
 
     @http.route('/saas/api/v1/auth/register/resend', type='json', auth='public')
     def register_resend(self, phone=None, **kw):
@@ -246,8 +246,7 @@ class SaasApi(http.Controller):
             )._generate_and_send_phone(phone)
         except Exception:
             return err(_("Couldn't resend the code. Please try again."), 'otp_send_failed')
-        # TODO: REMOVE before production — echo the code for on-screen testing.
-        return ok({'otp_sent': True, 'debug_otp': otp.code})
+        return ok({'otp_sent': True})
 
     @http.route('/saas/api/v1/auth/register/verify', type='json', auth='public')
     def register_verify(self, **p):

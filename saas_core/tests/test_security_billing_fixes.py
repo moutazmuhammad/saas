@@ -254,6 +254,26 @@ class TestApiSecurityHttp(HttpCase):
         # And the token must no longer be echoed back in the read payload.
         self.assertNotIn('access_token', read.get('data', {}))
 
+    def test_register_start_never_echoes_otp(self):
+        # SEC-001: the verification code is delivered out-of-band and must
+        # never appear in the register/start (or resend) JSON response.
+        country = self.env.ref('base.us', raise_if_not_found=False) \
+            or self.env['res.country'].sudo().search([], limit=1)
+        res = self._call('/saas/api/v1/auth/register/start', {
+            'name': 'OTP Probe', 'email': 'otpprobe@example.com',
+            'phone': '+12025550147', 'country_id': country.id,
+            'city': 'Springfield', 'password': 'sup3rsecret'})
+        self.assertTrue(res and res.get('ok'),
+                        "register/start should succeed: %s" % res)
+        self.assertTrue(res['data'].get('otp_sent'))
+        self.assertNotIn('debug_otp', res['data'],
+                         "OTP code must NOT be returned to the client")
+        resend = self._call('/saas/api/v1/auth/register/resend',
+                            {'phone': '+12025550147'})
+        self.assertTrue(resend and resend.get('ok'), resend)
+        self.assertNotIn('debug_otp', resend['data'],
+                         "OTP code must NOT be returned on resend")
+
     def test_environments_payload_exposes_scaling(self):
         # The workspace needs the Production server's resources + slot usage to
         # offer "Scale resources" and "add test environment" CTAs.

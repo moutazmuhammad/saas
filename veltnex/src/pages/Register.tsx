@@ -103,9 +103,6 @@ export default function Register() {
   const [countries, setCountries] = React.useState<{ id: number; name: string }[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
-  // TODO: REMOVE before production — the OTP the backend echoes back so
-  // we can show it on screen while testing (no SMS gateway needed).
-  const [debugOtp, setDebugOtp] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     api.meta().then((m) => setCountries(m.countries)).catch(() => {});
@@ -126,8 +123,7 @@ export default function Register() {
 
     setSubmitting(true);
     try {
-      const res = await registerStart(form);
-      setDebugOtp(res.debug_otp ?? null);  // TODO: REMOVE before production
+      await registerStart(form);
       toast.info("Verification sent", "We texted a 6-digit code to your phone.");
       setStep(2);
     } catch (err) {
@@ -212,7 +208,6 @@ export default function Register() {
           ) : (
             <OtpStep
               form={form}
-              debugOtp={debugOtp}
               onBack={() => setStep(1)}
               onVerify={async (otp) => {
                 const me = await registerVerify({ ...form, otp });
@@ -220,8 +215,7 @@ export default function Register() {
                 goAfterRegister();
               }}
               onResend={async () => {
-                const res = await registerResend(form.phone);
-                setDebugOtp(res.debug_otp ?? null);  // TODO: REMOVE before production
+                await registerResend(form.phone);
                 toast.info("Code resent", "A new code is on its way.");
               }}
             />
@@ -255,13 +249,11 @@ function Field({
 
 function OtpStep({
   form,
-  debugOtp,
   onBack,
   onVerify,
   onResend,
 }: {
   form: Form;
-  debugOtp?: string | null;
   onBack: () => void;
   onVerify: (otp: string) => Promise<void>;
   onResend: () => Promise<void>;
@@ -348,15 +340,6 @@ function OtpStep({
         Enter the 6-digit code we sent to{" "}
         <span className="font-medium text-foreground">{form.phone}</span>.
       </p>
-
-      {/* TODO: REMOVE before production — shows the OTP on screen for
-          testing so no SMS gateway is needed. */}
-      {debugOtp && (
-        <div className="mt-4 rounded-lg border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
-          <span className="font-medium text-warning">Debug — code:</span>{" "}
-          <span className="font-mono text-lg tracking-[0.3em] text-foreground">{debugOtp}</span>
-        </div>
-      )}
 
       {error && (
         <AlertBanner className="mt-4" variant="danger" title="Verification failed" description={error} />

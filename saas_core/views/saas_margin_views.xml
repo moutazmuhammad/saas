@@ -50,11 +50,7 @@
                (cost / CPU / RAM / storage) for the cost side to populate.</p>
         </field>
     </record>
-
-    <menuitem id="saas_master_menu_margins"
-        name="Tenant Margins"
-        parent="saas_master_menu_billing"
-        action="action_saas_tenant_margins"
-        sequence="35"/>
+    <!-- Menu lives in saas_menus.xml (loaded after this file) so its parent
+         saas_master_menu_billing exists when the menuitem is created. -->
 
 </odoo>
