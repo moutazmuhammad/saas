@@ -3950,6 +3950,11 @@ class SaasInstance(models.Model):
     _PENDING_MAX_WAIT_HOURS = 24
     _PENDING_BACKOFF_BASE_MIN = 5
 
+    # Max instances a single cron run will pull into memory / iterate (PERF-003).
+    # Bounds memory and runtime per run; the remainder is processed on the next
+    # run (searches are oldest-first so nothing starves).
+    _CRON_BATCH_SIZE = 500
+
     @api.model
     def _cron_retry_pending_provision(self):
         """Cron: attempt to deploy instances stuck in pending_provision.
@@ -3970,9 +3975,19 @@ class SaasInstance(models.Model):
         """
         now = fields.Datetime.now()
         max_wait = datetime.timedelta(hours=self._PENDING_MAX_WAIT_HOURS)
-        pending = self.search([('state', '=', 'pending_provision')])
+        # Oldest-pending first, bounded per run (PERF-003) so a backlog can't
+        # load the whole table into one cron run.
+        pending = self.search(
+            [('state', '=', 'pending_provision')],
+            order='pending_provision_since asc, id asc',
+            limit=self._CRON_BATCH_SIZE,
+        )
         if not pending:
             return
+        if len(pending) == self._CRON_BATCH_SIZE:
+            _logger.info(
+                "retry-pending cron hit the %d batch cap; remaining instances "
+                "are handled next run.", self._CRON_BATCH_SIZE)
         retried = 0
         escalated = 0
         for instance in pending:
@@ -4088,9 +4103,13 @@ class SaasInstance(models.Model):
                  ('write_date', '<', restore_health_cutoff),
             '&', ('pending_operation', '!=', 'restore'),
                  ('write_date', '<', normal_cutoff),
-        ])
+        ], order='write_date asc, id asc', limit=self._CRON_BATCH_SIZE)
         if not stuck:
             return
+        if len(stuck) == self._CRON_BATCH_SIZE:
+            _logger.info(
+                "recover-stuck cron hit the %d batch cap; remaining instances "
+                "are handled next run.", self._CRON_BATCH_SIZE)
         for instance in stuck:
             try:
                 # Liveness gate: a long deploy is ONE transaction, so its
@@ -8452,13 +8471,21 @@ class SaasInstance(models.Model):
 
         Batches SSH calls by server to avoid opening N connections sequentially.
         """
+        # Bounded per run (PERF-003): a large fleet must not pull every running
+        # instance into one cron transaction. Least-recently-touched first so
+        # coverage rotates across runs when the fleet exceeds the cap.
         instances = self.search([
             ('state', '=', 'running'),
             ('plan_id', '!=', False),
             ('plan_id.storage_limit', '>', 0),
-        ])
+        ], order='write_date asc, id asc', limit=self._CRON_BATCH_SIZE)
         if not instances:
             return
+        if len(instances) == self._CRON_BATCH_SIZE:
+            _logger.info(
+                "storage-limit cron hit the %d batch cap; the rest are checked "
+                "on subsequent runs (oldest-touched first).",
+                self._CRON_BATCH_SIZE)
 
         # Pre-fetch DB sizes per db_server in a single batched query.
         db_sizes_by_server = {}

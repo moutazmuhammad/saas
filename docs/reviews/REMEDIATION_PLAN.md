@@ -72,7 +72,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 
 ### Scale / perf
 - [ ] 🟠 **PERF-001** Parallelize backups (bounded pool) with per-job timeout + lag metric.
-- [ ] 🟠 **PERF-003** Batch/paginate unbounded crons (retry-pending, recover-stuck, storage-limits).
+- [x] 🟠 **PERF-003** Batch/paginate unbounded crons (retry-pending, recover-stuck, storage-limits) — **done + tested**: all three now `search(..., limit=_CRON_BATCH_SIZE=500, order=oldest-first)` so one run can't load the whole table; remainder picked up next run (storage uses least-recently-touched order so coverage rotates). `TestCronBatching` asserts each cron passes the bound.
 - [ ] 🟠 **PERF-004** Parallelize per-host metrics sampling with a hard per-run deadline.
 - [ ] 🟠 **PERF-005** Stream `pg_dump` directly to object storage (no `/tmp` staging).
 - [x] 🟡 **PERF-007** Add indexes: `(state)`, `(docker_server_id,state)`, `(partner_id)`, `(plan_id,state)` — **done + tested**: created idempotently in `saas.instance.init()`; `TestInstanceIndexes` asserts all four exist after install.

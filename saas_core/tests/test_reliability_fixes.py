@@ -27,6 +27,30 @@ class TestInstanceIndexes(TransactionCase):
 
 
 @tagged('post_install', '-at_install')
+class TestCronBatching(TransactionCase):
+    """PERF-003: the sweep crons bound their search() with a per-run limit so
+    a large fleet/backlog can't be pulled into one cron transaction."""
+
+    def test_sweep_crons_pass_batch_limit(self):
+        Inst = self.env['saas.instance']
+        limits = []
+
+        def spy(self2, domain, *args, **kwargs):
+            limits.append(kwargs.get('limit'))
+            return self2.browse()  # empty -> each cron returns early
+
+        with patch.object(type(Inst), 'search', spy):
+            Inst._cron_retry_pending_provision()
+            Inst._cron_recover_stuck_provisioning()
+            Inst._cron_check_storage_limits()
+
+        self.assertEqual(len(limits), 3, "each cron should issue one bounded search")
+        self.assertTrue(
+            all(lim == Inst._CRON_BATCH_SIZE for lim in limits),
+            "every sweep cron must pass limit=_CRON_BATCH_SIZE; got %s" % limits)
+
+
+@tagged('post_install', '-at_install')
 class TestSshResilience(TransactionCase):
     """ARCH-010: SSH connect retries transient failures with backoff and a
     per-host circuit breaker, but never retries permanent (auth) failures and
