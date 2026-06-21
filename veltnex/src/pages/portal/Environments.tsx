@@ -1037,11 +1037,15 @@ function MergeEnvDialog({
 }) {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Production is the highest-stakes target: merging deploys to the live
+  // server, so require an explicit second confirmation (CX-009).
+  const [confirmProd, setConfirmProd] = React.useState(false);
 
   React.useEffect(() => {
     if (prompt) {
       setLoading(false);
       setError(null);
+      setConfirmProd(false);
     }
   }, [prompt]);
 
@@ -1103,12 +1107,25 @@ function MergeEnvDialog({
             and redeploys <strong>{prompt.target.name}</strong>.
           </p>
           {toProd && (
-            <AlertBanner
-              className="mt-4"
-              variant="warning"
-              title="This targets Production"
-              description="The merged code deploys to your live Production server."
-            />
+            <>
+              <AlertBanner
+                className="mt-4"
+                variant="danger"
+                title="This deploys to live Production"
+                description="The merged code goes straight to your live Production server and its end-users. There is no staging step after this."
+              />
+              <label className="mt-3 flex items-start gap-2.5 rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={confirmProd}
+                  onChange={(e) => setConfirmProd(e.target.checked)}
+                />
+                <span>
+                  I understand this deploys merged code to my <strong>live Production</strong> server.
+                </span>
+              </label>
+            </>
           )}
         </>
       )}
@@ -1116,9 +1133,15 @@ function MergeEnvDialog({
         <Button variant="secondary" onClick={onClose} disabled={loading}>
           Cancel
         </Button>
-        <ActionButton loading={loading} loadingText="Merging…" onClick={submit}>
+        <ActionButton
+          variant={toProd ? "danger" : "default"}
+          loading={loading}
+          loadingText="Merging…"
+          disabled={toProd && !confirmProd}
+          onClick={submit}
+        >
           <GitMerge className="size-4" />
-          Merge &amp; redeploy
+          {toProd ? "Deploy to live Production" : "Merge & redeploy"}
         </ActionButton>
       </div>
     </Dialog>
@@ -1262,17 +1285,23 @@ function DeleteEnvDialog({
   const [deleteBranch, setDeleteBranch] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // Typed confirmation — deleting a server destroys its data irreversibly
+  // (CX-010), so require the name to be retyped before enabling the action.
+  const [confirmText, setConfirmText] = React.useState("");
 
   React.useEffect(() => {
     if (env) {
       setDeleteBranch(false);
       setLoading(false);
       setError(null);
+      setConfirmText("");
     }
   }, [env]);
 
+  const confirmed = !!env && confirmText.trim() === env.name;
+
   const submit = async () => {
-    if (!env) return;
+    if (!env || !confirmed) return;
     setError(null);
     setLoading(true);
     try {
@@ -1285,7 +1314,7 @@ function DeleteEnvDialog({
   };
 
   return (
-    <Dialog open={!!env} onClose={onClose} title="Remove environment">
+    <Dialog open={!!env} onClose={onClose} title="Delete environment — can't be undone">
       {error && <AlertBanner className="mb-4" variant="danger" title="Couldn't remove" description={error} />}
       <div className="flex gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
@@ -1293,11 +1322,11 @@ function DeleteEnvDialog({
         </span>
         <div className="text-sm">
           <p className="font-medium text-foreground">
-            Remove the {env?.environment_label.toLowerCase()} server <strong>{env?.name}</strong>?
+            Delete the {env?.environment_label.toLowerCase()} server <strong>{env?.name}</strong>?
           </p>
           <p className="mt-1 text-muted">
-            The server and its data are deleted. Any unused time on your current cycle is credited back to your
-            wallet. This can't be undone.
+            This permanently destroys the server and <strong>all of its data — databases, files, and logs</strong>.
+            Any unused time on your current cycle is credited back to your wallet. This can't be undone.
           </p>
         </div>
       </div>
@@ -1309,12 +1338,28 @@ function DeleteEnvDialog({
           remote. Leave unchecked to keep your branch.
         </span>
       </label>
+      <div className="mt-5 space-y-2">
+        <Label htmlFor="confirm-env">
+          Type{" "}
+          <code className="rounded bg-border/60 px-1 py-0.5 font-mono text-xs text-foreground">{env?.name}</code>{" "}
+          to confirm
+        </Label>
+        <Input
+          id="confirm-env"
+          autoFocus
+          autoComplete="off"
+          placeholder={env?.name ?? ""}
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && confirmed && submit()}
+        />
+      </div>
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={loading}>
           Cancel
         </Button>
-        <ActionButton variant="danger" loading={loading} loadingText="Removing…" onClick={submit}>
-          Remove server
+        <ActionButton variant="danger" loading={loading} loadingText="Deleting…" disabled={!confirmed} onClick={submit}>
+          Delete server
         </ActionButton>
       </div>
     </Dialog>

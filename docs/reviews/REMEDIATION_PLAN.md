@@ -1,0 +1,231 @@
+# SaaS Platform — Remediation Plan (V1 + V2)
+
+Single tracking file for every finding from the V1 audit (`docs/reviews/`) and the V2
+second-pass audit (`docs/reviews/v2/`). Check a box when the fix is merged **and** verified
+(test or live check). Each item links back to its finding ID so you can open the detailed
+report for context.
+
+**Legend:** `[ ]` not started · `[~]` in progress (edit to `[~]` manually) · `[x]` done & verified
+**Severity:** 🔴 Critical · 🟠 High · 🟡 Medium · ⚪ Low
+
+> Source counts — V1: Critical 10 · High 29 · Medium 41 · Low 14. V2 (new): High 8 · Medium 20 · Low 13.
+
+---
+
+## 0. Do NOT work these — verified false / by-design (close, don't fix)
+
+Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = no action.
+
+- Trial concurrent-create race — `create()` already `SELECT … FOR UPDATE` on commercial partner (`saas_instance.py:1269-1278`).
+- Wallet concurrent-debit double-spend — `_consume` is `_lock()`ed + idempotent per move (`saas_wallet.py:188-218`).
+- Backup-restore IDOR — ownership enforced via `_instance(write=True)` (`api.py:1294`).
+- Shared Docker network — per-instance `net_<subdomain>` already (`saas_instance.py:4660`).
+- Per-instance shell authz — already enforces `access_token` (`ssh_terminal.py:644-667`).
+- Port silent collision — partial unique index exists; race raises `IntegrityError` (add retry only).
+- Portal cross-tenant leak of repo/build/wallet/payment-method/db-op — portal users have **no ACL** to these models; not exploitable (reclassified as DiD: **ISO-001**).
+- Storage-block "free month" — code charges `full` when `left==0` (`saas_instance.py:1885`).
+- Repeated-upgrade double-credit — proration uses `today`; window shrinks correctly.
+- Yearly support add-on "asymmetry" — documented flat-×12 policy (`saas_pricing.py:261-279`).
+- CSRF on `type='json'` routes — exempt by design.
+
+---
+
+## 1. Immediate (1–2 weeks) — ship-blockers
+
+### Security / secrets
+- [~] 🔴 **SEC-001** Remove `debug_otp` from API responses (`api.py:233,250`) + SPA (`Register.tsx:130,224`); add regression test asserting field absent. *(also closes UX-001, BIZ-001, CX security premise)* — **code done + test-verified** (api.py + Register.tsx/AuthContext/api.ts; SPA rebuilt tsc-clean; `test_register_start_never_echoes_otp` passes — 0 failed/4 in local DB). **Pending live deploy verify.** Also fixed a blocking fresh-install manifest menu-order bug (saas_margin_views→saas_menus).
+- [ ] 🔴 **SEC-002** Move secrets (db/admin passwords, git tokens, SSH private keys) to KMS/secret manager; envelope-encrypt columns; **rotate all existing secrets** post-migration.
+- [ ] 🟠 **SEC-006** Stop rendering plaintext DB password into host `odoo.conf`; inject via secret mounted to tmpfs; `chmod 0600` non-tenant owner.
+- [ ] 🟠 **SEC-009** Stand up error monitoring (Sentry) + alerting on auth failures, cron failures, server-health.
+
+### Build / process
+- [ ] 🟠 **ARCH-007** Add CI gate: run Odoo test suite + `tsc`/lint on every PR; block merge on failure.
+
+### Destructive-flow safety (V1 + V2 overlap)
+- [x] 🟡 **UX-012** Typed confirmation on DB-drop — **verified already implemented** (`Databases.tsx DeleteDatabaseDialog`: `confirmText===dbName`, danger button disabled until exact match).
+- [x] 🟡 **CX-010** Environment-delete: spell out what is destroyed + typed confirm — **done** (`Environments.tsx DeleteEnvDialog`: title "Delete environment — can't be undone", lists databases/files/logs, type-the-name gate; tsc-clean).
+- [x] 🟠 **CX-009** Production merge: red/danger button + second confirmation — **done** (`Environments.tsx MergeEnvDialog`: danger banner + confirm checkbox + red "Deploy to live Production" button disabled until checked; tsc-clean).
+- [x] 🟠 **UX-004** Checkout-redirect loading state + button disable — **verified already implemented** for the async fetch-then-redirect cases (`Backups.tsx enableDailyBackup` + `InstanceDetail` lifecycle use `ActionButton loading=…`); remaining `window.location.href` calls go to an already-known URL (no async dead period).
+- [x] 🟡 **BIZ-012** Always recompute/validate price server-side at order creation; never trust client price. — **verified already satisfied** (no code change): SPA `Hosting.tsx` order payload sends only config (`workers/storage/billing/region/domain/version/...`), never a price; `main.py:hosting_order` → `_get_or_create_hosting_plan` recomputes price solely from `saas.pricing.engine.compute(...)` (`main.py:806-808`). Client price is never read/trusted.
+
+### V2 concurrency ship-blockers
+- [ ] 🟠 **SCALE-001 / SCALE-003** Per-proxy lock around nginx write+`nginx -t`+reload; write-temp-then-atomic-rename.
+- [ ] 🟠 **SCALE-005** Invalidate + re-read server capacity strictly **after** acquiring the allocation lock.
+- [ ] 🟠 **PROV-001** Wrap background DB-op target in fail-fast try/except (mark `failed` + traceback) + `last_heartbeat`.
+- [ ] 🟠 **CX-001** In-SPA password reset (or clearly-explained external link in new tab).
+- [ ] 🟠 **CX-002** Centralize `auth_required` → AuthContext re-auth; stop masking as "Instance not found".
+
+---
+
+## 2. Short Term (1 month)
+
+### Tenant runtime hardening
+- [ ] 🔴 **SEC-003** Non-root tenant containers; `cap_drop: [ALL]`, `no-new-privileges`, seccomp/AppArmor, read-only rootfs where possible.
+- [ ] 🟠 **SEC-004** Remove `CREATEDB` from tenant roles (provision DBs from control plane); add per-role connection/disk quotas.
+- [ ] 🟠 **SEC-005** Split host-shell from manager group into an audited, JIT-elevated, host-scoped role; stream commands to immutable log.
+
+### Async / reliability
+- [ ] 🟠 **ARCH-004 / PERF-002** Introduce durable job queue (OCA `queue_job`/Celery/DB-table) with retries, idempotency, client-pollable operation status.
+- [ ] 🟠 **ARCH-008** Idempotent partial-failure teardown on every deploy failure branch.
+- [ ] 🟠 **ARCH-009 / PERF-011 / SCALE-002** Shorten advisory-lock critical section; release port lock before nginx/certbot; rely on unique index.
+- [ ] 🟠 **ARCH-010** SSH retries w/ backoff + soft/hard per-command timeouts + host circuit breaker.
+
+### Scale / perf
+- [ ] 🟠 **PERF-001** Parallelize backups (bounded pool) with per-job timeout + lag metric.
+- [ ] 🟠 **PERF-003** Batch/paginate unbounded crons (retry-pending, recover-stuck, storage-limits).
+- [ ] 🟠 **PERF-004** Parallelize per-host metrics sampling with a hard per-run deadline.
+- [ ] 🟠 **PERF-005** Stream `pg_dump` directly to object storage (no `/tmp` staging).
+- [ ] 🟡 **PERF-007** Add indexes: `(state)`, `(docker_server_id,state)`, `(partner_id)`, `(plan_id,state)`.
+- [ ] 🟡 **PERF-006** Single grouped query for dashboard invoices (kill N+1).
+- [ ] 🟡 **PERF-008 / UX-006** SPA polling: exponential backoff + jitter; pause on hidden tab; stop on auth_required.
+
+### Provisioning lifecycle (V2)
+- [ ] 🟡 **PROV-003** Overcommit requires `health_state == 'ok'`; on probe failure → `pending_provision`, not hard fail.
+- [ ] 🟡 **PROV-004** Capacity-aware retry sweep on capacity/health change; shorten hard-fail; email "queued for capacity".
+
+### Billing correctness (V1 + V2)
+- [ ] 🟠 **BIZ-004** Explicit dunning state machine (retry→grace→suspend→delete) with customer-visible status; handle invalid token.
+- [ ] 🟠 **BIZ-002** Add `pending_plan_effective_date`; re-price add-ons on plan change; tests for prorated up/down incl. add-ons.
+- [ ] 🟠 **BIZ-003** Define + test trial-to-paid conversion proration.
+- [ ] 🟡 **BIZ-009** Enforce unique (instance, billing-period) invoice guard; idempotent generation.
+- [ ] 🟡 **BILL-V2-001** Unify proration to one helper (remove undocumented `-2`) so portal quote == invoice.
+- [ ] 🟡 **BILL-V2-002** Decide & codify yearly minimum-floor policy (`minimum_monthly*12` vs discounted).
+- [ ] 🟡 **BILL-V2-003 / BILL-V2-004** Size wallet consumption from confirmed, tax-aware invoice total within same txn.
+
+### Billing transparency UI (V2 CX)
+- [ ] 🟡 **CX-004** "Payment due / past due" badge on instance list → checkout.
+- [ ] 🟡 **CX-005** Next charge date + amount + payment method in a billing summary card.
+- [ ] 🟡 **CX-011** Branch backups empty-state on `daily_backup_enabled`; warn when off.
+
+### Audit / data exposure
+- [ ] 🟡 **SEC-010** Immutable, write-once internal audit log (actor/action/target/result/ts).
+- [ ] 🟠 **SEC-008** Reduce presigned-URL TTL to minutes; per-download auth; log downloads.
+
+---
+
+## 3. Medium Term (3 months)
+
+### Architecture
+- [ ] 🔴 **ARCH-001** Begin god-model decomposition (ComputeProvisioner / BillingEngine / BackupManager / RepoManager / MetricsCollector) behind existing seams.
+- [ ] 🔴 **ARCH-002** Split control plane vs data plane: host agents reconcile desired state; add control-plane HA.
+- [ ] 🟠 **ARCH-006** IaC (Terraform) for hosts/networks/buckets + drift detection.
+- [ ] 🟡 **ARCH-014** Automated, versioned template-DB builds with health validation.
+
+### Scale ceilings (V2)
+- [ ] 🟡 **SCALE-007** Shard live-metrics sampler by host (remove global-lock ceiling).
+- [ ] 🟡 **SCALE-004** Partition/retire metrics table (drop old partitions) + size/lag metrics + vacuum/reindex.
+- [ ] 🟡 **SCALE-008** Key template-build lock by (version, region) via DB advisory lock (cross-process).
+- [ ] ⚪ **SCALE-009** Per-server fallback lock when region absent.
+
+### Tenant boundary
+- [ ] 🟡 **ISO-002** Canonicalize boundary to `commercial_partner_id` across record rules + API; tests for multi-contact accounts.
+- [ ] ⚪ **ISO-001** Add partner-scoped record rules (DiD) for repo/build/wallet/payment-method/db-op.
+- [ ] 🟡 **ARCH-012 / ARCH-013** Per-tenant DB quotas; harden filestore isolation (object storage / strict mounts).
+
+### Product feature gaps (V1)
+- [ ] 🔴 **UX-002** Teams / collaborators with RBAC.
+- [ ] 🟠 **UX-010** Self-serve API keys + OpenAPI.
+- [ ] 🟠 **UX-007** Configurable alerts (resource/deploy/billing/suspension).
+- [ ] 🟠 **UX-008** Self-serve custom domains + automated SSL.
+- [ ] 🟠 **UX-009** Customer-facing audit log.
+- [ ] 🔴 **UX-003** One-click deploy rollback + auto-rollback on failed deploy.
+- [ ] 🟡 **CX-012** Account security: 2FA, active-session management, sign-in history.
+
+### Reliability/idempotency
+- [ ] 🟡 **ARCH-011 / PERF-009** Idempotent cron item-processing; savepoints/jobs instead of per-item commits.
+- [ ] 🟡 **ARCH-015 / ARCH-016 / ARCH-017** Recovery sentinel (not health-only); webhook de-dup; git clone TLS verify.
+
+---
+
+## 4. Long Term (6 months)
+
+- [ ] 🟠 **ARCH-005** Complete or remove Kubernetes driver; make driver fully backend-agnostic (route all infra ops through it).
+- [ ] 🔴 **ARCH-003** DR program: RTO/RPO, geo-replicated backups, control-DB failover, scheduled restore drills.
+- [ ] 🟡 **BIZ-010** Per-tenant cost attribution feeding margin alerts + pricing.
+- [ ] 🟡 **SCALE-006 / PROV-002 / PROV-005** Graceful port/capacity degradation; partial-create atomicity; subdomain reuse/reclaim.
+- [ ] 🟡 **BIZ-008 / BIZ-014** Retention/grace policy for suspend→delete; reactivation pricing/data semantics.
+- [ ] 🟡 SOC 2 / ISO 27001 readiness (RBAC granularity **SEC-016**, audit, secrets, retention).
+- [ ] ⚪ Mobile/a11y pass — **CX-014** (dialog touch dismiss), **CX-015** (help anchors), **CX-017** (skeletons), **UX-022/023/024**.
+
+---
+
+## 5. Full per-finding checklist (granular tracking)
+
+> Items already scheduled above are repeated here only so the master list is complete. Tick
+> here as the single source of truth if you prefer per-ID tracking. Items not separately
+> called out in §1–4 carry their fix inline below.
+
+### V1 — Security (`docs/reviews/SECURITY_AUDIT.md`)
+- [ ] 🔴 SEC-001 debug_otp · [ ] 🔴 SEC-002 plaintext secrets · [ ] 🔴 SEC-003 root containers
+- [ ] 🟠 SEC-004 CREATEDB · [ ] 🟠 SEC-005 host shell role · [ ] 🟠 SEC-006 host plaintext creds
+- [ ] 🟠 SEC-007 pip/git supply chain (anchor pkg grammar, internal mirror, sandbox, scan)
+- [ ] 🟠 SEC-008 presigned TTL · [ ] 🟠 SEC-009 monitoring · [ ] 🟡 SEC-010 audit log
+- [ ] 🟡 SEC-011 webhook rate-limit + constant-time lookup · [ ] 🟡 SEC-012 container-log ownership check
+- [ ] 🟡 SEC-013 OTP window/hashing · [ ] 🟡 SEC-014 central quoted SSH command builder
+- [ ] 🟡 SEC-015 narrow exception handling + telemetry · [ ] 🟡 SEC-016 granular RBAC roles
+- [ ] ⚪ SEC-017 restore-confirm UX · [ ] ⚪ SEC-018 SPA session refresh/idle · [ ] ⚪ SEC-019 CI lint: no `type='http'`+`csrf=False`
+
+### V1 — Architecture (`docs/reviews/ARCHITECTURE_AUDIT.md`)
+- [ ] 🔴 ARCH-001 god-model · [ ] 🔴 ARCH-002 control-plane SPOF · [ ] 🔴 ARCH-003 DR readiness
+- [ ] 🟠 ARCH-004 job queue · [ ] 🟠 ARCH-005 driver abstraction · [ ] 🟠 ARCH-006 IaC · [ ] 🟠 ARCH-007 CI
+- [ ] 🟠 ARCH-008 partial-failure teardown · [ ] 🟠 ARCH-009 lock hold time · [ ] 🟠 ARCH-010 SSH retries/timeouts
+- [ ] 🟡 ARCH-011 cron idempotency · [ ] 🟡 ARCH-012 DB quotas · [ ] 🟡 ARCH-013 filestore isolation
+- [ ] 🟡 ARCH-014 template automation · [ ] 🟡 ARCH-015 recovery race · [ ] 🟡 ARCH-016 webhook de-dup
+- [ ] 🟡 ARCH-017 git TLS · [ ] 🟡 ARCH-018 enforce tests · [ ] 🟡 ARCH-019 metrics scalability
+- [ ] ⚪ ARCH-020 config coupling · [ ] ⚪ ARCH-021 stop committing SPA bundles · [ ] ⚪ ARCH-022 versioned runbooks
+
+### V1 — Performance (`docs/reviews/PERFORMANCE_AUDIT.md`)
+- [ ] 🟠 PERF-001 parallel backups · [ ] 🟠 PERF-002 async provisioning · [ ] 🟠 PERF-003 bounded crons
+- [ ] 🟠 PERF-004 parallel metrics · [ ] 🟠 PERF-005 stream backups · [ ] 🟡 PERF-006 N+1 invoices
+- [ ] 🟡 PERF-007 indexes · [ ] 🟡 PERF-008 polling backoff · [ ] 🟡 PERF-009 cron commit batching
+- [ ] 🟡 PERF-010 billing cron sharding · [ ] 🟡 PERF-011 lock contention · [ ] 🟡 PERF-012 SQL/log pagination
+- [ ] ⚪ PERF-013 Globe bundle · [ ] ⚪ PERF-014 exception-masked latency
+
+### V1 — UX (`docs/reviews/UX_AUDIT.md`)
+- [ ] 🔴 UX-001 debug OTP (=SEC-001) · [ ] 🔴 UX-002 teams · [ ] 🔴 UX-003 rollback
+- [ ] 🟠 UX-004 checkout feedback · [ ] 🟠 UX-005 polling leaks · [ ] 🟠 UX-006 polling backoff
+- [ ] 🟠 UX-007 alerts · [ ] 🟠 UX-008 domains/SSL · [ ] 🟠 UX-009 audit log · [ ] 🟠 UX-010 API keys
+- [ ] 🟡 UX-011 pricing race · [ ] 🟡 UX-012 DB-drop confirm · [ ] 🟡 UX-013 logs search · [ ] 🟡 UX-014 SQL truncation
+- [ ] 🟡 UX-015 backup progress · [ ] 🟡 UX-016 optimistic UI · [ ] 🟡 UX-017 empty states · [ ] 🟡 UX-018 trial eligibility
+- [ ] 🟡 UX-019 webhook onboarding · [ ] 🟡 UX-020 deploy throttle · [ ] 🟡 UX-021 version upgrade
+- [ ] ⚪ UX-022 status page · [ ] ⚪ UX-023 session warning · [ ] ⚪ UX-024 copy feedback
+
+### V1 — Business (`docs/reviews/BUSINESS_AUDIT.md`)
+- [ ] 🔴 BIZ-001 signup integrity (=SEC-001) · [ ] 🟠 BIZ-002 downgrade reconciliation · [ ] 🟠 BIZ-003 trial proration
+- [ ] 🟠 BIZ-004 dunning · [ ] 🟠 BIZ-005 free-resource caps · [ ] 🟡 BIZ-006 refund cap · [ ] 🟡 BIZ-007 credit expiry
+- [ ] 🟡 BIZ-008 retention policy · [ ] 🟡 BIZ-009 invoice idempotency · [ ] 🟡 BIZ-010 cost attribution
+- [ ] 🟡 BIZ-011 pricing config trap · [ ] 🟡 BIZ-012 server-side price · [ ] ⚪ BIZ-013 add-on lifecycle billing
+- [ ] ⚪ BIZ-014 reactivation · [ ] ⚪ BIZ-015 region residency
+
+### V2 — Scalability (`docs/reviews/v2/SCALABILITY_AUDIT_V2.md`)
+- [ ] 🟠 SCALE-001 nginx reload lock · [ ] 🟠 SCALE-002 lock scope/certbot · [ ] 🟡 SCALE-003 atomic nginx write
+- [ ] 🟡 SCALE-004 metrics table growth · [ ] 🟠 SCALE-005 capacity race · [ ] 🟡 SCALE-006 port exhaustion
+- [ ] 🟡 SCALE-007 sampler ceiling · [ ] 🟡 SCALE-008 template lock key · [ ] ⚪ SCALE-009 region-less lock
+- [ ] ⚪ SCALE-010 reaper batching · [ ] ⚪ SCALE-011 sampler de-dup state
+
+### V2 — Tenant Isolation (`docs/reviews/v2/TENANT_ISOLATION_AUDIT_V2.md`)
+- [ ] ⚪ ISO-001 record-rule DiD · [ ] 🟡 ISO-002 scoping-key unification · [ ] ⚪ ISO-003 staff scope roles
+
+### V2 — Billing (`docs/reviews/v2/BILLING_AUDIT_V2.md`)
+- [ ] 🟡 BILL-V2-001 proration unify · [ ] 🟡 BILL-V2-002 yearly floor policy · [ ] 🟡 BILL-V2-003 wallet pre-tax cap
+- [ ] 🟡 BILL-V2-004 wallet pre-confirm lock · [ ] ⚪ BILL-V2-005 advertised vs realized discount · [ ] ⚪ BILL-V2-006 `0.0` yearly sentinel
+
+### V2 — Provisioning Reliability (`docs/reviews/v2/PROVISIONING_RELIABILITY_AUDIT_V2.md`)
+- [ ] 🟠 PROV-001 background thread guard · [ ] 🟡 PROV-002 partial-create rollback · [ ] 🟡 PROV-003 overcommit health
+- [ ] 🟡 PROV-004 capacity-aware retry · [ ] ⚪ PROV-005 subdomain reuse · [ ] ⚪ PROV-006 per-op SSH timeouts
+
+### V2 — Customer Experience (`docs/reviews/v2/CUSTOMER_EXPERIENCE_AUDIT_V2.md`)
+- [ ] 🟠 CX-001 password reset · [ ] 🟠 CX-002 session expiry · [ ] 🟡 CX-003 dup-account check · [ ] 🟡 CX-004 payment badge
+- [ ] 🟡 CX-005 next charge date · [ ] ⚪ CX-006 invoice payment method · [ ] 🟡 CX-007 restore wording · [ ] 🟠 CX-008 drag-merge discoverability
+- [ ] 🟠 CX-009 prod merge danger · [ ] 🟡 CX-010 env delete confirm · [ ] 🟡 CX-011 backups empty state · [ ] 🟡 CX-012 account security
+- [ ] ⚪ CX-013 command palette · [ ] ⚪ CX-014 dialog touch dismiss · [ ] ⚪ CX-015 help anchors · [ ] ⚪ CX-016 OTP cooldown · [ ] ⚪ CX-017 env skeleton
+
+---
+
+## Progress
+
+- V1: 0 / 94 done
+- V2: 0 / 41 done
+- **Total: 0 / 135 done**
+
+_Update the counts as boxes are ticked. Definition of done for every item: fix merged + verified end-to-end against the live system (per project testing policy), not just code-complete._
