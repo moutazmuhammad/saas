@@ -108,6 +108,12 @@ _LIVE_METRICS_LOCK_KEY = 738291014   # pg advisory lock id (single sampler clust
 _LIVE_SAMPLE_SEED_AT = {}            # instance_id -> monotonic ts of last seed spawn
 _LIVE_SAMPLE_SEED_GUARD = threading.Lock()
 
+# Host-side flock file used to serialise nginx vhost mutations on a proxy.
+# Every write/reload/remove on a given proxy host grabs this lock so
+# concurrent provisions sharing one proxy can't race `nginx -t`/reload and
+# corrupt the routing table for co-located tenants (SCALE-001).
+_NGINX_LOCK_FILE = '/run/lock/saas-nginx.lock'
+
 
 class SaasInstance(models.Model):
     _name = 'saas.instance'
@@ -8036,25 +8042,10 @@ class SaasInstance(models.Model):
             nginx_context['backend_ip'] = backend_ip
         nginx_content = self._render_template(template_name, nginx_context)
 
-        # Step 3: Write Nginx config to sites-enabled
-        nginx_path = '/etc/nginx/sites-enabled/%s' % self.subdomain
-        self._append_log("Writing Nginx config to %s..." % nginx_path)
-        ssh.write_file(nginx_path, nginx_content)
-
-        # Step 4: Test and reload Nginx
-        exit_code, stdout, stderr = ssh.execute('nginx -t 2>&1')
-        if exit_code != 0:
-            # Remove the broken config to avoid breaking other sites
-            ssh.execute('rm -f %s' % shlex.quote(nginx_path))
-            raise UserError(
-                _("Nginx configuration test failed:\n%s\n%s")
-                % (stdout, stderr)
-            )
-        exit_code, stdout, stderr = ssh.execute('systemctl reload nginx 2>&1')
-        if exit_code != 0:
-            raise UserError(
-                _("Failed to reload Nginx:\n%s\n%s") % (stdout, stderr)
-            )
+        # Step 3+4: Atomically install the vhost and reload nginx, serialised
+        # per-proxy and crash-safe (SCALE-001/003).
+        self._append_log("Installing Nginx config for %s..." % self.subdomain)
+        self._nginx_apply_vhost(ssh, nginx_content)
         self._append_log("Nginx reloaded successfully.")
 
     def _restic_wipe_repo(self):
@@ -8206,21 +8197,8 @@ class SaasInstance(models.Model):
         if backend_ip:
             nginx_context['backend_ip'] = backend_ip
         nginx_content = self._render_template(template_name, nginx_context)
-        nginx_path = '/etc/nginx/sites-enabled/%s' % self.subdomain
-        ssh.write_file(nginx_path, nginx_content)
-        exit_code, stdout, stderr = ssh.execute('nginx -t 2>&1')
-        if exit_code != 0:
-            raise UserError(
-                _("Nginx config test failed after refresh:\n%s\n%s")
-                % (stdout, stderr)
-            )
-        exit_code, stdout, stderr = ssh.execute(
-            'systemctl reload nginx 2>&1',
-        )
-        if exit_code != 0:
-            raise UserError(
-                _("Failed to reload Nginx:\n%s\n%s") % (stdout, stderr)
-            )
+        # Atomic, per-proxy-serialised install + reload (SCALE-001/003).
+        self._nginx_apply_vhost(ssh, nginx_content)
 
     def _refresh_nginx_on_correct_host(self):
         """Pick the right server (proxy vs docker host) and call
@@ -8238,12 +8216,73 @@ class SaasInstance(models.Model):
             with self.docker_server_id._get_ssh_connection() as ssh:
                 self._refresh_nginx_config(ssh)
 
+    def _nginx_apply_vhost(self, ssh, content):
+        """Atomically install this instance's vhost and reload nginx.
+
+        Serialised + crash-safe replacement for the old
+        write-direct-then-`nginx -t`-then-reload sequence:
+
+        * The rendered config is SFTP'd to a private temp file OUTSIDE
+          ``sites-enabled`` (dot-prefixed under ``/etc/nginx``), so a partial
+          write (SSH drop, disk full) can never land in the included glob and
+          wedge ``nginx -t`` for every co-located tenant (SCALE-003).
+        * The placement (``mv`` is atomic on one filesystem), validation and
+          reload run inside a host-side ``flock`` so concurrent provisions on
+          a SHARED proxy serialise instead of racing the reload (SCALE-001).
+        * On a failed ``nginx -t`` the previous vhost is restored and nginx is
+          NOT reloaded, so live routing is never disrupted by a bad deploy.
+        """
+        self.ensure_one()
+        sub = self.subdomain
+        path = '/etc/nginx/sites-enabled/%s' % sub
+        tmp = '/etc/nginx/.saas-%s.tmp' % sub
+        bak = '/etc/nginx/.saas-%s.bak' % sub
+        terr = '/etc/nginx/.saas-%s.terr' % sub
+        ssh.write_file(tmp, content)
+        script = (
+            "set -e\n"
+            "mv -f {path} {bak} 2>/dev/null || true\n"
+            "mv -f {tmp} {path}\n"
+            "if ! nginx -t 2>{terr}; then\n"
+            "  rm -f {path}; mv -f {bak} {path} 2>/dev/null || true\n"
+            "  cat {terr} >&2; rm -f {terr}; exit 10\n"
+            "fi\n"
+            "rm -f {bak} {terr}\n"
+            "systemctl reload nginx\n"
+        ).format(
+            path=shlex.quote(path), tmp=shlex.quote(tmp),
+            bak=shlex.quote(bak), terr=shlex.quote(terr),
+        )
+        cmd = 'flock -w 60 %s bash -c %s' % (
+            shlex.quote(_NGINX_LOCK_FILE), shlex.quote(script),
+        )
+        exit_code, stdout, stderr = ssh.execute(cmd, timeout=180)
+        if exit_code != 0:
+            # Best-effort cleanup of the temp (the script removes it on the
+            # happy/rollback paths; this covers a flock timeout that never ran
+            # the body).
+            ssh.execute('rm -f %s' % shlex.quote(tmp))
+            raise UserError(
+                _("Nginx configuration failed:\n%s\n%s") % (stdout, stderr)
+            )
+
+    def _nginx_remove_vhost(self, ssh):
+        """Remove this instance's vhost and reload nginx, under the per-proxy
+        lock so the removal+reload can't race a concurrent provision's
+        ``nginx -t``/reload on a shared proxy (SCALE-001)."""
+        self.ensure_one()
+        path = '/etc/nginx/sites-enabled/%s' % self.subdomain
+        script = "rm -f {path}\nsystemctl reload nginx\n".format(
+            path=shlex.quote(path))
+        cmd = 'flock -w 60 %s bash -c %s' % (
+            shlex.quote(_NGINX_LOCK_FILE), shlex.quote(script),
+        )
+        ssh.execute(cmd, timeout=120)
+
     def _remove_nginx(self, ssh):
         """Remove Nginx config and SSL certificate from the given server."""
         self.ensure_one()
-        nginx_path = '/etc/nginx/sites-enabled/%s' % self.subdomain
-        ssh.execute('rm -f %s' % shlex.quote(nginx_path))
-        ssh.execute('systemctl reload nginx 2>&1')
+        self._nginx_remove_vhost(ssh)
         if self.name:
             ssh.execute(
                 'certbot delete --cert-name %s --non-interactive 2>&1'
