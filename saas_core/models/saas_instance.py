@@ -9406,6 +9406,25 @@ class SaasInstance(models.Model):
         if self.is_trial:
             return
 
+        # Idempotency / concurrency guard (BIZ-009): lock this instance row so
+        # two overlapping cron runs can't both bill the same cycle. After the
+        # lock is granted we re-read next_invoice_date from the row — under
+        # READ COMMITTED the loser sees the value the winner already advanced
+        # past today and returns, so each cycle is invoiced exactly once.
+        today = fields.Date.today()
+        self.env.cr.execute(
+            "SELECT next_invoice_date FROM saas_instance WHERE id = %s FOR UPDATE",
+            (self.id,))
+        locked = self.env.cr.fetchone()
+        db_next = locked[0] if locked else None
+        if db_next and db_next > today:
+            _logger.info(
+                "Renewal for %s already billed this cycle (next_invoice_date=%s) "
+                "— skipping duplicate.", self.subdomain, db_next)
+            return
+        # Ensure ORM reads below see the freshly-locked DB state.
+        self.invalidate_recordset(['next_invoice_date'])
+
         # Apply scheduled downgrade at cycle boundary
         if self.scheduled_plan_id:
             old_plan = self.plan_id

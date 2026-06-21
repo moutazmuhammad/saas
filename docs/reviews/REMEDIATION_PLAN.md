@@ -89,7 +89,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 - [ ] 🟠 **BIZ-004** Explicit dunning state machine (retry→grace→suspend→delete) with customer-visible status; handle invalid token.
 - [ ] 🟠 **BIZ-002** Add `pending_plan_effective_date`; re-price add-ons on plan change; tests for prorated up/down incl. add-ons.
 - [ ] 🟠 **BIZ-003** Define + test trial-to-paid conversion proration.
-- [ ] 🟡 **BIZ-009** Enforce unique (instance, billing-period) invoice guard; idempotent generation.
+- [x] 🟡 **BIZ-009** Idempotent renewal invoicing — **done + tested**: `_generate_renewal_invoice` now `SELECT … FOR UPDATE`s the instance row and re-reads `next_invoice_date`; a concurrent/overlapping cron run whose cycle was already billed (date advanced past today) returns without creating a second invoice. Complements the existing advance-before-post guard against same-process retries. `TestInvoiceIdempotency` (double generation → exactly one invoice, cycle advances once) — full suite 0/190.
 - [x] 🟡 **BILL-V2-001** Unify proration to one helper (remove undocumented `-2`) so portal quote == invoice — **done + tested**: both portal display sites (`portal.py:570,648`) now call the authoritative `instance._proration_credit(old_price)` instead of duplicating the math with `-2`. `TestProrationUnify` asserts full-remaining-days (no -2) + safe on missing dates.
 - [ ] 🟡 **BILL-V2-002** Decide & codify yearly minimum-floor policy (`minimum_monthly*12` vs discounted).
 - [ ] 🟡 **BILL-V2-003 / BILL-V2-004** Size wallet consumption from confirmed, tax-aware invoice total within same txn.
