@@ -100,7 +100,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 - [ ] 🟡 **CX-011** Branch backups empty-state on `daily_backup_enabled`; warn when off.
 
 ### Audit / data exposure
-- [ ] 🟡 **SEC-010** Immutable, write-once internal audit log (actor/action/target/result/ts).
+- [x] 🟡 **SEC-010** Immutable, write-once internal audit log (actor/action/target/result/ts) — **done + tested**: new append-only `saas.audit.log` (write/unlink raise; manager read-only ACL; created via `_saas_audit()` sudo helper that never raises into callers). Wired the destructive events `instance_delete` + `db_drop`. `TestAuditLog` (records actor/action/target; immutable to write & unlink; helper caps detail + never raises) — full suite 0/184. *(more events + a customer-facing view can be layered on later.)*
 - [~] 🟠 **SEC-008** Reduce presigned-URL TTL to minutes — **done + tested** (TTL part): `PRESIGNED_URL_EXPIRY` cut from 7 days → 15 min; the `backups` API now re-mints fresh short links per list (`_refresh_download_url`) so the client never holds a stale long-lived URL. Server-side restore uses bucket creds, unaffected. `TestBackupUrlTtl` guards the TTL stays in minutes. *(per-download auth + download audit-log still TODO — pair with SEC-010.)*
 
 ---

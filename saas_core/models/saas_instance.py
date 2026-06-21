@@ -6106,6 +6106,10 @@ class SaasInstance(models.Model):
             rec.pending_operation = 'delete'
             rec.state = 'provisioning'
             rec._append_log("Deletion queued. Running in background...")
+            self.env['saas.audit.log']._saas_audit(
+                'instance_delete', model='saas.instance', res_id=rec.id,
+                res_name=rec.subdomain,
+                detail='Deletion queued (was %s)' % prev_state)
             run_in_background(
                 rec, '_do_delete_instance',
                 error_method='_on_background_error',
@@ -11551,6 +11555,9 @@ class SaasInstance(models.Model):
         # dropped DB with a leftover filestore dir is harmless, just
         # wasted disk.
         self._pg_drop_db(name)
+        self.env['saas.audit.log']._saas_audit(
+            'db_drop', model='saas.instance', res_id=self.id,
+            res_name=self.subdomain, detail='Dropped database %s' % name)
         try:
             self._hosting_drop_filestore(name)
         except Exception:
