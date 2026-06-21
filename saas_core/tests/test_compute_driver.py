@@ -81,6 +81,41 @@ class TestComputeDriver(TransactionCase):
         self.assertIn('odoo_a', calls[-1])
         self.assertIn('odoo_b', calls[-1])
 
+    def test_start_retries_transient_compose_failure_then_succeeds(self):
+        # A transient `docker compose up` blip (daemon hiccup / recreate port
+        # release race) must self-heal instead of failing the deploy.
+        from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
+        from odoo.addons.saas_core.drivers.base import ComputeHandle
+        server = MagicMock()
+        d = SshDockerDriver(server)
+        h = ComputeHandle(server_id=1, container_name='odoo_x',
+                          instance_path='/srv/x', host='1.2.3.4', http_port=8069)
+        seq = [(1, '', 'Error response from daemon: fail'), (0, '', '')]
+        calls = {'n': 0}
+
+        def fake_compose(ssh, path, verb, timeout=None):
+            calls['n'] += 1
+            return seq[min(calls['n'] - 1, len(seq) - 1)]
+
+        with patch.object(d, '_compose', side_effect=fake_compose), \
+                patch('odoo.addons.saas_core.drivers.ssh_docker_driver.time.sleep'):
+            d.start(h)  # must NOT raise
+        self.assertEqual(calls['n'], 2, "should retry once then succeed")
+
+    def test_start_gives_up_after_retry_budget(self):
+        from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
+        from odoo.addons.saas_core.drivers.base import ComputeHandle
+        server = MagicMock()
+        d = SshDockerDriver(server)
+        h = ComputeHandle(server_id=1, container_name='odoo_x',
+                          instance_path='/srv/x', host='1.2.3.4', http_port=8069)
+        with patch.object(d, '_compose', return_value=(1, '', 'boom')) as m, \
+                patch('odoo.addons.saas_core.drivers.ssh_docker_driver.time.sleep'):
+            with self.assertRaises(RuntimeError):
+                d.start(h)
+        self.assertEqual(m.call_count, d._COMPOSE_UP_ATTEMPTS,
+                         "a persistent failure must exhaust the retry budget then raise")
+
     def test_driver_health_reports_not_running(self):
         from odoo.addons.saas_core.drivers.ssh_docker_driver import SshDockerDriver
         from odoo.addons.saas_core.drivers.base import ComputeHandle

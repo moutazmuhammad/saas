@@ -12,6 +12,7 @@ same paths) so the green test baseline and real-infra behavior are unchanged.
 from __future__ import annotations
 
 import logging
+import random
 import shlex
 import time
 from contextlib import nullcontext
@@ -75,13 +76,38 @@ class SshDockerDriver(ComputeDriver):
             "through saas.instance._do_deploy (Phase 1, later increment)."
         )
 
+    # `docker compose up -d` occasionally fails transiently — a daemon
+    # networking hiccup, or the brief window during a recreate where the old
+    # container still holds the published port ("address already in use").
+    # Since `up -d` is idempotent we retry it a few times with backoff+jitter
+    # so provisioning self-heals instead of failing the whole deploy on a blip
+    # (observed on a real provision; ARCH-008/010). A genuinely permanent error
+    # still surfaces after the budget is exhausted.
+    _COMPOSE_UP_ATTEMPTS = 3
+    _COMPOSE_UP_BACKOFF = 2.0  # seconds: ~2s, ~4s (+ up to 1s jitter)
+
     def start(self, handle: ComputeHandle) -> None:
         # `up -d` is idempotent: creates if missing, recreates on config drift,
         # starts if stopped — matches the god-model's start path.
-        with self._ssh() as ssh:
-            rc, out, err = self._compose(ssh, handle.instance_path, 'up -d', timeout=300)
-        if rc != 0:
-            raise RuntimeError('docker compose up failed (rc=%s): %s' % (rc, (out + err)[-500:]))
+        last = ''
+        for attempt in range(1, self._COMPOSE_UP_ATTEMPTS + 1):
+            with self._ssh() as ssh:
+                rc, out, err = self._compose(
+                    ssh, handle.instance_path, 'up -d', timeout=300)
+            if rc == 0:
+                return
+            last = (out + err)[-500:]
+            if attempt < self._COMPOSE_UP_ATTEMPTS:
+                delay = self._COMPOSE_UP_BACKOFF * attempt + random.uniform(0, 1)
+                _logger.warning(
+                    "docker compose up failed (rc=%s, attempt %d/%d) for %s — "
+                    "retrying in %.1fs: %s", rc, attempt,
+                    self._COMPOSE_UP_ATTEMPTS, handle.instance_path, delay,
+                    last[-200:])
+                time.sleep(delay)
+        raise RuntimeError(
+            'docker compose up failed after %d attempts (rc=%s): %s'
+            % (self._COMPOSE_UP_ATTEMPTS, rc, last))
 
     def stop(self, handle: ComputeHandle) -> None:
         # Container-level op (works for both compose-managed and raw containers,
