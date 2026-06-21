@@ -27,6 +27,12 @@ class TestJobQueue(TransactionCase):
             p = patch.object(type(self.partner), name, fn, create=True)
             p.start()
             self.addCleanup(p.stop)
+        # Suppress the immediate worker thread so execution is driven
+        # deterministically via _cron_run_jobs / _run_one in the tests (and so
+        # _enqueue doesn't commit the test cursor).
+        wp = patch.object(type(self.Job), '_spawn_worker', lambda self: None)
+        wp.start()
+        self.addCleanup(wp.stop)
 
     def _no_commit(self):
         # _cron_run_jobs / _execute / reaper commit per item; the test cursor
@@ -118,3 +124,46 @@ class TestJobQueue(TransactionCase):
                    'last_heartbeat': fields.Datetime.now()})
         self.Job._cron_reap_jobs()
         self.assertEqual(job.state, 'running', "a freshly-beating job is left alone")
+
+
+@tagged('post_install', '-at_install')
+class TestBackupViaQueue(TransactionCase):
+    """ARCH-004 Phase 1: portal backups are routed through the durable queue."""
+
+    def setUp(self):
+        super().setUp()
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1) or \
+            self.env['saas.product'].sudo().create(
+                {'name': 'BQ Hosting', 'is_hosting': True, 'is_published': True})
+        plan = self.env['saas.plan'].sudo().create({
+            'name': 'BQ Plan', 'is_custom': True, 'workers': 1, 'storage_limit': 5,
+            'cpu_limit': 1.0, 'ram_limit': '1g', 'price': 20.0, 'yearly_price': 192.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])]})
+        domain = self.env['saas.based.domain'].sudo().search([], limit=1) or \
+            self.env['saas.based.domain'].sudo().create({'name': 'bq.example.com'})
+        partner = self.env['res.partner'].sudo().create({'name': 'BQ Cust'})
+        self.instance = self.env['saas.instance'].sudo().create({
+            'subdomain': 'bqinst', 'domain_id': domain.id, 'partner_id': partner.id,
+            'saas_product_id': product.id, 'plan_id': plan.id,
+            'billing_period': 'monthly', 'environment': 'production',
+            'region_id': False, 'state': 'running', 'is_hosting': True})
+
+    def test_action_create_backup_enqueues_durable_job(self):
+        # Suppress the immediate worker thread so no real backup runs.
+        with patch.object(type(self.env['saas.job']), '_spawn_worker',
+                          lambda self: None):
+            self.instance.action_create_backup()
+        backup = self.env['saas.instance.backup'].sudo().search(
+            [('instance_id', '=', self.instance.id)], limit=1)
+        self.assertEqual(backup.state, 'running',
+                         "the backup record is created up-front")
+        job = self.env['saas.job'].sudo().search([
+            ('model', '=', 'saas.instance.backup'),
+            ('res_id', '=', backup.id)], limit=1)
+        self.assertTrue(job, "a durable job must be enqueued for the backup")
+        self.assertEqual(job.method, '_run_portal_backup')
+        self.assertEqual(job.channel, 'backup')
+        self.assertEqual(job.lock_key, 'instance:%s' % self.instance.id)
+        self.assertEqual(job.state, 'pending')

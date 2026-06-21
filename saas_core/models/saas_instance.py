@@ -6665,9 +6665,12 @@ class SaasInstance(models.Model):
                 done_backups -= oldest
 
         self._append_log("Backup queued. Running in background...")
-        run_in_background(
+        # Durable queue (ARCH-004 Phase 1): starts promptly via the immediate
+        # worker, but survives a crash (reaper) and records failures.
+        self.env['saas.job']._enqueue(
             backup, '_run_portal_backup',
-            thread_name='saas_backup_%s' % self.subdomain,
+            channel='backup', lock_key='instance:%s' % self.id,
+            max_attempts=1,
         )
         return True
 
@@ -11699,9 +11702,11 @@ class SaasInstance(models.Model):
             'ephemeral': True,
             'format': fmt,
         })
-        run_in_background(
+        # Durable queue (ARCH-004 Phase 1).
+        self.env['saas.job']._enqueue(
             backup, '_run_portal_backup',
-            thread_name='saas_db_backup_%s' % full,
+            channel='backup', lock_key='instance:%s' % self.id,
+            max_attempts=1,
         )
         return backup
 

@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import random
+import threading
 
 from odoo import api, fields, models
 
@@ -63,10 +64,15 @@ class SaasJob(models.Model):
     @api.model
     def _enqueue(self, record, method, args=(), *, idempotency_key=None,
                  channel='default', lock_key=None, max_attempts=3,
-                 idempotent=False, priority=10, eta=None):
+                 idempotent=False, priority=10, eta=None, run_now=True):
         """Persist a job and return its record. Idempotent on
         ``idempotency_key``: if a pending/running/done job already carries it,
-        that job is returned and nothing new is created."""
+        that job is returned and nothing new is created.
+
+        ``run_now`` (default True, and only when not delayed by ``eta``) kicks
+        an immediate background worker so the job starts promptly — like the old
+        ``run_in_background`` — while the durable row + reaper guarantee it still
+        runs if that worker (or the process) dies. The cron is the backstop."""
         if idempotency_key:
             existing = self.sudo().search([
                 ('idempotency_key', '=', idempotency_key),
@@ -74,7 +80,7 @@ class SaasJob(models.Model):
             ], limit=1)
             if existing:
                 return existing
-        return self.sudo().create({
+        job = self.sudo().create({
             'model': record._name,
             'res_id': record.id,
             'method': method,
@@ -87,6 +93,52 @@ class SaasJob(models.Model):
             'priority': priority,
             'run_after': eta or fields.Datetime.now(),
         })
+        if run_now and not eta:
+            job._spawn_worker()
+        return job
+
+    def _spawn_worker(self):
+        """Commit the job, then run it in a daemon thread with its own cursor.
+        Mirrors utils.run_in_background, but the durable row means a crash is
+        recovered by the cron/reaper rather than lost."""
+        self.ensure_one()
+        job_id = self.id
+        dbname = self.env.cr.dbname
+        self.env.cr.commit()  # publish the job so the new cursor sees it
+
+        def _target():
+            import odoo
+            from odoo import api as odoo_api, SUPERUSER_ID
+            try:
+                reg = odoo.modules.registry.Registry(dbname)
+                with reg.cursor() as cr:
+                    env = odoo_api.Environment(cr, SUPERUSER_ID, {})
+                    env['saas.job']._run_one(job_id)
+            except Exception:
+                _logger.exception("saas.job %s worker thread crashed", job_id)
+
+        threading.Thread(
+            target=_target, name='saas_job_%s' % job_id, daemon=True).start()
+
+    @api.model
+    def _run_one(self, job_id):
+        """Claim a single job by id (no-op if the cron/another worker already
+        took it) and execute it."""
+        now = fields.Datetime.now()
+        self.env.cr.execute(
+            """
+            UPDATE saas_job SET state='running', started_at=%s,
+                   last_heartbeat=%s, attempts=attempts+1
+            WHERE id=%s AND state='pending' AND run_after<=%s
+                  AND attempts<max_attempts
+            RETURNING id
+            """, (now, now, job_id, now))
+        if not self.env.cr.fetchone():
+            return  # already claimed elsewhere
+        self.env.cr.commit()
+        job = self.browse(job_id)
+        job.invalidate_recordset()
+        job._execute()
 
     # -------------------------------------------------------------- worker
     @api.model
