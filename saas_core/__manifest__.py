@@ -48,6 +48,7 @@ Key capabilities:
         'data/saas_margin_alert_cron.xml',
         'data/saas_metrics_cron.xml',
         'data/saas_pending_provision_cron.xml',
+        'data/saas_job_cron.xml',
         'data/saas_addon_data.xml',
         'data/saas_region_data.xml',
         'data/saas_support_plan_data.xml',

@@ -54,3 +54,4 @@ access_saas_instance_metric_user,saas.instance.metric user,model_saas_instance_m
 access_saas_instance_metric_manager,saas.instance.metric manager,model_saas_instance_metric,saas_core.group_saas_manager,1,1,1,1
 access_saas_rate_limit_manager,saas.rate.limit manager,model_saas_rate_limit,saas_core.group_saas_manager,1,1,1,1
 access_saas_audit_log_manager,saas.audit.log manager,model_saas_audit_log,saas_core.group_saas_manager,1,0,0,0
+access_saas_job_manager,saas.job manager,model_saas_job,saas_core.group_saas_manager,1,1,0,0

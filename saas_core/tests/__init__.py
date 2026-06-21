@@ -28,3 +28,4 @@ from . import test_alerting
 from . import test_repo_clone_tls
 from . import test_invoice_idempotency
 from . import test_pending_retry
+from . import test_job_queue
