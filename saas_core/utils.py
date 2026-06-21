@@ -44,7 +44,8 @@ class _PinnedHostKeyPolicy(paramiko.MissingHostKeyPolicy):
 
 def run_in_background(record, method_name, method_args=(),
                       error_method=None, error_args=(),
-                      thread_name=None):
+                      thread_name=None,
+                      heartbeat_field=None, heartbeat_interval=30):
     """Run record.method_name(*args) in a background thread with its own cursor.
 
     On success the cursor is committed.  On failure it is rolled back and,
@@ -53,6 +54,14 @@ def run_in_background(record, method_name, method_args=(),
 
     Commits the current transaction first so the background thread sees the
     latest DB state, then starts the thread immediately.
+
+    ``heartbeat_field`` (optional): the name of a Datetime field on *record*
+    that a watchdog thread stamps with ``now`` every ``heartbeat_interval``
+    seconds while the work runs (each in its own short, committed cursor).
+    If the worker thread dies (unhandled crash, dropped DB connection, worker
+    recycle) the stamps stop, so a reaper can fail the record in minutes
+    instead of waiting for a coarse create-time timeout. Liveness for an
+    otherwise-opaque long-running op (PROV-001).
     """
     from odoo import SUPERUSER_ID
     dbname = record.env.cr.dbname
@@ -61,35 +70,65 @@ def run_in_background(record, method_name, method_args=(),
     model_name = record._name
     record_id = record.id
 
+    def _beat_loop(db_registry, stop):
+        """Stamp ``heartbeat_field`` until *stop* is set or the work ends."""
+        import odoo
+        from odoo import api as odoo_api, fields as odoo_fields
+        # stop.wait returns True once set; False on timeout -> beat again.
+        while not stop.wait(heartbeat_interval):
+            try:
+                with db_registry.cursor() as hb_cr:
+                    hb_env = odoo_api.Environment(hb_cr, uid, context)
+                    hb_env[model_name].browse(record_id).write(
+                        {heartbeat_field: odoo_fields.Datetime.now()})
+                    hb_cr.commit()
+            except Exception:
+                # A missed beat is non-fatal; the reaper's create-time net
+                # still backstops. Don't let the watchdog kill the worker.
+                _logger.debug("Heartbeat write failed for %s#%s",
+                              model_name, record_id, exc_info=True)
+
     def _target():
         import odoo
         from odoo import api as odoo_api
         try:
             db_registry = odoo.modules.registry.Registry(dbname)
-            with db_registry.cursor() as new_cr:
-                new_env = odoo_api.Environment(new_cr, uid, context)
-                rec = new_env[model_name].browse(record_id)
-                try:
-                    getattr(rec, method_name)(*method_args)
-                    new_cr.commit()
-                except Exception as e:
-                    new_cr.rollback()
-                    if error_method:
-                        try:
-                            with db_registry.cursor() as err_cr:
-                                err_env = odoo_api.Environment(err_cr, uid, context)
-                                err_rec = err_env[model_name].browse(record_id)
-                                getattr(err_rec, error_method)(e, *error_args)
-                                err_cr.commit()
-                        except Exception:
-                            _logger.exception(
-                                "Error handler failed for %s#%s",
-                                model_name, record_id,
-                            )
-                    _logger.exception(
-                        "Background %s failed for %s#%s",
-                        method_name, model_name, record_id,
-                    )
+            stop = threading.Event()
+            beater = None
+            if heartbeat_field:
+                beater = threading.Thread(
+                    target=_beat_loop, args=(db_registry, stop),
+                    name='%s_hb' % (thread_name or method_name), daemon=True)
+                beater.start()
+            try:
+                with db_registry.cursor() as new_cr:
+                    new_env = odoo_api.Environment(new_cr, uid, context)
+                    rec = new_env[model_name].browse(record_id)
+                    try:
+                        getattr(rec, method_name)(*method_args)
+                        new_cr.commit()
+                    except Exception as e:
+                        new_cr.rollback()
+                        if error_method:
+                            try:
+                                with db_registry.cursor() as err_cr:
+                                    err_env = odoo_api.Environment(err_cr, uid, context)
+                                    err_rec = err_env[model_name].browse(record_id)
+                                    getattr(err_rec, error_method)(e, *error_args)
+                                    err_cr.commit()
+                            except Exception:
+                                _logger.exception(
+                                    "Error handler failed for %s#%s",
+                                    model_name, record_id,
+                                )
+                        _logger.exception(
+                            "Background %s failed for %s#%s",
+                            method_name, model_name, record_id,
+                        )
+            finally:
+                stop.set()
+                if beater:
+                    beater.join(timeout=5)
         except Exception:
             _logger.exception(
                 "Background thread crashed before executing %s for %s#%s",

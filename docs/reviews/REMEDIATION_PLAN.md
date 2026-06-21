@@ -50,8 +50,8 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 
 ### V2 concurrency ship-blockers
 - [ ] 🟠 **SCALE-001 / SCALE-003** Per-proxy lock around nginx write+`nginx -t`+reload; write-temp-then-atomic-rename.
-- [ ] 🟠 **SCALE-005** Invalidate + re-read server capacity strictly **after** acquiring the allocation lock.
-- [ ] 🟠 **PROV-001** Wrap background DB-op target in fail-fast try/except (mark `failed` + traceback) + `last_heartbeat`.
+- [x] 🟠 **SCALE-005** Invalidate + re-read server capacity strictly **after** acquiring the allocation lock. — **verified already satisfied** (no code change): `_allocate_servers` takes `pg_advisory_xact_lock` first, *then* `Server.invalidate_model(['instance_count','allocated_cpu','allocated_ram_gb'])` (`saas_instance.py:3584-3591`); those fields are **non-stored** computed (`saas_server.py:115-126`) so the re-read runs a live `_read_group` inside the lock.
+- [x] 🟠 **PROV-001** Wrap background DB-op target in fail-fast try/except (mark `failed` + traceback) + `last_heartbeat`. — **done + tested**: each `_run_*` already self-marks `failed`; added a `last_heartbeat` field + watchdog beater in `utils.run_in_background` (opt-in `heartbeat_field`), wired into all 6 db-op dispatches; reaper now fails ops with a stale heartbeat in ~3 min instead of 30 (`_HEARTBEAT_STALE_MIN`). New `TestDbOperationReaper` (3 tests) passes.
 - [ ] 🟠 **CX-001** In-SPA password reset (or clearly-explained external link in new tab).
 - [ ] 🟠 **CX-002** Centralize `auth_required` → AuthContext re-auth; stop masking as "Instance not found".
 

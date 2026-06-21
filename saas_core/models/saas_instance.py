@@ -11015,6 +11015,7 @@ class SaasInstance(models.Model):
         run_in_background(
             op, '_run_upgrade',
             thread_name='saas_db_upgrade_%s_%s' % (full_name, module_norm),
+            heartbeat_field='last_heartbeat',
         )
         return op
 
@@ -11177,6 +11178,7 @@ class SaasInstance(models.Model):
         run_in_background(
             op, '_run_upgrade_live',
             thread_name='saas_db_upgmod_%s' % full_name,
+            heartbeat_field='last_heartbeat',
         )
         return op
 
@@ -11278,6 +11280,7 @@ class SaasInstance(models.Model):
             op, '_run_restore',
             method_args=(backup.id,),
             thread_name='saas_db_restore_%s' % backup.db_name,
+            heartbeat_field='last_heartbeat',
         )
         return op
 
@@ -11910,6 +11913,7 @@ class SaasInstance(models.Model):
                 login, password, lang or 'en_US', country_code or None,
             ),
             thread_name='saas_db_create_%s' % full_name,
+            heartbeat_field='last_heartbeat',
         )
         return op
 
@@ -11941,6 +11945,7 @@ class SaasInstance(models.Model):
         run_in_background(
             op, '_run_duplicate',
             thread_name='saas_db_dup_%s' % new_full,
+            heartbeat_field='last_heartbeat',
         )
         return op
 
@@ -11970,6 +11975,7 @@ class SaasInstance(models.Model):
         run_in_background(
             op, '_run_drop',
             thread_name='saas_db_drop_%s' % full_name,
+            heartbeat_field='last_heartbeat',
         )
         return op
 

@@ -93,7 +93,16 @@ class SaasInstanceDbOperation(models.Model):
     # Any op older than this and still in 'running' is reaped. Tuned to
     # be comfortably longer than the slowest legitimate op (large DB
     # duplicate ~5–10 min, module upgrade on a big DB up to ~15 min).
+    # This is the backstop for rows that never got a heartbeat.
     _ZOMBIE_TIMEOUT_MIN = 30
+
+    # A running op whose background worker is alive stamps ``last_heartbeat``
+    # every ~30s (see utils.run_in_background). If the heartbeat goes stale by
+    # this many minutes the worker is presumed dead and the op is failed fast —
+    # well under the 30-min net, so the customer isn't stuck on a spinner
+    # (PROV-001). Comfortably larger than the beat interval to absorb a few
+    # missed beats / DB hiccups.
+    _HEARTBEAT_STALE_MIN = 3
 
     instance_id = fields.Many2one(
         'saas.instance', required=True, ondelete='cascade', index=True,
@@ -124,6 +133,9 @@ class SaasInstanceDbOperation(models.Model):
         [('running', 'Running'), ('done', 'Done'), ('failed', 'Failed')],
         default='running', required=True, index=True,
     )
+    # Stamped at creation and then every ~30s by the background worker's
+    # watchdog while it runs; a stale value means the worker died (PROV-001).
+    last_heartbeat = fields.Datetime(default=fields.Datetime.now, index=True)
     error_message = fields.Text(readonly=True)
     output_log = fields.Text(
         readonly=True,
@@ -335,7 +347,7 @@ class SaasInstanceDbOperation(models.Model):
     # ------------------------------------------------------------------
     @api.model
     def _cron_reap_stuck_db_operations(self):
-        """Fail every 'running' op that's been alive too long.
+        """Fail every 'running' op whose worker is gone.
 
         Runs from cron every few minutes. The background workers
         normally flip state themselves; this is the safety net for
@@ -343,17 +355,25 @@ class SaasInstanceDbOperation(models.Model):
         reload, SSH socket dropped) so the customer doesn't see an
         eternal "Creating database X..." banner.
 
-        The cutoff (``_ZOMBIE_TIMEOUT_MIN``) is intentionally larger
-        than the slowest legitimate op, so we never kill an in-flight
-        long-running upgrade.
+        Two cutoffs, OR'd:
+        * **heartbeat stale** (``_HEARTBEAT_STALE_MIN``): a live worker
+          stamps ``last_heartbeat`` every ~30s, so a stale stamp means
+          the worker died — fail it fast (minutes). A legitimately long
+          op keeps beating, so it's never touched however long it runs.
+        * **create-time net** (``_ZOMBIE_TIMEOUT_MIN``): backstop for
+          rows that somehow never beat (heartbeat thread failed to start,
+          legacy rows created before this field existed).
         """
         import datetime as _dt
-        cutoff = fields.Datetime.now() - _dt.timedelta(
-            minutes=self._ZOMBIE_TIMEOUT_MIN,
-        )
+        now = fields.Datetime.now()
+        hb_cutoff = now - _dt.timedelta(minutes=self._HEARTBEAT_STALE_MIN)
+        old_cutoff = now - _dt.timedelta(minutes=self._ZOMBIE_TIMEOUT_MIN)
         zombies = self.search([
             ('state', '=', 'running'),
-            ('create_date', '<', cutoff),
+            '|',
+                ('last_heartbeat', '<', hb_cutoff),
+                '&', ('last_heartbeat', '=', False),
+                     ('create_date', '<', old_cutoff),
         ])
         if not zombies:
             return
