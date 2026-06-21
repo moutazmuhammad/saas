@@ -135,7 +135,7 @@ Confirmed during audit; left here so nobody "fixes" a non-issue. No checkbox = n
 
 ### Reliability/idempotency
 - [ ] 🟡 **ARCH-011 / PERF-009** Idempotent cron item-processing; savepoints/jobs instead of per-item commits.
-- [ ] 🟡 **ARCH-015 / ARCH-016 / ARCH-017** Recovery sentinel (not health-only); webhook de-dup; git clone TLS verify.
+- [~] 🟡 **ARCH-015 / ARCH-016 / ARCH-017** Recovery sentinel (not health-only); webhook de-dup; git clone TLS verify. — **ARCH-017 done + tested**: clone + pull now force `git -c http.sslVerify=true` (strictly safe; protects customer-code fetch from a downgraded host git config / MITM). `TestRepoCloneTls` asserts the flag. **ARCH-016** webhook de-dup already in place (`last_delivery_id` guard in `webhook.py`). ARCH-015 (recovery sentinel) still TODO.
 
 ---
 

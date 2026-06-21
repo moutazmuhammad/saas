@@ -1421,9 +1421,12 @@ class SaasInstanceRepo(models.Model):
                     instance._append_log(
                         "Cloning repo %s (branch: %s)..." % (rec.repo_url, rec.branch)
                     )
+                    # Force TLS cert verification at clone time (ARCH-017) so a
+                    # downgraded/compromised host git config can't silently
+                    # disable it and allow a MITM of customer code over https.
                     clone_cmd = (
-                        'git clone --branch %s --single-branch '
-                        '--depth 1 %s %s 2>&1'
+                        'git -c http.sslVerify=true clone --branch %s '
+                        '--single-branch --depth 1 %s %s 2>&1'
                     ) % (
                         shlex.quote(rec.branch),
                         shlex.quote(clone_url),
@@ -1562,7 +1565,7 @@ class SaasInstanceRepo(models.Model):
                 instance._append_log(
                     "Pulling latest changes for %s..." % self.name
                 )
-                pull_cmd = 'cd %s && git pull origin %s 2>&1' % (
+                pull_cmd = 'cd %s && git -c http.sslVerify=true pull origin %s 2>&1' % (
                     shlex.quote(repo_path), shlex.quote(self.branch),
                 )
                 exit_code, stdout, stderr = ssh.execute(pull_cmd, timeout=300)
