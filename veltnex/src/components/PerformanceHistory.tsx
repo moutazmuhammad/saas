@@ -1,4 +1,5 @@
 import * as React from "react";
+import { usePolling } from "@/hooks/usePolling";
 import { Activity } from "lucide-react";
 import { api, type MetricsHistory, type MetricSample } from "@/lib/api";
 import { Card } from "@/components/ui/card";
@@ -54,38 +55,23 @@ export function PerformanceHistory({
 
   // History: load on range change, then auto-refresh on an interval matched to
   // the window so new points stream into the charts without a manual reload.
-  React.useEffect(() => {
-    let alive = true;
+  const loadHistory = React.useCallback(async () => {
     setLoading(true);
-    const load = () =>
-      api
-        .instanceMetricsHistory(instanceId, range, accessToken)
-        .then((d) => alive && setData(d))
-        .catch(() => {})
-        .finally(() => alive && setLoading(false));
-    load();
-    const t = setInterval(load, HISTORY_REFRESH_MS[range] ?? 60000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
+    try {
+      setData(await api.instanceMetricsHistory(instanceId, range, accessToken));
+    } finally {
+      setLoading(false);
+    }
   }, [instanceId, range, accessToken]);
+  usePolling(loadHistory, {
+    interval: HISTORY_REFRESH_MS[range] ?? 60000, immediate: true,
+  });
 
   // Live poll every 5s — keeps the instance watched + drives the live readout.
-  React.useEffect(() => {
-    let alive = true;
-    const poll = () =>
-      api
-        .instanceMetrics(instanceId, accessToken)
-        .then((d) => alive && setLive(d))
-        .catch(() => {});
-    poll();
-    const t = setInterval(poll, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
+  const loadLive = React.useCallback(async () => {
+    setLive(await api.instanceMetrics(instanceId, accessToken));
   }, [instanceId, accessToken]);
+  usePolling(loadLive, { interval: 5000, immediate: true });
 
   const samples = data?.samples ?? [];
   const lastSample = samples[samples.length - 1];

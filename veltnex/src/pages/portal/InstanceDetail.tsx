@@ -1,4 +1,5 @@
 import * as React from "react";
+import { usePolling } from "@/hooks/usePolling";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Play,
@@ -89,53 +90,37 @@ export default function InstanceDetail() {
     }
   }, [params, toast]);
 
-  // Live status polling (state + usage).
-  React.useEffect(() => {
-    if (!instance) return;
-    const fast = TRANSITIONAL.has(instance.state);
-    if (!fast && instance.state !== "running") return;
-    const t = setInterval(async () => {
-      try {
-        const s = await api.instanceStatus(instanceId);
-        setInstance((prev) =>
-          prev ? { ...prev, state: s.state, state_label: s.state_label, url: s.url || prev.url, usage: s.usage || prev.usage } : prev
-        );
-      } catch {
-        /* transient */
-      }
-    }, fast ? 4000 : 10000);
-    return () => clearInterval(t);
-  }, [instance, instanceId]);
+  // Live status polling (state + usage) — resilient (backoff / pause-hidden /
+  // stop-on-auth) via usePolling.
+  const _fast = instance ? TRANSITIONAL.has(instance.state) : false;
+  const _pollStatus = !!instance && (_fast || instance.state === "running");
+  usePolling(
+    async () => {
+      const s = await api.instanceStatus(instanceId);
+      setInstance((prev) =>
+        prev ? { ...prev, state: s.state, state_label: s.state_label, url: s.url || prev.url, usage: s.usage || prev.usage } : prev
+      );
+    },
+    { interval: _fast ? 4000 : 10000, enabled: _pollStatus }
+  );
 
   // Near-real-time CPU/RAM by polling the cheap cached endpoint (which
   // also marks the instance "watched" so the backend sampler measures
   // it). No SSH per viewer — measurement is decoupled from viewing.
   const running = instance?.state === "running";
   React.useEffect(() => {
-    if (!running) {
-      setLive(null);
-      return;
-    }
-    let cancelled = false;
-    const token = params.get("access_token") || undefined;
-    const tick = async () => {
-      try {
-        const m = await api.instanceMetrics(instanceId, token);
-        if (cancelled) return;
-        setLive({ cpu: m.cpu, ram: m.ram });
-        setCpuHist((h) => [...h.slice(-39), m.cpu]);
-        setRamHist((h) => [...h.slice(-39), m.ram]);
-      } catch {
-        /* transient */
-      }
-    };
-    tick();
-    const t = setInterval(tick, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, [running, instanceId, params]);
+    if (!running) setLive(null);
+  }, [running]);
+  const _liveToken = params.get("access_token") || undefined;
+  usePolling(
+    async () => {
+      const m = await api.instanceMetrics(instanceId, _liveToken);
+      setLive({ cpu: m.cpu, ram: m.ram });
+      setCpuHist((h) => [...h.slice(-39), m.cpu]);
+      setRamHist((h) => [...h.slice(-39), m.ram]);
+    },
+    { interval: 3000, enabled: running, immediate: true }
+  );
 
   if (error) {
     return (
