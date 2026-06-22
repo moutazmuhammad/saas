@@ -373,6 +373,33 @@ class TestDeployViaQueue(TransactionCase):
         self.assertEqual(inst.state, 'provisioning',
                          "instance with a live job must be left to the queue")
 
+    def _lifecycle_job(self, inst, method):
+        return self.Job.sudo().search([
+            ('model', '=', 'saas.instance'), ('res_id', '=', inst.id),
+            ('method', '=', method)], limit=1)
+
+    def test_action_restart_enqueues_idempotent_job(self):
+        inst = self._instance('dpqrestart', state='running')
+        with patch.object(type(inst), '_ensure_can_ssh', lambda self: None):
+            inst.action_restart()
+        job = self._lifecycle_job(inst, '_do_restart')
+        self.assertTrue(job, "restart must enqueue a durable job")
+        self.assertEqual(job.channel, 'deploy')
+        self.assertTrue(job.idempotent, "restart is crash-recoverable")
+        self.assertEqual(job.max_attempts, 2)
+        self.assertEqual(job.on_error, '_on_background_error')
+        self.assertEqual(json.loads(job.on_error_args_json), ['running'])
+
+    def test_action_redeploy_enqueues_idempotent_job(self):
+        inst = self._instance('dpqredeploy', state='running')
+        with patch.object(type(inst), '_ensure_can_ssh', lambda self: None):
+            inst.action_redeploy()
+        job = self._lifecycle_job(inst, '_do_redeploy')
+        self.assertTrue(job, "redeploy must enqueue a durable job")
+        self.assertEqual(job.channel, 'deploy')
+        self.assertTrue(job.idempotent)
+        self.assertEqual(job.max_attempts, 2)
+
     def test_action_delete_enqueues_job(self):
         inst = self._instance('dpqdel', state='running')
         with patch.object(type(inst), '_ensure_can_ssh', lambda self: None):

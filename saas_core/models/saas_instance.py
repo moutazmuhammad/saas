@@ -5528,12 +5528,13 @@ class SaasInstance(models.Model):
             rec.pending_operation = 'restart'
             rec.state = 'provisioning'
             rec._append_log("Restart queued. Running in background...")
-            run_in_background(
-                rec, '_do_restart',
-                error_method='_on_background_error',
-                error_args=(prev_state,),
-                thread_name='saas_restart_%s' % rec.subdomain,
-            )
+            # Durable queue (ARCH-004): restart is recoverable + idempotent, so a
+            # worker that dies mid-restart is re-run by the reaper (completing the
+            # op) rather than left for recover-stuck to merely revert.
+            self.env['saas.job']._enqueue(
+                rec, '_do_restart', channel='deploy',
+                lock_key='instance:%s' % rec.id, idempotent=True, max_attempts=2,
+                on_error='_on_background_error', on_error_args=(prev_state,))
 
     def _do_restart(self):
         """Restart container (runs in background thread). Routed via ComputeDriver."""
@@ -5633,12 +5634,11 @@ class SaasInstance(models.Model):
             rec.pending_operation = 'redeploy'
             rec.state = 'provisioning'
             rec._append_log("Redeployment queued. Running in background...")
-            run_in_background(
-                rec, '_do_redeploy',
-                error_method='_on_background_error',
-                error_args=(prev_state,),
-                thread_name='saas_redeploy_%s' % rec.subdomain,
-            )
+            # Durable queue (ARCH-004): redeploy is recoverable + idempotent.
+            self.env['saas.job']._enqueue(
+                rec, '_do_redeploy', channel='deploy',
+                lock_key='instance:%s' % rec.id, idempotent=True, max_attempts=2,
+                on_error='_on_background_error', on_error_args=(prev_state,))
 
     def _collect_repo_requirements(self, ssh):
         """Combined ``requirements.txt`` content from the connected repos, read
