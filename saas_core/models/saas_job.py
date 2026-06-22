@@ -262,16 +262,9 @@ class SaasJob(models.Model):
         except Exception as e:
             self.env.cr.rollback()
             _logger.exception("saas.job %s (%s.%s) failed", self.id, self.model, self.method)
-            # Run the target's error handler (e.g. _on_background_error, which
-            # transitions the instance to failed/pending + alerts) before we
-            # record the job outcome — mirrors run_in_background's error_method.
-            if self.on_error and record is not None:
-                try:
-                    getattr(record, self.on_error)(
-                        e, *json.loads(self.on_error_args_json or '[]'))
-                except Exception:
-                    _logger.exception(
-                        "saas.job %s on_error handler failed", self.id)
+            # on_error runs ONLY on terminal failure (in _finish_failed), not on
+            # every intermediate retry — so a target that owns retries via
+            # max_attempts (e.g. deploy) isn't marked failed/alerted mid-retry.
             self._reschedule_or_fail(str(e))
         finally:
             stop.set()
@@ -337,6 +330,21 @@ class SaasJob(models.Model):
             'error': (message or '')[:2000],
         })
         self.env.cr.commit()
+        # Terminal failure → run the target's on_error handler exactly once
+        # (e.g. _on_background_error, which transitions the instance to failed +
+        # alerts). Runs here, not per-attempt, so a retry-owning target isn't
+        # failed mid-retry. Reached from both retry-exhaustion and the reaper.
+        if self.on_error and self.res_id:
+            record = self.env[self.model].browse(self.res_id)
+            if record.exists():
+                try:
+                    getattr(record, self.on_error)(
+                        Exception(message), *json.loads(self.on_error_args_json or '[]'))
+                    self.env.cr.commit()
+                except Exception:
+                    self.env.cr.rollback()
+                    _logger.exception(
+                        "saas.job %s on_error handler failed", self.id)
         # Operational alert + immutable audit on terminal failure.
         try:
             self.env['saas.alert']._notify(

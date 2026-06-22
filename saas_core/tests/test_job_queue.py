@@ -107,6 +107,25 @@ class TestJobQueue(TransactionCase):
         self.assertIn('boom', self._onerror_calls[0][0])
         self.assertEqual(self._onerror_calls[0][1], ['x'])
 
+    def test_on_error_only_on_terminal_failure(self):
+        # With retries remaining, a failed attempt reschedules WITHOUT firing
+        # on_error; on_error fires once, only when attempts are exhausted.
+        self._no_commit()
+        job = self.Job._enqueue(self.partner, '_job_boom', max_attempts=2,
+                                on_error='_job_onerror', on_error_args=('z',))
+        self.Job._cron_run_jobs()  # attempt 1 -> reschedule
+        self.assertEqual(job.state, 'pending')
+        self.assertEqual(len(self._onerror_calls), 0,
+                         "on_error must NOT fire on an intermediate retry")
+        # Clear the back-off so the next claim is due. Flush so the raw-SQL
+        # claim in _claim_jobs sees the new run_after (not just the ORM cache).
+        job.run_after = fields.Datetime.now() - timedelta(seconds=1)
+        self.env.flush_all()
+        self.Job._cron_run_jobs()  # attempt 2 -> terminal
+        self.assertEqual(job.state, 'failed')
+        self.assertEqual(len(self._onerror_calls), 1,
+                         "on_error fires exactly once, on terminal failure")
+
     def test_channel_concurrency_cap(self):
         # Soft per-channel cap bounds immediate workers (no thundering herd).
         self.env['ir.config_parameter'].sudo().set_param(
@@ -322,6 +341,37 @@ class TestDeployViaQueue(TransactionCase):
         self.assertEqual(job.on_error, '_on_background_error')
         self.assertEqual(json.loads(job.on_error_args_json), ['failed'])
         self.assertEqual(inst.state, 'provisioning')
+        # Retry cutover: the queue owns retries (max_attempts) + crash recovery
+        # (idempotent → reaper requeues a dead deploy).
+        self.assertEqual(job.max_attempts, inst.max_deploy_retries + 1)
+        self.assertTrue(job.idempotent)
+
+    def test_deploy_terminal_failure_marks_instance_failed(self):
+        # _on_background_error (the deploy job's on_error) now goes straight to
+        # 'failed' — the queue already exhausted its retries; no pending dance.
+        inst = self._instance('dpqfail', state='provisioning')
+        inst._on_background_error(Exception("boom"), 'failed')
+        self.assertEqual(inst.state, 'failed',
+                         "terminal deploy failure must not re-queue to pending")
+
+    def test_recover_stuck_defers_to_queue(self):
+        # An instance with a live deploy job must be left to the queue reaper,
+        # not recovered by the stuck-provisioning cron (no double-run).
+        inst = self._instance('dpqstuck', state='provisioning')
+        inst.pending_operation = 'deploy'
+        inst.write({'pre_provisioning_state': 'failed'})
+        job = self.Job._enqueue(inst, '_do_deploy', channel='deploy',
+                                idempotent=True, run_now=False)
+        job.state = 'running'
+        # Make it look stuck (old write_date) for the cron's search window.
+        self.env.cr.execute(
+            "UPDATE saas_instance SET write_date = (now() at time zone 'UTC') "
+            "- interval '30 minutes' WHERE id = %s", (inst.id,))
+        inst.invalidate_recordset()
+        self.env['saas.instance']._cron_recover_stuck_provisioning()
+        inst.invalidate_recordset()
+        self.assertEqual(inst.state, 'provisioning',
+                         "instance with a live job must be left to the queue")
 
     def test_action_delete_enqueues_job(self):
         inst = self._instance('dpqdel', state='running')

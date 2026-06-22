@@ -4006,6 +4006,13 @@ class SaasInstance(models.Model):
     def _cron_retry_pending_provision(self):
         """Cron: attempt to deploy instances stuck in pending_provision.
 
+        After the ARCH-004 retry cutover this cron handles ONE concern:
+        CAPACITY-WAITING. ``pending_provision`` is now set only by
+        ``_mark_as_pending`` (no server available) — deploy *failures* are
+        retried by the durable queue (max_attempts), not bounced back here.
+        PROV-004's ``pending_retry_now`` still fast-tracks these when capacity
+        or host health changes.
+
         Capacity-blocked instances can stay pending indefinitely if
         the operator never adds servers — without back-off this cron
         would call ``_allocate_servers`` every 5 minutes for days,
@@ -4179,8 +4186,20 @@ class SaasInstance(models.Model):
             _logger.info(
                 "recover-stuck cron hit the %d batch cap; remaining instances "
                 "are handled next run.", self._CRON_BATCH_SIZE)
+        Job = self.env['saas.job'].sudo()
         for instance in stuck:
             try:
+                # ARCH-004 retry cutover: the durable queue owns crash recovery
+                # for queued operations (deploy via the reaper, db-ops, etc.).
+                # If a non-terminal job targets this instance, leave it to the
+                # queue — recovering here would race the reaper / double-run.
+                # This cron now only rescues LEGACY run_in_background ops that
+                # have no job row (e.g. restart/redeploy/start).
+                if Job.search_count([
+                        ('model', '=', 'saas.instance'),
+                        ('res_id', '=', instance.id),
+                        ('state', 'in', ('pending', 'running'))]):
+                    continue
                 # Liveness gate: a long deploy is ONE transaction, so its
                 # write_date stays frozen and it looks "stuck" — but it holds
                 # the operation advisory lock. If a live op holds it, leave it
@@ -5178,13 +5197,19 @@ class SaasInstance(models.Model):
                 "Deployment queued (attempt %d). Running in background..."
                 % (rec.deploy_retry_count + 1)
             )
-            # Durable queue (ARCH-004 Phase 3): runs promptly via the immediate
-            # worker but is crash-recoverable; on failure _on_background_error
-            # still drives the instance state + the existing pending/recover
-            # crons own retries (max_attempts=1 here). No secret args.
+            # Durable queue OWNS deploy retries + crash recovery (ARCH-004 retry
+            # cutover): the queue retries _do_deploy up to max_deploy_retries
+            # with back-off (instance stays 'provisioning' across attempts), and
+            # because the deploy is idempotent (re-runnable — mkdir -p, template
+            # clone is guarded, etc.) the reaper requeues it if a worker dies.
+            # _on_background_error fires only on TERMINAL failure → 'failed'.
+            # No secret args. (Capacity-waiting still flows through
+            # pending_provision + _cron_retry_pending_provision; per-host death
+            # is moot — _allocate_servers keeps the same host once assigned.)
             self.env['saas.job']._enqueue(
                 rec, '_do_deploy', channel='deploy',
-                lock_key='instance:%s' % rec.id, max_attempts=1,
+                lock_key='instance:%s' % rec.id,
+                max_attempts=max(1, rec.max_deploy_retries + 1), idempotent=True,
                 on_error='_on_background_error', on_error_args=('failed',))
 
     def _record_build(self, source, state='success', commit_message=False,
@@ -6547,21 +6572,16 @@ class SaasInstance(models.Model):
         self.pending_operation = False
 
         if prev_state == 'failed':
-            # This was a deploy attempt (error_args=('failed',))
-            if self.max_deploy_retries and self.deploy_retry_count < self.max_deploy_retries:
-                self.deploy_retry_count += 1
-                self.state = 'pending_provision'
-                self._append_log(
-                    "Auto-queued for retry (%d/%d). Will retry automatically."
-                    % (self.deploy_retry_count, self.max_deploy_retries)
-                )
-                return
-            # Max retries exhausted
+            # This was a deploy attempt (error_args=('failed',)). The durable
+            # queue OWNS deploy retries now (max_attempts=max_deploy_retries+1
+            # with back-off) — this handler only runs on TERMINAL failure (the
+            # queue exhausted its attempts or the job is unrecoverable), so go
+            # straight to 'failed'. (Retrying here too would double-retry.)
             self.state = 'failed'
             if self.max_deploy_retries:
                 self._append_log(
-                    "Max retries exhausted (%d/%d). Manual intervention required."
-                    % (self.deploy_retry_count, self.max_deploy_retries)
+                    "Deployment failed after all automatic retries (max %d). "
+                    "Manual intervention required." % self.max_deploy_retries
                 )
         else:
             self.state = prev_state
