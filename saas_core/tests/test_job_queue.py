@@ -107,6 +107,20 @@ class TestJobQueue(TransactionCase):
         self.assertIn('boom', self._onerror_calls[0][0])
         self.assertEqual(self._onerror_calls[0][1], ['x'])
 
+    def test_channel_concurrency_cap(self):
+        # Soft per-channel cap bounds immediate workers (no thundering herd).
+        self.env['ir.config_parameter'].sudo().set_param(
+            'saas_master.job_channel_concurrency', '2')
+        self.assertTrue(self.Job._should_spawn_now('capx'))
+        j1 = self.Job._enqueue(self.partner, '_job_ok', channel='capx', run_now=False)
+        j1.state = 'running'
+        self.assertTrue(self.Job._should_spawn_now('capx'), "1 < cap -> spawn ok")
+        j2 = self.Job._enqueue(self.partner, '_job_ok', channel='capx', run_now=False)
+        j2.state = 'running'
+        self.assertFalse(self.Job._should_spawn_now('capx'), "2 >= cap -> defer")
+        # Cap is per-channel: a different channel still has capacity.
+        self.assertTrue(self.Job._should_spawn_now('other'))
+
     # ---- claim gating ----
     def test_future_job_not_claimed(self):
         self._no_commit()

@@ -29,6 +29,11 @@ class SaasJob(models.Model):
 
     # How many due jobs a single _cron_run_jobs tick claims.
     _RUN_BATCH = 50
+    # Soft cap on concurrent immediate workers PER CHANNEL, so a burst of
+    # enqueues can't spawn an unbounded number of threads (thundering herd).
+    # Over-cap jobs stay pending and the cron drains them. Configurable via
+    # ir.config_parameter 'saas_master.job_channel_concurrency'.
+    _DEFAULT_CHANNEL_CONCURRENCY = 8
     # A running job whose heartbeat is older than this is presumed dead.
     _HEARTBEAT_STALE_MIN = 15
     # How often the in-flight worker stamps the heartbeat (job + target).
@@ -108,11 +113,35 @@ class SaasJob(models.Model):
             job._spawn_worker()
         return job
 
+    @api.model
+    def _channel_concurrency(self):
+        """Max concurrent immediate workers per channel (config-overridable)."""
+        val = self.env['ir.config_parameter'].sudo().get_param(
+            'saas_master.job_channel_concurrency')
+        try:
+            return int(val) if val else self._DEFAULT_CHANNEL_CONCURRENCY
+        except (TypeError, ValueError):
+            return self._DEFAULT_CHANNEL_CONCURRENCY
+
+    @api.model
+    def _should_spawn_now(self, channel):
+        """True while the channel has spare concurrency for an immediate worker.
+        Over-cap jobs stay pending; the cron drains them as workers free up."""
+        running = self.search_count([
+            ('state', '=', 'running'), ('channel', '=', channel)])
+        return running < self._channel_concurrency()
+
     def _spawn_worker(self):
         """Commit the job, then run it in a daemon thread with its own cursor.
         Mirrors utils.run_in_background, but the durable row means a crash is
-        recovered by the cron/reaper rather than lost."""
+        recovered by the cron/reaper rather than lost. Bounded per channel so a
+        burst of enqueues can't spawn unbounded threads."""
         self.ensure_one()
+        if not self._should_spawn_now(self.channel):
+            _logger.info(
+                "saas.job %s: channel '%s' at concurrency cap; left pending "
+                "for the cron", self.id, self.channel)
+            return
         job_id = self.id
         dbname = self.env.cr.dbname
         self.env.cr.commit()  # publish the job so the new cursor sees it
