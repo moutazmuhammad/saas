@@ -6634,6 +6634,19 @@ class SaasInstance(models.Model):
                     source.name,
                 )
 
+    def _run_daily_full_backup(self):
+        """Durable-queue entry point for the nightly full-instance snapshot
+        (hosting). Runs the same backup logic the cron used to run inline — now
+        parallelised across instances by the queue's per-channel worker pool."""
+        self.ensure_one()
+        self.env['saas.instance.backup']._perform_full_instance_backup(self)
+
+    def _run_daily_db_backup(self):
+        """Durable-queue entry point for the nightly per-DB backup (managed
+        services)."""
+        self.ensure_one()
+        self.env['saas.instance.backup']._perform_backup(self)
+
     def action_create_backup(self):
         """Create a backup in the background."""
         self.ensure_one()

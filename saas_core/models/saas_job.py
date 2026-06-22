@@ -143,6 +143,7 @@ class SaasJob(models.Model):
                 "for the cron", self.id, self.channel)
             return
         job_id = self.id
+        channel = self.channel
         dbname = self.env.cr.dbname
         self.env.cr.commit()  # publish the job so the new cursor sees it
 
@@ -153,12 +154,51 @@ class SaasJob(models.Model):
                 reg = odoo.modules.registry.Registry(dbname)
                 with reg.cursor() as cr:
                     env = odoo_api.Environment(cr, SUPERUSER_ID, {})
-                    env['saas.job']._run_one(job_id)
+                    env['saas.job']._worker_loop(job_id, channel)
             except Exception:
                 _logger.exception("saas.job %s worker thread crashed", job_id)
 
         threading.Thread(
             target=_target, name='saas_job_%s' % job_id, daemon=True).start()
+
+    @api.model
+    def _worker_loop(self, first_job_id, channel):
+        """Run ``first_job_id``, then keep draining due pending jobs in the same
+        channel until none remain. A fixed set of immediate workers (bounded by
+        the per-channel cap) thus sustains parallel throughput — e.g. nightly
+        backups run ~cap-at-a-time instead of cap-then-serial — and over-cap
+        deferred jobs get picked up here rather than waiting for the cron."""
+        self._run_one(first_job_id)
+        while True:
+            job = self._claim_next_in_channel(channel)
+            if not job:
+                break
+            job._execute()
+
+    @api.model
+    def _claim_next_in_channel(self, channel):
+        """Atomically claim ONE due pending job in *channel* (FOR UPDATE SKIP
+        LOCKED) and return it (now running), or an empty recordset."""
+        now = fields.Datetime.now()
+        self.env.cr.execute(
+            """
+            UPDATE saas_job SET state='running', started_at=%s,
+                   last_heartbeat=%s, attempts=attempts+1
+            WHERE id = (
+                SELECT id FROM saas_job
+                WHERE state='pending' AND channel=%s AND run_after<=%s
+                      AND attempts<max_attempts
+                ORDER BY priority, run_after, id
+                FOR UPDATE SKIP LOCKED LIMIT 1)
+            RETURNING id
+            """, (now, now, channel, now))
+        row = self.env.cr.fetchone()
+        if not row:
+            return self.browse()
+        self.env.cr.commit()
+        job = self.browse(row[0])
+        job.invalidate_recordset()
+        return job
 
     @api.model
     def _run_one(self, job_id):

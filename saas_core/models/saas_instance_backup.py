@@ -1748,40 +1748,28 @@ fi
             ('plan_id', '=', False),
             ('plan_id.is_trial_plan', '=', False),
         ])
+        Job = self.env['saas.job']
+        enqueued = 0
         for instance in instances:
-            try:
-                if instance.is_hosting:
-                    if not instance.daily_backup_enabled:
-                        continue
-                    # Paused because the monthly add-on invoice is
-                    # overdue — skip until the customer renews.
-                    if instance.daily_backup_suspended:
-                        continue
-                    # One full-instance snapshot per night, not per DB —
-                    # so restoring is a single atomic action that brings
-                    # back every database, the filestore, custom code,
-                    # config and Docker layout together.
-                    try:
-                        self._perform_full_instance_backup_in_new_cursor(
-                            instance.id,
-                        )
-                    except Exception as e:
-                        _logger.error(
-                            "Full-instance backup failed for %s: %s",
-                            instance.name, e,
-                        )
-                else:
-                    # Services: snapshots are a paid, opt-in add-on too —
-                    # only back up when subscribed and not paused (mirrors
-                    # the hosting gate above).
-                    if not instance.daily_backup_enabled:
-                        continue
-                    if instance.daily_backup_suspended:
-                        continue
-                    self._perform_backup_in_new_cursor(instance.id)
-            except Exception as e:
-                _logger.error("Backup failed for instance %s: %s", instance.name, e)
-
+            # Both hosting + services snapshots are a paid, opt-in add-on:
+            # skip unless subscribed and not paused for an overdue invoice.
+            if not instance.daily_backup_enabled or instance.daily_backup_suspended:
+                continue
+            # PERF-001: enqueue one backup job per instance instead of running
+            # them serially in this cron thread. The queue's per-channel worker
+            # pool runs up to the concurrency cap in parallel, so the nightly
+            # window scales; lock_key='instance:<id>' serialises with any portal
+            # backup of the same instance (shared restic repo).
+            method = ('_run_daily_full_backup' if instance.is_hosting
+                      else '_run_daily_db_backup')
+            Job._enqueue(
+                instance, method, channel='backup',
+                lock_key='instance:%s' % instance.id, max_attempts=1,
+                idempotency_key='daily_backup:%s:%s' % (
+                    instance.id, fields.Date.today()))
+            enqueued += 1
+        _logger.info("Daily backup cron enqueued %d instance backup job(s).",
+                     enqueued)
         self._cleanup_old_backups()
 
     def _perform_full_instance_backup_in_new_cursor(self, instance_id):

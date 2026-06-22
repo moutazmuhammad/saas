@@ -126,6 +126,28 @@ class TestJobQueue(TransactionCase):
         self.assertEqual(len(self._onerror_calls), 1,
                          "on_error fires exactly once, on terminal failure")
 
+    def test_worker_loop_drains_channel(self):
+        # A single worker drains all due pending jobs in its channel (the basis
+        # for bounded-parallel throughput, e.g. nightly backups).
+        self._no_commit()
+        jobs = [self.Job._enqueue(self.partner, '_job_ok', channel='drain',
+                                  run_now=False) for _i in range(3)]
+        self.env.flush_all()
+        self.Job._worker_loop(jobs[0].id, 'drain')
+        for j in jobs:
+            j.invalidate_recordset()
+            self.assertEqual(j.state, 'done', "worker loop must drain the channel")
+
+    def test_claim_next_in_channel_is_scoped(self):
+        self._no_commit()
+        mine = self.Job._enqueue(self.partner, '_job_ok', channel='c1', run_now=False)
+        self.Job._enqueue(self.partner, '_job_ok', channel='c2', run_now=False)
+        self.env.flush_all()
+        claimed = self.Job._claim_next_in_channel('c1')
+        self.assertEqual(claimed, mine, "must claim only within the channel")
+        self.assertFalse(self.Job._claim_next_in_channel('c1'),
+                         "channel drained → empty")
+
     def test_channel_concurrency_cap(self):
         # Soft per-channel cap bounds immediate workers (no thundering herd).
         self.env['ir.config_parameter'].sudo().set_param(
@@ -289,6 +311,71 @@ class TestDbOpViaQueue(TransactionCase):
         job = self.Job._enqueue(op, '_run_drop', run_now=False)  # state pending
         self.assertFalse(self.Job._heartbeat_tick(job.id),
                          "a non-running job stops the beater")
+
+
+@tagged('post_install', '-at_install')
+class TestDailyBackupViaQueue(TransactionCase):
+    """PERF-001: the daily-backup cron enqueues one job per eligible instance
+    (run in parallel by the queue) instead of backing them up serially."""
+
+    def setUp(self):
+        super().setUp()
+        self.Job = self.env['saas.job']
+        product = self.env['saas.product'].sudo().search(
+            [('is_hosting', '=', True)], limit=1) or \
+            self.env['saas.product'].sudo().create(
+                {'name': 'DB Hosting', 'is_hosting': True, 'is_published': True})
+        plan = self.env['saas.plan'].sudo().create({
+            'name': 'DB Plan', 'is_custom': True, 'workers': 1, 'storage_limit': 5,
+            'cpu_limit': 1.0, 'ram_limit': '1g', 'price': 20.0, 'yearly_price': 192.0,
+            'currency_id': self.env.company.currency_id.id,
+            'saas_product_ids': [(6, 0, [product.id])]})
+        domain = self.env['saas.based.domain'].sudo().search([], limit=1) or \
+            self.env['saas.based.domain'].sudo().create({'name': 'db.example.com'})
+        partner = self.env['res.partner'].sudo().create({'name': 'DB Cust'})
+        self._base = {
+            'domain_id': domain.id, 'partner_id': partner.id,
+            'saas_product_id': product.id, 'plan_id': plan.id,
+            'billing_period': 'monthly', 'environment': 'production',
+            'region_id': False, 'is_hosting': True, 'state': 'running'}
+        wp = patch.object(type(self.Job), '_spawn_worker', lambda self: None)
+        wp.start()
+        self.addCleanup(wp.stop)
+
+    def _inst(self, sub, **vals):
+        return self.env['saas.instance'].sudo().create(
+            {**self._base, 'subdomain': sub, **vals})
+
+    def test_cron_enqueues_only_for_enabled_instances(self):
+        on = self._inst('bkon', daily_backup_enabled=True)
+        off_disabled = self._inst('bkoff', daily_backup_enabled=False)
+        off_suspended = self._inst('bksusp', daily_backup_enabled=True,
+                                   daily_backup_suspended=True)
+        Backup = self.env['saas.instance.backup']
+        with patch.object(type(Backup), '_cleanup_old_backups', lambda self: None):
+            Backup._cron_backup_all_instances()
+
+        def job_for(inst):
+            return self.Job.sudo().search([
+                ('model', '=', 'saas.instance'), ('res_id', '=', inst.id),
+                ('method', '=', '_run_daily_full_backup')], limit=1)
+        job_on = job_for(on)
+        self.assertTrue(job_on, "enabled instance must get a backup job")
+        self.assertEqual(job_on.channel, 'backup')
+        self.assertEqual(job_on.lock_key, 'instance:%s' % on.id)
+        self.assertFalse(job_for(off_disabled), "disabled → no job")
+        self.assertFalse(job_for(off_suspended), "suspended → no job")
+
+    def test_cron_is_idempotent_per_day(self):
+        on = self._inst('bkidem', daily_backup_enabled=True)
+        Backup = self.env['saas.instance.backup']
+        with patch.object(type(Backup), '_cleanup_old_backups', lambda self: None):
+            Backup._cron_backup_all_instances()
+            Backup._cron_backup_all_instances()  # second run same day
+        jobs = self.Job.sudo().search([
+            ('model', '=', 'saas.instance'), ('res_id', '=', on.id),
+            ('method', '=', '_run_daily_full_backup')])
+        self.assertEqual(len(jobs), 1, "same-day re-run must not double-enqueue")
 
 
 @tagged('post_install', '-at_install')
