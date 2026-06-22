@@ -1,4 +1,5 @@
 import * as React from "react";
+import { usePolling } from "@/hooks/usePolling";
 import {
   CheckCircle2,
   XCircle,
@@ -53,15 +54,11 @@ export function DeploymentHistory({
 
   React.useEffect(() => {
     load();
-    // refresh while a build is running so the status flips live
-    const t = setInterval(() => {
-      setBuilds((cur) => {
-        if (cur?.some((b) => b.state === "running")) load();
-        return cur;
-      });
-    }, 6000);
-    return () => clearInterval(t);
   }, [load]);
+  // Refresh while a build is running so the status flips live (resilient:
+  // backs off on error, pauses on a hidden tab, stops on auth-expiry).
+  const hasRunningBuild = !!builds?.some((b) => b.state === "running");
+  usePolling(load, { interval: 6000, enabled: hasRunningBuild });
 
   return (
     <div className="mt-6">

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { api, ApiError, type ApiInstance } from "@/lib/api";
 import { useAuth } from "./AuthContext";
+import { usePolling } from "@/hooks/usePolling";
 
 // States that are mid-transition — we poll these so the UI moves to
 // running/stopped on its own without a manual refresh.
@@ -63,38 +64,31 @@ export function InstancesProvider({ children }: { children: React.ReactNode }) {
 
   // Poll status for any transitional/running instances so usage + state
   // stay live. Running instances refresh more slowly than provisioning.
-  React.useEffect(() => {
-    if (!isAuthenticated) return;
-    const hasTransitional = instances.some((i) => TRANSITIONAL.has(i.state));
-    if (!hasTransitional && !instances.some((i) => i.state === "running")) return;
-
-    const interval = setInterval(
-      async () => {
-        const targets = instances.filter(
-          (i) => TRANSITIONAL.has(i.state) || i.state === "running"
-        );
-        await Promise.all(
-          targets.map(async (inst) => {
-            try {
-              const s = await api.instanceStatus(inst.id);
-              setInstances((prev) =>
-                prev.map((i) =>
-                  i.id === inst.id
-                    ? { ...i, state: s.state, state_label: s.state_label, url: s.url || i.url, usage: s.usage || i.usage }
-                    : i
-                )
-              );
-            } catch {
-              /* transient — try again next tick */
-            }
-          })
-        );
-      },
-      // Faster cadence while something is provisioning.
-      instances.some((i) => TRANSITIONAL.has(i.state)) ? 4000 : 12000
-    );
-    return () => clearInterval(interval);
-  }, [instances, isAuthenticated]);
+  const _hasTransitional = instances.some((i) => TRANSITIONAL.has(i.state));
+  const _shouldPoll =
+    isAuthenticated &&
+    (_hasTransitional || instances.some((i) => i.state === "running"));
+  usePolling(
+    async () => {
+      const targets = instances.filter(
+        (i) => TRANSITIONAL.has(i.state) || i.state === "running"
+      );
+      await Promise.all(
+        targets.map(async (inst) => {
+          const s = await api.instanceStatus(inst.id);
+          setInstances((prev) =>
+            prev.map((i) =>
+              i.id === inst.id
+                ? { ...i, state: s.state, state_label: s.state_label, url: s.url || i.url, usage: s.usage || i.usage }
+                : i
+            )
+          );
+        })
+      );
+    },
+    // Faster cadence while something is provisioning.
+    { interval: _hasTransitional ? 4000 : 12000, enabled: _shouldPoll }
+  );
 
   const getInstance = React.useCallback(
     (id: number) => instances.find((i) => i.id === id),

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { usePolling } from "@/hooks/usePolling";
 import { useNavigate, useParams } from "react-router-dom";
 import { Archive, RotateCcw, Clock, ShieldCheck, ShieldAlert } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -80,11 +81,7 @@ export default function Backups({ embedId }: { embedId?: number } = {}) {
 
   // Poll while a snapshot is in progress.
   const hasRunning = !!snapshots?.some((b) => b.status === "in_progress");
-  React.useEffect(() => {
-    if (!hasRunning) return;
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [hasRunning, load]);
+  usePolling(load, { interval: 5000, enabled: hasRunning });
 
   const lastDone = snapshots?.find((b) => b.status === "available");
 

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { usePolling } from "@/hooks/usePolling";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   Plus,
@@ -117,11 +118,7 @@ export default function Databases({ embedId }: { embedId?: number } = {}) {
   );
   // Any create in flight (existing-in-list or not) locks the button.
   const isCreating = (data?.pending_ops ?? []).some((o) => o.operation === "create");
-  React.useEffect(() => {
-    if (!hasPending) return;
-    const t = setInterval(() => load(true), 5000);
-    return () => clearInterval(t);
-  }, [hasPending, load]);
+  usePolling(() => load(true), { interval: 5000, enabled: hasPending });
 
   // Runs the actual delete once confirmed in the dialog. Throws on
   // failure so the dialog can surface the error inline. No banner —

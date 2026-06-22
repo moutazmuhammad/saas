@@ -1,4 +1,5 @@
 import * as React from "react";
+import { usePolling } from "@/hooks/usePolling";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Search,
@@ -225,11 +226,7 @@ export default function Environments() {
   }, [load]);
 
   const hasTransient = !!data?.environments.some((c) => TRANSIENT.has(c.state));
-  React.useEffect(() => {
-    if (!hasTransient) return;
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [hasTransient, load]);
+  usePolling(load, { interval: 5000, enabled: hasTransient });
 
   const allEnvs = React.useMemo<EnvChild[]>(
     () => (data ? [data.production, ...data.environments] : []),
