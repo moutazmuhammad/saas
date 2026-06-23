@@ -436,19 +436,15 @@ export default function Hosting() {
               </div>
             )}
 
-            {/* Step indicator — trials skip the paid "Production specs" step */}
+            {/* Step indicator — paid funnel only. A trial is a single step,
+                so the badge above is enough (no numbered stepper). */}
+            {!isTrial && (
             <ol className="mb-10 flex items-center justify-center gap-1 sm:gap-3">
-              {(isTrial
-                ? [
-                    { n: 2, label: "Project & code" },
-                    { n: 3, label: "Region" },
-                  ]
-                : [
-                    { n: 1, label: "Production specs" },
-                    { n: 2, label: "Project & code" },
-                    { n: 3, label: "Region & environments" },
-                  ]
-              ).map((s, i, arr) => (
+              {[
+                { n: 1, label: "Production specs" },
+                { n: 2, label: "Project & code" },
+                { n: 3, label: "Region & environments" },
+              ].map((s, i, arr) => (
                 <li key={s.n} className="flex items-center gap-2">
                   <button
                     type="button"
@@ -475,6 +471,7 @@ export default function Hosting() {
                 </li>
               ))}
             </ol>
+            )}
 
             {/* ── Step 1: choose Production specs ── */}
             {step === 1 && (
@@ -777,14 +774,60 @@ export default function Hosting() {
                   )}
                 </div>
 
+                {/* Trial = single step: pick a region (only if there's a real
+                    choice) and start — no separate Region step, no payment. */}
+                {isTrial && showRegionPicker && (
+                  <div className="mt-5 space-y-1">
+                    <label className="flex items-center gap-1.5 text-sm font-medium">
+                      <Globe className="size-3.5 text-primary" /> Region
+                      <FieldHint text="The data-center location your trial runs in. Pick the one closest to your users — you can change region when you upgrade to a paid plan." />
+                    </label>
+                    <select
+                      value={regionId ?? ""}
+                      onChange={(e) => setRegionId(Number(e.target.value))}
+                      className="h-10 w-full cursor-pointer rounded-lg border border-border bg-card px-3 text-sm outline-none ring-primary/40 focus:ring-1"
+                    >
+                      {sortedRegions.map((r) => {
+                        const tag = (r.default || r.recommended)
+                          ? " — Recommended"
+                          : (r.budget || (cheapestRegion && r.id === cheapestRegion.id))
+                            ? " — Budget"
+                            : r.multiplier !== 1 ? ` (×${r.multiplier.toFixed(2)})` : "";
+                        return <option key={r.id} value={r.id}>{r.name}{tag}</option>;
+                      })}
+                    </select>
+                  </div>
+                )}
+
+                {isTrial && orderError && (
+                  <p className="mt-4 text-xs text-danger">{orderError}</p>
+                )}
+
                 <div className="mt-6 flex items-center gap-3">
                   {!isTrial && (
                     <Button variant="secondary" onClick={() => setStep(1)}>← Back</Button>
                   )}
-                  <Button className="flex-1" size="lg" disabled={!projectName.trim() || !subdomain} onClick={() => setStep(3)}>
-                    Continue <ArrowRight />
-                  </Button>
+                  {isTrial ? (
+                    <Button
+                      className="flex-1"
+                      size="lg"
+                      disabled={!projectName.trim() || !subdomain || ordering}
+                      onClick={placeOrder}
+                    >
+                      {ordering ? "Starting trial…" : "Start free trial"} <ArrowRight />
+                    </Button>
+                  ) : (
+                    <Button className="flex-1" size="lg" disabled={!projectName.trim() || !subdomain} onClick={() => setStep(3)}>
+                      Continue <ArrowRight />
+                    </Button>
+                  )}
                 </div>
+                {isTrial && (
+                  <p className="mt-3 text-center text-xs text-muted">
+                    {meta?.trial.days ? `Free for ${meta.trial.days} days · ` : ""}
+                    no credit card · upgrade any time
+                  </p>
+                )}
               </Card>
             )}
 
@@ -793,13 +836,10 @@ export default function Hosting() {
               <div className="grid items-start gap-6 lg:grid-cols-[1fr_20rem]">
                 {/* Left: region, support, backup & environments */}
                 <Card className="p-5">
-                  <h2 className="text-lg font-semibold">
-                    {isTrial ? "Region" : "Region, support & environments"}
-                  </h2>
+                  <h2 className="text-lg font-semibold">Region, support &amp; environments</h2>
                   <p className="mt-1 text-xs text-muted">
-                    {isTrial
-                      ? "Choose where your trial instance runs. You can upgrade to a paid plan any time before it ends."
-                      : "Choose where it runs, your support level, and how many extra environments to buy."}
+                    Choose where it runs, your support level, and how many extra
+                    environments to buy.
                   </p>
 
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
