@@ -1261,11 +1261,18 @@ class SaasInstance(models.Model):
                 # One trial per COMMERCIAL entity (across all its contacts),
                 # not per contact — see res.partner._saas_commercial.
                 commercial = rec.partner_id._saas_commercial()
+                # A 'failed' trial must NOT block a retry: deploy runs async
+                # (the worker marks the instance 'failed' after this commit),
+                # and the design deliberately sets the trial-used FLAG only on
+                # a SUCCESSFUL deploy so a transient infra failure never locks
+                # the customer out. Counting a failed trial here would re-impose
+                # exactly that lock-out — so exclude it (alongside cancelled).
                 existing = self.search([
                     ('partner_id', 'child_of', commercial.id),
                     ('is_trial', '=', True),
                     ('id', '!=', rec.id),
-                    ('state', 'not in', ('cancelled', 'cancelled_by_client')),
+                    ('state', 'not in', ('cancelled', 'cancelled_by_client',
+                                         'failed')),
                 ], limit=1)
                 if existing:
                     raise ValidationError(

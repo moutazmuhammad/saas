@@ -19,6 +19,16 @@ _ACTIVE_STATES = (
     'cancelled', 'cancelled_by_client',
 )
 
+# States that count toward a customer's max-instances QUOTA. Cancelled
+# instances are excluded: they consume no infrastructure and — as the quota
+# error message itself promises ("delete or cancel an existing one first") —
+# cancelling must actually free a slot. (Cancelled instances stay in
+# _ACTIVE_STATES for subdomain reservation / reactivation, which is a
+# separate concern from the resource quota.)
+_QUOTA_STATES = tuple(
+    s for s in _ACTIVE_STATES if s not in ('cancelled', 'cancelled_by_client')
+)
+
 
 class SaasWebsite(http.Controller):
 
@@ -197,7 +207,7 @@ class SaasWebsite(http.Controller):
         if max_instances > 0:
             active_count = request.env['saas.instance'].sudo().search_count([
                 ('partner_id', '=', partner.id),
-                ('state', 'in', _ACTIVE_STATES),
+                ('state', 'in', _QUOTA_STATES),
             ])
             if active_count >= max_instances:
                 return self.service_configure(
@@ -247,54 +257,57 @@ class SaasWebsite(http.Controller):
             )
 
         # --- Create instance ---
-        instance = None
+        vals = {
+            'subdomain': subdomain,
+            'domain_id': domain.id,
+            'partner_id': partner.id,
+            'saas_product_id': product.id,
+            'plan_id': plan.id,
+            'odoo_version_id': version.id,
+            'billing_period': billing_period,
+        }
+        if is_trial:
+            vals['is_trial'] = True
+
         try:
-            vals = {
-                'subdomain': subdomain,
-                'domain_id': domain.id,
-                'partner_id': partner.id,
-                'saas_product_id': product.id,
-                'plan_id': plan.id,
-                'odoo_version_id': version.id,
-                'billing_period': billing_period,
-            }
-            if is_trial:
-                vals['is_trial'] = True
+            # Atomic (see hosting_order): a deferred constraint that fires on
+            # flush during action_deploy() — e.g. one-trial-per-client — must
+            # roll the instance INSERT back entirely, else a rejected trial
+            # leaks an orphan draft instance (the caught error still lets the
+            # request commit). cr.savepoint() undoes the INSERT on any failure.
+            with request.env.cr.savepoint():
+                instance = request.env['saas.instance'].sudo().create(vals)
 
-            instance = request.env['saas.instance'].sudo().create(vals)
+                # Server allocation is handled by _allocate_servers() inside
+                # action_deploy(), which enforces capacity limits
+                # (max_instances, max_cpu_cores, max_ram_gb) and falls back
+                # to overcommit servers only when explicitly allowed from
+                # the backend.  Do NOT pre-assign servers here.
 
-            # Server allocation is handled by _allocate_servers() inside
-            # action_deploy(), which enforces capacity limits
-            # (max_instances, max_cpu_cores, max_ram_gb) and falls back
-            # to overcommit servers only when explicitly allowed from
-            # the backend.  Do NOT pre-assign servers here.
-
-            if is_trial:
-                # Trial: skip billing, deploy immediately.
-                # The partner's trial flag (saas_trial_used) is set inside
-                # _do_deploy() only after the deployment actually succeeds,
-                # so that a failed deploy does not permanently lock the
-                # customer out of their trial.
-                instance.action_deploy()
-                return request.redirect('/my/instances/%s?access_token=%s' % (
-                    instance.id, instance.access_token,
-                ))
-
-            # Paid: billing + auto-deploy flow
-            instance.action_confirm_and_bill()
-
-            # Redirect to checkout for immediate payment
-            return request.redirect('/my/instances/%s/checkout' % instance.id)
-
+                if is_trial:
+                    # Trial: skip billing, deploy immediately.
+                    # The partner's trial flag (saas_trial_used) is set inside
+                    # _do_deploy() only after the deployment actually succeeds,
+                    # so that a failed deploy does not permanently lock the
+                    # customer out of their trial.
+                    instance.action_deploy()
+                else:
+                    # Paid: billing + auto-deploy flow
+                    instance.action_confirm_and_bill()
         except (UserError, ValidationError) as e:
-            # Clean up the draft instance so the user can retry
-            if instance and instance.exists() and instance.state == 'draft':
-                instance.unlink()
+            # savepoint already rolled the INSERT back — no orphan to clean up.
             return self.service_configure(
                 product_id, plan_id,
                 error=str(e),
                 **post,
             )
+
+        if is_trial:
+            return request.redirect('/my/instances/%s?access_token=%s' % (
+                instance.id, instance.access_token,
+            ))
+        # Paid: redirect to checkout for immediate payment
+        return request.redirect('/my/instances/%s/checkout' % instance.id)
 
     # ==================================================================
     #  5. Custom Plan Builder  –  pricing config & calculation
@@ -466,7 +479,7 @@ class SaasWebsite(http.Controller):
         if max_instances > 0:
             active_count = request.env['saas.instance'].sudo().search_count([
                 ('partner_id', '=', partner.id),
-                ('state', 'in', _ACTIVE_STATES),
+                ('state', 'in', _QUOTA_STATES),
             ])
             if active_count >= max_instances:
                 return self.service_custom_configure(
@@ -493,30 +506,30 @@ class SaasWebsite(http.Controller):
         # We look for a plan that matches exactly, or create a dynamic one
         plan = self._get_or_create_custom_plan(product, workers, storage, config)
 
-        instance = None
+        vals = {
+            'subdomain': subdomain,
+            'domain_id': domain.id,
+            'partner_id': partner.id,
+            'saas_product_id': product.id,
+            'plan_id': plan.id,
+            'odoo_version_id': version.id,
+            'billing_period': billing_period,
+        }
         try:
-            vals = {
-                'subdomain': subdomain,
-                'domain_id': domain.id,
-                'partner_id': partner.id,
-                'saas_product_id': product.id,
-                'plan_id': plan.id,
-                'odoo_version_id': version.id,
-                'billing_period': billing_period,
-            }
-            instance = request.env['saas.instance'].sudo().create(vals)
-            instance.action_confirm_and_bill()
-
-            return request.redirect('/my/instances/%s/checkout' % instance.id)
-
+            # Atomic (see hosting_order): a deferred constraint firing on flush
+            # during action_confirm_and_bill() must roll the INSERT back, else
+            # a rejected order leaks an orphan draft instance.
+            with request.env.cr.savepoint():
+                instance = request.env['saas.instance'].sudo().create(vals)
+                instance.action_confirm_and_bill()
         except (UserError, ValidationError) as e:
-            if instance and instance.exists() and instance.state == 'draft':
-                instance.unlink()
             return self.service_custom_configure(
                 product_id, workers=workers, storage=storage,
                 error=str(e),
                 **post,
             )
+
+        return request.redirect('/my/instances/%s/checkout' % instance.id)
 
     def _get_or_create_custom_plan(self, product, workers, storage, config, region=None):
         """Find or create a plan matching the custom configuration.
@@ -1175,7 +1188,7 @@ class SaasWebsite(http.Controller):
         if max_instances > 0:
             active_count = request.env['saas.instance'].sudo().search_count([
                 ('partner_id', '=', partner.id),
-                ('state', 'in', _ACTIVE_STATES),
+                ('state', 'in', _QUOTA_STATES),
             ])
             if active_count >= max_instances:
                 return request.redirect(err_redirect % ('Maximum+instances+reached'))
@@ -1229,72 +1242,78 @@ class SaasWebsite(http.Controller):
             plan = self._get_or_create_hosting_plan(
                 product, workers, storage, config, region=region)
 
-        instance = None
+        vals = {
+            'subdomain': subdomain,
+            'project_name': project_name or subdomain,
+            'domain_id': domain.id,
+            'partner_id': partner.id,
+            'saas_product_id': product.id,
+            'plan_id': plan.id,
+            'odoo_version_id': version.id,
+            'billing_period': billing_period,
+            'pip_packages': pip_packages or False,
+            # Paid daily-backup add-on. Trials don't get it.
+            'daily_backup_enabled': (
+                not is_trial and post.get('daily_backup') == '1'
+            ),
+        }
+        # Pin the region at creation (fixed for the instance's life);
+        # drives co-located server allocation.
+        if region:
+            vals['region_id'] = region.id
+        # Staging/Development servers chosen at checkout are spawned once
+        # the initial invoice is paid (trials get only Production).
+        if not is_trial and (staging_count or dev_count):
+            vals['pending_staging_count'] = staging_count
+            vals['pending_dev_count'] = dev_count
+        # Support plan (P6): a paid add-on chosen at checkout. Trials
+        # don't get paid support. Falls back to the default plan.
+        if not is_trial:
+            Support = request.env['saas.support.plan'].sudo()
+            sup = Support.search([
+                ('code', '=', (post.get('support_code') or '').strip()),
+                ('active', '=', True),
+            ], limit=1)
+            if sup:
+                vals['support_plan_id'] = sup.id
+        if is_trial:
+            vals['is_trial'] = True
+
         try:
-            vals = {
-                'subdomain': subdomain,
-                'project_name': project_name or subdomain,
-                'domain_id': domain.id,
-                'partner_id': partner.id,
-                'saas_product_id': product.id,
-                'plan_id': plan.id,
-                'odoo_version_id': version.id,
-                'billing_period': billing_period,
-                'pip_packages': pip_packages or False,
-                # Paid daily-backup add-on. Trials don't get it.
-                'daily_backup_enabled': (
-                    not is_trial and post.get('daily_backup') == '1'
-                ),
-            }
-            # Pin the region at creation (fixed for the instance's life);
-            # drives co-located server allocation.
-            if region:
-                vals['region_id'] = region.id
-            # Staging/Development servers chosen at checkout are spawned once
-            # the initial invoice is paid (trials get only Production).
-            if not is_trial and (staging_count or dev_count):
-                vals['pending_staging_count'] = staging_count
-                vals['pending_dev_count'] = dev_count
-            # Support plan (P6): a paid add-on chosen at checkout. Trials
-            # don't get paid support. Falls back to the default plan.
-            if not is_trial:
-                Support = request.env['saas.support.plan'].sudo()
-                sup = Support.search([
-                    ('code', '=', (post.get('support_code') or '').strip()),
-                    ('active', '=', True),
-                ], limit=1)
-                if sup:
-                    vals['support_plan_id'] = sup.id
-            if is_trial:
-                vals['is_trial'] = True
+            # Atomic: a deferred constraint (e.g. the one-trial-per-client
+            # ConstraintError that fires on flush during action_deploy) must
+            # roll back the instance INSERT entirely — otherwise a rejected
+            # trial leaks an orphan draft instance (subdomain/port/creds and
+            # all) because the request still commits after the caught error.
+            # A cr.savepoint() rolls the INSERT back cleanly on ANY failure,
+            # so there is nothing to unlink afterwards.
+            with request.env.cr.savepoint():
+                instance = request.env['saas.instance'].sudo().create(vals)
 
-            instance = request.env['saas.instance'].sudo().create(vals)
+                # Create the customer's repository record (if provided)
+                if repo_url:
+                    request.env['saas.instance.repo'].sudo().create({
+                        'instance_id': instance.id,
+                        'repo_url': repo_url,
+                        'branch': repo_branch,
+                        'github_token': git_token or False,
+                        'webhook_enabled': bool(git_token),
+                    })
 
-            # Create the customer's repository record (if provided)
-            if repo_url:
-                request.env['saas.instance.repo'].sudo().create({
-                    'instance_id': instance.id,
-                    'repo_url': repo_url,
-                    'branch': repo_branch,
-                    'github_token': git_token or False,
-                    'webhook_enabled': bool(git_token),
-                })
-
-            if is_trial:
-                # Trial: skip billing, deploy immediately
-                instance.action_deploy()
-                return request.redirect('/my/instances/%s?access_token=%s' % (
-                    instance.id, instance.access_token,
-                ))
-
-            instance.action_confirm_and_bill()
-
-            return request.redirect('/my/instances/%s/checkout' % instance.id)
-
+                if is_trial:
+                    # Trial: skip billing, deploy immediately.
+                    instance.action_deploy()
+                else:
+                    instance.action_confirm_and_bill()
         except (UserError, ValidationError) as e:
-            if instance and instance.exists() and instance.state == 'draft':
-                instance.unlink()
+            # savepoint already rolled the INSERT back — no orphan to clean up.
             return request.redirect(err_redirect % str(e).replace(' ', '+'))
+
+        if is_trial:
+            return request.redirect('/my/instances/%s?access_token=%s' % (
+                instance.id, instance.access_token,
+            ))
+        return request.redirect('/my/instances/%s/checkout' % instance.id)
 
     @http.route('/saas/hosting-plan/calculate', type='json', auth='public', website=True)
     def hosting_plan_calculate(self, workers=2, storage=5, region=None):

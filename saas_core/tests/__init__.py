@@ -29,3 +29,4 @@ from . import test_repo_clone_tls
 from . import test_invoice_idempotency
 from . import test_pending_retry
 from . import test_job_queue
+from . import test_order_eligibility_fixes

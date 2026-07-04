@@ -177,13 +177,20 @@ class ResPartner(models.Model):
         """True if this commercial entity already owns a paid (non-trial,
         non-cancelled) instance of the given type — across ALL its contacts.
         Once they pay for a server, the free trial no longer applies.
+
+        ``draft`` and ``pending_payment`` are INCOMPLETE orders — nothing has
+        been paid or provisioned yet (see the awaiting-payment handling at
+        saas_instance state transitions), so they must NOT count as a paid
+        instance. Otherwise a buyer who opens a paid checkout and abandons it
+        would be permanently barred from the free trial they never used.
         """
         self.ensure_one()
         return bool(self.env['saas.instance'].sudo().search_count([
             ('partner_id', 'child_of', self._saas_commercial().id),
             ('is_trial', '=', False),
             ('is_hosting', '=', bool(hosting)),
-            ('state', 'not in', ('cancelled', 'cancelled_by_client')),
+            ('state', 'not in', ('cancelled', 'cancelled_by_client',
+                                 'draft', 'pending_payment')),
         ], limit=1))
 
     def action_view_saas_instances(self):
