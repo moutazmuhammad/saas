@@ -28,8 +28,18 @@ class TestJobQueue(TransactionCase):
         def _job_onerror(rec, exc, *a):
             self._onerror_calls.append((str(exc), list(a)))
 
+        # Records how many jobs are in 'running' while THIS job executes —
+        # used to prove the cron drains one job at a time.
+        self._running_counts = []
+
+        def _job_count_running(rec, *a):
+            self._running_counts.append(
+                rec.env['saas.job'].search_count([('state', '=', 'running')]))
+            return True
+
         for name, fn in (('_job_ok', _job_ok), ('_job_boom', _job_boom),
-                         ('_job_onerror', _job_onerror)):
+                         ('_job_onerror', _job_onerror),
+                         ('_job_count_running', _job_count_running)):
             p = patch.object(type(self.partner), name, fn, create=True)
             p.start()
             self.addCleanup(p.stop)
@@ -60,6 +70,23 @@ class TestJobQueue(TransactionCase):
         j1 = self.Job._enqueue(self.partner, '_job_ok', idempotency_key='k1')
         j2 = self.Job._enqueue(self.partner, '_job_ok', idempotency_key='k1')
         self.assertEqual(j1, j2, "same idempotency key must not create a 2nd job")
+
+    # ---- backstop cron drains one job at a time (reaper-safety) ----
+    def test_cron_runs_jobs_one_at_a_time(self):
+        """Regression: the backstop cron must NOT flip a whole batch to
+        'running' upfront. Doing so left not-yet-started jobs 'running' with a
+        stale claim-time heartbeat, so a reaper tick during a long serial drain
+        would requeue (double-run) or terminally fail them. During any job's
+        execution exactly one job — itself — is 'running'."""
+        self._no_commit()
+        for i in range(4):
+            self.Job._enqueue(self.partner, '_job_count_running',
+                              idempotency_key='cnt%d' % i)
+        self.Job._cron_run_jobs()
+        self.assertEqual(len(self._running_counts), 4, "all jobs ran once")
+        self.assertEqual(
+            max(self._running_counts), 1,
+            "no job may sit in 'running' while another job executes")
 
     # ---- run ----
     def test_run_success_stores_result(self):

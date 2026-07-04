@@ -222,39 +222,48 @@ class SaasJob(models.Model):
 
     # -------------------------------------------------------------- worker
     @api.model
-    def _claim_jobs(self, limit):
-        """Atomically claim up to *limit* due jobs (state->running). Uses
-        ``FOR UPDATE SKIP LOCKED`` so concurrent workers never grab the same
-        job. Increments attempts so the count survives a crash."""
+    def _claim_next_any(self):
+        """Atomically claim ONE due pending job across ALL channels
+        (``FOR UPDATE SKIP LOCKED``) and return it (now running), or an empty
+        recordset. Increments attempts so the count survives a crash."""
         now = fields.Datetime.now()
         self.env.cr.execute(
             """
             UPDATE saas_job SET state='running', started_at=%s,
                    last_heartbeat=%s, attempts=attempts+1
-            WHERE id IN (
+            WHERE id = (
                 SELECT id FROM saas_job
                 WHERE state='pending' AND run_after <= %s
                       AND attempts < max_attempts
                 ORDER BY priority, run_after, id
-                FOR UPDATE SKIP LOCKED
-                LIMIT %s
-            )
+                FOR UPDATE SKIP LOCKED LIMIT 1)
             RETURNING id
-            """, (now, now, now, limit))
-        ids = [r[0] for r in self.env.cr.fetchall()]
-        jobs = self.browse(ids)
-        # The UPDATE bypassed the ORM cache; refresh so state/attempts read true.
-        jobs.invalidate_recordset()
-        return jobs
+            """, (now, now, now))
+        row = self.env.cr.fetchone()
+        if not row:
+            return self.browse()
+        self.env.cr.commit()
+        job = self.browse(row[0])
+        job.invalidate_recordset()
+        return job
 
     @api.model
     def _cron_run_jobs(self):
-        jobs = self._claim_jobs(self._RUN_BATCH)
-        if not jobs:
-            return
-        # Publish the claim so a parallel worker sees these as 'running'.
-        self.env.cr.commit()
-        for job in jobs:
+        """Backstop drain. Claims and runs due jobs ONE AT A TIME (up to
+        ``_RUN_BATCH`` per tick), so a job is only in the 'running' state while
+        it is actually executing and carrying a live heartbeat.
+
+        A previous version claimed the whole batch upfront (all → 'running'
+        with a claim-time heartbeat) and executed them serially; jobs waiting
+        their turn kept that stale heartbeat, so once the drain ran longer than
+        ``_HEARTBEAT_STALE_MIN`` the reaper would treat the not-yet-started
+        jobs as dead — requeuing (double run) or terminally failing them
+        (spurious on_error/alert) even though this loop would still execute
+        them. Claiming one at a time removes that window entirely."""
+        for _i in range(self._RUN_BATCH):
+            job = self._claim_next_any()
+            if not job:
+                break
             try:
                 job._execute()
             except Exception:
