@@ -14,18 +14,40 @@ class ContainerLogsStream extends Component {
             lines: [],
             connected: false,
             error: null,
+            autoScroll: true,
         });
         this.logRef = useRef("logContainer");
         this.eventSource = null;
-        this.autoScroll = true;
+        // Bind once so addEventListener/removeEventListener use the same ref
+        this._boundOnScroll = this._onScroll.bind(this);
 
         const { stream_url, container_name, tail } = this.props.action.context || {};
         this.streamUrl = stream_url;
         this.containerName = container_name || "Container";
         this.tail = tail || 100;
 
-        onMounted(() => this.startStream());
-        onWillUnmount(() => this.stopStream());
+        onMounted(() => {
+            this.startStream();
+            const el = this.logRef.el;
+            if (el) {
+                el.addEventListener("scroll", this._boundOnScroll);
+            }
+        });
+        onWillUnmount(() => {
+            this.stopStream();
+            const el = this.logRef.el;
+            if (el) {
+                el.removeEventListener("scroll", this._boundOnScroll);
+            }
+        });
+    }
+
+    _onScroll() {
+        const el = this.logRef.el;
+        if (!el) return;
+        // User is "at the bottom" if within 30px of the end
+        const atBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 30;
+        this.state.autoScroll = atBottom;
     }
 
     startStream() {
@@ -44,7 +66,8 @@ class ContainerLogsStream extends Component {
             if (this.state.lines.length > 5000) {
                 this.state.lines.splice(0, this.state.lines.length - 5000);
             }
-            if (this.autoScroll) {
+            // Only auto-scroll if user is at the bottom
+            if (this.state.autoScroll) {
                 this.scrollToBottom();
             }
         };
@@ -85,11 +108,9 @@ class ContainerLogsStream extends Component {
         });
     }
 
-    onToggleAutoScroll() {
-        this.autoScroll = !this.autoScroll;
-        if (this.autoScroll) {
-            this.scrollToBottom();
-        }
+    onScrollToBottom() {
+        this.state.autoScroll = true;
+        this.scrollToBottom();
     }
 
     onClear() {

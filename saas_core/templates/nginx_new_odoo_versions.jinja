@@ -1,9 +1,9 @@
 upstream {{ subdomain }} {
-  server 127.0.0.1:{{ http_port }};
+  server {{ backend_ip | default('127.0.0.1') }}:{{ http_port }};
 }
 
 upstream {{ subdomainchat }} {
-  server 127.0.0.1:{{ longpolling_port }};
+  server {{ backend_ip | default('127.0.0.1') }}:{{ longpolling_port }};
 }
 
 map $http_upgrade $connection_upgrade {

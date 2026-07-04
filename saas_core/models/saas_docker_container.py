@@ -1,5 +1,3 @@
-import shlex
-
 from odoo import fields, models, _
 from odoo.exceptions import UserError
 
@@ -10,7 +8,7 @@ class SaasDockerContainer(models.Model):
     _order = 'name'
 
     server_id = fields.Many2one(
-        'saas.container.physical.server',
+        'saas.server',
         string='Docker Server',
         required=True,
         ondelete='cascade',
@@ -52,33 +50,34 @@ class SaasDockerContainer(models.Model):
         help='Port mappings between the host and the container.',
     )
 
+    def _driver_handle(self):
+        """Build a ComputeDriver + ComputeHandle for this raw container record.
+        Container-level ops (stop/restart) need only server + container name."""
+        from ..drivers.ssh_docker_driver import SshDockerDriver
+        from ..drivers.base import ComputeHandle
+        return (SshDockerDriver(self.server_id),
+                ComputeHandle(server_id=self.server_id.id,
+                              container_name=self.name, instance_path=''))
+
     def action_stop_container(self):
-        """Stop this Docker container via SSH."""
+        """Stop this Docker container via the ComputeDriver."""
         self.ensure_one()
-        server = self.server_id
-        with server._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = ssh.execute(
-                'docker stop %s' % shlex.quote(self.name),
-            )
-            if exit_code != 0:
-                raise UserError(
-                    _("Failed to stop container '%s':\n%s") % (self.name, stderr)
-                )
-        return server.action_refresh_containers()
+        driver, handle = self._driver_handle()
+        try:
+            driver.stop(handle)
+        except Exception as e:
+            raise UserError(_("Failed to stop container '%s':\n%s") % (self.name, e))
+        return self.server_id.action_refresh_containers()
 
     def action_restart_container(self):
-        """Restart this Docker container via SSH."""
+        """Restart this Docker container via the ComputeDriver."""
         self.ensure_one()
-        server = self.server_id
-        with server._get_ssh_connection() as ssh:
-            exit_code, stdout, stderr = ssh.execute(
-                'docker restart %s' % shlex.quote(self.name),
-            )
-            if exit_code != 0:
-                raise UserError(
-                    _("Failed to restart container '%s':\n%s") % (self.name, stderr)
-                )
-        return server.action_refresh_containers()
+        driver, handle = self._driver_handle()
+        try:
+            driver.restart(handle)
+        except Exception as e:
+            raise UserError(_("Failed to restart container '%s':\n%s") % (self.name, e))
+        return self.server_id.action_refresh_containers()
 
     def action_view_logs(self):
         """Open a live log stream for this container."""
