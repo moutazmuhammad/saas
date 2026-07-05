@@ -25,3 +25,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Local-dev artifacts (see scripts/devctl.sh)
+.odoo-req.filtered.txt
