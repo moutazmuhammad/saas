@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Local dev control for the SaaS control-plane (Odoo 18 + userspace PostgreSQL).
-# Usage: scripts/devctl.sh {up|down|status|logs|seed|shell|reset|test|crons-off|crons-on|cron}
+# Usage: scripts/devctl.sh {up|down|status|logs|otp|seed|shell|reset|test|crons-off|crons-on|cron}
 #
 # Paths are auto-derived from the repo location and overridable via env vars,
 # so this works on any checkout without editing. Layout expected (siblings of
@@ -58,6 +58,12 @@ case "${1:-}" in
     (echo > /dev/tcp/127.0.0.1/$PGPORT) 2>/dev/null && echo "postgres :$PGPORT UP" || echo "postgres DOWN"
     (echo > /dev/tcp/127.0.0.1/8069) 2>/dev/null && echo "odoo :8069 UP" || echo "odoo DOWN" ;;
   logs)   tail -f "$LOGDIR/odoo.log" ;;
+  otp)    # print the most recent registration code from the log, so you can
+          # complete sign-up in the browser (codes are delivered out-of-band; in
+          # local dev the phone OTP lands in the log ending with the 6-digit code).
+    line=$(grep -hE "phone OTP for|code for" "$LOGDIR/odoo.log" 2>/dev/null | tail -1)
+    if [ -n "$line" ]; then echo "$line" | grep -oE "[0-9]{6}" | tail -1
+    else echo "no recent code — start a registration first, then run: devctl otp"; fi ;;
   seed)   pg_up; cd "$ODOO"; "$VENV/bin/python" odoo-bin shell -c "$CONF" -d "$DB" --no-http --log-level=warn < "$REPO/scripts/seed_dev.py" ;;
   test)   # run the saas test suite in a DEDICATED test DB. Must override the
           # conf's dbfilter (=^saas_dev$) and http port, or HttpCase requests
@@ -89,7 +95,7 @@ case "${1:-}" in
   reset)  # DANGER: drop + reinit the DB, then reseed
     odoo_down; pg_up
     "$PGBIN/psql" -h 127.0.0.1 -p $PGPORT -U odoo -d postgres -c "DROP DATABASE IF EXISTS $DB;"
-    cd "$ODOO"; "$VENV/bin/python" odoo-bin -c "$CONF" -d "$DB" -i saas_core,saas_website --without-demo=False --stop-after-init
+    cd "$ODOO"; "$VENV/bin/python" odoo-bin -c "$CONF" -d "$DB" -i saas_core,saas_website,payment_demo --without-demo=False --stop-after-init
     "$VENV/bin/python" odoo-bin shell -c "$CONF" -d "$DB" --no-http --log-level=warn < "$REPO/scripts/seed_dev.py" ;;
   *) echo "usage: $0 {up|down|status|logs|seed|shell|reset}"; exit 1 ;;
 esac

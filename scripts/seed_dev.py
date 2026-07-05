@@ -330,6 +330,17 @@ for i in range(3):
             'format': 'restic' if 'format' in E['saas.instance.backup']._fields else False,
             'bucket_path': 'acme/daily/%d.restic' % i})
 
+# ----------------------------------------------------------------- payments
+# Enable the Demo payment provider (module payment_demo) if present, so paid
+# checkout can be completed with a SIMULATED card locally — no real gateway.
+demo = E['payment.provider'].sudo().search([('code', '=', 'demo')], limit=1)
+if demo:
+    demo.write({'state': 'test', 'is_published': True})
+    print('demo payment provider enabled (state=test) — paid checkout works')
+else:
+    print('payment_demo not installed — paid checkout needs a provider; '
+          'trials still work with no payment')
+
 E.cr.commit()
 print('COMMITTED')
 print('=' * 60)
